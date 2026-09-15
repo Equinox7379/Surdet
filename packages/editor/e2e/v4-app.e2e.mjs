@@ -81,6 +81,9 @@ const open = async (context = undefined) => {
 
 const keyboardActivate = async (control, key = 'Enter') => {
   await control.focus();
+  if (!await control.evaluate((node) => node === document.activeElement)) {
+    console.error('Keyboard focus mismatch', await control.evaluate(node => ({ target: node.outerHTML.slice(0, 400), active: document.activeElement?.outerHTML.slice(0, 400), openDialog: Boolean(document.querySelector('dialog[open]')) })));
+  }
   assert(await control.evaluate((node) => node === document.activeElement), 'keyboard target did not receive focus');
   await control.press(key);
 };
@@ -144,7 +147,10 @@ try {
   assert(await page.locator('.block[data-line="5"]').evaluate(node => node.classList.contains('v4-current')), 'project search must reveal the actual matching row');
   await page.getByRole('button', { name: 'lynn:uniform · normal', exact: false }).click();
   assert(await page.locator('.block[data-line="3"]').evaluate(node => node.classList.contains('v4-current')), 'inherited presentation must reveal the original show instruction');
+  const beforeDynamicStage = await page.locator('.v4-edit-stage').boundingBox();
   await page.locator('[data-step-summary="6"]').click();
+  const dynamicStage = await page.locator('.v4-edit-stage').boundingBox();
+  assert(Math.abs(dynamicStage.height - beforeDynamicStage.height) <= 1, 'dynamic presentation must keep the same stage frame');
   await page.getByRole('button', { name: '编辑 intro 画面效果 第 1 个节点', exact: false }).click();
   await page.locator('#timeline-view').waitFor();
   assert.deepEqual(await page.evaluate(() => window.surdetEditorDebug.state.currentTimelineCue), { trackIndex: 0, cueIndex: 0 });
@@ -311,7 +317,52 @@ try {
   await page.locator('[data-workbench-panel="editor"]').click();
   const dialogue = page.locator('.block[data-line="5"] .v4-dialogue-input');
   const longText = '长对白仍可连续编辑，标点和内容都保留。'.repeat(30);
+  // A wider preview/directory and a narrower desktop window must reflow the
+  // existing textarea, not hide its bottom lines until the next text edit.
+  await page.setViewportSize({ width: 1600, height: 1000 });
   await dialogue.fill(longText);
+  await dialogue.press('End');
+  await dialogue.press('Shift+ArrowLeft');
+  const beforeResizeSource = await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('start').text);
+  const beforeResizeSelection = await dialogue.evaluate(node => [node.selectionStart, node.selectionEnd, node.selectionDirection]);
+  const expectDialogueReflow = async () => {
+    await page.waitForFunction(() => {
+      const node = document.querySelector('.block[data-line="5"] .v4-dialogue-input');
+      return node && node.clientHeight > 0 && node.scrollHeight <= node.clientHeight + 1;
+    }, null, { timeout: 3_000 }).catch(async (error) => {
+      console.error('Dialogue reflow dimensions', await dialogue.evaluate(node => ({ width: node.clientWidth, height: node.clientHeight, contentHeight: node.scrollHeight })));
+      throw error;
+    });
+    assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('start').text), beforeResizeSource,
+      'layout reflow must not edit the shared scene');
+    assert.deepEqual(await dialogue.evaluate(node => [node.selectionStart, node.selectionEnd, node.selectionDirection]), beforeResizeSelection,
+      'layout reflow must preserve the textarea selection');
+  };
+  await expectDialogueReflow();
+  for (const [label, key, count] of [
+    ['调整目录宽度', 'ArrowRight', 6],
+    ['调整画面与属性区宽度', 'ArrowLeft', 8],
+  ]) {
+    const separator = page.getByRole('separator', { name: label, exact: true });
+    const beforeWidth = await dialogue.evaluate(node => node.clientWidth);
+    for (let index = 0; index < count; index++) await separator.press(key);
+    assert((await dialogue.evaluate(node => node.clientWidth)) < beforeWidth,
+      'the regression must actually narrow the existing dialogue');
+    await expectDialogueReflow();
+  }
+  await dialogue.focus();
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expectDialogueReflow();
+  assert(await dialogue.evaluate(node => node === document.activeElement), 'window reflow must not steal dialogue focus');
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.getByRole('separator', { name: '调整目录宽度', exact: true }).dblclick();
+  await page.getByRole('separator', { name: '调整画面与属性区宽度', exact: true }).dblclick();
+  await expectDialogueReflow();
+  await dialogue.focus();
+  await page.setViewportSize({ width: 960, height: 720 });
+  await expectDialogueReflow();
+  assert(await dialogue.evaluate(node => node === document.activeElement), 'desktop split reflow must preserve dialogue focus');
+  console.log('PASS desktop dialogue reflow follows both panes and window width without changing source or selection');
   const beforeCompositionRows = await page.locator('.block[data-line]').count();
   await dialogue.evaluate((node) => {
     node.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
@@ -432,6 +483,7 @@ try {
       await keyboardActivate(page.locator('[data-workbench-panel="editor"]'));
       await keyboardActivate(page.locator('#script-v4-toolbar').getByRole('button', { name: '添加剧情', exact: true }));
       await page.keyboard.press('Escape');
+      await page.getByRole('dialog', { name: '添加剧情', exact: true }).waitFor({ state: 'detached' });
     }
     if (mode === 'assets') {
       await keyboardActivate(page.locator('.asset-center-item[data-asset-id]').first());

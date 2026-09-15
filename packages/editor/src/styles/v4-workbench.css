@@ -108,7 +108,6 @@
 .v4-stage-tools .v4-button { border-color: transparent; background: transparent; }
 #script-v4-edit-layout { background: #1d2529; border-radius: 3px; }
 .v4-edit-stage { width: 100%; max-width: calc(38dvh * 16 / 9); margin-inline: auto; aspect-ratio: 16 / 9; position: relative; overflow: hidden; background: #1d2529; border-radius: 3px; container-type: inline-size; }
-.v4-edit-stage:has(.v4-stage-empty):not(:has(.v4-stage-background)) { aspect-ratio: auto; min-height: 120px; }
 .v4-stage-background { position: absolute; inset: 0; padding: 0; width: 100%; height: 100%; border: 0; background: transparent; }
 .v4-stage-background img { width: 100%; height: 100%; object-fit: contain !important; }
 .v4-stage-actor { position: absolute; bottom: 0; height: 94%; width: 36%; transform: translateX(-50%); border: 0; padding: 0; background: transparent; }

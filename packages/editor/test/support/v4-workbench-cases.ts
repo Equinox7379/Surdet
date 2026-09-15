@@ -196,6 +196,33 @@ export const v4WorkbenchCases: BrowserCase[] = [
     const scene = fixture(); input('.block[data-line="4"] .v4-dialogue-input', '新的台词。'); await tick();
     assert(scene.text.includes('凛:新的台词。\r\n'), scene.text);
   } },
+  { name: 'disposing the workbench cancels a queued dialogue reflow without editing history', run: async () => {
+    const scene = fixture();
+    const editor = control<HTMLElement>('#editor');
+    const textarea = control<HTMLTextAreaElement>('.block[data-line="4"] .v4-dialogue-input');
+    const frame = (): Promise<void> => new Promise(resolve => requestAnimationFrame(() => resolve()));
+    editor.style.width = '680px'; await frame(); await frame();
+    const beforeHistory = JSON.stringify([...histories]);
+    let writes = 0;
+    const mutations = new MutationObserver(records => { writes += records.length; });
+    let disposed = false;
+    // Registered after the production observer: abort after it queues its frame.
+    const boundary = new ResizeObserver(entries => {
+      if (entries[0]?.contentRect.width !== 380) return;
+      disposeScriptV4();
+      mutations.observe(textarea, { attributes: true, attributeFilter: ['style'] });
+      disposed = true;
+    });
+    boundary.observe(editor);
+    try {
+      editor.style.width = '380px'; await frame(); await frame();
+      assert(disposed, 'the real resize observer did not reach the disposal boundary');
+      editor.style.width = '520px'; await frame(); await frame();
+      assert(writes === 0, 'disposed workbench resized a detached-owner dialogue');
+      assert(scene.text === SOURCE && !scene.dirty, 'layout teardown changed the document');
+      assert(JSON.stringify([...histories]) === beforeHistory, 'layout teardown changed undo history');
+    } finally { boundary.disconnect(); mutations.disconnect(); }
+  } },
   { name: 'multiline paste does not pass through text-input newline stripping', run: async () => {
     const scene = fixture(); input('.block[data-line="4"] .v4-dialogue-input', '第一行\n第二行'); await tick();
     assert(scene.text.includes('凛:第一行\r\n第二行\r\n'), scene.text);
