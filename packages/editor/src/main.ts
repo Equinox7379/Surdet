@@ -83,7 +83,7 @@ import { renderAssetInsights, disposeV4SurfaceViews } from './v4/surfaces.js';
 import './styles/v4-workbench.css';
 import { clearTimelineViewState, clearTimelineViewStates, renderTimelinePanel, selectTimelineCue, bindTimelineHooks } from './panels/timeline-panel.js';
 import { renderStatsPanel, bindStatsHooks } from './panels/stats-panel.js';
-import { renderSearchPanel, bindSearchHooks, focusSearchInput } from './panels/search-panel.js';
+import { renderSearchPanel, bindSearchHooks, focusSearchInput, resetSearchSession } from './panels/search-panel.js';
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
 import { openReviewPanelWorkspace, renderReviewPanel, disposeReviewApply } from './panels/review-panel.js';
 import { renderTimelineAutosaveConflictPanel } from './panels/timeline-autosave-conflicts.js';
@@ -1509,6 +1509,7 @@ bindProjectIoHooks({
   onProjectStateReset: () => {
     invalidatePendingValidation();
     resetConfigSession();
+    resetSearchSession();
   },
   onProjectReading: async (root, readProject, reopen) => {
     if (state.dirHandle !== null && editorWorkspaceStatus().protection !== 'unavailable'

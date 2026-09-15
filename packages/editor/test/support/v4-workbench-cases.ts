@@ -5,6 +5,7 @@ import { disposePreviewPanel, renderPreviewPanel } from '../../src/panels/previe
 import { buildAuthoringWorkbench } from '../../src/shell/authoring-workbench.js';
 import { disposeScriptV4, revealScriptV4Line } from '../../src/v4/script-workbench.js';
 import { enhanceConfigTables } from '../../src/v4/surfaces.js';
+import { bindSearchHooks, renderSearchPanel, focusSearchInput, resetSearchSession } from '../../src/panels/search-panel.js';
 
 export const SOURCE = '@scene start\r\n@label opening\r\n@bg hall\r\n@show lynn:uniform normal @ right\r\n凛:你好。\r\n@wait 500\r\n@choice\r\n  继续 -> @goto again\r\n  离开 -> @goto done\r\n@label again\r\n凛：继续。\r\n@label done\r\n@end';
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
@@ -51,6 +52,14 @@ function makeFontRoot(name: string, bytes: number[]): FileSystemDirectoryHandle 
 async function startPreviewLoad(host: HTMLElement): Promise<{ frame: HTMLIFrameElement; loads: unknown[] }> {
   const frame = host.querySelector<HTMLIFrameElement>('iframe.preview-frame');
   assert(frame?.contentWindow, 'preview iframe has no window');
+  if (frame.contentDocument?.URL !== frame.src || frame.contentDocument?.readyState !== 'complete') {
+    await new Promise<void>((resolve, reject) => {
+      const loaded = () => { clearTimeout(timer); resolve(); };
+      const timer = setTimeout(() => { frame.removeEventListener('load', loaded); reject(new Error('preview fixture navigation did not finish')); }, 2000);
+      frame.addEventListener('load', loaded, { once: true });
+    });
+  }
+  assert(frame.contentDocument?.URL === frame.src, 'preview listener must attach to the final fixture document');
   const loads: unknown[] = [];
   frame.contentWindow.addEventListener('message', (event) => loads.push(event.data));
   window.dispatchEvent(new MessageEvent('message', {
@@ -61,13 +70,16 @@ async function startPreviewLoad(host: HTMLElement): Promise<{ frame: HTMLIFrameE
   return { frame, loads };
 }
 
-async function waitForPublishedPreviewLoad(result: { loads: unknown[] }): Promise<void> {
-  for (let attempt = 0; attempt < 10 && result.loads.length === 0; attempt++) await nextTask();
-  assert(result.loads.some((value) => (value as { type?: string } | null)?.type === 'surdet-preview-load'), 'preview load was not published');
+async function waitForPublishedPreviewLoad(result: { frame: HTMLIFrameElement; loads: unknown[] }): Promise<void> {
+  const published = () => result.loads.some(value => (value as { type?: string } | null)?.type === 'surdet-preview-load');
+  const deadline = performance.now() + 2000;
+  while (!published() && performance.now() < deadline) await new Promise<void>(resolve => setTimeout(resolve, 10));
+  assert(published(), `preview load was not published: ${result.frame.contentDocument?.URL}; messages=${JSON.stringify(result.loads.map(value => (value as { type?: string } | null)?.type))}`);
 }
 
 function fixture(sourceText = SOURCE): SceneEntry {
   disposeScriptV4(); disposePreviewPanel();
+  resetSearchSession(); state.reviewPreviewReadOnly = false;
   document.body.innerHTML = '<main id="main"></main><div id="status"></div>';
   state.scenes.clear(); histories.clear();
   state.dirHandle = null; state.projectLoading = false; state.projectWriteLock = null;
@@ -95,7 +107,115 @@ function fixture(sourceText = SOURCE): SceneEntry {
 export function mountV4Fixture(): void { fixture(); }
 export function currentFixtureText(): string { return state.current ? state.scenes.get(state.current)?.text ?? '' : ''; }
 export interface BrowserCase { name: string; run: () => void | Promise<void> }
+function searchFixture(source = '@scene start\r\n凛：查找一\r\n凛：查找二\r\n@end') {
+  const scene = fixture(source);
+  const other: SceneEntry = { ...scene, id: 'other', file: 'other.gal', text: '@scene other\n凛：查找三\n@end' };
+  state.scenes.set('other', other);
+  const jumps: Array<{ key: string; line: number }> = [];
+  const draw = () => renderSearchPanel(control('#search-panel'));
+  bindSearchHooks({ onEdited: () => {}, onJump: (key, line) => {
+    jumps.push({ key, line }); state.current = key; renderEditor(); draw(); revealScriptV4Line(line);
+  } });
+  draw(); focusSearchInput();
+  return { scene, other, jumps, draw };
+}
+function searchKey(key: string, options: KeyboardEventInit = {}): void {
+  control('#search-input').dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options }));
+}
 export const v4WorkbenchCases: BrowserCase[] = [
+  { name: 'search retains query, scope and keyboard focus while navigating between real scene rows', run: () => {
+    const { jumps } = searchFixture(); input('#search-input', '查找');
+    searchKey('Enter'); searchKey('Enter'); searchKey('Enter');
+    assert(JSON.stringify(jumps) === JSON.stringify([{ key: 'start', line: 1 }, { key: 'start', line: 2 }, { key: 'other', line: 1 }]), JSON.stringify(jumps));
+    searchKey('Enter', { shiftKey: true });
+    assert(jumps.at(-1)?.key === 'start' && jumps.at(-1)?.line === 2, 'reverse search lost its position');
+    assert(control<HTMLInputElement>('#search-input').value === '查找' && document.activeElement === control('#search-input'), 'query or focus lost after navigation');
+    assert(control<HTMLDetailsElement>('.authoring-search-drawer').open && control('.search-count').textContent === '2 / 3 行', 'search drawer did not persist its selected result');
+    input('[aria-label="查找范围"]', 'scene', 'change');
+    assert(document.querySelectorAll('.search-item').length === 2 && histories.size === 0, 'scope search edited history or included another scene');
+  } },
+  { name: 'search refuses shifted source and replaced scene identities, then resets on project adoption', run: () => {
+    const { scene, jumps, draw } = searchFixture(); input('#search-input', '查找');
+    const oldResult = control<HTMLButtonElement>('.search-item'); scene.text = '// shifted\r\n' + scene.text; oldResult.click();
+    assert(jumps.length === 0 && control('#status').textContent?.includes('正文已变化'), 'stale line was activated');
+    const currentResult = control<HTMLButtonElement>('.search-item'); state.scenes.set('start', { ...scene }); currentResult.click();
+    assert(jumps.length === 0, 'replacement project object accepted an old result');
+    const beforeReset = control<HTMLButtonElement>('.search-item'); resetSearchSession(); beforeReset.click(); draw();
+    assert(jumps.length === 0 && control<HTMLInputElement>('#search-input').value === '', 'project switch reused old query or action');
+  } },
+  { name: 'scoped replacement keeps other scenes and original per-scene undo, with no implicit save', run: () => {
+    const { scene, other } = searchFixture(); const before = scene.text, otherBefore = other.text;
+    input('#search-input', '查找'); input('[aria-label="查找范围"]', 'scene', 'change');
+    clickText('#search-panel', '替换'); input('.search-replacement input', '修改'); clickText('#search-panel', '替换当前场景');
+    assert(scene.text === before.replaceAll('查找', '修改') && other.text === otherBefore && scene.dirty && !other.dirty, 'replacement crossed scene scope or saved');
+    undo(); assert(currentFixtureText() === before && histories.get('start')?.past.length === 0, 'replacement was not a single undo point');
+    assert(control<HTMLInputElement>('#search-input').value === '查找', 'replacement discarded search');
+  } },
+  { name: 'project replacement is explicit and identical replacement does not create history', run: () => {
+    const { scene, other } = searchFixture(); input('#search-input', '查找'); clickText('#search-panel', '替换');
+    input('.search-replacement input', '查找'); clickText('#search-panel', '替换整个项目');
+    assert(histories.size === 0 && !scene.dirty && !other.dirty, 'identical replacement created edits');
+    input('.search-replacement input', '共同修改'); clickText('#search-panel', '替换整个项目');
+    assert(scene.text.includes('共同修改') && other.text.includes('共同修改'), 'project scope missed a scene');
+    assert(histories.get('start')?.past.length === 1 && histories.get('other')?.past.length === 1, 'project replacement lost independent scene history');
+  } },
+  { name: 'search reports invalid regex and safely displays literal markup and zero-length matches', run: () => {
+    searchFixture('@scene start\n凛：<img src=x>\n@end'); input('#search-input', '<img');
+    assert(control('.search-excerpt mark').textContent === '<img' && !control('.search-results').querySelector('img'), 'search interpreted document markup');
+    control<HTMLInputElement>('.search-regex input').checked = true;
+    control('.search-regex input').dispatchEvent(new Event('change', { bubbles: true })); input('#search-input', '[');
+    assert(control<HTMLInputElement>('#search-input').getAttribute('aria-invalid') === 'true' && control('.search-count').textContent === '正则表达式无效', 'invalid regex appeared as no match');
+    clickText('#search-panel', '替换'); assert(control<HTMLButtonElement>('.search-replacement button').disabled, 'invalid replacement remained enabled');
+    input('#search-input', '^'); assert(document.querySelectorAll('.search-item').length === 6, 'zero-length regex lost lines or failed to terminate');
+  } },
+  { name: 'search keyboard protects project shortcuts, composition and Escape returns to the drawer trigger', run: () => {
+    const { jumps } = searchFixture(); input('#search-input', '查找');
+    let leaked = 0; const listener = () => { leaked++; }; window.addEventListener('keydown', listener);
+    try {
+      searchKey('z', { ctrlKey: true }); searchKey('y', { ctrlKey: true }); searchKey('s', { ctrlKey: true });
+      assert(leaked === 0 && histories.size === 0, 'query shortcut reached project history or saving');
+    } finally { window.removeEventListener('keydown', listener); }
+    searchKey('Enter', { isComposing: true }); assert(jumps.length === 0, 'composition confirmation navigated');
+    searchKey('Escape'); assert(!control<HTMLDetailsElement>('.authoring-search-drawer').open && document.activeElement === control('.authoring-search-drawer > summary'), 'Escape lost focus');
+    focusSearchInput(); assert(control<HTMLInputElement>('#search-input').value === '查找', 'reopening discarded the query');
+  } },
+  { name: 'search replacement rechecks readonly, recovery inert and detached control boundaries', run: () => {
+    const { scene, draw } = searchFixture(); const before = scene.text;
+    input('#search-input', '查找'); clickText('#search-panel', '替换'); input('.search-replacement input', '不可写入');
+    const action = control<HTMLButtonElement>('.search-replacement button');
+    state.reviewPreviewReadOnly = true; action.click(); state.reviewPreviewReadOnly = false;
+    control('#search-panel').inert = true; action.click(); control('#search-panel').inert = false;
+    draw(); action.click(); assert(scene.text === before && histories.size === 0, 'protected or detached search mutated the project');
+  } },
+  { name: 'opening search from its title accepts typing and Escape works before the focus transfer', run: async () => {
+    searchFixture(); searchKey('Escape');
+    const summary = control<HTMLElement>('.authoring-search-drawer > summary'); summary.click(); await nextTask();
+    assert(document.activeElement === control('#search-input'), 'opening the title did not focus search');
+    searchKey('Escape'); summary.click();
+    summary.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    assert(!control<HTMLDetailsElement>('.authoring-search-drawer').open && document.activeElement === summary, 'Escape on the title did not close search');
+  } },
+  { name: 'detached search field events cannot change the visible replacement scope or payload', run: () => {
+    const { scene, other, draw } = searchFixture(); const otherBefore = other.text;
+    input('#search-input', '查找'); input('[aria-label="查找范围"]', 'scene', 'change');
+    clickText('#search-panel', '替换'); input('.search-replacement input', '新文字');
+    const query = control<HTMLInputElement>('#search-input'), scope = control<HTMLSelectElement>('[aria-label="查找范围"]');
+    const replacement = control<HTMLInputElement>('.search-replacement input'), regex = control<HTMLInputElement>('.search-regex input');
+    draw(); query.value = '^'; replacement.value = '旧文字'; scope.value = 'project'; regex.checked = true;
+    query.dispatchEvent(new Event('input')); replacement.dispatchEvent(new Event('input'));
+    scope.dispatchEvent(new Event('change')); regex.dispatchEvent(new Event('change'));
+    clickText('#search-panel', '替换当前场景');
+    assert(scene.text.includes('新文字一') && !scene.text.includes('旧文字') && other.text === otherBefore, 'stale controls retargeted the current replacement');
+  } },
+  { name: 'zero-length regex results locate only real editor rows before a terminal newline', run: () => {
+    const { jumps } = searchFixture('@scene start\r\n凛：正文\n@end\r');
+    input('[aria-label="查找范围"]', 'scene', 'change');
+    control<HTMLInputElement>('.search-regex input').checked = true;
+    control('.search-regex input').dispatchEvent(new Event('change')); input('#search-input', '^');
+    assert(document.querySelectorAll('.search-item').length === 3, 'terminal EOL created a phantom row');
+    for (let index = 0; index < 3; index++) { searchKey('Enter'); assert(control('.block.v4-current').dataset.line === String(index), 'result has no real source row'); }
+    assert(jumps.length === 3, 'not all physical rows were navigable');
+  } },
   { name: 'Enter splits dialogue at the caret as one undoable operation and focuses the next sentence', run: async () => {
     const before = '@scene start\r\n凛:前句后句\r\n@end'; const scene = fixture(before);
     const text = control<HTMLTextAreaElement>('.block[data-line="1"] .v4-dialogue-input');

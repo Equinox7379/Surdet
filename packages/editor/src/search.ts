@@ -2,6 +2,7 @@
  * 跨场景搜索/替换（M6 E5-1）：全文搜索（正则可选），替换走 history 可撤销，
  * 替换后由调用方重新调度校验。
  */
+import { parseSceneDocument } from '@surdet/authoring';
 
 export interface SceneText {
   /** 场景 Map key（相对路径） */
@@ -36,8 +37,8 @@ export function searchScenes(scenes: Iterable<SceneText>, query: string, useRege
   if (!re) return [];
   const results: SearchResult[] = [];
   for (const sc of scenes) {
-    const lines = sc.text.split(/\r?\n/);
-    lines.forEach((text, i) => {
+    const lines = parseSceneDocument(sc.text);
+    lines.forEach(({ raw: text }, i) => {
       if (results.length >= maxResults) return;
       re.lastIndex = 0;
       if (re.test(text)) {
@@ -49,11 +50,15 @@ export function searchScenes(scenes: Iterable<SceneText>, query: string, useRege
   return results;
 }
 
-/** 单场景全文替换：返回替换后的文本与替换次数（count=0 时调用方不应写入） */
+/** 与查找相同的逐行匹配，保留原行结束符；count=0 时调用方不应写入。 */
 export function replaceInSceneText(text: string, query: string, replacement: string, useRegex: boolean): { text: string; count: number } | null {
   const re = buildMatcher(query, useRegex);
   if (!re) return null;
+  if (!query) return { text, count: 0 };
   let count = 0;
-  const next = text.replace(re, () => { count++; return replacement; });
+  const next = parseSceneDocument(text).map(line => {
+    re.lastIndex = 0;
+    return line.raw.replace(re, () => { count++; return replacement; }) + line.eol;
+  }).join('');
   return { text: next, count };
 }

@@ -18,6 +18,9 @@ try {
   // Preview session IDs use the real secure-context browser crypto API.
   const fixtureUrl = 'http://127.0.0.1/__surdet-workbench-checks';
   await page.route(fixtureUrl, (route) => route.fulfill({ contentType: 'text/html', body: '<!doctype html><meta charset="utf-8"><body></body>' }));
+  // This harness observes parent messages; the full app test runs the real player.
+  // Serve a stable child document instead of racing an unavailable iframe URL.
+  await page.route('http://127.0.0.1/preview.html', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><body></body>' }));
   await page.goto(fixtureUrl);
   await page.addScriptTag({ content: chunks[0].code });
   const results = await page.evaluate(async () => {

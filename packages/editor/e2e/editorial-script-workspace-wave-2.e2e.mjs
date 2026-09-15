@@ -365,7 +365,7 @@ async function run() {
     pass('scene-switch-keeps-single-scene-truth', sceneSwitch);
 
     await page.locator('#search-input').fill('CalendarRunner');
-    await page.locator('#search-panel button', { hasText: '搜索' }).click();
+    await page.locator('#search-input').press('Enter');
     const searchResult = page.locator('.search-item', { hasText: 'CalendarRunner' }).first();
     await searchResult.waitFor({ state: 'visible' });
     await searchResult.click();
