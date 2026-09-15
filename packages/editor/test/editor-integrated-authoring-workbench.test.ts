@@ -115,6 +115,8 @@ afterEach(() => {
 describe('integrated authoring workbench contract', () => {
   it('builds stable semantic regions and an in-flow accessible context switch', () => {
     vi.stubGlobal('document', documentStub);
+    // This fixture has no layout; actual frame sizing is covered in the browser.
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
     const workbench = buildAuthoringWorkbench() as unknown as {
       root: FakeElement;
       outline: FakeElement;

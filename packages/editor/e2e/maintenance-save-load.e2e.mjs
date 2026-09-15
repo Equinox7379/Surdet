@@ -115,6 +115,7 @@ function observePage(page, channels) {
           failure.code = error?.code ?? null;
           failure.message = error?.message ?? null;
           failure.messageKey = error?.messageKey ?? null;
+          failure.details = error?.details ?? null;
         } catch {
           // Keep the public error record fields null when the body is not JSON.
         }
@@ -173,6 +174,20 @@ async function waitForSaved(page) {
       && document.querySelector('[data-save-state]')?.textContent === '已保存'
       && (document.getElementById('status')?.textContent ?? '').includes('全部成功')
   ));
+}
+
+async function waitForSoleLiveWorkspace(page) {
+  // Closing a browser context can abort its asynchronous revoke request. Respect
+  // the real authority's grace period before this single-Editor save regression;
+  // do not delete its records, force a clean state, or weaken the write gate.
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const response = await page.waitForResponse(response => response.ok()
+      && new URL(response.url()).pathname.endsWith('/workspace/snapshot'), { timeout: 6_000 });
+    const summary = (await response.json()).data.humanWorkspace;
+    if (summary.activeSessions === 1 && summary.graceSessions === 0) return;
+  }
+  assert.fail('previous browser workspace did not revoke or leave the authority grace period');
 }
 
 async function waitForPreview(page, score) {
@@ -270,6 +285,7 @@ async function main() {
 
     ({ context: activeContext, page: activePage } = await openBrowserPage(browser, baseUrl, bridge, channels));
     await openProject(activePage, 'project', path.basename(projectRoot), channels);
+    await waitForSoleLiveWorkspace(activePage);
 
     await openConfigSection(activePage, '角色', 'characters');
     await activePage.getByRole('textbox', { name: 'lynn 的显示名称', exact: true }).fill(renamedCharacter);
@@ -345,6 +361,7 @@ async function main() {
     await activePage.reload({ waitUntil: 'networkidle' });
     await activePage.locator('[data-action="open-project"]').waitFor({ state: 'visible' });
     await openProject(activePage, 'project', path.basename(projectRoot), channels);
+    await waitForSoleLiveWorkspace(activePage);
     await activePage.locator('[data-editor-mode="preview"]').click();
     await waitForPreview(activePage, 42);
 
@@ -535,6 +552,7 @@ async function main() {
       screenshotPath,
       failure: errorText(error),
       targetedEaccesReadCount: blockedSceneReadCount,
+      editorStatus: await activePage?.evaluate(() => ({ status: document.getElementById('status')?.textContent, save: document.querySelector('[data-save-state]')?.textContent })).catch(() => null),
       channels,
     }, null, 2));
     process.exitCode = 1;

@@ -31,10 +31,10 @@
 
 #app input[type="checkbox"] { accent-color: var(--surdet-action-primary); }
 
-#app button,
-#app input,
-#app select,
-#app textarea {
+:where(#app) button,
+:where(#app) input,
+:where(#app) select,
+:where(#app) textarea {
   font: inherit;
 }
 

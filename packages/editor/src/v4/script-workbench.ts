@@ -3,7 +3,8 @@ import { setCurrentText } from '../history.js';
 import { parseScript, splitInstr, type LineModel } from '../model.js';
 import { decodeInstructionArgument } from '@surdet/authoring';
 import { disposePreviewPanel, renderPreviewPanel, refreshPreviewSourceState } from '../panels/preview-panel.js';
-import { allowedToEdit, button, disclosure, field, ImageScope, navigateMode, navigateTimeline } from './ui.js';
+import { allowedToEdit, button, disclosure, field, ImageScope, navigateMode } from './ui.js';
+import { renderTimelineSummary } from './timeline-summary.js';
 import {
   applySourceTextareaEdit, deleteStep, duplicateStep, insertStep, instructionPosition,
   moveStep, moveStepBefore, projectEditLayout, quoteAssetArgument, setInstructionArgument,
@@ -236,7 +237,7 @@ export class ScriptWorkbench {
     original.setAttribute('aria-hidden', 'true');
     original.tabIndex = -1;
     const textarea = h('textarea', 'v4-dialogue-input');
-    textarea.rows = 2; textarea.value = original.value;
+    textarea.rows = 1; textarea.value = original.value;
     textarea.setAttribute('aria-label', '台词内容');
     textarea.oninput = () => {
       if (!original.isConnected || !this.editable()) return;
@@ -273,7 +274,7 @@ export class ScriptWorkbench {
   }
   private fitTextarea(textarea: HTMLTextAreaElement): void {
     textarea.style.height = 'auto';
-    textarea.style.height = `${Math.max(48, textarea.scrollHeight)}px`;
+    textarea.style.height = `${Math.max(34, textarea.scrollHeight)}px`;
   }
 
   private updateSummary(block: HTMLElement, line: LineModel | undefined): void {
@@ -413,6 +414,38 @@ export class ScriptWorkbench {
     };
     if (line.kind === 'text') {
       this.inspector.append(h('p', 'v4-muted', '说话人和台词直接在正文编辑。本次修改只作用于这一句。'));
+      const source = this.scene.text;
+      const lines = this.lines();
+      const revealOrigin = (sourceLine: number): void => {
+        if (!this.current() || this.scene.text !== source) {
+          setStatus('正文已经变化，请重新选择对白后定位来源', false, 5000); return;
+        }
+        this.select(sourceLine, true);
+      };
+      const projection = projectEditLayout(lines, index);
+      if (!projection.reason) {
+        const origins = h('div', 'studio-presentation-origins');
+        origins.append(h('h3', undefined, '沿用的画面设置'));
+        if (projection.background) {
+          const background = projection.background;
+          origins.append(button(`背景 · ${background.key}`, () => revealOrigin(background.line), 'studio-origin-link'));
+        }
+        for (const actor of projection.actors) origins.append(button(`${actor.target} · ${actor.expression}`, () => revealOrigin(actor.line), 'studio-origin-link'));
+        if (origins.childElementCount > 1) this.inspector.append(origins);
+      }
+      // These are source calls in this section, not inferred runtime effects.
+      for (let previous = index - 1; previous >= 0; previous--) {
+        const row = lines[previous]!;
+        if (row.kind === 'label' || row.kind === 'choice-option') break;
+        if (row.kind !== 'instr') continue;
+        if (['scene', 'choice', 'if', 'elif', 'else', 'endif', 'goto', 'jump', 'call', 'return', 'end'].includes(row.name)) break;
+        if (row.name === 'timeline') {
+          const id = decodeInstructionArgument(splitInstr(row.raw).args[0] ?? '');
+          const sourceLine = previous;
+          this.inspector.append(h('h3', 'studio-inspector-subtitle', '本段调用的时间轴'), renderTimelineSummary(id), button('定位时间轴调用指令', () => revealOrigin(sourceLine), 'studio-origin-link'));
+          break;
+        }
+      }
       const voices = state.dirAssets.filter((asset) => asset.kind === 'voice' && asset.handle !== null);
       const select = h('select');
       select.append(new Option('选择语音文件', ''));
@@ -434,8 +467,10 @@ export class ScriptWorkbench {
           });
         }
       };
-      this.inspector.append(field('关联语音', select));
-      if (!voices.length) this.inspector.append(h('p', 'v4-muted', '当前项目没有可关联的语音文件。'));
+      const voiceDetails = h('details', 'v4-disclosure');
+      voiceDetails.append(h('summary', undefined, '关联语音'), field('语音文件', select));
+      if (!voices.length) voiceDetails.append(h('p', 'v4-muted', '当前项目没有可关联的语音文件。'));
+      this.inspector.append(voiceDetails);
     } else if (line.kind === 'instr') {
       const { args } = splitInstr(line.raw);
       if (line.name === 'show') {
@@ -489,7 +524,7 @@ export class ScriptWorkbench {
         if (!grid.childElementCount) this.inspector.append(h('p', 'v4-muted', '项目中没有可用背景，请先导入素材。'));
       } else if (line.name === 'timeline') {
         const id = decodeInstructionArgument(args[0] ?? '');
-        this.inspector.append(button('打开对应时间轴', () => navigateTimeline(id)));
+        this.inspector.append(renderTimelineSummary(id));
       } else if (line.name === 'wait') {
         const quick = h('div', 'v4-segmented');
         for (const milliseconds of [200, 500, 1000, 2000]) quick.append(button(`${milliseconds} ms`, () => editParameter(0, String(milliseconds))));

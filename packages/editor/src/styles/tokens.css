@@ -1,15 +1,15 @@
 :root {
   color-scheme: light;
 
-  --surdet-color-paper-0: #F3F1ED;
-  --surdet-color-paper-50: #FBFAF8;
-  --surdet-color-paper-100: #E9E6E0;
-  --surdet-color-ink-900: #242321;
-  --surdet-color-ink-600: #66635E;
+  --surdet-color-paper-0: #EEF0F3;
+  --surdet-color-paper-50: #FFFFFF;
+  --surdet-color-paper-100: #F3F4F6;
+  --surdet-color-ink-900: #282C34;
+  --surdet-color-ink-600: #606873;
   --surdet-color-frame-900: #1D2326;
-  --surdet-color-line-300: #D2CEC6;
-  --surdet-color-line-600: #85817A;
-  --surdet-color-rust-600: #A34F3B;
+  --surdet-color-line-300: #DDE1E6;
+  --surdet-color-line-600: #929AA6;
+  --surdet-color-rust-600: #9B4B35;
   --surdet-color-provenance-600: #6F5A45;
   --surdet-color-success-600: #3F6851;
   --surdet-color-warning-600: #946426;
@@ -18,7 +18,7 @@
   --surdet-surface-app: var(--surdet-color-paper-0);
   --surdet-surface-panel: var(--surdet-color-paper-50);
   --surdet-surface-subtle: var(--surdet-color-paper-100);
-  --surdet-surface-selected: #E6E1DA;
+  --surdet-surface-selected: #F5EDE8;
   --surdet-text-primary: var(--surdet-color-ink-900);
   --surdet-text-secondary: var(--surdet-color-ink-600);
   --surdet-border-default: var(--surdet-color-line-300);
@@ -35,9 +35,9 @@
   --surdet-font-story: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", var(--surdet-font-ui);
   --surdet-font-mono: "Cascadia Mono", "Sarasa Mono SC", Consolas, monospace;
 
-  --surdet-type-caption: 13px;
-  --surdet-type-control: 14px;
-  --surdet-type-body: 15px;
+  --surdet-type-caption: 12px;
+  --surdet-type-control: 13px;
+  --surdet-type-body: 14px;
   --surdet-type-section: 17px;
   --surdet-type-title: 21px;
   --surdet-type-display: 25px;
@@ -56,18 +56,18 @@
 
   --surdet-radius-square: 0;
   --surdet-radius-tight: 3px;
-  --surdet-radius-control: 6px;
-  --surdet-control-height: 38px;
+  --surdet-radius-control: 4px;
+  --surdet-control-height: 32px;
   --surdet-focus-width: 2px;
   --surdet-motion-fast: 120ms;
   --surdet-motion-standard: 180ms;
 
-  --surdet-shell-chrome-bg: var(--surdet-color-frame-900);
-  --surdet-shell-chrome-text: var(--surdet-color-paper-50);
-  --surdet-shell-chrome-muted: var(--surdet-color-line-300);
-  --surdet-shell-chrome-surface: #293034;
-  --surdet-shell-chrome-selected: #363E42;
-  --surdet-shell-chrome-border: #4C5559;
+  --surdet-shell-chrome-bg: #F7F8FA;
+  --surdet-shell-chrome-text: var(--surdet-text-primary);
+  --surdet-shell-chrome-muted: var(--surdet-text-secondary);
+  --surdet-shell-chrome-surface: #FFFFFF;
+  --surdet-shell-chrome-selected: #E9ECF0;
+  --surdet-shell-chrome-border: var(--surdet-border-default);
   --surdet-editor-nav-active-bg: var(--surdet-surface-selected);
   --surdet-editor-selection-outline: var(--surdet-border-strong);
   --surdet-review-decision-border: var(--surdet-border-strong);

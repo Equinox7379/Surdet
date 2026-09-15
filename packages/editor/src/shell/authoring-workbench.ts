@@ -8,12 +8,17 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', text?:
   return node;
 }
 let dockWidth = 0;
+let outlineWidth = 210;
+let disposeLayout: (() => void) | null = null;
+export function disposeAuthoringWorkbench(): void { disposeLayout?.(); disposeLayout = null; }
 
 /** Layout only. The original sidebar, search, validation, history and IO retain ownership. */
 export function buildAuthoringWorkbench(): AuthoringWorkbenchElements {
+  disposeAuthoringWorkbench();
   const root = element('div', 'main-body authoring-workbench v4-authoring');
   root.dataset.editorRegion = 'authoring-workbench'; root.dataset.auxiliaryView = 'outline';
-  root.dataset.mobilePanel = 'editor'; root.style.setProperty('--v4-dock-width', dockWidth ? `${dockWidth}px` : '46%');
+  root.dataset.mobilePanel = 'editor'; root.style.setProperty('--v4-dock-width', dockWidth ? `${dockWidth}px` : '40%');
+  root.style.setProperty('--studio-outline-width', `${outlineWidth}px`);
   const outline = element('aside', 'authoring-outline');
   outline.id = 'sidebar'; outline.dataset.editorRegion = 'outline'; outline.setAttribute('aria-label', '场景与素材目录');
   const center = element('section', 'editor-col authoring-manuscript-column');
@@ -33,35 +38,66 @@ export function buildAuthoringWorkbench(): AuthoringWorkbenchElements {
   const toolbar = element('div', 'authoring-workbench-toolbar'); toolbar.dataset.editorRegion = 'manuscript-toolbar';
   const viewToolbar = element('div', 'v4-script-toolbar'); viewToolbar.id = 'script-v4-toolbar';
   const search = element('div', 'authoring-search'); search.id = 'search-panel'; search.dataset.editorRegion = 'manuscript-search';
-  toolbar.append(viewToolbar, search);
+  const searchDrawer = element('details', 'authoring-search-drawer');
+  searchDrawer.append(element('summary', '', '查找和替换'), search);
+  toolbar.append(viewToolbar, searchDrawer);
   const manuscript = element('section', 'authoring-manuscript-scroll'); manuscript.id = 'editor';
   manuscript.dataset.editorRegion = 'manuscript'; manuscript.setAttribute('aria-label', '当前场景');
   center.append(toolbar, manuscript);
-  const divider = element('div', 'v4-resizer'); divider.tabIndex = 0; divider.setAttribute('role', 'separator');
-  divider.setAttribute('aria-orientation', 'vertical'); divider.setAttribute('aria-label', '调整画面与属性区宽度');
-  divider.setAttribute('aria-valuemin', '320'); divider.setAttribute('aria-valuemax', '960'); divider.setAttribute('aria-valuenow', String(dockWidth || 480));
-  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => {
-    if (root.isConnected) {
-      const measured = root.querySelector<HTMLElement>('.v4-script-dock')!.getBoundingClientRect().width;
-      if (measured > 0) divider.setAttribute('aria-valuenow', String(Math.round(measured)));
-    }
-  });
-  const resize = (width: number): void => {
-    dockWidth = Math.max(320, Math.min(960, Math.round(width), root.clientWidth * 0.55));
-    root.style.setProperty('--v4-dock-width', `${dockWidth}px`); divider.setAttribute('aria-valuenow', String(dockWidth));
+  const cleanups: Array<() => void> = [];
+  const separator = (side: 'outline' | 'dock'): HTMLElement => {
+    const control = element('div', side === 'dock' ? 'v4-resizer' : 'studio-outline-resizer');
+    control.tabIndex = 0; control.setAttribute('role', 'separator'); control.setAttribute('aria-orientation', 'vertical');
+    control.setAttribute('aria-label', side === 'dock' ? '调整画面与属性区宽度' : '调整目录宽度');
+    const measured = (): number => (side === 'dock' ? dock : outline).getBoundingClientRect().width;
+    const limits = (): { min: number; max: number } => {
+      const min = side === 'dock' ? 320 : 170;
+      const reserved = side === 'dock' ? outline.getBoundingClientRect().width : dock.getBoundingClientRect().width;
+      const max = Math.max(min, Math.min(side === 'dock' ? 960 : 330, root.clientWidth - reserved - 332));
+      return { min, max };
+    };
+    const reportSize = (): void => {
+      const { min, max } = limits();
+      control.setAttribute('aria-valuemin', String(min)); control.setAttribute('aria-valuemax', String(max));
+      control.setAttribute('aria-valuenow', String(Math.round(measured())));
+    };
+    const resize = (width: number): void => {
+      const { min, max } = limits();
+      const value = Math.max(min, Math.min(max, Math.round(width)));
+      if (side === 'dock') dockWidth = value; else outlineWidth = value;
+      root.style.setProperty(side === 'dock' ? '--v4-dock-width' : '--studio-outline-width', `${value}px`);
+      reportSize();
+    };
+    control.onkeydown = (event) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      event.preventDefault(); resize(measured() + (event.key === 'ArrowLeft' ? -20 : 20) * (side === 'dock' ? -1 : 1));
+    };
+    control.onpointerdown = (event) => {
+      if (event.button !== 0) return; event.preventDefault();
+      const start = measured(); control.setPointerCapture(event.pointerId);
+      const move = (next: PointerEvent): void => resize(start + (next.clientX - event.clientX) * (side === 'dock' ? -1 : 1));
+      const end = (): void => {
+        control.removeEventListener('pointermove', move); control.removeEventListener('pointerup', end); control.removeEventListener('pointercancel', cancel); control.removeEventListener('lostpointercapture', end);
+        if (control.hasPointerCapture(event.pointerId)) control.releasePointerCapture(event.pointerId);
+        const index = cleanups.indexOf(end); if (index >= 0) cleanups.splice(index, 1);
+      };
+      const cancel = (): void => { resize(start); end(); };
+      cleanups.push(end);
+      control.addEventListener('pointermove', move); control.addEventListener('pointerup', end); control.addEventListener('pointercancel', cancel);
+      control.addEventListener('lostpointercapture', end);
+    };
+    control.ondblclick = () => resize(side === 'dock' ? root.clientWidth * .4 : 210);
+    requestAnimationFrame(() => {
+      if (!root.isConnected) return;
+      reportSize();
+      const observer = new ResizeObserver(reportSize);
+      observer.observe(root); observer.observe(dock); observer.observe(outline);
+      cleanups.push(() => observer.disconnect());
+    });
+    return control;
   };
-  divider.onkeydown = (event) => {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-    event.preventDefault(); resize((dockWidth || root.querySelector<HTMLElement>('.v4-script-dock')!.getBoundingClientRect().width) + (event.key === 'ArrowLeft' ? 20 : -20));
-  };
-  divider.onpointerdown = (event) => {
-    if (event.button !== 0) return; event.preventDefault();
-    const start = dockWidth || root.querySelector<HTMLElement>('.v4-script-dock')!.getBoundingClientRect().width; divider.setPointerCapture(event.pointerId);
-    const move = (next: PointerEvent): void => resize(start + event.clientX - next.clientX);
-    const end = (): void => { divider.removeEventListener('pointermove', move); divider.removeEventListener('pointerup', end); divider.removeEventListener('pointercancel', cancel); if (divider.hasPointerCapture(event.pointerId)) divider.releasePointerCapture(event.pointerId); };
-    const cancel = (): void => { resize(start); end(); };
-    divider.addEventListener('pointermove', move); divider.addEventListener('pointerup', end); divider.addEventListener('pointercancel', cancel);
-  };
+  const divider = separator('dock');
+  const outlineDivider = separator('outline');
   const dock = element('aside', 'v4-script-dock'); dock.setAttribute('aria-label', '画面与当前对象属性');
   const picture = element('section', 'v4-script-picture');
   const stageTools = element('div', 'v4-stage-tools'); stageTools.id = 'script-v4-stage-tools';
@@ -74,6 +110,7 @@ export function buildAuthoringWorkbench(): AuthoringWorkbenchElements {
   const summary = element('summary', '', '引用、问题与项目'); summary.dataset.action = 'toggle-authoring-context';
   const context = element('aside', 'authoring-context'); context.id = 'right'; context.dataset.editorRegion = 'context'; context.setAttribute('aria-label', '当前对象与项目上下文');
   contextual.append(summary, context); dock.append(picture, inspector, contextual);
-  root.append(navigation, outline, center, divider, dock);
+  root.append(navigation, outline, outlineDivider, center, divider, dock);
+  disposeLayout = () => { for (const cleanup of [...cleanups]) cleanup(); };
   return { root, outline, search, manuscript, context };
 }

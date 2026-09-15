@@ -126,6 +126,7 @@ const appliedFontUrls: Partial<Record<FontRole, string>> = {};
 let appliedAssetUrls: string[] = [];
 const previewGeneration = new PreviewGeneration();
 let runtimeLifecycle: PreviewRuntimeLifecycle<RendererRuntime> | null = null;
+let previewDisposed = false;
 
 interface ActivePreviewTrace {
   traceId: string;
@@ -173,7 +174,7 @@ function startPreviewTrace(generation: number, payload: LoadPayload): ActivePrev
 
 function captureRuntimeTrace(event: RuntimeTraceEvent, evidenceSnapshot: () => PreviewTraceEvidenceSnapshot): void {
   const trace = activePreviewTrace;
-  if (!trace || trace.completed) return;
+  if (previewDisposed || !trace || trace.completed) return;
   const sequence = trace.sequence++;
   replayController?.observe(event);
   const playback = replayController?.checkpoint();
@@ -182,6 +183,7 @@ function captureRuntimeTrace(event: RuntimeTraceEvent, evidenceSnapshot: () => P
   // event. A microtask observes the Renderer after all synchronous handlers for
   // that Core step have completed, without inventing a second state machine.
   queueMicrotask(() => {
+    if (previewDisposed || activePreviewTrace !== trace) return;
     const presentationAfter = evidenceSnapshot();
     trace.events.push(event);
     window.parent.postMessage({
@@ -205,7 +207,7 @@ function schedulePreviewTraceComplete(trace: ActivePreviewTrace, status: 'passed
   if (trace.completionScheduled) return;
   trace.completionScheduled = true;
   queueMicrotask(() => {
-    if (trace.completed) return;
+    if (previewDisposed || activePreviewTrace !== trace || trace.completed) return;
     trace.completed = true;
     window.parent.postMessage({
       type: 'surdet-preview-trace-complete',
@@ -978,7 +980,7 @@ function invalidatePreviewSession(): void {
 
 async function load(p: LoadPayload): Promise<void> {
   const activeRuntime = runtime;
-  if (!bus || !activeRuntime) return;
+  if (previewDisposed || !bus || !activeRuntime) return;
   const { commands, queries, controller } = activeRuntime;
   const assets = commands.assets;
   const dialogue = commands.dialogue;
@@ -1004,6 +1006,7 @@ async function load(p: LoadPayload): Promise<void> {
     dialogue.setSpeakerProfiles(p.speakerProfiles ?? []);
     // 新请求即使在编译/配置阶段失败，也不能让上一轮 BGM/语音继续播放。
     await releaseAppliedAssetUrls();
+    if (previewDisposed) return;
     // 字体下发应用：先于剧情启动。旧版 font 映射到三个角色，避免旧项目预览变样。
     const incomingFonts = p.fonts ?? (p.font ? { title: p.font, body: p.font, ui: p.font } : {});
     const roles: FontRole[] = ['body', 'title', 'ui'];
@@ -1020,6 +1023,7 @@ async function load(p: LoadPayload): Promise<void> {
         if (!font) continue;
         const url = URL.createObjectURL(new Blob([font.buffer as unknown as BlobPart], { type: font.mime }));
         const ok = await assets.registerFontRole(role, url);
+        if (previewDisposed) { URL.revokeObjectURL(url); return; }
         if (ok) {
           appliedFontUrls[role] = url;
           appliedFontKeys[role] = nextKeys[role];
@@ -1076,6 +1080,7 @@ async function load(p: LoadPayload): Promise<void> {
     store = vs;
     registry = reg;
     await applyPreviewAssets(p.assets);
+    if (previewDisposed) return;
     postPreviewDiagnostic({ generation, level: 'info', phase: 'assets', message: '素材加载完成', sceneId: p.sceneId });
     interp = new Interpreter(vs, bus!, reg, undefined, undefined, {
       snapshot: (): SystemSnapshots => ({
@@ -1097,6 +1102,7 @@ async function load(p: LoadPayload): Promise<void> {
     });
     interp.setRandomSource(createSeededRandomSource(p.seed!));
     const sources = await buildPreviewReplaySources(p.scenes, { sha256: previewTextHash });
+    if (previewDisposed) return;
     let replayReportedStatus = false;
     replayController = new PreviewReplayController({ sources, seed: p.seed!, sceneId: p.sceneId,
       ...(p.startLabel === undefined ? {} : { label: p.startLabel }),
@@ -1114,6 +1120,7 @@ async function load(p: LoadPayload): Promise<void> {
       postPreviewDiagnostic({ generation, level: 'info', phase: 'compile', message: '预览已启动', sceneId: p.sceneId, ...(p.startLabel ? { label: p.startLabel } : {}) });
     }
   } catch (err) {
+    if (previewDisposed) return;
     // 构造新解释器后仍可能在 start() 阶段失败；半成品会话同样不得继续响应输入。
     invalidatePreviewSession();
     const message = `预览失败：${err instanceof Error ? err.message : String(err)}`;
@@ -1147,6 +1154,10 @@ window.addEventListener('message', (e: MessageEvent) => {
 };
 
 window.addEventListener('beforeunload', () => {
+  previewDisposed = true;
+  activePreviewTrace = null;
+  invalidatePreviewSession();
+  runtime = null;
   try {
     runtimeLifecycle?.dispose();
   } catch (err) {

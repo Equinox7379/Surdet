@@ -1,16 +1,16 @@
-import { state, h, setStatus } from '../state.js';
+import { state, h, setStatus, type TimelineCueSelection } from '../state.js';
 import type { EditorModeId } from '../shell/editor-modes.js';
 import type { DirAsset } from '../assets.js';
 
 export interface V4Navigation {
   onMode: (mode: EditorModeId) => void;
-  onTimeline: (id: string) => void;
+  onTimeline: (id: string, cue?: TimelineCueSelection) => void;
   onAsset: (id: string) => void;
 }
 let navigation: V4Navigation | null = null;
 export function bindV4Navigation(value: V4Navigation): void { navigation = value; }
 export function navigateMode(mode: EditorModeId): void { navigation?.onMode(mode); }
-export function navigateTimeline(id: string): void { navigation?.onTimeline(id); }
+export function navigateTimeline(id: string, cue?: TimelineCueSelection): void { navigation?.onTimeline(id, cue); }
 export function revealAsset(id: string): void { navigation?.onAsset(id); }
 
 export function button(label: string, action: () => void, className = 'v4-button'): HTMLButtonElement {

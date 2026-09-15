@@ -15,7 +15,10 @@ try {
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1792, height: 900 } });
   const errors = []; page.on('pageerror', (error) => errors.push(error.message));
-  await page.setContent('<!doctype html><meta charset="utf-8"><body></body>');
+  // Preview session IDs use the real secure-context browser crypto API.
+  const fixtureUrl = 'http://127.0.0.1/__surdet-workbench-checks';
+  await page.route(fixtureUrl, (route) => route.fulfill({ contentType: 'text/html', body: '<!doctype html><meta charset="utf-8"><body></body>' }));
+  await page.goto(fixtureUrl);
   await page.addScriptTag({ content: chunks[0].code });
   const results = await page.evaluate(async () => {
     const results = [];
