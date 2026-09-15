@@ -278,7 +278,7 @@ try {
   assert.equal(await page.locator('.v4-authoring').getAttribute('data-script-view'), 'source');
   await page.keyboard.press('Control+f');
   await page.locator('#search-input').fill('源码插入定位用例。');
-  await page.locator('#search-panel').getByRole('button', { name: '搜索', exact: true }).click();
+  await page.locator('#search-input').press('Enter');
   await page.locator('.search-item').filter({ hasText: '源码插入定位用例。' }).first().click();
   const sourceLocation = await page.locator('.v4-source-editor').evaluate((node) => ({
     active: node === document.activeElement,
@@ -286,6 +286,38 @@ try {
   }));
   assert.deepEqual(sourceLocation, { active: true, selected: '源码插入定位用例。' });
   assert.equal(await page.locator('.v4-source-editor').inputValue(), sourceAfterInsert, 'search navigation changed source');
+  assert.equal(await page.locator('#search-input').inputValue(), '源码插入定位用例。', 'navigation discarded the search query');
+  assert(await page.locator('.search-item').first().isVisible(), 'navigation closed the matching results');
+  await page.locator('#search-input').fill('@');
+  await page.locator('#search-input').press('Enter');
+  assert.equal(await page.locator('.search-count').innerText(), '1 / 7 行');
+  await page.locator('#search-input').press('Enter');
+  assert.equal(await page.locator('.search-count').innerText(), '2 / 7 行');
+  await page.locator('#search-input').press('Shift+Enter');
+  assert.equal(await page.locator('.search-count').innerText(), '1 / 7 行');
+  assert(await page.locator('#search-input').evaluate(node => node === document.activeElement), 'continuous keyboard search lost its input');
+  for (let index = 0; index < 4; index++) await page.locator('#search-input').press('Enter');
+  assert.equal(await page.locator('.search-count').innerText(), '5 / 7 行');
+  assert(await page.locator('.search-results').evaluate(node => {
+    const viewport = node.getBoundingClientRect(), selected = node.querySelector('[aria-current="true"]').getBoundingClientRect();
+    return selected.top >= viewport.top - 1 && selected.bottom <= viewport.bottom + 1;
+  }), 'current keyboard result scrolled out of view after navigation');
+  await page.locator('#search-input').press('Control+z');
+  await page.locator('#search-input').press('Control+s');
+  assert.equal(await page.locator('.v4-source-editor').inputValue(), sourceAfterInsert, 'search query shortcuts edited or saved project content');
+  assert.equal(await page.locator('[data-save-state]').getAttribute('data-save-state'), 'dirty');
+  await page.locator('#search-input').fill('源码插入定位用例。');
+  await page.getByRole('combobox', { name: '查找范围', exact: true }).selectOption('scene');
+  assert.equal(await page.getByRole('textbox', { name: '替换为（可空）', exact: true }).isVisible(), false);
+  await page.getByRole('button', { name: '展开或收起替换', exact: true }).click();
+  await page.getByRole('textbox', { name: '替换为（可空）', exact: true }).fill('查找替换确认。');
+  await page.getByRole('button', { name: '替换当前场景', exact: true }).click();
+  assert.equal(await page.locator('.v4-source-editor').inputValue(), sourceAfterInsert.replace('源码插入定位用例。', '查找替换确认。'));
+  await page.locator('[data-action="undo"]').click();
+  assert.equal(await page.locator('.v4-source-editor').inputValue(), sourceAfterInsert, 'replacement did not have its own undo');
+  await page.locator('#search-input').press('Escape');
+  assert.equal(await page.locator('.authoring-search-drawer').getAttribute('open'), null);
+  console.log('PASS search iteration: preserved results, forward/backward navigation, query shortcut isolation, explicit scoped replacement and independent undo');
   // Keep original fixture shape for the existing nine-workspace checks.
   await page.locator('[data-action="undo"]').click();
   assert.equal(await page.locator('.v4-source-editor').inputValue(), sourceEdited);

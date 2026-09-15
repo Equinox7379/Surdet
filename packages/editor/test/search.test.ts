@@ -35,13 +35,32 @@ describe('searchScenes', () => {
     expect(found).toHaveLength(1);
     expect(found[0]).toMatchObject({ sceneKey: 'ch1', line: 2 });
   });
+  it('CR-only 与混合换行返回实际物理行号', () => {
+    const text = '@scene first\r凛：第一句\r\n凛：第二句\n凛：第三句';
+    expect(searchScenes([{ key: 'first', id: 'first', text }], '凛', false).map(r => r.line)).toEqual([1, 2, 3]);
+    expect(replaceInSceneText(text, '凛', '主角', false)?.text).toBe('@scene first\r主角：第一句\r\n主角：第二句\n主角：第三句');
+  });
   it('空查询返回空；上限截断', () => {
     expect(searchScenes(scenes, '', false)).toEqual([]);
     expect(searchScenes(scenes, '凛', false, 1)).toHaveLength(1);
   });
+  it('终止换行不是额外编辑行，但实际空行与空文档可定位', () => {
+    for (const eol of ['\r\n', '\n', '\r']) {
+      const text = `@scene start${eol}${eol}@end${eol}`;
+      expect(searchScenes([{ key: 'start', id: 'start', text }], '^', true).map(r => r.line)).toEqual([0, 1, 2]);
+    }
+    expect(searchScenes([{ key: 'blank', id: 'blank', text: '' }], '^', true)).toHaveLength(1);
+  });
 });
 
 describe('replaceInSceneText', () => {
+  it('正则逐行替换与显示匹配一致，并保留每一处原换行', () => {
+    const text = 'a\r\nb\nc\r';
+    expect(replaceInSceneText(text, '^', '前', true)).toEqual({ text: '前a\r\n前b\n前c\r', count: 3 });
+    expect(replaceInSceneText(text, '$', '后', true)).toEqual({ text: 'a后\r\nb后\nc后\r', count: 3 });
+    expect(replaceInSceneText(text, '\\r\\n', '不可替换', true)).toEqual({ text, count: 0 });
+    expect(replaceInSceneText(text, '', '不可替换', false)).toEqual({ text, count: 0 });
+  });
   it('文本模式全量替换并计数', () => {
     const r = replaceInSceneText('你好，你好。\n凛：你好', '你好', '再见', false);
     expect(r).not.toBeNull();
