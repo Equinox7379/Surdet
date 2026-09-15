@@ -16,7 +16,7 @@ const assetImportPlugin = projectLauncher
   })
   : assetImportAuthorityVitePlugin(undefined);
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   // Review transactions share the Agent/Editor coordination store. --data-root
   // belongs to asset-import storage and may legitimately be a different folder.
   plugins: [reviewAuthorityVitePlugin(projectLauncher ? { projectRoot } : {}), assetImportPlugin],
@@ -27,7 +27,10 @@ export default defineConfig({
       input: {
         main: fileURLToPath(new URL('index.html', import.meta.url)),
         preview: fileURLToPath(new URL('preview.html', import.meta.url)),
+        ...(mode === 'studio-examples'
+          ? { studioExamples: fileURLToPath(new URL('studio-examples.html', import.meta.url)) }
+          : {}),
       },
     },
   },
-});
+}));
