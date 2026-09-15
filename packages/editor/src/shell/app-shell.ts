@@ -1,4 +1,5 @@
 import { EDITOR_MODE_GROUPS, EDITOR_MODES, type EditorModeId } from './editor-modes.js';
+import { workbenchIcon } from './icons.js';
 
 export type ProjectSaveState = 'saved' | 'dirty' | 'partial-failure';
 export type RelayProtectionState = 'unavailable' | 'connected' | 'lost';
@@ -32,6 +33,7 @@ export interface ProjectBarActions {
   onSyncProject?(): void;
   onDiscardProjectDrafts?(): void;
   onKeepProjectDrafts?(): void;
+  onSearch?(): void;
 }
 
 function element<K extends keyof HTMLElementTagNameMap>(
@@ -58,6 +60,8 @@ function actionButton(
   button.setAttribute('data-action', action);
   button.setAttribute('data-action-scope', 'global');
   button.onclick = onClick;
+  button.setAttribute('title', shortcut ? `${label} (${shortcut})` : label);
+  if (['open-project', 'open-review', 'undo', 'redo', 'save-project'].includes(action)) button.appendChild(workbenchIcon(action));
   button.appendChild(element('span', 'editor-command-label', label));
   if (shortcut !== undefined) button.appendChild(element('kbd', 'editor-command-shortcut', shortcut));
   return button;
@@ -269,6 +273,12 @@ export function renderProjectBar(
   );
   saveCommands.appendChild(save);
   commands.append(projectCommands, editCommands, saveCommands);
+  if (actions.onSearch) {
+    const search = actionButton('搜索项目', 'search-project', actions.onSearch, false, 'Ctrl+K');
+    search.appendChild(workbenchIcon('search'));
+    search.setAttribute('aria-keyshortcuts', 'Control+K Meta+K');
+    commands.appendChild(search);
+  }
 
   const status = element('span', 'editor-operation-status');
   status.id = 'status';
@@ -321,6 +331,7 @@ export function renderModeNavigation(
     groupElement.appendChild(element('span', 'editor-mode-group-label', group.label));
     for (const mode of EDITOR_MODES.filter(({ group: modeGroup }) => modeGroup === group.id)) {
       const button = element('button', 'editor-mode-button', mode.label);
+      button.appendChild(workbenchIcon(mode.id));
       button.type = 'button';
       button.setAttribute('data-editor-mode', mode.id);
       button.setAttribute('aria-controls', mode.panelId);

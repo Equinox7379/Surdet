@@ -210,7 +210,8 @@ export const v4WorkbenchCases: BrowserCase[] = [
     const scene = fixture('@scene start\r凛:你好');
     state.dirAssets.push({ key: 'voice_line', kind: 'voice', isImage: false, handle: {} as FileSystemFileHandle });
     control<HTMLButtonElement>('[data-step-summary="1"]').click();
-    input('#script-v4-inspector [aria-label="关联语音"]', 'voice_line', 'change'); await tick();
+    control<HTMLElement>('#script-v4-inspector .v4-disclosure summary').click();
+    input('#script-v4-inspector [aria-label="语音文件"]', 'voice_line', 'change'); await tick();
     assert(scene.text === '@scene start\r@voice voice_line\r凛:你好', scene.text);
   } },
   { name: 'raw edits refresh typed fields without undoing previous modifiers', run: async () => {

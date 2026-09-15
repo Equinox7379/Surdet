@@ -76,7 +76,9 @@ import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDep
   inspectConfigDraftState, saveDirtyConfigSections } from './panels/config.js';
 import { renderPreviewPanel, disposePreviewPanel } from './panels/preview-panel.js';
 import { disposeScriptV4, revealScriptV4Line } from './v4/script-workbench.js';
-import { bindV4Navigation } from './v4/ui.js';
+import { bindV4Navigation, navigateMode, navigateTimeline } from './v4/ui.js';
+import { openProjectSearch } from './shell/project-search.js';
+import { workbenchIcon } from './shell/icons.js';
 import { renderAssetInsights, disposeV4SurfaceViews } from './v4/surfaces.js';
 import './styles/v4-workbench.css';
 import { clearTimelineViewState, clearTimelineViewStates, renderTimelinePanel, selectTimelineCue, bindTimelineHooks } from './panels/timeline-panel.js';
@@ -102,7 +104,7 @@ import {
   type ProjectBarProjection,
   type ProjectSaveState,
 } from './shell/app-shell.js';
-import { buildAuthoringWorkbench } from './shell/authoring-workbench.js';
+import { buildAuthoringWorkbench, disposeAuthoringWorkbench } from './shell/authoring-workbench.js';
 import {
   AUTOSAVE_INTERVAL_MS, buildAutosave, readAutosave, inspectSceneAutosaveRecovery, pickRecoverableTimelines,
   preserveAutosaveTimelineConflicts, settlePendingSceneCommit, unresolvedAutosaveTimelineConflicts, writeAutosave, clearAutosave,
@@ -1725,13 +1727,13 @@ bindV4Navigation({
     state.mainTab = mode;
     renderMainArea();
   },
-  onTimeline: (id) => {
+  onTimeline: (id, cue) => {
     if (state.projectLoading || sceneAutosaveRecoveryPhase !== 'idle' || state.projectWriteLock !== null) return;
     if (!state.timelines.some((entry) => entry.id === id)) {
       setStatus('引用的时间轴不存在，请先检查项目内容', false, 5000); return;
     }
     state.currentTimeline = id;
-    state.currentTimelineCue = null;
+    state.currentTimelineCue = cue ?? null;
     state.previewTimelineId = null;
     state.mainTab = 'timeline';
     renderMainArea();
@@ -1752,6 +1754,7 @@ bindV4Navigation({
 });
 
 function renderAll(): void {
+  disposeAuthoringWorkbench();
   disposeScriptV4();
   disposePreviewPanel();
   disposeV4SurfaceViews();
@@ -1778,6 +1781,7 @@ function renderAll(): void {
     onSyncProject: () => { void syncProject(); },
     onDiscardProjectDrafts: () => { void syncProject(true); },
     onKeepProjectDrafts: () => setStatus('草稿已保留，可继续编辑或导出当前场景。', true, 5000),
+    onSearch: searchProject,
   });
   appEl.appendChild(header);
 
@@ -1799,6 +1803,7 @@ function renderAll(): void {
 
 /** 主区：标签页（块编辑 / 流程图 / 时间轴 / 配置 / 预览 / 统计 / 审计）+ 对应内容 */
 function renderMainArea(): void {
+  disposeAuthoringWorkbench();
   const main = document.getElementById('main');
   if (!main) return;
   if (state.reviewPreviewReadOnly && ['editor', 'assets', 'flow', 'timeline', 'config', 'audit'].includes(state.mainTab)) {
@@ -1851,6 +1856,23 @@ function renderMainArea(): void {
   });
 
   if (state.mainTab === 'editor') {
+    if (state.scenes.size === 0 && state.dirHandle === null) {
+      const welcome = h('section', 'editor-welcome');
+      const introduction = h('div');
+      introduction.append(h('h1', undefined, 'Surdet 工作台'), h('p', undefined, '打开一个项目，继续编写剧情、安排演出，或接手 Agent 交付的创作结果。'));
+      const actions = h('div', 'editor-welcome-actions');
+      for (const [action, title, description] of [
+        [state.fsSupported ? 'open-project' : 'load-demo', state.fsSupported ? '打开项目' : '加载演示项目', '剧本、素材与演出，在同一个工作区编辑'],
+        ...(state.fsSupported ? [['open-review', '打开审阅任务', '比较候选，试玩结果，再决定是否采用']] : []),
+      ]) {
+        const control = h('button'); control.type = 'button'; const label = h('span');
+        label.append(h('strong', undefined, title), h('small', undefined, description));
+        control.append(workbenchIcon(action!), label);
+        control.onclick = () => document.querySelector<HTMLButtonElement>(`.editor-project-bar [data-action="${action}"]`)?.click();
+        actions.append(control);
+      }
+      welcome.append(introduction, actions); col.append(welcome); refreshProjectBarProjection(); return;
+    }
     const workbench = buildAuthoringWorkbench();
     col.appendChild(workbench.root);
     renderSidebar();
@@ -2045,7 +2067,17 @@ function doRedo(): void {
 
 /* ============================ 快捷键 ============================ */
 
+function searchProject(): void {
+  if (state.projectLoading || sceneAutosaveRecoveryPhase !== 'idle' || state.projectWriteLock !== null) {
+    setStatus('请先完成当前项目操作，再使用搜索导航', false, 5000); return;
+  }
+  openProjectSearch({ onScene: jumpToScene, onMode: navigateMode, onTimeline: navigateTimeline });
+}
+
 window.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault(); searchProject(); return;
+  }
   if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
     e.preventDefault();
     void saveProject();

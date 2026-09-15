@@ -28,7 +28,7 @@ const address = server.address();
 assert(address && typeof address !== 'string');
 const url = `http://127.0.0.1:${address.port}/`;
 const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540"><rect width="960" height="540" fill="#6c8993"/><path d="M0 370L450 160L960 400V540H0Z" fill="#314d5d"/></svg>';
-const source = '@scene start\r\n@label opening\r\n@bg hall\r\n@show lynn:uniform normal @ right\r\n@set score = 10 + 5\r\n凛：分数是 {score}。\r\n@end';
+const source = '@scene start\r\n@label opening\r\n@bg hall\r\n@show lynn:uniform normal @ right\r\n@set score = 10 + 5\r\n凛：分数是 {score}。\r\n@timeline intro\r\n@end';
 const documents = {
   'game.config.json': JSON.stringify({ entryScene: 'start', variables: { score: { type: 'number', initial: 0 } }, characters: { lynn: { name: '凛' } } }),
   'content/scenario/start.gal': source,
@@ -93,7 +93,9 @@ const checkSurface = async (page, mode) => {
   const controlledId = await page.locator(`[data-editor-mode="${mode}"]`).getAttribute('aria-controls');
   assert(await root.evaluate((node, id) => Boolean(id && node.contains(document.getElementById(id))), controlledId), `${mode}: navigation does not reference its active work surface`);
   assert(await root.evaluate((node) => getComputedStyle(node).display === 'flex' && node.getBoundingClientRect().height > 100), `${mode}: main structure collapsed`);
-  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), `${mode}: page overflow`);
+  const pageBounds = await page.evaluate(() => ({ viewport: innerWidth, content: document.documentElement.scrollWidth }));
+  if (pageBounds.content > pageBounds.viewport + 2) console.error('Overflow elements', await page.evaluate(() => [...document.body.children, ...document.querySelectorAll('.editor-project-bar *')].filter(node => node.getBoundingClientRect().right > innerWidth + 2).map(node => ({ class: node.className, width: node.getBoundingClientRect().width, text: node.textContent?.slice(0, 100) }))));
+  assert(pageBounds.content <= pageBounds.viewport + 2, `${mode}: page overflow ${JSON.stringify(pageBounds)}`);
   assert(await page.locator('iframe.preview-frame').count() <= 1, `${mode}: multiple preview runtimes`);
   if (mode === 'preview') {
     await page.waitForFunction(() => {
@@ -110,6 +112,45 @@ try {
   browser = await chromium.launch({ headless: true });
   let opened = await open();
   let page = opened.page;
+  await page.mouse.move(0, 0);
+  const hiddenSceneActions = await page.locator('.scene-row-actions').first().evaluate((actions) => {
+    const rect = actions.querySelector('button').getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    return { opacity: getComputedStyle(actions).opacity, intercepts: Boolean(hit?.closest('.scene-row-action')) };
+  });
+  assert.equal(hiddenSceneActions.opacity, '0');
+  assert.equal(hiddenSceneActions.intercepts, false, 'invisible scene rename/delete controls must not intercept row clicks');
+  // Studio workbench: layout and navigation never alter the original document.
+  for (const label of ['调整目录宽度', '调整画面与属性区宽度']) {
+    const separator = page.getByRole('separator', { name: label, exact: true });
+    const pane = page.locator(label === '调整目录宽度' ? '#sidebar' : '.v4-script-dock');
+    const beforeWidth = (await pane.boundingBox()).width;
+    const before = Number(await separator.getAttribute('aria-valuenow'));
+    await separator.press('ArrowRight');
+    assert.notEqual(Number(await separator.getAttribute('aria-valuenow')), before);
+    assert.notEqual((await pane.boundingBox()).width, beforeWidth, 'resizer must change the actual panel, not only its accessible value');
+    await separator.press('ArrowLeft');
+  }
+  await page.keyboard.press('Control+k');
+  let projectSearch = page.getByRole('dialog', { name: '搜索项目', exact: true });
+  await keyboardActivate(projectSearch.getByRole('button', { name: '关闭搜索', exact: true }));
+  await projectSearch.waitFor({ state: 'detached' });
+  assert.equal(await page.locator('[data-editor-mode="editor"]').getAttribute('aria-current'), 'page', 'Enter on close must not activate a search result');
+  await page.keyboard.press('Control+k');
+  projectSearch = page.getByRole('dialog', { name: '搜索项目', exact: true });
+  await projectSearch.getByRole('combobox').fill('分数是');
+  await projectSearch.getByRole('combobox').press('Enter');
+  await projectSearch.waitFor({ state: 'detached' });
+  assert(await page.locator('.block[data-line="5"]').evaluate(node => node.classList.contains('v4-current')), 'project search must reveal the actual matching row');
+  await page.getByRole('button', { name: 'lynn:uniform · normal', exact: false }).click();
+  assert(await page.locator('.block[data-line="3"]').evaluate(node => node.classList.contains('v4-current')), 'inherited presentation must reveal the original show instruction');
+  await page.locator('[data-step-summary="6"]').click();
+  await page.getByRole('button', { name: '编辑 intro 画面效果 第 1 个节点', exact: false }).click();
+  await page.locator('#timeline-view').waitFor();
+  assert.deepEqual(await page.evaluate(() => window.surdetEditorDebug.state.currentTimelineCue), { trackIndex: 0, cueIndex: 0 });
+  await page.locator('[data-editor-mode="editor"]').click();
+  assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('start').text), source);
+  console.log('PASS Studio: panel resizing, project search, presentation source and exact timeline cue navigation preserve source');
   const addStory = page.locator('#script-v4-toolbar').getByRole('button', { name: '添加剧情', exact: true });
   await keyboardActivate(addStory, 'Space');
   const dialog = page.getByRole('dialog', { name: '添加剧情', exact: true });
@@ -125,6 +166,16 @@ try {
   await page.locator('[data-step-summary="3"]').click();
   await page.getByRole('button', { name: '选择表情 despair', exact: true }).click();
   await page.getByRole('button', { name: '左侧', exact: true }).click();
+  const beforeSearchUndo = await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('start').text);
+  await page.keyboard.press('Control+k');
+  projectSearch = page.getByRole('dialog', { name: '搜索项目', exact: true });
+  await projectSearch.getByRole('combobox').fill('查询文字');
+  await projectSearch.getByRole('combobox').press('Control+z');
+  await projectSearch.getByRole('combobox').press('Control+s');
+  assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('start').text), beforeSearchUndo, 'search undo must not undo the project');
+  assert.equal(await page.locator('[data-save-state]').getAttribute('data-save-state'), 'dirty', 'search keyboard must not save underlying drafts');
+  await page.keyboard.press('Escape');
+  await projectSearch.waitFor({ state: 'detached' });
   await page.locator('[data-action="save-project"]').click();
   await page.waitForFunction(() => document.querySelector('[data-save-state]')?.getAttribute('data-save-state') === 'saved');
   files = await page.evaluate(() => window.__surdetDumpFakeRoot());
@@ -174,6 +225,7 @@ try {
   const sourceAfterInsert = sourceEdited.replace('凛：源码修改后的对白。', '凛：源码修改后的对白。\n源码插入定位用例。');
   assert.equal(await page.locator('.v4-source-editor').inputValue(), sourceAfterInsert);
   assert.equal(await page.locator('.v4-authoring').getAttribute('data-script-view'), 'source');
+  await page.keyboard.press('Control+f');
   await page.locator('#search-input').fill('源码插入定位用例。');
   await page.locator('#search-panel').getByRole('button', { name: '搜索', exact: true }).click();
   await page.locator('.search-item').filter({ hasText: '源码插入定位用例。' }).first().click();
@@ -250,6 +302,10 @@ try {
   }
   await page.locator('[data-editor-mode="editor"]').click();
   await page.setViewportSize({ width: 960, height: 720 });
+  const compactDock = page.locator('.v4-script-dock');
+  const compactDockWidth = (await compactDock.boundingBox()).width;
+  await page.getByRole('separator', { name: '调整画面与属性区宽度', exact: true }).press('ArrowLeft');
+  assert((await compactDock.boundingBox()).width > compactDockWidth, 'desktop split window must retain a working resizer');
   await page.locator('[data-workbench-panel="outline"]').click();
   assert(await page.locator('#sidebar').isVisible(), 'medium-width scene directory is unreachable');
   await page.locator('[data-workbench-panel="editor"]').click();
@@ -317,6 +373,33 @@ try {
       await page.screenshot({ path: path.join(output, name) });
     }
   }
+  // Close the real preview while its source hashing is in flight. The original
+  // teardown used to let this continuation start an interpreter on a disposed renderer.
+  await page.locator('[data-editor-mode="preview"]').click();
+  const closingFrame = await (await page.locator('iframe.preview-frame').elementHandle()).contentFrame();
+  await closingFrame.waitForFunction(() => Boolean(window.surdetPreviewDebug?.interp && window.surdetPreviewDebug?.runtime));
+  await closingFrame.evaluate(() => {
+    const digest = crypto.subtle.digest.bind(crypto.subtle);
+    window.__heldHashes = [];
+    window.__pendingHashes = [];
+    crypto.subtle.digest = async (...args) => {
+      const result = await digest(...args);
+      const pending = new Promise(resolve => window.__heldHashes.push(resolve));
+      window.__pendingHashes.push(pending);
+      await pending;
+      return result;
+    };
+  });
+  await page.locator('[data-action="reload-preview"]').click();
+  await closingFrame.waitForFunction(() => window.__heldHashes.length > 0);
+  await closingFrame.evaluate(async () => {
+    window.dispatchEvent(new Event('beforeunload'));
+    window.__heldHashes.forEach(resolve => resolve());
+    await Promise.all(window.__pendingHashes);
+    await new Promise(resolve => setTimeout(resolve, 0));
+  });
+  assert(await closingFrame.evaluate(() => window.surdetPreviewDebug.runtime === null && window.surdetPreviewDebug.interp === null), 'closing a preview must not resurrect the renderer or interpreter');
+  console.log('PASS actual preview teardown cancels the in-flight source continuation without querying a disposed renderer');
   await browser.close(); browser = null;
   // Reuse the Pass 8 chrome.tabs.setZoom method in a disposable profile. Local
   // zoom is headed; CI uses Chromium's headless extension support, never page-scale.

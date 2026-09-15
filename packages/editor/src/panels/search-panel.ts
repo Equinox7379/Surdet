@@ -107,5 +107,7 @@ export function renderSearchPanel(container: HTMLElement): void {
 /** 聚焦搜索框（Ctrl+F 用） */
 export function focusSearchInput(): void {
   const el = document.getElementById('search-input') as HTMLInputElement | null;
+  const drawer = el?.closest<HTMLDetailsElement>('.authoring-search-drawer');
+  if (drawer) drawer.open = true;
   el?.focus();
 }

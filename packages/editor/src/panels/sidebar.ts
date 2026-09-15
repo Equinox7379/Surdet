@@ -84,7 +84,7 @@ export function renderSidebar(): void {
       item.title = sc.file;
       const identity = h('span', 'scene-identity');
       identity.appendChild(h('span', 'scene-name', sc.id || id.split('/').pop() || id));
-      identity.appendChild(h('span', 'scene-path', sc.file));
+      if (sc.file !== `${sc.id}.gal`) identity.appendChild(h('span', 'scene-path', sc.file));
       item.appendChild(identity);
       const facts = h('span', 'scene-facts');
       if (selected) facts.appendChild(h('span', 'scene-current', '当前'));
