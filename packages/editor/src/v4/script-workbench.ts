@@ -84,6 +84,7 @@ export class ScriptWorkbench {
     }, { signal: this.abort.signal });
     editor.addEventListener('scroll', () => { this.view.scroll = editor.scrollTop; }, { signal: this.abort.signal });
     this.installDock();
+    this.installDialogueReflow();
   }
 
   private current(): boolean {
@@ -272,6 +273,30 @@ export class ScriptWorkbench {
     original.before(textarea);
     this.fitTextarea(textarea);
   }
+  /** Panel/window resizing rewraps text without changing the scene or its history. */
+  private installDialogueReflow(): void {
+    let width = -1;
+    let frame = 0;
+    const observer = new ResizeObserver(([entry]) => {
+      const nextWidth = entry?.contentRect.width ?? 0;
+      if (nextWidth <= 0 || nextWidth === width) return;
+      width = nextWidth;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (!this.current()) return;
+        for (const textarea of this.editor.querySelectorAll<HTMLTextAreaElement>('.v4-dialogue-input')) {
+          this.fitTextarea(textarea);
+        }
+      });
+    });
+    observer.observe(this.editor);
+    this.abort.signal.addEventListener('abort', () => {
+      observer.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    }, { once: true });
+  }
+
   private fitTextarea(textarea: HTMLTextAreaElement): void {
     textarea.style.height = 'auto';
     textarea.style.height = `${Math.max(34, textarea.scrollHeight)}px`;
