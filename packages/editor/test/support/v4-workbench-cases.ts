@@ -96,6 +96,60 @@ export function mountV4Fixture(): void { fixture(); }
 export function currentFixtureText(): string { return state.current ? state.scenes.get(state.current)?.text ?? '' : ''; }
 export interface BrowserCase { name: string; run: () => void | Promise<void> }
 export const v4WorkbenchCases: BrowserCase[] = [
+  { name: 'Enter splits dialogue at the caret as one undoable operation and focuses the next sentence', run: async () => {
+    const before = '@scene start\r\n凛:前句后句\r\n@end'; const scene = fixture(before);
+    const text = control<HTMLTextAreaElement>('.block[data-line="1"] .v4-dialogue-input');
+    text.focus(); text.setSelectionRange(2, 2);
+    text.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); await tick();
+    assert(currentFixtureText() === '@scene start\r\n凛:前句\r\n凛:后句\r\n@end', scene.text);
+    const next = control<HTMLTextAreaElement>('.block[data-line="2"] .v4-dialogue-input');
+    assert(document.activeElement === next && next.selectionStart === 0, 'next sentence did not receive the caret');
+    undo(); assert(currentFixtureText() === before, 'split was not one undoable operation');
+    redo(); assert(scene.text.includes('凛:前句\r\n凛:后句'), 'split redo was lost');
+  } },
+  { name: 'Enter replaces selected text but leaves a composing IME confirmation untouched', run: async () => {
+    const before = '@scene start\n凛：前句删去后句\n@end'; const scene = fixture(before);
+    const text = control<HTMLTextAreaElement>('.v4-dialogue-input'); text.focus(); text.setSelectionRange(2, 4, 'backward');
+    text.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, isComposing: true })); await tick();
+    assert(currentFixtureText() === before, 'IME confirmation split the sentence');
+    text.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); await tick();
+    assert(scene.text === '@scene start\n凛：前句\n凛：后句\n@end', scene.text);
+  } },
+  { name: 'Enter at terminal narration creates an editable blank row without inventing a speaker', run: async () => {
+    const before = '@scene start\r\n没有说话人的旁白'; const scene = fixture(before);
+    const text = control<HTMLTextAreaElement>('.v4-dialogue-input'); text.focus(); text.setSelectionRange(text.value.length, text.value.length);
+    text.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); await tick();
+    const next = control<HTMLTextAreaElement>('.block[data-line="2"] .v4-dialogue-input');
+    assert(document.activeElement === next, 'blank narration was not editable in the manuscript');
+    input('.block[data-line="2"] .v4-dialogue-input', '继续旁白'); await tick();
+    assert(scene.text === before + '\r\n继续旁白\r\n', scene.text);
+  } },
+  { name: 'outline visibility preserves source and history across a view rerender', run: () => {
+    const scene = fixture(); const toggle = control<HTMLButtonElement>('.v4-outline-toggle');
+    if (toggle.getAttribute('aria-expanded') === 'false') toggle.click();
+    toggle.click(); assert(control('.authoring-workbench').dataset.outlineCollapsed === 'true', 'outline did not collapse');
+    control<HTMLButtonElement>('[data-script-view="manuscript"]').click();
+    assert(control<HTMLButtonElement>('.v4-outline-toggle').getAttribute('aria-expanded') === 'false', 'view change reset layout');
+    control<HTMLButtonElement>('.v4-outline-toggle').click();
+    assert(scene.text === SOURCE && (histories.get('start')?.past.length ?? 0) === 0, 'layout changed document history');
+  } },
+  { name: 'enlarging restores the original picture and disposes an open viewer without another renderer', run: () => {
+    fixture(); const picture = control('#script-v4-edit-layout'), parent = picture.parentElement;
+    const trigger = control<HTMLButtonElement>('.v4-enlarge-picture'); trigger.click();
+    assert(control('.v4-picture-dialog').contains(picture) && picture.inert, 'viewer duplicated or left picture actions active');
+    clickText('.v4-picture-dialog', '关闭');
+    assert(picture.parentElement === parent && !picture.inert && document.activeElement === trigger, 'picture or focus was not restored');
+    trigger.click(); disposeScriptV4();
+    assert(!document.querySelector('.v4-picture-dialog') && picture.parentElement === parent, 'disposed viewer retained its stage');
+    assert(document.querySelectorAll('iframe').length === 0, 'picture view started a runtime');
+  } },
+  { name: 'step menu closes with Escape and restores its trigger without changing source', run: () => {
+    const scene = fixture(); const menu = control<HTMLDetailsElement>('.block[data-line="4"] .v4-row-menu');
+    const summary = menu.querySelector('summary')!; summary.click();
+    assert(menu.open, 'step menu did not open');
+    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    assert(!menu.open && document.activeElement === summary && scene.text === SOURCE, 'step menu dismissal changed source or lost focus');
+  } },
   { name: 'source edit then insert refreshes row bindings without losing the dialog draft', run: async () => {
     const scene = fixture(); control<HTMLButtonElement>('[data-script-view="source"]').click();
     input('.v4-source-editor', SOURCE.replace(/\r\n/g, '\n').replace('你好。', '源码修改。')); await tick();

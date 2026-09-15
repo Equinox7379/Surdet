@@ -4,7 +4,7 @@ import { parseScript, serializeScript } from '../src/model.js';
 import { InstructionFieldSource } from '../src/instruction-field-source.js';
 import {
   applySourceTextareaEdit, deleteStep, duplicateStep, insertStep, instructionPosition,
-  moveStep, moveStepBefore, projectEditLayout, quoteAssetArgument,
+  moveStep, moveStepBefore, projectEditLayout, quoteAssetArgument, splitDialogue,
   setInstructionArgument, setInstructionPosition, simpleChoice, scriptSteps, stepAt, writeSimpleChoice,
 } from '../src/v4/script-source.js';
 
@@ -72,6 +72,26 @@ describe('V4 source adapters use shared rows and preserve B01', () => {
     expect(moveStepBefore(branch, 1, 3).text).toBe(branch);
   });
   it('inserts into an empty document', () => { expect(insertStep('', 0, ['岚：开始']).text).toBe('岚：开始'); });
+  it('splits at the UTF-16 caret, retaining indentation, speaker spacing and mixed EOL elsewhere', () => {
+    expect(splitDialogue('@scene x\n  岚:  你好😀继续\r\n@end', 1, 4, 4)).toEqual({
+      text: '@scene x\n  岚:  你好😀\r\n  岚:  继续\r\n@end', selectedLine: 2,
+    });
+  });
+  it('replaces the selected dialogue range and keeps the file terminal shape', () => {
+    expect(splitDialogue('岚：开始删掉结尾', 0, 2, 4).text).toBe('岚：开始\n岚：结尾');
+    expect(splitDialogue('岚：你好\r\n', 0, 2, 2).text).toBe('岚：你好\r\n岚：\r\n');
+  });
+  it('splits narration without inventing a speaker or losing text at either boundary', () => {
+    expect(splitDialogue('旁白正文', 0, 0, 0).text).toBe('\n旁白正文');
+    const terminal = splitDialogue('旁白正文', 0, 4, 4);
+    expect(terminal.text).toBe('旁白正文\n\n');
+    expect(parseScript(terminal.text)[terminal.selectedLine]?.kind).toBe('blank');
+    expect(splitDialogue('旁白正文', 0, 2, 2).text).toBe('旁白\n正文');
+  });
+  it('rejects stale positions and non-dialogue rows', () => {
+    expect(() => splitDialogue('@bg hall', 0, 0, 0)).toThrow();
+    expect(() => splitDialogue('岚：短句', 0, 3, 3)).toThrow();
+  });
   it('source view round-trip is exactly unchanged', () => {
     const raw = '@scene x\r\n岚:原文\nhttps://example.org\r@end';
     expect(applySourceTextareaEdit(raw, raw.replace(/\r\n|\r/g, '\n'))).toBe(raw);

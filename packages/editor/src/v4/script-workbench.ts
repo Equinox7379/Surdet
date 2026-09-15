@@ -5,10 +5,11 @@ import { decodeInstructionArgument } from '@surdet/authoring';
 import { disposePreviewPanel, renderPreviewPanel, refreshPreviewSourceState } from '../panels/preview-panel.js';
 import { allowedToEdit, button, disclosure, field, ImageScope, navigateMode } from './ui.js';
 import { renderTimelineSummary } from './timeline-summary.js';
+import { toggleAuthoringOutline } from '../shell/authoring-workbench.js';
 import {
   applySourceTextareaEdit, deleteStep, duplicateStep, insertStep, instructionPosition,
   moveStep, moveStepBefore, projectEditLayout, quoteAssetArgument, setInstructionArgument,
-  setInstructionPosition, simpleChoice, sourceEol, stepAt, writeSimpleChoice,
+  setInstructionPosition, simpleChoice, sourceEol, splitDialogue, stepAt, writeSimpleChoice,
   type ScriptView, type SourceEdit,
 } from './script-source.js';
 
@@ -57,6 +58,7 @@ export class ScriptWorkbench {
   private knownSource = '';
   private lastStageIdentity = '';
   private pointerCleanup: (() => void) | null = null;
+  private closePicture: (() => void) | null = null;
 
   constructor(
     readonly root: HTMLElement,
@@ -82,9 +84,17 @@ export class ScriptWorkbench {
         this.select(Number(block.dataset.line), false);
       }
     }, { signal: this.abort.signal });
-    editor.addEventListener('scroll', () => { this.view.scroll = editor.scrollTop; }, { signal: this.abort.signal });
+    editor.addEventListener('scroll', () => {
+      this.view.scroll = editor.scrollTop;
+      for (const menu of editor.querySelectorAll<HTMLDetailsElement>('.v4-row-menu[open]')) menu.open = false;
+    }, { signal: this.abort.signal });
     this.installDock();
     this.installDialogueReflow();
+    root.addEventListener('pointerdown', (event) => {
+      for (const menu of root.querySelectorAll<HTMLDetailsElement>('.v4-row-menu[open]')) {
+        if (!menu.contains(event.target as Node)) menu.open = false;
+      }
+    }, { signal: this.abort.signal });
   }
 
   private current(): boolean {
@@ -103,6 +113,7 @@ export class ScriptWorkbench {
     this.borrowed = null;
   }
   dispose(): void {
+    this.closePicture?.();
     this.returnFields();
     this.abort.abort();
     this.stageImages.dispose(); this.inspectorImages.dispose(); this.rowImages.dispose();
@@ -127,7 +138,14 @@ export class ScriptWorkbench {
       control.dataset.scriptView = value;
       views.append(control);
     }
-    host.replaceChildren(views,
+    const outline = button('目录', () => {
+      outline.setAttribute('aria-expanded', String(toggleAuthoringOutline(this.root)));
+    }, 'v4-button v4-outline-toggle');
+    outline.title = '展开或收起场景与素材目录';
+    outline.setAttribute('aria-label', '场景与素材目录');
+    outline.setAttribute('aria-controls', 'sidebar');
+    outline.setAttribute('aria-expanded', String(this.root.dataset.outlineCollapsed !== 'true'));
+    host.replaceChildren(outline, views,
       button('添加剧情', () => this.openInsert(), 'v4-button v4-primary'),
       button('查看素材', () => navigateMode('assets')),
       button('导出 .gal', () => this.download()));
@@ -144,6 +162,8 @@ export class ScriptWorkbench {
       for (const control of tools.querySelectorAll<HTMLElement>('[data-stage-mode]')) {
         control.setAttribute('aria-pressed', String(control.dataset.stageMode === mode));
       }
+      const enlarge = tools.querySelector<HTMLButtonElement>('.v4-enlarge-picture');
+      if (enlarge) enlarge.disabled = mode !== 'layout';
       if (mode === 'layout') {
         disposePreviewPanel();
         this.runtime.replaceChildren();
@@ -160,13 +180,38 @@ export class ScriptWorkbench {
     edit.dataset.stageMode = 'layout';
     const play = button('运行预览', () => show('runtime'));
     play.dataset.stageMode = 'runtime';
-    tools.replaceChildren(edit, play);
+    const enlarge = button('放大画面', () => this.enlargePicture(enlarge), 'v4-button v4-enlarge-picture');
+    tools.replaceChildren(edit, play, enlarge);
     // Never auto-start audio on returning from another view.
     this.view.dock = 'layout';
     edit.setAttribute('aria-pressed', 'true');
     play.setAttribute('aria-pressed', 'false');
     this.runtime.hidden = true;
     this.picture.hidden = false;
+  }
+
+  private enlargePicture(trigger: HTMLButtonElement): void {
+    if (!this.current() || this.view.dock !== 'layout' || this.closePicture) return;
+    const placeholder = h('span'); placeholder.hidden = true;
+    this.picture.before(placeholder);
+    const dialog = h('dialog', 'v4-picture-dialog');
+    dialog.setAttribute('aria-label', '放大编辑画面');
+    const header = h('header');
+    const close = (): void => {
+      if (this.closePicture !== close) return;
+      this.closePicture = null;
+      this.picture.inert = false;
+      placeholder.replaceWith(this.picture);
+      dialog.close(); dialog.remove();
+      if (trigger.isConnected) trigger.focus({ preventScroll: true });
+    };
+    this.closePicture = close;
+    header.append(h('strong', undefined, '编辑画面'), h('span', 'v4-muted', '静态排布 · 未运行'), button('关闭', close));
+    dialog.append(header, this.picture);
+    this.picture.inert = true;
+    this.root.append(dialog);
+    dialog.addEventListener('close', close, { once: true });
+    dialog.showModal();
   }
 
   decorate(): void {
@@ -210,15 +255,40 @@ export class ScriptWorkbench {
     block.insertBefore(action, block.querySelector('.fields'));
     const ops = block.querySelector<HTMLElement>('.ops');
     if (ops) {
-      ops.replaceChildren(
-        button('↑', () => this.structural((text) => moveStep(text, index, -1)), 'v4-row-op'),
-        button('↓', () => this.structural((text) => moveStep(text, index, 1)), 'v4-row-op'),
-        button('＋', () => { this.select(index, false); this.openInsert(); }, 'v4-row-op'),
-        button('复制', () => this.structural((text) => duplicateStep(text, index)), 'v4-row-op'),
-        button('删除', () => this.remove(index), 'v4-row-op'),
-      );
-      const labels = ['上移剧情步骤', '下移剧情步骤', '在步骤后添加剧情', '复制剧情步骤', '删除剧情步骤'];
-      [...ops.querySelectorAll('button')].forEach((control, i) => { control.setAttribute('aria-label', `${labels[i]}，第 ${index + 1} 行`); });
+      const menu = h('details', 'v4-row-menu');
+      const summary = h('summary', '', '···');
+      summary.setAttribute('role', 'button');
+      summary.setAttribute('aria-expanded', 'false');
+      summary.setAttribute('aria-label', `剧情步骤操作，第 ${index + 1} 行`);
+      summary.title = '移动、复制或删除这个步骤';
+      const actions = h('div', 'v4-row-menu-actions');
+      const definitions: Array<[string, string, () => void]> = [
+        ['上移步骤', '上移剧情步骤', () => { this.structural((text) => moveStep(text, index, -1)); }],
+        ['下移步骤', '下移剧情步骤', () => { this.structural((text) => moveStep(text, index, 1)); }],
+        ['在后面添加', '在步骤后添加剧情', () => { this.select(index, false); this.openInsert(); }],
+        ['复制步骤', '复制剧情步骤', () => { this.structural((text) => duplicateStep(text, index)); }],
+        ['删除步骤', '删除剧情步骤', () => this.remove(index)],
+      ];
+      for (const [label, accessible, action] of definitions) {
+        const item = button(label, () => { menu.open = false; action(); }, 'v4-row-op');
+        item.setAttribute('aria-label', `${accessible}，第 ${index + 1} 行`);
+        actions.append(item);
+      }
+      menu.append(summary, actions);
+      menu.addEventListener('toggle', () => {
+        summary.setAttribute('aria-expanded', String(menu.open));
+        if (!menu.open) return;
+        for (const other of this.editor.querySelectorAll<HTMLDetailsElement>('.v4-row-menu[open]')) {
+          if (other !== menu) other.open = false;
+        }
+        const bounds = summary.getBoundingClientRect();
+        actions.style.left = `${Math.max(8, Math.min(bounds.right - actions.offsetWidth, window.innerWidth - actions.offsetWidth - 8))}px`;
+        actions.style.top = `${Math.max(8, Math.min(bounds.bottom + 4, window.innerHeight - actions.offsetHeight - 8))}px`;
+      });
+      menu.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && menu.open) { event.preventDefault(); event.stopPropagation(); menu.open = false; summary.focus(); }
+      });
+      ops.replaceChildren(menu);
     }
     const handle = button('⋮⋮', () => {}, 'v4-drag-handle');
     handle.setAttribute('aria-label', `拖动第 ${index + 1} 行所在步骤；也可使用上移下移`);
@@ -229,6 +299,18 @@ export class ScriptWorkbench {
   }
 
   private decorateDialogue(block: HTMLElement): void {
+    if (block.classList.contains('block-blank')) {
+      const blank = block.querySelector<HTMLTextAreaElement>('.fields textarea.wide');
+      if (!blank || blank.dataset.v4Proxy === 'true') return;
+      blank.dataset.v4Proxy = 'true'; blank.classList.add('v4-dialogue-input');
+      block.classList.add('v4-empty-dialogue');
+      blank.placeholder = '输入旁白…'; blank.setAttribute('aria-label', '台词内容');
+      const originalInput = blank.oninput;
+      blank.oninput = (event) => { originalInput?.call(blank, event); this.fitTextarea(blank); };
+      this.bindDialogueEnter(block, blank);
+      this.fitTextarea(blank);
+      return;
+    }
     if (!block.classList.contains('block-text')) return;
     const original = block.querySelector<HTMLInputElement>('.fields input.wide');
     if (!original || original.dataset.v4Proxy === 'true') return;
@@ -260,18 +342,22 @@ export class ScriptWorkbench {
       original.dispatchEvent(new Event('input', { bubbles: true }));
       this.fitTextarea(textarea);
     };
+    this.bindDialogueEnter(block, textarea);
+    original.before(textarea);
+    this.fitTextarea(textarea);
+  }
+
+  private bindDialogueEnter(block: HTMLElement, textarea: HTMLTextAreaElement): void {
     // A physical newline is another DSL row, not a hidden multiline dialogue token.
     textarea.onkeydown = (event) => {
       if (event.key === 'Enter' && !event.isComposing) {
         event.preventDefault();
         const index = Number(block.dataset.line);
         const current = this.lines()[index];
-        const speaker = current?.kind === 'text' ? current.speaker : '';
-        this.structural((text) => insertStep(text, index, [speaker ? `${speaker}${current?.kind === 'text' ? current.sep : '：'}` : '']), true);
+        if (current?.kind !== 'text' || current.value !== textarea.value) return;
+        this.structural((text) => splitDialogue(text, index, textarea.selectionStart, textarea.selectionEnd), true);
       }
     };
-    original.before(textarea);
-    this.fitTextarea(textarea);
   }
   /** Panel/window resizing rewraps text without changing the scene or its history. */
   private installDialogueReflow(): void {
@@ -281,6 +367,7 @@ export class ScriptWorkbench {
       const nextWidth = entry?.contentRect.width ?? 0;
       if (nextWidth <= 0 || nextWidth === width) return;
       width = nextWidth;
+      for (const menu of this.editor.querySelectorAll<HTMLDetailsElement>('.v4-row-menu[open]')) menu.open = false;
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
@@ -583,14 +670,15 @@ export class ScriptWorkbench {
         }
       } else this.inspector.append(h('p', 'v4-muted', '这条选项包含完整语法；显示条件、选中后效果和目标均保留在原始行中，可直接编辑并撤销。'));
     }
-    if (line.kind !== 'text') {
+    if (line.kind === 'blank') this.inspector.append(h('p', 'v4-muted', '在正文中输入旁白。'));
+    if (line.kind !== 'text' && line.kind !== 'blank') {
       const fields = block.querySelector<HTMLElement>('.fields');
       if (fields) {
         this.borrowed = { block, fields };
         const advanced = disclosure('全部参数与高级语法', fields);
         const rawOnlyChoice = line.kind === 'choice-option' && simpleChoice(line.raw) === null;
         advanced.open = rawOnlyChoice || line.kind === 'instr' && !['bg', 'show', 'wait', 'timeline', 'choice'].includes(line.name);
-        if (line.kind === 'blank' || line.kind === 'comment' || line.kind === 'label') advanced.open = true;
+        if (line.kind === 'comment' || line.kind === 'label') advanced.open = true;
         this.inspector.append(advanced);
       }
     }
@@ -685,7 +773,11 @@ export class ScriptWorkbench {
       if (this.view.view === 'source') { this.revealLine(result.selectedLine); return; }
       const block = this.block(result.selectedLine);
       block?.scrollIntoView({ block: 'nearest' });
-      if (focusDialogue) block?.querySelector<HTMLElement>('.v4-dialogue-input, .fields textarea, .fields input')?.focus();
+      if (focusDialogue) {
+        const target = block?.querySelector<HTMLTextAreaElement>('.v4-dialogue-input, .fields textarea')
+          ?? this.inspector.querySelector<HTMLTextAreaElement>('.fields textarea');
+        target?.focus(); target?.setSelectionRange(0, 0);
+      }
     });
     return true;
   }

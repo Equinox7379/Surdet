@@ -9,14 +9,22 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', text?:
 }
 let dockWidth = 0;
 let outlineWidth = 210;
+let outlineCollapsed = false;
 let disposeLayout: (() => void) | null = null;
 export function disposeAuthoringWorkbench(): void { disposeLayout?.(); disposeLayout = null; }
+
+export function toggleAuthoringOutline(root: HTMLElement): boolean {
+  outlineCollapsed = root.dataset.outlineCollapsed !== 'true';
+  root.dataset.outlineCollapsed = String(outlineCollapsed);
+  return !outlineCollapsed;
+}
 
 /** Layout only. The original sidebar, search, validation, history and IO retain ownership. */
 export function buildAuthoringWorkbench(): AuthoringWorkbenchElements {
   disposeAuthoringWorkbench();
   const root = element('div', 'main-body authoring-workbench v4-authoring');
   root.dataset.editorRegion = 'authoring-workbench'; root.dataset.auxiliaryView = 'outline';
+  root.dataset.outlineCollapsed = String(outlineCollapsed);
   root.dataset.mobilePanel = 'editor'; root.style.setProperty('--v4-dock-width', dockWidth ? `${dockWidth}px` : '40%');
   root.style.setProperty('--studio-outline-width', `${outlineWidth}px`);
   const outline = element('aside', 'authoring-outline');
