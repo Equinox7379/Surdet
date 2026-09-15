@@ -429,7 +429,7 @@ body {
 
 .editor-mode-button[aria-current=page] {
   background: var(--surdet-surface-panel);
-  color: var(--surdet-action-primary);
+  color: var(--surdet-text-primary);
   font-weight: 600;
 }
 

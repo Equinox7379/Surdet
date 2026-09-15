@@ -18,7 +18,7 @@
   --surdet-surface-app: var(--surdet-color-paper-0);
   --surdet-surface-panel: var(--surdet-color-paper-50);
   --surdet-surface-subtle: var(--surdet-color-paper-100);
-  --surdet-surface-selected: #F5EDE8;
+  --surdet-surface-selected: #ECEFF2;
   --surdet-text-primary: var(--surdet-color-ink-900);
   --surdet-text-secondary: var(--surdet-color-ink-600);
   --surdet-border-default: var(--surdet-color-line-300);

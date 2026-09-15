@@ -11,7 +11,6 @@ export function renderSidebar(): void {
   sidebar.innerHTML = '';
   const heading = h('div', 'outline-heading');
   heading.appendChild(h('h2', undefined, '项目内容'));
-  heading.appendChild(h('p', undefined, '按真实场景路径与素材引用整理'));
   sidebar.appendChild(heading);
 
   const tabs = h('div', 'side-tabs');
