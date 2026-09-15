@@ -438,7 +438,7 @@ export class ScriptWorkbench {
       }
     };
     if (line.kind === 'text') {
-      this.inspector.append(h('p', 'v4-muted', '说话人和台词直接在正文编辑。本次修改只作用于这一句。'));
+      this.inspector.append(h('p', 'v4-muted', '在正文中编辑说话人和台词。'));
       const source = this.scene.text;
       const lines = this.lines();
       const revealOrigin = (sourceLine: number): void => {
@@ -641,7 +641,7 @@ export class ScriptWorkbench {
     const actual = this.runtime.querySelector<HTMLElement>('[data-preview-source-state]')?.dataset.previewSourceState;
     this.sourceStatus.textContent = this.view.dock === 'runtime'
       ? actual === 'stale' ? '剧本已有修改。当前仍是上次运行，请重新播放以应用最新内容。' : '运行位置与编辑选择分别记录；选择步骤不会伪造重放。'
-      : `${this.scene.file} · 编辑第 ${this.view.line + 1} 行。画面仅表示当前明确的静态排布。`;
+      : `${this.scene.file} · 第 ${this.view.line + 1} 行 · 静态排布`;
   }
 
   private createSourceEditor(): void {
