@@ -192,6 +192,7 @@ export class FileSaveStore {
     const stems = [...new Set([sanitizeSlot(slot), legacyL0Stem(slot)])];
     const out: string[] = [];
     for (const stem of stems) {
+      if (asciiCaseFold(`${stem}.json`) === INDEX_FILE) continue;
       const main = path.join(this.dir, `${stem}.json`);
       out.push(main, `${main}.bak`);
     }
@@ -371,29 +372,71 @@ export class FileSaveStore {
     const existingBackup = this.#exactCanonicalEntry(slot, '.json.bak');
     const tmp = `${file}.tmp`;
     this.#exactPhysicalEntry(path.basename(tmp));
-    // 覆盖前备份上一版（.bak）：供玩家通过显式恢复动作取回上一版进度
-    if (existingFile !== null) fs.copyFileSync(existingFile, existingBackup ?? `${file}.bak`);
-    // 原子写：先写临时文件再 rename，崩溃/中断不会留下半截损坏存档
-    fs.writeFileSync(tmp, json);
-    this.#exactPhysicalEntry(path.basename(file));
-    fs.renameSync(tmp, file);
-    // 索引更新失败也必须向上层报告：写入事务不能把部分成功伪装成成功。
+    // 先验证索引；失败不能轮换玩家最后有效的主档或备份。
     const index = this.readIndex();
+    const indexFile = this.indexPath();
+    const mainBefore = existingFile === null ? null : fs.readFileSync(existingFile);
+    const backupBefore = existingBackup === null ? null : fs.readFileSync(existingBackup);
+    const indexBefore = fs.existsSync(indexFile) ? fs.readFileSync(indexFile) : null;
+    const backupFile = `${file}.bak`;
+    const backupTmp = `${backupFile}.tmp`;
+    this.#exactPhysicalEntry(path.basename(backupTmp));
     this.#setIndexEntry(index, slot, { ...data.meta, id: slot });
-    this.writeIndex(index);
+    const changed: Array<{ file: string; before: Buffer | null }> = [];
+    try {
+      fs.writeFileSync(tmp, json);
+      if (mainBefore !== null) fs.writeFileSync(backupTmp, mainBefore);
+      this.#exactPhysicalEntry(path.basename(file));
+      fs.renameSync(tmp, file);
+      changed.push({ file, before: mainBefore });
+      if (mainBefore !== null) {
+        this.#exactPhysicalEntry(path.basename(backupFile));
+        fs.renameSync(backupTmp, backupFile);
+        changed.push({ file: backupFile, before: backupBefore });
+      }
+      // 索引发布可能已改变文件后才报错，因此在调用前记录补偿内容。
+      changed.push({ file: indexFile, before: indexBefore });
+      this.writeIndex(index);
+    } catch (error) {
+      const failures: unknown[] = [error];
+      for (const original of changed.reverse()) {
+        try {
+          this.#exactPhysicalEntry(path.basename(original.file));
+          if (original.before === null) {
+            if (fs.existsSync(original.file)) fs.unlinkSync(original.file);
+          } else {
+            const restoreTmp = `${original.file}.restore.tmp`;
+            this.#exactPhysicalEntry(path.basename(restoreTmp));
+            fs.writeFileSync(restoreTmp, original.before);
+            fs.renameSync(restoreTmp, original.file);
+          }
+        } catch (compensationError) { failures.push(compensationError); }
+      }
+      if (failures.length > 1) throw new AggregateError(failures, `存档失败且无法完整恢复原主档/备份/索引：${slot}`);
+      throw error;
+    } finally {
+      for (const temporary of [tmp, backupTmp, `${indexFile}.tmp`]) {
+        try {
+          const entry = this.#exactPhysicalEntry(path.basename(temporary));
+          if (entry !== null) fs.unlinkSync(entry);
+        } catch (error) { console.warn(`存档临时文件未清理：${path.basename(temporary)}`, error); }
+      }
+    }
     // A5 懒迁移收尾：仅清理所有权已验证的 legacy 文件（历史碰撞中属于
     // 其他逻辑槽位的数据保持原样）；新写入恒落 canonical 物理身份。
-    this.#cleanupVerifiedLegacy(slot);
+    try { this.#cleanupVerifiedLegacy(slot); }
+    catch (error) { console.warn(`存档已保存，旧格式副本暂未清理：${slot}`, error); }
   }
 
   delete(slot: string): void {
+    const index = this.readIndex();
+    const indexFile = this.indexPath();
+    const indexBefore = fs.existsSync(indexFile) ? fs.readFileSync(indexFile) : null;
     // canonical 主档/备份：该命名空间无碰撞，且 write 期已强制 meta.id === slot，
     // 物理身份即属主身份，直接删除。
     const canonical = this.#exactCanonicalEntry(slot, '.json');
     const backup = this.#exactCanonicalEntry(slot, '.json.bak');
-    for (const f of [canonical, backup]) {
-      if (f !== null) fs.unlinkSync(f);
-    }
+    const files = [canonical, backup].filter((file): file is string => file !== null);
     // legacy 文件：历史碰撞可能使其内容实际属于别的逻辑槽位，
     // 必须独立验证所有权后才删除（损坏不可证明 → 保留，不误毁）。
     for (const cand of this.#legacyCandidates(slot)) {
@@ -404,10 +447,9 @@ export class FileSaveStore {
       } catch {
         continue;
       }
-      if (snap !== null && snap.meta?.id === slot) fs.unlinkSync(cand);
+      if (snap !== null && snap.meta?.id === slot) files.push(cand);
     }
     // 索引按逻辑槽位身份清理（含旧格式按物理词干键控的陈旧条目）。
-    const index = this.readIndex();
     let changed = false;
     for (const key of Object.keys(index)) {
       if (key === slot || index[key]?.id === slot) {
@@ -415,7 +457,38 @@ export class FileSaveStore {
         changed = true;
       }
     }
-    if (changed) this.writeIndex(index);
+    const originals = [...new Set(files)].map(file => ({ file, bytes: fs.readFileSync(file) }));
+    const deleted: typeof originals = [];
+    let indexAttempted = false;
+    try {
+      for (const original of originals) {
+        fs.unlinkSync(original.file);
+        deleted.push(original);
+      }
+      if (changed) { indexAttempted = true; this.writeIndex(index); }
+    } catch (error) {
+      const failures: unknown[] = [error];
+      for (const original of deleted) {
+        try {
+          const temporary = `${original.file}.restore.tmp`;
+          this.#exactPhysicalEntry(path.basename(temporary));
+          fs.writeFileSync(temporary, original.bytes);
+          fs.renameSync(temporary, original.file);
+        } catch (restoreError) { failures.push(restoreError); }
+      }
+      if (indexAttempted) {
+        try {
+          if (indexBefore === null) {
+            if (fs.existsSync(indexFile)) fs.unlinkSync(indexFile);
+          } else {
+            fs.writeFileSync(`${indexFile}.restore.tmp`, indexBefore);
+            fs.renameSync(`${indexFile}.restore.tmp`, indexFile);
+          }
+        } catch (restoreError) { failures.push(restoreError); }
+      }
+      if (failures.length > 1) throw new AggregateError(failures, `删除失败且无法完整恢复槽位：${slot}`);
+      throw error;
+    }
   }
 
   /** 定位槽位的备份文件（A5 所有权语义）：

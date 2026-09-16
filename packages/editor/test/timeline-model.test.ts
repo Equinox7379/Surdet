@@ -97,6 +97,6 @@ describe('时间轴编辑模型', () => {
       tracks: [{ kind: 'screen', cues: [{ atMs: 90, durationMs: 20, easing: 'linear', action: 'fade', alpha: 0 }] }],
     }));
     expect(result.definition).toBeNull();
-    expect(result.issues.some((issue) => issue.includes('T006'))).toBe(true);
+    expect(result.issues.some((issue) => issue.includes('TL006'))).toBe(true);
   });
 });

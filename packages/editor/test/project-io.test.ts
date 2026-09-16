@@ -14,6 +14,7 @@ import {
   sceneTextSha256,
 } from '../src/project-io.js';
 import { state } from '../src/state.js';
+import * as workspace from '../src/editor-workspace.js';
 import type { SceneEntry, TimelineEntry } from '../src/state.js';
 import { createTimeline, stringifyTimeline } from '../src/timeline-model.js';
 import { deleteTimeline, nextTimelineId, restorePendingTimelineDeletion } from '../src/panels/timeline-panel.js';
@@ -181,6 +182,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     state.projectWriteLock = null;
     state.pendingSceneCommit = null;
     vi.unstubAllGlobals();
@@ -855,6 +857,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
   });
 
   it('物理删除成功后清除墓碑与该 id 的旧历史', async () => {
+    const publish = vi.spyOn(workspace, 'publishEditorWorkspaceFile').mockResolvedValue(true);
     const removeEntry = vi.fn();
     state.dirHandle = {
       getDirectoryHandle: async () => ({
@@ -869,10 +872,26 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
 
     await saveAll();
 
-    expect(removeEntry).toHaveBeenCalledWith('gone.json');
+    expect(publish).toHaveBeenCalledWith('content/timelines/gone.json', null);
+    expect(removeEntry).not.toHaveBeenCalled();
     expect(state.pendingTimelineDeletes).toEqual([]);
     expect(state.pendingTimelineRestores.has('gone')).toBe(false);
     expect(timelineHistoryDepth('gone')).toEqual({ undo: 0, redo: 0 });
+  });
+
+  it('安全连接缺失时保留待删时间轴及撤销记录，不回退浏览器直删', async () => {
+    const removeEntry = vi.fn();
+    state.dirHandle = { getDirectoryHandle: async () => ({ getDirectoryHandle: async () => ({ removeEntry }) }) } as unknown as FileSystemDirectoryHandle;
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+    state.timelines.push(timeline('offline', fileHandle(null, log, 'offline'), false));
+    pushTimelineSnapshot('offline', 'before');
+    expect(deleteTimeline('offline')).toBe(true);
+    await saveAll();
+    expect(removeEntry).not.toHaveBeenCalled();
+    expect(state.pendingTimelineDeletes).toEqual([{ id: 'offline', file: 'offline.json' }]);
+    expect(state.pendingTimelineRestores.has('offline')).toBe(true);
+    expect(timelineHistoryDepth('offline').undo).toBeGreaterThan(0);
+    expect(status.title).toContain('安全保存服务未连接');
   });
 
   it('恢复崩溃备份时更新已有时间轴并插入未落盘新时间轴', () => {

@@ -17,6 +17,15 @@ function makeOptions(adapters: readonly HostSystemAdapter[] = []): DefaultHostOp
 }
 
 describe('createDefaultHost', () => {
+  it('finishes adapter and host reset before resuming the interpreter', async () => {
+    const calls: string[] = [];
+    const options = makeOptions([{ id: 'battle', open: () => {}, reset: () => { calls.push('adapter'); } }]);
+    options.resume.mockImplementation(() => { calls.push('resume'); });
+    const host = createDefaultHost({ ...options, onStateReset: () => { calls.push('state'); } });
+    await host.routeSystem('battle', {});
+    host.reset();
+    expect(calls).toEqual(['adapter', 'state', 'resume']);
+  });
   it('routes optional adapters and pauses before opening', async () => {
     const calls: string[] = [];
     const options = makeOptions([{

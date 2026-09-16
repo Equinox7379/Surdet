@@ -102,42 +102,42 @@ function validatePayload(
 ): void {
   const action = cue.action;
   if (kind === 'background' && action === 'set') {
-    requireString(cue.key, diagnostics, 'T009', 'background set requires a non-empty key', `${path}.key`);
+    requireString(cue.key, diagnostics, 'TL009', 'background set requires a non-empty key', `${path}.key`);
   } else if (kind === 'portrait') {
-    requireString(track.target, diagnostics, 'T009', 'portrait track requires a non-empty target', `${path.replace(/\.cues\.\d+$/, '')}.target`);
+    requireString(track.target, diagnostics, 'TL009', 'portrait track requires a non-empty target', `${path.replace(/\.cues\.\d+$/, '')}.target`);
     if (action === 'show' || action === 'expression') {
-      requireString(cue.expression, diagnostics, 'T009', 'portrait show/expression requires expression', `${path}.expression`);
+      requireString(cue.expression, diagnostics, 'TL009', 'portrait show/expression requires expression', `${path}.expression`);
     }
     if (action === 'show' || action === 'move') {
-      requireString(cue.position, diagnostics, 'T009', 'portrait show/move requires position', `${path}.position`);
+      requireString(cue.position, diagnostics, 'TL009', 'portrait show/move requires position', `${path}.position`);
     }
   } else if (kind === 'camera') {
     if (action === 'zoom' && (!isFiniteNumber(cue.scale) || cue.scale <= 0)) {
-      add(diagnostics, 'T009', 'camera zoom requires a positive scale', `${path}.scale`);
+      add(diagnostics, 'TL009', 'camera zoom requires a positive scale', `${path}.scale`);
     }
     if (action === 'pan') {
       if (!isFiniteNumber(cue.x) || cue.x < -2000 || cue.x > 2000) {
-        add(diagnostics, 'T009', 'camera pan x must be between -2000 and 2000', `${path}.x`);
+        add(diagnostics, 'TL009', 'camera pan x must be between -2000 and 2000', `${path}.x`);
       }
       if (!isFiniteNumber(cue.y) || cue.y < -2000 || cue.y > 2000) {
-        add(diagnostics, 'T009', 'camera pan y must be between -2000 and 2000', `${path}.y`);
+        add(diagnostics, 'TL009', 'camera pan y must be between -2000 and 2000', `${path}.y`);
       }
     }
     if (action === 'shake' && (!isFiniteNumber(cue.strength) || cue.strength < 0 || cue.strength > 64)) {
-      add(diagnostics, 'T009', 'camera shake strength must be between 0 and 64', `${path}.strength`);
+      add(diagnostics, 'TL009', 'camera shake strength must be between 0 and 64', `${path}.strength`);
     }
   } else if (kind === 'screen') {
     if (action === 'fade') {
-      if (!isFiniteNumber(cue.alpha) || cue.alpha < 0 || cue.alpha > 1) add(diagnostics, 'T009', 'screen fade alpha must be between 0 and 1', `${path}.alpha`);
+      if (!isFiniteNumber(cue.alpha) || cue.alpha < 0 || cue.alpha > 1) add(diagnostics, 'TL009', 'screen fade alpha must be between 0 and 1', `${path}.alpha`);
     }
     if (action === 'tint') {
-      if (!isFiniteNumber(cue.color) || cue.color < 0 || cue.color > 0xffffff) add(diagnostics, 'T009', 'screen tint color must be a 0xRRGGBB number', `${path}.color`);
-      if (!isFiniteNumber(cue.alpha) || cue.alpha < 0 || cue.alpha > 1) add(diagnostics, 'T009', 'screen tint alpha must be between 0 and 1', `${path}.alpha`);
+      if (!isFiniteNumber(cue.color) || cue.color < 0 || cue.color > 0xffffff) add(diagnostics, 'TL009', 'screen tint color must be a 0xRRGGBB number', `${path}.color`);
+      if (!isFiniteNumber(cue.alpha) || cue.alpha < 0 || cue.alpha > 1) add(diagnostics, 'TL009', 'screen tint alpha must be between 0 and 1', `${path}.alpha`);
     }
   } else if (kind === 'particle' && action === 'start') {
-    requireString(cue.kind, diagnostics, 'T009', 'particle start requires a preset kind', `${path}.kind`);
+    requireString(cue.kind, diagnostics, 'TL009', 'particle start requires a preset kind', `${path}.kind`);
   } else if (kind === 'audio') {
-    requireString(cue.key, diagnostics, 'T009', 'audio cue requires a non-empty key', `${path}.key`);
+    requireString(cue.key, diagnostics, 'TL009', 'audio cue requires a non-empty key', `${path}.key`);
   }
 }
 
@@ -145,18 +145,18 @@ function validatePayload(
 export function validateTimeline(value: unknown): TimelineDiagnostic[] {
   const diagnostics: TimelineDiagnostic[] = [];
   if (!isObject(value)) {
-    return [{ code: 'T001', message: 'timeline must be an object', path: '$' }];
+    return [{ code: 'TL001', message: 'timeline must be an object', path: '$' }];
   }
 
-  if (value.version !== TIMELINE_VERSION) add(diagnostics, 'T002', `timeline version must be ${TIMELINE_VERSION}`, '$.version');
+  if (value.version !== TIMELINE_VERSION) add(diagnostics, 'TL002', `timeline version must be ${TIMELINE_VERSION}`, '$.version');
   if (!isString(value.id) || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(value.id)) {
-    add(diagnostics, 'T003', 'timeline id must contain only letters, numbers, _, ., and -', '$.id');
+    add(diagnostics, 'TL003', 'timeline id must contain only letters, numbers, _, ., and -', '$.id');
   }
   if (!isFiniteNumber(value.durationMs) || !Number.isInteger(value.durationMs) || value.durationMs < 0 || value.durationMs > MAX_TIMELINE_MS) {
-    add(diagnostics, 'T004', `durationMs must be an integer from 0 to ${MAX_TIMELINE_MS}`, '$.durationMs');
+    add(diagnostics, 'TL004', `durationMs must be an integer from 0 to ${MAX_TIMELINE_MS}`, '$.durationMs');
   }
   if (!Array.isArray(value.tracks) || value.tracks.length === 0) {
-    add(diagnostics, 'T005', 'timeline must contain at least one track', '$.tracks');
+    add(diagnostics, 'TL005', 'timeline must contain at least one track', '$.tracks');
     return diagnostics;
   }
 
@@ -164,38 +164,38 @@ export function validateTimeline(value: unknown): TimelineDiagnostic[] {
   for (const [trackIndex, rawTrack] of value.tracks.entries()) {
     const trackPath = `$.tracks.${trackIndex}`;
     if (!isObject(rawTrack)) {
-      add(diagnostics, 'T005', 'track must be an object', trackPath);
+      add(diagnostics, 'TL005', 'track must be an object', trackPath);
       continue;
     }
     const kind = rawTrack.kind;
     if (!isString(kind) || !TRACKS.has(kind as TimelineTrackKind)) {
-      add(diagnostics, 'T007', 'track kind is not supported', `${trackPath}.kind`);
+      add(diagnostics, 'TL007', 'track kind is not supported', `${trackPath}.kind`);
       continue;
     }
     if (!Array.isArray(rawTrack.cues)) {
-      add(diagnostics, 'T005', 'track cues must be an array', `${trackPath}.cues`);
+      add(diagnostics, 'TL005', 'track cues must be an array', `${trackPath}.cues`);
       continue;
     }
     for (const [cueIndex, rawCue] of rawTrack.cues.entries()) {
       const cuePath = `${trackPath}.cues.${cueIndex}`;
       if (!isObject(rawCue)) {
-        add(diagnostics, 'T005', 'cue must be an object', cuePath);
+        add(diagnostics, 'TL005', 'cue must be an object', cuePath);
         continue;
       }
       if (!isFiniteNumber(rawCue.atMs) || !Number.isInteger(rawCue.atMs) || rawCue.atMs < 0) {
-        add(diagnostics, 'T006', 'atMs must be a non-negative integer', `${cuePath}.atMs`);
+        add(diagnostics, 'TL006', 'atMs must be a non-negative integer', `${cuePath}.atMs`);
       }
       if (!isFiniteNumber(rawCue.durationMs) || !Number.isInteger(rawCue.durationMs) || rawCue.durationMs < 0) {
-        add(diagnostics, 'T006', 'durationMs must be a non-negative integer', `${cuePath}.durationMs`);
+        add(diagnostics, 'TL006', 'durationMs must be a non-negative integer', `${cuePath}.durationMs`);
       }
       if (isFiniteNumber(rawCue.atMs) && isFiniteNumber(rawCue.durationMs) && rawCue.atMs + rawCue.durationMs > duration) {
-        add(diagnostics, 'T006', 'cue ends after the timeline duration', cuePath);
+        add(diagnostics, 'TL006', 'cue ends after the timeline duration', cuePath);
       }
       if (!isString(rawCue.easing) || !EASINGS.has(rawCue.easing as TimelineEasing)) {
-        add(diagnostics, 'T007', 'easing is not supported', `${cuePath}.easing`);
+        add(diagnostics, 'TL007', 'easing is not supported', `${cuePath}.easing`);
       }
       if (!isString(rawCue.action) || !ACTIONS[kind as TimelineTrackKind].has(rawCue.action)) {
-        add(diagnostics, 'T008', `action is not supported for ${kind} track`, `${cuePath}.action`);
+        add(diagnostics, 'TL008', `action is not supported for ${kind} track`, `${cuePath}.action`);
       }
       validatePayload(kind as TimelineTrackKind, rawCue, rawTrack, diagnostics, cuePath);
     }
@@ -216,7 +216,7 @@ export class TimelineRegistry implements TimelineCatalog {
     if (diagnostics.length > 0) throw new TimelineValidationError(diagnostics);
     const definition = cloneDefinition(value as TimelineDefinition);
     if (this.#definitions.has(definition.id)) {
-      throw new TimelineValidationError([{ code: 'T010', message: `duplicate timeline id '${definition.id}'`, path: '$.id' }]);
+      throw new TimelineValidationError([{ code: 'TL010', message: `duplicate timeline id '${definition.id}'`, path: '$.id' }]);
     }
     this.#definitions.set(definition.id, definition);
     return cloneDefinition(definition);

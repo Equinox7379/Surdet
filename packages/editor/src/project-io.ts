@@ -912,6 +912,7 @@ export function repairTimelineAutosaveConflict(
     target.text = normalized.entry.text;
     target.eol = normalized.entry.eol;
     target.dirty = true;
+    if (state.currentTimeline === target.id) state.currentTimelineCue = null;
     return { ok: true, timelineId: target.id };
   }
 
@@ -1018,13 +1019,7 @@ async function saveAllUnlocked(): Promise<void> {
       try {
         const projectPath = pending.file.startsWith('content/timelines/') ? pending.file : `content/timelines/${pending.file}`;
         if (!await publishEditorWorkspaceFile(projectPath, null)) {
-          const contentDir = await state.dirHandle.getDirectoryHandle('content');
-          let timelineDir = await contentDir.getDirectoryHandle('timelines');
-          const parts = pending.file.split('/').filter(Boolean);
-          const fileName = parts.pop();
-          if (!fileName) throw new Error('文件名为空');
-          for (const part of parts) timelineDir = await timelineDir.getDirectoryHandle(part);
-          await timelineDir.removeEntry(fileName);
+          throw new Error('安全保存服务未连接，请重新打开项目后再删除时间轴');
         }
         state.pendingTimelineRestores.delete(pending.id);
         clearTimelineHistory(pending.id);

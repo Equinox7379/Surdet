@@ -72,19 +72,22 @@ export class EventScheduler {
    * number 效果走 add 语义（增量），flag/string 走 set 语义；类型校验由 store 兜底。
    */
   fireInto(id: string, store: VariableStore): ScheduledEventDef | null {
-    const ev = this.fire(id);
-    if (!ev) return null;
+    const ev = this.#events.find((event) => event.id === id);
+    if (!ev || (ev.once === true && this.#fired.has(id)) || !evalExprBoolean(ev.when, this.#env)) return null;
+    const updates: Parameters<VariableStore['setMany']>[0][number][] = [];
     if (ev.effects) {
       for (const [name, value] of Object.entries(ev.effects)) {
         if (!store.has(name)) continue; // 未声明变量跳过（严格校验交给 lint/配置审查）
         if (typeof value === 'number') {
           const cur = store.get(name);
-          store.set(name, typeof cur === 'number' ? cur + value : value);
+          updates.push({ name, value: typeof cur === 'number' ? cur + value : value });
         } else {
-          store.set(name, value);
+          updates.push({ name, value });
         }
       }
     }
+    store.setMany(updates);
+    if (ev.once === true) this.#fired.add(id);
     return ev;
   }
 

@@ -3,8 +3,9 @@ import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createJsonRecord, readJsonRecord, replaceJsonRecord } from '../src/authoring/node-json-record.js';
+vi.mock('node:fs/promises', async () => ({ ...await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises') }));
 
 const temporaryRoots: string[] = [];
 
@@ -13,6 +14,25 @@ function sha256(bytes: Uint8Array): string {
 }
 
 describe('node JSON record writer', () => {
+  it('re-reads a concurrently replaced record without reporting healthy bytes as corruption', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-record-race-'));
+    temporaryRoots.push(root);
+    const file = path.join(root, 'record.json');
+    await createJsonRecord(file, { version: 1 });
+    const open = fsp.open;
+    let replaced = false;
+    const spy = vi.spyOn(fsp, 'open').mockImplementation(async (...args) => {
+      if (args[0] === file && !replaced) {
+        replaced = true;
+        const next = path.join(root, 'next.json');
+        await fsp.writeFile(next, '{"version":2}\n');
+        await fsp.rename(next, file);
+      }
+      return open(...args);
+    });
+    try { expect((await readJsonRecord(file))?.value).toEqual({ version: 2 }); }
+    finally { spy.mockRestore(); }
+  });
   afterEach(() => {
     for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   });

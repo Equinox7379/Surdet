@@ -74,7 +74,21 @@ function corruptRecord(file: string, message: string): AuthoringOperationError {
   return new AuthoringOperationError('CHANGE_STORE_CORRUPT', `${message}：${file}`, { path: file });
 }
 
+function readRaced(file: string): AuthoringOperationError {
+  return new AuthoringOperationError('CHANGE_BUSY', `JSON record 读取期间正在更新，请重试：${file}`, { path: file, recordReadRaced: true, retryAfterMs: 10 });
+}
+
 async function readBytes(file: string): Promise<{ bytes: Buffer; identity: JsonRecordIdentity } | null> {
+  for (let attempt = 0; ; attempt += 1) {
+    try { return await readBytesOnce(file); }
+    catch (error) {
+      if (!(error instanceof AuthoringOperationError) || error.details?.['recordReadRaced'] !== true || attempt >= 19) throw error;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+}
+
+async function readBytesOnce(file: string): Promise<{ bytes: Buffer; identity: JsonRecordIdentity } | null> {
   let pathBefore: Awaited<ReturnType<typeof fs.lstat>>;
   try {
     pathBefore = await fs.lstat(file);
@@ -91,14 +105,16 @@ async function readBytes(file: string): Promise<{ bytes: Buffer; identity: JsonR
   try {
     handle = await fs.open(file, fsConstants.O_RDONLY | noFollow);
     const openedBefore = await handle.stat();
-    if (!openedBefore.isFile()
-      || openedBefore.dev !== pathBefore.dev
-      || openedBefore.ino !== pathBefore.ino) {
-      throw corruptRecord(file, 'JSON record 打开对象与路径身份不一致');
+    if (!openedBefore.isFile()) throw corruptRecord(file, 'JSON record 打开对象不是普通文件');
+    if (openedBefore.dev !== pathBefore.dev || openedBefore.ino !== pathBefore.ino) {
+      throw readRaced(file);
     }
     const bytes = await handle.readFile();
     const openedAfter = await handle.stat();
     const pathAfter = await fs.lstat(file).catch(() => null);
+    if (pathAfter !== null && (!pathAfter.isFile() || pathAfter.isSymbolicLink())) {
+      throw corruptRecord(file, 'JSON record 读取后路径不是普通文件');
+    }
     if (!sameOpenedFile(openedBefore, openedAfter)
       || pathAfter === null
       || !pathAfter.isFile()
@@ -108,11 +124,12 @@ async function readBytes(file: string): Promise<{ bytes: Buffer; identity: JsonR
       || pathAfter.size !== openedAfter.size
       || pathAfter.mtimeMs !== openedAfter.mtimeMs
       || pathAfter.ctimeMs !== openedAfter.ctimeMs) {
-      throw corruptRecord(file, 'JSON record 读取期间发生替换');
+      throw readRaced(file);
     }
     return { bytes, identity: identity(file, bytes) };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ELOOP') throw corruptRecord(file, 'JSON record 拒绝符号链接');
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw readRaced(file);
     throw error;
   } finally {
     if (handle !== undefined) await handle.close().catch(() => undefined);

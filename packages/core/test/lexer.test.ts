@@ -92,6 +92,14 @@ describe('Lexer', () => {
     expect(() => lex('@set msg = "abc')).toThrow(/L004/);
     expect(() => lex('@set msg = \'abc')).toThrow(/L004/);
   });
+
+  it('reports the physical quote column in arguments and modifiers', () => {
+    for (const source of ['  @set msg = "abc', '  @show lynn @effect "abc']) {
+      try { lex(source); throw new Error('expected lexical error'); }
+      catch (error) { expect((error as { col: number }).col).toBe(source.indexOf('"') + 1); }
+    }
+    expect(() => lex('@show lynn @=left')).toThrow(/L002/);
+  });
 });
 
 describe('extractSpeaker exported semantic helper (N2 shared truth)', () => {

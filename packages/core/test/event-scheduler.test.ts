@@ -21,6 +21,20 @@ function makeEvents(): ScheduledEventDef[] {
 }
 
 describe('EventScheduler（兰斯式事件优先级调度）', () => {
+  it('failed effects preserve all variables and leave a once event eligible for retry', () => {
+    const store = new VariableStore(decls);
+    const events: ScheduledEventDef[] = [{ id: 'bad', characterId: 'sys', when: 'true', scene: 's', once: true,
+      effects: { morale: 5, liberated: 'invalid' as never } }];
+    const sched = new EventScheduler(events, store);
+    const before = store.snapshot();
+    expect(() => sched.fireInto('bad', store)).toThrow();
+    expect(store.snapshot()).toEqual(before);
+    expect(sched.isFired('bad')).toBe(false);
+    events[0]!.effects = { morale: 5, liberated: true };
+    expect(sched.fireInto('bad', store)?.id).toBe('bad');
+    expect(store.get('morale')).toBe(5);
+    expect(sched.isFired('bad')).toBe(true);
+  });
   it('eligible 按优先级降序返回合格事件（同优先级保持声明序）', () => {
     const store = new VariableStore(decls);
     const sched = new EventScheduler(makeEvents(), store);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { parseVariableConfig, validateVarDecl, type LintIssue } from '../src/scene-lint.js';
+import { parseVariableConfig, validateVarDecl, validateSceneVariables, type LintIssue } from '../src/scene-lint.js';
+import { compileScene } from '../src/dsl/compiler.js';
 import { VariableStore } from '../src/state/variable-store.js';
 import type { VarDeclaration, VarValue } from '../src/state/types.js';
 
@@ -9,6 +10,13 @@ function lintDeclaration(name: string, decl: unknown): { valid: boolean; issues:
 }
 
 describe('scene-lint 变量声明校验', () => {
+  it('checks inventory/random targets and has_item result writes', () => {
+    const scene = compileScene('@add_item missing potion\n@remove_item missing potion\n@random missing 1 3\n@has_item bag potion fixed', 'scene.gal', 'scene');
+    const issues: LintIssue[] = [];
+    validateSceneVariables(scene, new Set(['bag', 'fixed']), new Map([['bag', 'string[]'], ['fixed', 'boolean']]), new Set(['fixed']), issues, true);
+    expect(issues.filter(issue => issue.code === 'V001')).toHaveLength(3);
+    expect(issues.some(issue => issue.text.includes('fixed') && issue.text.includes('readonly'))).toBe(true);
+  });
   it('与 VariableStore 一致拒绝嵌套非法值，并接受合法嵌套数组对象', () => {
     const invalidValues = [
       Object.fromEntries([['nested', null]]) as unknown as VarValue,

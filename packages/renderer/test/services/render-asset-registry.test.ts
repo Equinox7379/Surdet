@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Texture } from 'pixi.js';
+import { Texture, TextureSource } from 'pixi.js';
 import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
 
 function fakeTexture(label: string): Texture {
@@ -36,6 +36,33 @@ afterEach(() => {
 });
 
 describe('RenderAssetRegistry', () => {
+  it('destroys the source of its final generated texture but preserves caller textures', () => {
+    const { registry } = registryHarness();
+    const source = new TextureSource({ width: 1, height: 1 });
+    const texture = new Texture({ source });
+    registry.getOrCreateBackground('missing', () => texture);
+    registry.reset();
+    expect(texture.destroyed).toBe(true);
+    expect(source.destroyed).toBe(true);
+    expect(Texture.WHITE.destroyed).toBe(false);
+  });
+  it('keeps the latest key request when an older different URL finishes last', async () => {
+    let finishOld!: (texture: Texture) => void;
+    const latest = fakeTexture('latest');
+    const unload = vi.fn(async () => {});
+    const registry = new RenderAssetRegistry({
+      load: async (source) => source === 'old' ? new Promise<Texture>(resolve => { finishOld = resolve; }) : latest,
+      unload,
+    });
+    const old = registry.registerBackground('room', 'old');
+    await registry.registerBackground('room', 'new');
+    finishOld(fakeTexture('old'));
+    await old;
+    expect(registry.resolveBackground('room')).toBe(latest);
+    expect(unload).toHaveBeenCalledWith(['old']);
+    expect(unload).not.toHaveBeenCalledWith(['new']);
+    await registry.releaseRegisteredAssetSources();
+  });
   it('keeps the old resource when replacement preparation fails', async () => {
     const { registry } = registryHarness();
     const goodTexture = fakeTexture('good');

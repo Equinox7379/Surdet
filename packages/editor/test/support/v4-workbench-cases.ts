@@ -6,6 +6,9 @@ import { buildAuthoringWorkbench } from '../../src/shell/authoring-workbench.js'
 import { disposeScriptV4, revealScriptV4Line } from '../../src/v4/script-workbench.js';
 import { enhanceConfigTables } from '../../src/v4/surfaces.js';
 import { bindSearchHooks, renderSearchPanel, focusSearchInput, resetSearchSession } from '../../src/panels/search-panel.js';
+import { renderConfig, resetConfigSession, inspectConfigDraftState } from '../../src/panels/config.js';
+import { renderTimelinePanel, bindTimelineHooks, clearTimelineViewStates } from '../../src/panels/timeline-panel.js';
+import { clearTimelineHistories, timelineHistoryDepth } from '../../src/timeline-history.js';
 
 export const SOURCE = '@scene start\r\n@label opening\r\n@bg hall\r\n@show lynn:uniform normal @ right\r\n凛:你好。\r\n@wait 500\r\n@choice\r\n  继续 -> @goto again\r\n  离开 -> @goto done\r\n@label again\r\n凛：继续。\r\n@label done\r\n@end';
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
@@ -123,6 +126,28 @@ function searchKey(key: string, options: KeyboardEventInit = {}): void {
   control('#search-input').dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options }));
 }
 export const v4WorkbenchCases: BrowserCase[] = [
+  { name: '项目切换后拒绝旧名词表异步导入', run: async () => {
+    fixture(); resetConfigSession();
+    document.body.innerHTML = '<div id="config-view"></div><div id="status"></div>';
+    renderConfig(control('#config-view')); await nextTask();
+    clickText('#config-view', '名词表');
+    const upload = control<HTMLInputElement>('input[type="file"]');
+    let finish!: (text: string) => void;
+    const pending = new Promise<string>(resolve => { finish = resolve; });
+    const file = new File([''], 'terminology.json');
+    Object.defineProperty(file, 'text', { value: () => pending });
+    Object.defineProperty(upload, 'files', { value: [file] });
+    upload.dispatchEvent(new Event('change', { bubbles: true }));
+    resetConfigSession();
+    state.configFiles.terminology = { terms: [{ canonical: '新项目', variants: [] }] };
+    renderConfig(control('#config-view')); await nextTask();
+    const before = control('#config-view').textContent;
+    finish(JSON.stringify({ terms: [{ canonical: '旧项目', variants: [] }] }));
+    await nextTask();
+    assert(control('#config-view').textContent === before, 'old import changed the current project UI');
+    assert(!inspectConfigDraftState().dirty, 'old import dirtied the current project');
+    resetConfigSession();
+  } },
   { name: 'scoped replacement preserves Unicode separators and unrelated dialogue through undo and redo', run: () => {
     for (const separator of ['\u2028', '\u2029']) {
       const before = `@scene start\r\n林汀：前半句${separator}后半句\n周渡：灯塔还亮着。\r@end`;
@@ -604,6 +629,28 @@ export const v4WorkbenchCases: BrowserCase[] = [
     assert(secondLoad?.payload?.fonts?.body?.buffer, 'second preview load did not contain the test font');
     assert(JSON.stringify([...new Uint8Array(secondLoad.payload.fonts.body.buffer)]) === JSON.stringify([31, 32, 33]), 'same-name project reused prior font bytes');
     disposePreviewPanel();
+  } },
+  { name: 'timeline fields reject invalid payloads and retain unrelated timing', run: () => {
+    fixture(); clearTimelineHistories(); clearTimelineViewStates();
+    bindTimelineHooks({ onPreview: () => {} });
+    const text = JSON.stringify({ version: 1, id: 't', durationMs: 1000, tracks: [
+      { kind: 'portrait', target: 'lynn:uniform', cues: [{ action: 'show', expression: 'normal', position: 'center', atMs: 5, durationMs: 125, easing: 'linear' }] },
+      { kind: 'particle', cues: [{ action: 'start', kind: 'sparkle', atMs: 25, durationMs: 405, easing: 'linear' }] },
+    ] });
+    const entry = { id: 't', file: 't.json', text, eol: '\n' as const, dirty: false, handle: null };
+    state.timelines = [entry]; state.currentTimeline = 't'; state.currentTimelineCue = { trackIndex: 0, cueIndex: 0 };
+    const panel = control<HTMLElement>('#main'); renderTimelinePanel(panel);
+    input('[data-timeline-focus="track-0-target"]', '', 'change');
+    assert(entry.text === text && !entry.dirty, 'invalid portrait target changed the draft');
+    input('[data-timeline-focus="track-0-target"]', 'other', 'change');
+    const changed = JSON.parse(entry.text);
+    assert(changed.tracks[0].target === 'other', 'valid target not applied');
+    assert(changed.tracks[1].cues[0].atMs === 25 && changed.tracks[0].cues[0].durationMs === 125, 'unrelated timing changed');
+    state.currentTimelineCue = { trackIndex: 1, cueIndex: 0 }; renderTimelinePanel(panel);
+    const before = entry.text;
+    input('[data-timeline-focus="inspector-kind"]', '', 'change');
+    assert(entry.text === before, 'invalid particle kind changed the draft');
+    assert(timelineHistoryDepth('t').undo === 1, 'rejected fields created history');
   } },
   { name: 'only one real preview panel may own an iframe', run: () => {
     fixture(); const first = document.createElement('section'), second = document.createElement('section');

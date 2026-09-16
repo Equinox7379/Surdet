@@ -328,8 +328,9 @@ export function updateGraph(): void {
     title.textContent = id === entry ? `${id}（入口）` : id;
     g.appendChild(title);
     g.addEventListener('click', () => {
-      const key = [...state.scenes.keys()].find((k) => state.scenes.get(k)!.id === id);
-      if (key) onSceneJumpHook(key);
+      const matches = [...state.scenes.keys()].filter((k) => state.scenes.get(k)!.id === id);
+      if (matches.length === 1) onSceneJumpHook(matches[0]!);
+      else setStatus(`场景“${id}”不存在或对应多个文件，请从目录选择具体文件`, false, 4000);
     });
     svg.appendChild(g);
   }

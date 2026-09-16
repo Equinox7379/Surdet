@@ -6,7 +6,7 @@ export type Locale = string;
 export type MessageCatalog = Readonly<Record<string, string>>;
 
 function localeChain(locale: Locale, fallback: Locale): string[] {
-  const normalized = locale.trim().replace('_', '-');
+  const normalized = locale.trim().replace(/_/g, '-');
   const base = normalized.split('-')[0] ?? normalized;
   return [...new Set([normalized, base, fallback])].filter((item) => item.length > 0);
 }

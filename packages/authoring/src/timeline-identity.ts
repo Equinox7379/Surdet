@@ -8,6 +8,16 @@
  * 禁止各自复制派生算法，禁止 alias / fallback 双真相。
  */
 
+import { AuthoringOperationError } from './change-session.js';
+
+/** Resolve existing files without inventing a flat path or picking a duplicate. */
+export function resolveUniqueTimelinePath(files: Readonly<Record<string, string>>, id: string): string | undefined {
+  const paths = Object.keys(files).filter(path => path.startsWith('content/timelines/')
+    && path.endsWith('.json') && timelineIdFromPath(path) === id);
+  if (paths.length > 1) throw new AuthoringOperationError('OBJECT_AMBIGUOUS', `时间轴身份 timeline:${id} 对应多个文件：${paths.sort().join('、')}`);
+  return paths[0];
+}
+
 /** 从项目路径派生 canonical timeline ID（filename stem）的唯一实现。 */
 export function timelineIdFromPath(path: string): string {
   const base = path.slice(path.lastIndexOf('/') + 1);

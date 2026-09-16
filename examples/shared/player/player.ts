@@ -261,6 +261,8 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   commands.preferences.setTheme(createRendererTheme(project.theme));
   dialogue.setSpeakerProfiles(speakerProfiles);
   settings.apply(typewriter, audio);
+  // Observe the start before the presentation handler can synchronously finish a skipped video.
+  bus.on('video', () => { uiSession.setVideoActive(true); });
   renderer.connect(bus);
   interp.setTimelineCatalog(timelines);
   const presentationConnection = connectInterpreterPresentation({
@@ -272,7 +274,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   const isTitleScreen = (): boolean => uiSnapshot().base === 'title';
   const isOverlay = (overlay: PlayerOverlay): boolean => uiSnapshot().overlay === overlay;
   const isVideoActive = (): boolean => uiSnapshot().videoActive;
-  const isUiBusy = (): boolean => uiSnapshot().operation !== 'idle';
+  const isUiBusy = (): boolean => uiSnapshot().operation !== 'idle' || queries.overlay.system().type !== 'none';
   const restoreCommandRailForPlayerContext = (): void => {
     const snapshot = uiSnapshot();
     if (snapshot.base === 'game' && snapshot.overlay === 'none' && snapshot.operation === 'idle' && !snapshot.interfaceHidden) {
@@ -300,7 +302,6 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   const canRollback = (): boolean => rollbackRuntime.canRollback();
   const performRollback = (): boolean => rollbackRuntime.perform();
 
-  bus.on('video', () => { uiSession.setVideoActive(true); });
   bus.on('stateReset', () => { uiSession.setVideoActive(false); });
   bus.on('text', () => rollbackRuntime.captureText());
 
@@ -432,18 +433,15 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
     ? createElectronSaveStorage(desktopSave)
     : {
         read: (slot) => {
-          try {
-            const raw = localStorage.getItem(`surdet:save:${slot}`);
-            return raw ? (JSON.parse(raw) as SaveSnapshot) : null;
-          } catch {
-            return null;
-          }
+          const raw = localStorage.getItem(`surdet:save:${slot}`);
+          return raw === null ? null : (JSON.parse(raw) as SaveSnapshot);
         },
         write: (slot, data) => {
           try {
             localStorage.setItem(`surdet:save:${slot}`, JSON.stringify(data));
           } catch (err) {
             console.error('[starter] 存档写入失败：', err);
+            throw err;
           }
         },
         delete: (slot) => localStorage.removeItem(`surdet:save:${slot}`),
@@ -459,6 +457,8 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
     if (rollbackRuntime.isRestoring()) return;
     void saves.save(AUTO_SLOT, enrichSnapshot(snap)).then(() => {
       console.info('[starter] 自动存档（ngp cleared:', ngp.isCleared(), '）');
+    }, (error) => {
+      console.error('[starter] 自动存档失败，原存档保留：', error);
     });
   });
 
@@ -1026,13 +1026,11 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
       const snap = await saves.load(QUICK_SLOT);
       clearRollback();
       interp.loadSnapshot(snap);
-      playerShell!.commands.completeOperation({
-        base: origin.base,
-        overlay: origin.overlay,
-        interfaceHidden: origin.interfaceHidden,
-        videoActive: origin.videoActive,
-      });
-      if (railWasVisible) dialogue.restoreCommandRail();
+      sessionStart = Date.now() - Math.max(0, snap.meta.playTimeSec ?? 0) * 1000;
+      playerShell!.commands.completeOperation({ base: 'game', overlay: 'none' });
+      activeSaveLoad = null;
+      menu.hideTitle();
+      refreshCommandRail();
       clearCountedThisSession = false;
       console.info('[starter] 快速读档');
       return true;
@@ -1078,6 +1076,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
       const snap = await saves.load(slotId);
       clearRollback();
       interp.loadSnapshot(snap);
+      sessionStart = Date.now() - Math.max(0, snap.meta.playTimeSec ?? 0) * 1000;
       playerShell!.commands.completeOperation({ base: 'game', overlay: 'none' });
       menu.hideTitle();
       activeSaveLoad = null;
@@ -1309,6 +1308,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
     }
     const input = rendererInputForGameAction(action);
     if (input) {
+      if (input.type === 'interface.toggle') uiSession.toggleInterface();
       renderer.dispatchInput(input);
       refreshCommandRail();
       return;
@@ -1415,6 +1415,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
       refreshCommandRail();
     } else if (e.key === 'h' || e.key === 'H') {
       // 隐藏对话界面（galgame 惯例：赏画用；再按恢复）
+      uiSession.toggleInterface();
       console.info('[starter] 隐藏界面', renderer.dispatchInput({ type: 'interface.toggle' }) ? '开' : '关');
       refreshCommandRail();
     } else if (e.key === 'g' || e.key === 'G') {

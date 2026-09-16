@@ -18,6 +18,9 @@ function validateEvidencePath(root, capabilityId, kind, value) {
   if (!fs.existsSync(path.join(root, value))) {
     throw new Error(`${capabilityId} 的 ${kind} 证据 ${value} 不存在`);
   }
+  if (kind === 'test' && !/\.(?:test|spec|e2e)\.[cm]?[jt]sx?$/.test(normalized)) {
+    throw new Error(`${capabilityId} 的测试证据必须指向测试文件，不能用生产源码代替：${value}`);
+  }
 }
 
 export function validateCapabilityDocument(input, root) {
@@ -56,6 +59,7 @@ export function renderCapabilityMatrix(input) {
     '# Surdet 能力矩阵',
     '',
     '> 本文件由 `docs/capabilities.json` 生成。请修改 JSON 后运行 `npm run docs:capabilities`，不要手工编辑本文件。',
+    '> 下表是已登记能力的实现与测试索引，不是一次运行的通过证明，也不穷尽全部 Agent 能力；正式创作入口以 capabilities.describe 为准。',
     '',
     '| 能力 | 类型 | Core | Renderer | Editor | Host | 测试证据 | 文档证据 | 当前限制 |',
     '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',

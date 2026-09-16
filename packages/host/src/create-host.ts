@@ -111,7 +111,6 @@ export function createDefaultHost(options: DefaultHostOptions): DefaultHostContr
       state.settled = true;
       active = null;
       onSystemBoundary('reset');
-      resumeInterpreter();
     } else {
       onSystemBoundary('reset');
     }
@@ -127,6 +126,7 @@ export function createDefaultHost(options: DefaultHostOptions): DefaultHostContr
     } catch (error) {
       onError(error);
     }
+    if (state) resumeInterpreter();
   };
 
   const dispose = (): void => {

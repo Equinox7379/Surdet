@@ -112,6 +112,7 @@ export function renderIssues(): void {
   for (const issue of issues.slice(0, 100)) {
     box.appendChild(renderIssue(issue));
   }
+  if (issues.length > 100) box.appendChild(h('p', 'empty', `当前显示前 100 条，共 ${issues.length} 条；修复后重新校验可继续查看。`));
   // 插到右侧面板顶部（h3 之后）
   const firstH3 = right.querySelector('h3');
   if (firstH3 && firstH3.parentElement === right) right.insertBefore(box, firstH3.nextSibling);
@@ -126,10 +127,15 @@ function renderIssue(issue: Issue): HTMLElement {
   el.onclick = () => {
     // 跳转到对应场景与行：场景 Map 的 key 是相对路径（M4），由文件名推导 key；
     // 推导不中再按 basename 回退（部分告警以 sceneId 上报）——修复子目录场景点击失效
-    let key = issue.file.replace(/\.gal$/, '');
+    let key = issue.file.replace(/^content\/scenario\//, '').replace(/\.gal$/i, '');
     if (!state.scenes.has(key)) {
       const base = key.split('/').pop() ?? key;
-      key = [...state.scenes.keys()].find((k) => k === base || k.endsWith('/' + base)) ?? base;
+      const matches = [...state.scenes.keys()].filter((k) => k === base || k.endsWith('/' + base));
+      if (matches.length !== 1) {
+        setStatus(`无法唯一定位“${issue.file}”，请从目录选择具体文件`, false, 4000);
+        return;
+      }
+      key = matches[0]!;
     }
     if (state.scenes.has(key)) {
       onIssueJumpHook(key, Math.max(0, issue.line - 1));

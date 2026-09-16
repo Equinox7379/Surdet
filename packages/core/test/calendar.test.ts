@@ -30,6 +30,14 @@ function makeRunner() {
 }
 
 describe('CalendarRunner', () => {
+  it.each([0, -1, NaN, Infinity, 1.5])('rejects invalid weeksPerMonth %s', (weeksPerMonth) => {
+    expect(() => new CalendarRunner(makeConfig({ weeksPerMonth }), new VariableStore(decls))).toThrow();
+  });
+  it('rejects negative AP costs instead of rewarding a visit', () => {
+    const config = makeConfig();
+    config.nodes[0]!.apCost = -1;
+    expect(() => new CalendarRunner(config, new VariableStore(decls))).toThrow();
+  });
   it('初始回合/行动力/日期', () => {
     const { runner } = makeRunner();
     expect(runner.turn).toBe(1);

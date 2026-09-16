@@ -47,6 +47,24 @@ async function requestFor(session: Awaited<ReturnType<typeof openAgentPortSessio
   return { operationId: crypto.randomUUID(), items: [{ itemId: crypto.randomUUID(), sourceId, sourcePath: 'night.png', sha256: file.sha256, kind, fileName }] };
 }
 
+it('public inspect of an unknown operation is read-only; a registered recovery barrier is visible in session discovery', async () => {
+  const f = await fixture();
+  const observe = await f.open('observe');
+  expect(await observe.invoke('asset.import.inspect', { operationId: crypto.randomUUID() }))
+    .toMatchObject({ ok: false, error: { code: 'IMPORT_OPERATION_NOT_FOUND' } });
+  expect((await observe.describe()).manualRecoveryRequired).toBe(false);
+  const apply = await f.open('apply');
+  const request = await requestFor(apply);
+  result(await apply.invoke('asset.import.stage', request));
+  const store = new AssetImportRecordStore(await openAssetImportAuthorityPaths({ projectRoot: f.projectRoot, dataRoot: path.join(f.root, 'asset-data') }));
+  await store.ensureOperationRecoveryBarrier(request.operationId, new Date().toISOString(), 'maintenance-fixture');
+  const description = await apply.describe();
+  expect(description.manualRecoveryRequired).toBe(true);
+  expect(description.capabilities.find(capability => capability.id === 'asset.import.stage')?.availability).toBe('state-blocked');
+  expect(description.capabilities.find(capability => capability.id === 'asset.import.commit')?.availability).toBe('state-blocked');
+  expect(description.nextActions).toContain('asset.import.inspect');
+});
+
 it('stages via the public port without project writes, resumes and commits exactly once, then returns usable catalog keys', async () => {
   const f = await fixture();
   const stage = await f.open('stage');

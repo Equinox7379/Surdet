@@ -76,7 +76,16 @@ export class AffectionSystem {
     this.#env = env;
     for (const ev of events) {
       for (const child of ev.children ?? []) {
+        const parent = this.#parentOf.get(child);
+        if (parent !== undefined && parent !== ev.id) throw new Error(`关系事件 '${child}' 有多个父事件`);
         this.#parentOf.set(child, ev.id);
+      }
+    }
+    for (const event of events) {
+      const visited = new Set<string>();
+      for (let id: string | undefined = event.id; id !== undefined; id = this.#parentOf.get(id)) {
+        if (visited.has(id)) throw new Error(`关系事件树存在循环：${id}`);
+        visited.add(id);
       }
     }
   }

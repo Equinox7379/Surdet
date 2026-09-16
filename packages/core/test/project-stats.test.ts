@@ -6,6 +6,12 @@ function scene(id: string, source: string) {
 }
 
 describe('computeProjectStats', () => {
+  it('includes configured system entry scenes and their successors in reachability', () => {
+    const scenes = [scene('start', '开始'), scene('event', '@jump end'), scene('end', '结束'), scene('unused', '孤立')];
+    const stats = computeProjectStats({ scenes, entryScene: 'start', sourceTextByScene: {}, additionalSceneRoots: ['event'] });
+    expect(stats.reachableScenes).toEqual(['end', 'event', 'start']);
+    expect(stats.unreachableScenes).toEqual(['unused']);
+  });
   it('computes stable text/choice/ending/speaker/reachability/assets metrics', () => {
     const scenes = [
       scene('b', '@bg room\n旁白\n@clear end_b'),

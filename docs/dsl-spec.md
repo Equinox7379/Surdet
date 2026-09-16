@@ -75,6 +75,8 @@
 | `@mov` | `@mov lynn left` / `@mov lynn 400 600` | ✅ | 立绘位置平移（角色 位置 [时长毫秒]；位置 = left/center/right 或裸数字 X 坐标；缺省 400ms） |
 | `@tint` | `@tint #ff6600 0.3` / `@tint #ff6600 0.3 800` | ✅ | 全屏调色叠加（颜色 hex + 透明度 [过渡毫秒]；`@tint off` 清除） |
 | `@timeline` | `@timeline intro_arrival @ blocking` | ✅ | 播放 `content/timelines/<id>.json` 中的多轨演出；默认非阻塞，追加 `@ blocking` 后等待演出完成 |
+| `@ambience` | `@ambience rain` / `@ambience off` | ✅ | 播放或停止独立环境音轨，与 BGM 分开 |
+| `@transition` | `@transition fade 600` | ✅ | 预设切景转场，支持 fade、slide-left、slide-right、circle |
 
 ### 时间轴演出
 
@@ -116,8 +118,10 @@ content/timelines/intro_arrival.json
 在 `.gal` 中：
 
 ```gal
-@timeline intro_arrival              // 播放演出，同时继续解释剧情
-@timeline intro_arrival @ blocking   // 演出完成前暂停剧情，可点击/快进完成
+// 播放演出，同时继续解释剧情
+@timeline intro_arrival
+// 演出完成前暂停剧情，可点击/快进完成
+@timeline intro_arrival @ blocking
 ```
 
 时间轴缺少素材时沿用渲染器的占位回退，不会阻塞启动；非法 JSON 会被 lint/编辑器报告并隔离。保存与读档会记录正在播放的时间轴游标，读档后从保存位置恢复，不重复重播已经完成的演出。旧项目不含 `content/timelines` 时行为完全不变。
@@ -250,6 +254,8 @@ node packages/cli/dist/index.js lint <projectDir>
 | S006 | `@goto/@jump/@call` 缺目标（含 choice 选项内联写法） |
 | S007 | choice 选项内不允许块指令 |
 | S008 | `@if` 嵌套过深（超过 200 层，防止栈溢出） |
+| S009 | 选择项箭头后的内联动作必须以 `@` 开头 |
+| S010 | choice 行内不支持 `@switch`、`@loop`、`@video`，需在独立标签下使用 |
 
 ### 编译（C）
 | 码 | 含义 |
@@ -260,6 +266,10 @@ node packages/cli/dist/index.js lint <projectDir>
 | C004 | `@set` 用法错误 |
 | C005 | `@set` 表达式语法错误 |
 | C006 | `@mod` 增量非法 |
+| C007 | `@wait` 毫秒参数非法 |
+| C008 | `@switch` 变量与值:标签条目非法 |
+| C009 | `@video` 缺少素材键 |
+| C010 | `@timeline` 参数或 blocking 修饰符非法 |
 
 ### 跨场景（J）
 | 码 | 含义 |
@@ -282,6 +292,24 @@ node packages/cli/dist/index.js lint <projectDir>
 | T001 | `@set` 值类型与目标变量声明类型不匹配（`+=/-=` 要求 number） |
 | T002 | 条件表达式（`@if`/`choice [if:]`）静态类型非 boolean |
 | T003 | 运算符操作数类型明显不符（如 `trust > "a"`、`trust && flag`） |
+| T010 | 未知转场名称 |
+
+### 时间轴 JSON（TL）
+
+时间轴诊断独立于剧本表达式错误，使用 `TL001`–`TL010`（原时间轴 `T001`–`T010` 已更正），附带 JSON 字段路径。
+
+| 码 | 含义 |
+|---|---|
+| TL001 | 顶层不是对象 |
+| TL002 | version 不是 1 |
+| TL003 | id 不合法 |
+| TL004 | 总时长不是 0..600000 的整数毫秒 |
+| TL005 | tracks/cues 或其元素结构错误 |
+| TL006 | 节点时间非法或超出总时长 |
+| TL007 | 轨道类型或缓动不支持 |
+| TL008 | 动作不属于该轨道 |
+| TL009 | 动作参数非法 |
+| TL010 | 重复时间轴 id |
 
 静态类型推断基于 `game.config.json` 的声明表与字面量；无法确定类型时跳过（不误报）。运行时类型校验仍由 `VariableStore`/求值器兜底。
 

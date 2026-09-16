@@ -420,6 +420,7 @@ const ERROR_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
   PROJECT_IDENTITY_MISMATCH: '当前打开的目录与导入服务绑定的项目不一致。',
   PROJECT_BUSY: '项目正在被另一项写入操作占用，请稍后重试。',
   IMPORT_FILESYSTEM_UNSUPPORTED: '当前文件系统不支持安全导入。',
+  PATH_OUTSIDE_PROJECT: '项目包含越界路径、符号链接或目录联接。请先整理为项目内的真实文件后重试。',
   IMPORT_OPERATION_NOT_FOUND: '没有找到这次导入记录。',
   IMPORT_OPERATION_CONFLICT: '这次导入的状态已经变化，请刷新后继续。',
   IMPORT_PLAN_BLOCKED: '导入计划存在冲突，请先处理标出的文件。',

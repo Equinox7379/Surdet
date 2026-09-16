@@ -15,6 +15,24 @@ function makeProject(files: Record<string, string>): string {
 }
 
 describe('lintProject', () => {
+  it('checks DSL and timeline image references using content/assets and supported public images', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ entryScene: 'start', variables: {} }),
+      'content/scenario/start.gal': '@scene start\n@bg absent\n@show lynn:uniform lost\n@timeline intro\n@bg public_image\n@end\n',
+      'public/bg/public_image.svg': '<svg/>',
+      'content/timelines/intro.json': JSON.stringify({ version: 1, id: 'intro', durationMs: 100,
+        tracks: [{ kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'missing_timeline' }] }] }),
+    });
+    const issues = lintProject(dir).issues.filter(issue => issue.code === 'ASSET_UNRESOLVED');
+    expect(issues).toHaveLength(3);
+    expect(issues.map(issue => issue.text).join('\n')).not.toContain('public_image');
+    fs.mkdirSync(path.join(dir, 'content/assets/bg'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'content/assets/portrait'), { recursive: true });
+    for (const file of ['bg/absent.svg', 'bg/missing_timeline.svg', 'portrait/lynn_uniform_lost.svg']) {
+      fs.writeFileSync(path.join(dir, 'content/assets', file), '<svg/>');
+    }
+    expect(lintProject(dir).issues.filter(issue => issue.code === 'ASSET_UNRESOLVED')).toEqual([]);
+  });
   it('does not report a real avatar missing when the caller has not supplied asset catalog facts', () => {
     const dir = makeProject({
       'game.config.json': JSON.stringify({

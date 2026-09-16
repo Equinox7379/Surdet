@@ -86,7 +86,6 @@ describe('agent authoring project config wave 3 CLI vertical slice', () => {
     const begun = runCli(['change', 'begin', '--project', root, '--json'], env);
     expect(begun.status).toBe(0);
     const changeId = body(begun).changeId as string;
-    const revision = body(begun).projectRevision as string;
     const requestDir = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-wave3-input-'));
 
     // 新建目标场景 agent_probe（@scene 行作为后续 insertAfter 锚点）。
@@ -114,15 +113,20 @@ describe('agent authoring project config wave 3 CLI vertical slice', () => {
     expect(body(ensured).result.objectRef).toBe('character:nova');
     expect(body(ensured).result.created).toBe(true);
 
-    // scene.patch 在 agent_probe 的 @label start 行后追加 nova 台词（保证 start 启动路径可达）。
-    const anchorRef = `scene:agent_probe/instruction:2@${revision.slice(0, 8)}-${fingerprint('@label start')}`;
+    // scene.patch 使用当前公开对象查询返回的正文锚点追加 nova 台词。
+    const currentScene = runCli(['object', 'inspect', '--project', root, '--change', changeId, '--ref', 'scene:agent_probe', '--json'], env);
+    expect(currentScene.status).toBe(0);
+    const anchorRef = body(currentScene).result.childRefs.find((ref: string) => ref.includes('/text:'));
+    expect(anchorRef).toBeDefined();
+    const anchor = runCli(['object', 'inspect', '--project', root, '--change', changeId, '--ref', anchorRef, '--json'], env);
+    expect(anchor.status).toBe(0);
     const patchInput = writeJson(requestDir, 'patch.json', {
       operationId: 'op-scene-patch-nova',
       sceneId: 'agent_probe',
       patch: {
         kind: 'insertAfter',
         anchor: anchorRef,
-        expectedFingerprint: fingerprint('@label start'),
+        expectedFingerprint: body(anchor).result.fingerprint,
         blocks: [{ kind: 'text', speaker: 'nova', value: '诺瓦登场台词。' }],
       },
     });

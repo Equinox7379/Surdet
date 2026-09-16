@@ -177,9 +177,11 @@ export class HumanWorkspaceStore {
   private readonly activeWindowMs: number;
   private readonly graceWindowMs: number;
   private readonly updates = new Map<string, Promise<unknown>>();
+  private readonly leases: NodeLocalLeaseManager;
 
   constructor(options: HumanWorkspaceStoreOptions = {}) {
     this.dataRoot = options.dataRoot ?? new NodeLocalLeaseManager().dataRoot;
+    this.leases = new NodeLocalLeaseManager(this.dataRoot);
     this.now = options.now ?? (() => Date.now());
     this.activeWindowMs = options.activeWindowMs ?? 7_000;
     this.graceWindowMs = options.graceWindowMs ?? 22_000;
@@ -206,7 +208,30 @@ export class HumanWorkspaceStore {
 
   private async updateSession<T>(file: string, work: () => Promise<T>): Promise<T> {
     const previous = this.updates.get(file) ?? Promise.resolve();
-    const pending = previous.catch(() => undefined).then(work);
+    const pending = previous.catch(() => undefined).then(async () => {
+      const resourceId = `${path.basename(path.dirname(file))}-${path.basename(file, '.json')}`;
+      for (let attempt = 0; ; attempt += 1) {
+        let lease;
+        try { lease = await this.leases.acquire({ scope: 'workspace', resourceId }); }
+        catch (error) {
+          if (!(error instanceof AuthoringOperationError) || error.code !== 'PROJECT_BUSY'
+            || error.details?.['manualRecoveryRequired'] === true || attempt >= 99) throw error;
+          await new Promise(resolve => setTimeout(resolve, 10));
+          continue;
+        }
+        let failed = false;
+        let workError: unknown;
+        try { return await work(); }
+        catch (error) { failed = true; workError = error; throw error; }
+        finally {
+          try { await lease.release(); }
+          catch (releaseError) {
+            if (failed) throw new AggregateError([workError, releaseError], '工作区状态更新失败，且释放租约失败', { cause: workError });
+            throw releaseError;
+          }
+        }
+      }
+    });
     this.updates.set(file, pending);
     try {
       return await pending;

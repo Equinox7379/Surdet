@@ -417,6 +417,13 @@ export class AssetImportRecordStore {
     createdAt = new Date().toISOString(),
     incidentKey = 'journal-state',
   ): Promise<void> {
+    // Unknown IDs carry no publication evidence and must not poison the project.
+    // Read only existence here: parsing registration would recurse on corrupt records.
+    const registration = await fs.lstat(this.operationIndexFile(operationId)).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    });
+    if (registration === null) throw new AssetImportAuthorityError('IMPORT_OPERATION_NOT_FOUND', '导入操作不存在');
     this.localRecoveryBlocked = true;
     const normalizedKey = incidentKey.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').slice(0, 48) || 'incident';
     const baseBarrierId = `operation-${operationId}-${normalizedKey}`;
@@ -985,10 +992,10 @@ export class AssetImportRecordStore {
   }
 
   async readOperation(operationId: string): Promise<{ journal: AssetImportJournal; sha256: string }> {
-    await this.assertOperationWorkspaceOrBarrier(operationId);
-    const loaded = await this.readOperationJson<AssetImportJournal>(this.journalFile(operationId), operationId, '导入 journal');
     const registration = await this.readOperationRegistration(operationId);
     if (registration === null) throw new AssetImportAuthorityError('IMPORT_OPERATION_NOT_FOUND', '导入操作不存在');
+    await this.assertOperationWorkspaceOrBarrier(operationId);
+    const loaded = await this.readOperationJson<AssetImportJournal>(this.journalFile(operationId), operationId, '导入 journal');
     if (loaded === null) {
       await this.ensureOperationRecoveryBarrier(operationId, registration.createdAt, 'journal-missing');
       throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '已登记导入缺少 journal');

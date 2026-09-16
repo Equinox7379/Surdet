@@ -24,6 +24,7 @@ export interface ProjectStats {
 export interface ProjectStatsInput {
   scenes: readonly CompiledScene[];
   entryScene: string;
+  additionalSceneRoots?: readonly string[];
   sourceTextByScene: Readonly<Record<string, string>>;
 }
 
@@ -95,7 +96,7 @@ export function computeProjectStats(input: ProjectStatsInput): ProjectStats {
   }
 
   const reachable = new Set<string>();
-  const queue = input.entryScene && sceneIds.has(input.entryScene) ? [input.entryScene] : [];
+  const queue = [input.entryScene, ...input.additionalSceneRoots ?? []].filter(id => sceneIds.has(id));
   while (queue.length > 0) {
     const current = queue.shift()!;
     if (reachable.has(current)) continue;

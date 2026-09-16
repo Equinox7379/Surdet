@@ -13,6 +13,7 @@ import { cmdSimulate } from './simulate.js';
 import { cmdPack } from './pack.js';
 import { statsCommand } from './stats.js';
 import { authoringCommand } from './authoring-command.js';
+import { AUTHORING_CAPABILITY_REGISTRY } from '@surdet/authoring';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -28,10 +29,25 @@ function readVersion(): string {
 }
 const VERSION = readVersion();
 
-/** 参数值识别：--assume k=v 的值位置不可能是项目目录（防止误当作位置参数） */
-function isFlagValue(args: string[], a: string): boolean {
-  const i = args.indexOf(a);
-  return i > 0 && (args[i - 1] === '--assume' || args[i - 1] === '--max-paths' || args[i - 1] === '--max-steps' || args[i - 1] === '--seed');
+function projectArguments(command: string, args: string[]): string[] {
+  const flags: Record<string, string[]> = { new: [], lint: ['--json'], stats: ['--json'], audit: ['--no-run'],
+    build: ['--web'], manifest: [], pack: [], simulate: ['--json', '--assume', '--seed', '--max-paths', '--max-steps'] };
+  const values = new Set(['--assume', '--seed', '--max-paths', '--max-steps']);
+  const positional: string[] = [];
+  let literal = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (!literal && argument === '--') { literal = true; continue; }
+    if (!literal && argument.startsWith('-')) {
+      if (!flags[command]?.includes(argument)) throw new Error(`${command} 不支持参数 ${argument}`);
+      if (values.has(argument)) {
+        const value = args[++index];
+        if (value === undefined || value.startsWith('--')) throw new Error(`${argument} 缺少参数值`);
+      }
+    } else positional.push(argument);
+  }
+  if (positional.length > 1 || positional.some(value => value.trim() === '')) throw new Error(`${command} 需要一个有效的项目目录或名称`);
+  return positional;
 }
 
 const HELP = `Surdet Engine CLI v${VERSION}
@@ -57,7 +73,11 @@ const HELP = `Surdet Engine CLI v${VERSION}
   surdet manifest [dir]    生成版本补丁清单 release/update-manifest.json
   surdet pack <dir>        打包指定游戏的 Windows exe（M7）
   surdet capabilities describe --json
-  surdet project|object|change|scene|variable|character|timeline|gallery|runtime ... --json
+  surdet project|object|change|scene|variable|character|timeline|gallery|runtime|composition|review|asset ... --json
+      --input <file|->      按 capabilities describe 返回的 schema 传入完整 JSON
+      --asset-source <dir>  本次 CLI 调用授权读取的绝对图片目录（可重复）
+      --asset-import-data-root <dir>  与 Editor/MCP 共用的素材操作数据目录
+      原生 authoring 命令按本机操作者的 apply 权限执行；MCP 权限由启动 policy 限制。
 `;
 
 async function main(): Promise<number> {
@@ -74,13 +94,14 @@ async function main(): Promise<number> {
 
   const cmd = args[0];
 
-  if (cmd !== undefined && ['capabilities', 'project', 'object', 'change', 'scene', 'variable', 'character', 'timeline', 'gallery', 'runtime'].includes(cmd)) {
+  if (cmd !== undefined && AUTHORING_CAPABILITY_REGISTRY.some(capability => capability.id.split('.')[0] === cmd)) {
     return await authoringCommand(args);
   }
+  const positional = projectArguments(cmd ?? '', args.slice(1));
 
   switch (cmd) {
     case 'new': {
-      const name = args[1];
+      const name = positional[0];
       if (!name) {
         process.stderr.write('用法：surdet new <游戏名>\n');
         return 1;
@@ -89,27 +110,24 @@ async function main(): Promise<number> {
     }
 
     case 'audit': {
-      const rest = args.slice(1).filter((a) => !a.startsWith('--'));
-      const projectDir = path.resolve(rest[0] ?? process.cwd());
+      const projectDir = path.resolve(positional[0] ?? process.cwd());
       return await cmdAudit(projectDir, { noRun: args.includes('--no-run') });
     }
 
     case 'simulate': {
-      const rest = args.slice(1).filter((a) => !a.startsWith('--') && !isFlagValue(args, a));
-      const projectDir = path.resolve(rest[0] ?? process.cwd());
+      const projectDir = path.resolve(positional[0] ?? process.cwd());
       return await cmdSimulate(projectDir, args.slice(1));
     }
 
     case 'lint': {
       const jsonOut = args.includes('--json');
-      const rest = args.slice(1).filter((a) => a !== '--json');
-      const projectDir = path.resolve(rest[0] ?? process.cwd());
+      const projectDir = path.resolve(positional[0] ?? process.cwd());
       const result = lintProject(projectDir);
 
       if (jsonOut) {
         // 机器可读输出（M5 支柱1）：结构稳定 { ok, sceneCount, issues[{severity,code,text,hint,file,line,col}] }
         process.stdout.write(JSON.stringify({ ok: result.ok, sceneCount: result.sceneCount, issues: result.issues }, null, 2) + '\n');
-        return result.issues.some((i) => i.severity === 'error') ? 1 : 0;
+        return result.ok ? 0 : 1;
       }
 
       const errors = result.issues.filter((i) => i.severity === 'error');
@@ -133,24 +151,22 @@ async function main(): Promise<number> {
 
     case 'stats': {
       const jsonOut = args.includes('--json');
-      const rest = args.slice(1).filter((a) => a !== '--json');
-      return await statsCommand(path.resolve(rest[0] ?? process.cwd()), { json: jsonOut });
+      return await statsCommand(path.resolve(positional[0] ?? process.cwd()), { json: jsonOut });
     }
 
     case 'build': {
       const webOut = args.includes('--web');
-      const rest = args.slice(1).filter((a) => a !== '--web');
-      const projectDir = path.resolve(rest[0] ?? process.cwd());
+      const projectDir = path.resolve(positional[0] ?? process.cwd());
       return await cmdBuild(projectDir, { web: webOut });
     }
 
     case 'manifest': {
-      const projectDir = path.resolve(args[1] ?? process.cwd());
+      const projectDir = path.resolve(positional[0] ?? process.cwd());
       return await cmdManifest(projectDir);
     }
 
     case 'pack': {
-      return await cmdPack(args[1]);
+      return await cmdPack(positional[0]);
     }
 
     default:

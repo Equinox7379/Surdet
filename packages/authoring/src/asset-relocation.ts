@@ -1,3 +1,4 @@
+import { splitOutsideQuotes } from '@surdet/core';
 import type {
   ProjectAssetFileFact,
   ProjectAssetKind,
@@ -473,16 +474,14 @@ function sceneRewrite(
   const tokens = opaqueTokens(source);
   const sourcePortrait = roleAndOutfit(source.key);
   const targetPortrait = roleAndOutfit(target.key);
-  lines.forEach((line, index) => {
-    if (line.kind !== 'instr') return;
-    const parsed = splitInstruction(line.raw);
+  const rewrite = (raw: string, lineNumber: number, prefix = ''): string => {
+    const parsed = splitInstruction(raw);
     const args = parsed.args.map(decodeInstructionArgument);
     const replacements = new Map<number, string>();
-    const lineNumber = index + 1;
     const addChange = (argument: number, field: string, before: string, after: string): void => {
       replacements.set(argument, after);
       references.push({
-        ...reference('scene', file.path, `场景 · 第 ${lineNumber} 行`, field, `scene:${file.path}:${lineNumber}:${field}`, lineNumber),
+        ...reference('scene', file.path, `场景 · 第 ${lineNumber} 行`, `${prefix}${field}`, `scene:${file.path}:${lineNumber}:${prefix}${field}`, lineNumber),
         before,
         after,
       });
@@ -515,7 +514,7 @@ function sceneRewrite(
         }
       }
     } else if (!KNOWN_ASSET_INSTRUCTIONS.has(parsed.name)
-      && [...args, ...instructionModifierTokens(line.raw)].some((argument) => tokens.includes(argument))) {
+      && [...args, ...instructionModifierTokens(raw)].some((argument) => tokens.includes(argument))) {
       addBlocker(
         blockers,
         'ASSET_RELOCATION_OPAQUE_REFERENCE',
@@ -524,7 +523,18 @@ function sceneRewrite(
         lineNumber,
       );
     }
-    if (replacements.size > 0) lines[index] = { ...line, raw: rewriteInstructionArgumentsRaw(line.raw, replacements) };
+    return replacements.size > 0 ? rewriteInstructionArgumentsRaw(raw, replacements) : raw;
+  };
+  lines.forEach((line, index) => {
+    if (line.kind === 'instr') lines[index] = { ...line, raw: rewrite(line.raw, index + 1) };
+    if (line.kind !== 'choice-option') return;
+    // 与 Core choice parser 使用同一箭头规则，指令分段复用其引号感知 lexer。
+    const arrow = /\s->(?:\s|$)/.exec(line.raw);
+    if (!arrow) return;
+    const end = arrow.index + arrow[0].length;
+    const parts = splitOutsideQuotes(line.raw.slice(end), '@');
+    const inline = parts.map((part, n) => n === 0 ? part : rewrite(`@${part}`, index + 1, `inline.${n}.`).slice(1)).join('@');
+    lines[index] = { ...line, raw: line.raw.slice(0, end) + inline };
   });
   return { text: serializeSceneDocument(lines), references };
 }

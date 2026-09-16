@@ -438,6 +438,18 @@ export async function rollbackChange(change: ChangeSession): Promise<ChangeRecor
 /**
  * Wave 5 commit gate：integration change 必须 READY 才可 commit；普通 change（undefined）不受影响。
  */
+/** Shared external commit gate; evaluated again while holding the change lease. */
+export function assertCurrentCommitEvidence(record: ChangeRecord): void {
+  assertIntegrationReadyForCommit(record);
+  if (record.latestValidation === undefined) throw new AuthoringOperationError('VALIDATION_REQUIRED', '提交前缺少校验证据');
+  if (record.latestValidation.workingRevision !== record.workingRevision) throw new AuthoringOperationError('VALIDATION_STALE', '提交前校验证据不是当前 workingRevision');
+  if (record.latestValidation.errors !== 0) throw new AuthoringOperationError('VALIDATION_FAILED', '提交前校验仍有 error');
+  if (record.latestSimulation === undefined || record.latestSimulation.workingRevision !== record.workingRevision) throw new AuthoringOperationError('SIMULATION_REQUIRED', '提交前缺少当前 workingRevision 的模拟证据');
+  if (record.latestSimulation.status === 'incomplete') throw new AuthoringOperationError('SIMULATION_INCOMPLETE', '提交前模拟未完成');
+  if (record.latestSimulation.status !== 'passed') throw new AuthoringOperationError('SIMULATION_REQUIRED', '提交前模拟未通过');
+  if (!record.runtimeTraces?.some(trace => trace.status === 'passed' && trace.workingRevision === record.workingRevision)) throw new AuthoringOperationError('RUNTIME_EVIDENCE_REQUIRED', '提交前缺少当前 workingRevision 的 runtime trace');
+}
+
 export function assertIntegrationReadyForCommit(record: ChangeRecord): void {
   if (record.integration !== undefined && record.integration.status !== 'READY') {
     throw new AuthoringOperationError('COMPOSITION_INCOMPLETE', 'integration change 尚未 READY', {

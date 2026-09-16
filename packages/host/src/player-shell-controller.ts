@@ -336,9 +336,9 @@ export function createPlayerShellController(
           `close has no active provider request for slot=${slot}`,
         );
       }
+      const returned = session.closeOverlay();
       let providerCloseStarted = false;
       try {
-        const returned = session.closeOverlay();
         providerCloseStarted = true;
         slots.close(slot);
         const next = previous.slice(0, -1);
@@ -390,6 +390,15 @@ export function createPlayerShellController(
       const previous = activeProjections;
       let projectionsClosed = false;
       try {
+        if (operationOptions?.overlay !== undefined && operationOptions.overlay !== 'none') {
+          if (operationOptions.overlay !== origin.overlay
+            || (operationOptions.base ?? origin.base) !== origin.base
+            || previous.at(-1)?.request.slot !== overlaySlot(origin.overlay)) {
+            throw controllerError('PLAYER_UI_INVALID_TRANSITION', 'operation cannot retain an unbound overlay');
+          }
+          session.completeOperation(operationOptions);
+          return;
+        }
         closeProjectionStack(slots, previous, 'operation completion projection cleanup failed');
         projectionsClosed = true;
         session.completeOperation(operationOptions);

@@ -99,7 +99,10 @@ Editor 和 Agent Port 必须绑定同一个项目；若自定义了 `SURDET_AGEN
 | `packages/shell` | Electron、文件存储与发行壳 |
 | `packages/editor` | 可视化创作界面 |
 | `examples/starter` | 《雾港来信》示例游戏与可选系统玩法 |
-| `examples/shared/player` | Starter 与新项目模板共用的玩家入口 |
+| `examples/zero-after-midnight` | 《零点之后》，保留独立玩家入口的正式游戏 |
+| `games/*` | 独立游戏工作区，目前包含 `tide-mark` |
+
+`examples/shared/player` 是 Starter 与新项目模板共用的源码目录，不是独立 npm 工作区。
 
 ## 验证
 

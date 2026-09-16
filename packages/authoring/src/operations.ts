@@ -48,6 +48,18 @@ function assertSingleLine(value: string, field: string): void {
   }
 }
 
+function renderText(speaker: string, value: string, sep = '：', indent = '', previous = ''): SceneDocumentLineInput {
+  if (/[\r\n]/.test(speaker) || /[\r\n]/.test(value)) {
+    throw new AuthoringOperationError('INVALID_REQUEST', 'typed text 不能包含 CR/LF 物理换行');
+  }
+  const raw = indent + rebuildTextRaw(speaker, value, sep);
+  const parsed = parseSceneLine(raw, previous);
+  if (parsed.kind !== 'text' || parsed.speaker !== speaker || parsed.value !== value) {
+    throw new AuthoringOperationError('INVALID_REQUEST', '此正文无法原样表达为台词；请使用明确的 speaker，指令请通过 instruction 编排');
+  }
+  return parsed;
+}
+
 function renderChoiceOption(option: SceneChoiceOptionInput, indent = '  ', trailing = ''): string {
   assertSingleLine(option.label, 'choice option.label');
   if (option.when !== undefined && option.when !== null) assertSingleLine(option.when, 'choice option.when');
@@ -72,15 +84,9 @@ function renderBlocks(blocks: readonly SceneBlockInput[], indent = ''): SceneDoc
   for (const block of blocks) {
     if (block.kind === 'text') {
       const speaker = block.speaker ?? '';
-      assertSingleLine(speaker, 'text.speaker');
-      assertSingleLine(block.value, 'text.value');
-      lines.push({
-        kind: 'text',
-        speaker,
-        value: block.value,
-        sep: '：',
-        raw: indent + rebuildTextRaw(speaker, block.value),
-      });
+      const last = lines.at(-1);
+      const previous = last?.kind === 'instr' && last.name === 'choice' ? 'choice' : last?.kind ?? '';
+      lines.push(renderText(speaker, block.value, '：', indent, previous));
     } else if (block.kind === 'label') {
       assertSingleLine(block.name, 'label.name');
       lines.push({ kind: 'label', name: block.name, raw: `${indent}@label ${block.name}` });
@@ -496,6 +502,9 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
   if (sceneId === undefined) throw new AuthoringOperationError('INVALID_REQUEST', 'scene.patch 缺少 sceneId');
   const defaultPath = scenePath(sceneId); // Existing scenes may live in subdirectories.
   return runOperation<{ path: string; line: number; kind: string }>(change, input, async (record) => {
+    if (sceneIdFromTarget(operationTarget(patch)) !== sceneId) {
+      throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', 'scene.patch 的目标或 anchor 必须属于所选场景');
+    }
     if (patch.kind === 'replaceInstruction') {
       const target = /^scene:([^/]+)\/instruction:(\d+)@[0-9a-f]{8}-([0-9a-f]{8})$/.exec(patch.target);
       if (target?.[1] !== sceneId || target?.[3] !== patch.expectedFingerprint) {
@@ -546,9 +555,10 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
     let nextLines: SceneDocumentLine[];
     if (patch.kind === 'replaceText') {
       if (current.kind !== 'text') throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', 'replaceText 目标不是台词对象');
-      const raw = rebuildTextRaw(patch.speaker ?? current.speaker, patch.value, current.sep);
+      const replacement = renderText(patch.speaker ?? current.speaker, patch.value, current.sep, lineIndent(current.raw), previousKind(lines, index));
       nextLines = [...lines];
-      nextLines[index] = parseSceneLine(raw, previousKind(lines, index), current.eol);
+      nextLines[index] = materializeInput(replacement, current.eol || defaultEol(lines));
+      nextLines[index]!.eol = current.eol;
     } else if (patch.kind === 'replaceInstruction') {
       if (current.kind !== 'instr' || !REPLACEABLE_SCENE_INSTRUCTIONS.some((name) => name === current.name)) {
         throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `replaceInstruction 目标必须是可替换的单条场景指令（${REPLACEABLE_SCENE_INSTRUCTIONS.join('、')}）`);
@@ -564,11 +574,16 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
       nextLines = [...lines];
       nextLines[index] = parseSceneLine(raw, previousKind(lines, index), current.eol);
     } else if (patch.kind === 'insertAfter') {
+      const nextContent = lines.slice(index + 1).find(line => line.kind !== 'blank' && line.kind !== 'comment');
+      if ((current.kind === 'choice-option' || previousKind(lines, index + 1) === 'choice-option')
+        && nextContent?.kind === 'choice-option') {
+        throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '不能在选择组内部插入正文或指令；请用 replaceChoiceGroup 修改完整选择组');
+      }
       nextLines = insertLinesAfter(lines, index, renderBlocks(patch.blocks), defaultEol(lines));
     } else if (patch.kind === 'replaceChoiceOption') {
       if (current.kind !== 'choice-option') throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', 'replaceChoiceOption 目标不是选择项');
       nextLines = [...lines];
-      nextLines[index] = parseSceneLine(renderChoiceOption(patch.option), previousKind(lines, index), current.eol);
+      nextLines[index] = parseSceneLine(renderChoiceOption(patch.option, lineIndent(current.raw)), previousKind(lines, index), current.eol);
     } else {
       if (current.kind === 'instr' && current.name === 'scene') {
         throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '不能移除场景声明');
@@ -592,14 +607,7 @@ export async function ensureVariable(change: ChangeSession, input: VariableEnsur
   return runOperation<{ name: string; created: boolean }>(change, input, async (record) => {
     const path = 'game.config.json';
     const currentText = record.workingFiles[path] ?? '{}';
-    let config: Record<string, unknown>;
-    try {
-      const parsed: unknown = JSON.parse(currentText);
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('config must be object');
-      config = { ...(parsed as Record<string, unknown>) };
-    } catch (error) {
-      throw new AuthoringOperationError('PROJECT_INVALID', `game.config.json 不是对象：${String(error)}`);
-    }
+    const config = parseProjectConfigDocument(currentText);
     const variablesValue = config['variables'];
     if (variablesValue !== undefined && (typeof variablesValue !== 'object' || variablesValue === null || Array.isArray(variablesValue))) {
       throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', 'game.config.json.variables 必须是对象');

@@ -161,7 +161,7 @@ export async function applyCharacterEnsure(
         sceneFiles.push([path, text]);
       }
     } else if (!created && nameChanges && oldSpeakerToken !== undefined) {
-      sceneFiles.push(...Object.entries(record.workingFiles).filter(([path]) => path.startsWith('content/scenario/') && path.endsWith('.gal')));
+      sceneFiles.push(...Object.entries(record.workingFiles).filter(([path]) => path.startsWith('content/scenario/') && path.toLowerCase().endsWith('.gal')));
     }
     if (!created && nameChanges && oldSpeakerToken !== undefined) {
       const speakerRefMap = buildSpeakerCharacterRefs(characters);

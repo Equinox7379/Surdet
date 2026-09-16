@@ -47,6 +47,7 @@ export async function buildSceneOperationCompositionDraft(input: {
 export async function buildTimelineOperationCompositionDraft(input: {
   capabilityId: 'timeline.create' | 'timeline.patch';
   timelineId: string;
+  path?: string;
   beforeDefinition?: unknown;
   afterDefinition: unknown;
   hasher: TextHasher;
@@ -56,7 +57,7 @@ export async function buildTimelineOperationCompositionDraft(input: {
   return {
     capabilityId: input.capabilityId, primaryObject,
     rawReferences: analyzeTimelineCompositionReferences({
-      timelineId: input.timelineId, path: `content/timelines/${input.timelineId}.json`, definition: input.afterDefinition,
+      timelineId: input.timelineId, path: input.path ?? `content/timelines/${input.timelineId}.json`, definition: input.afterDefinition,
     }),
     producedObjects: [{ objectRef: primaryObject, disposition: input.capabilityId === 'timeline.create' ? 'create' : 'update', finalFingerprint: objectFingerprintAfter }],
     ...(input.beforeDefinition === undefined ? {} : { objectFingerprintBefore: await input.hasher.sha256(stableStringify(input.beforeDefinition)) }),

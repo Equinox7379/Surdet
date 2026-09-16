@@ -144,7 +144,7 @@ describe('malformed timeline structural safety (Phase 2A)', () => {
       result = validateSnapshot(snapshot, buildObjectIndex(snapshot), { assetCatalog: catalog });
     }).not.toThrow();
     expect(result!.ok).toBe(false);
-    const t005 = result!.issues.find((issue) => issue.code.startsWith('T0') && issue.file === 'content/timelines/agent_blackout.json');
+    const t005 = result!.issues.find((issue) => issue.code.startsWith('TL0') && issue.file === 'content/timelines/agent_blackout.json');
     expect(t005).toBeDefined();
     expect(t005!.severity).toBe('error');
   });
@@ -312,8 +312,8 @@ describe('explicit timeline reference scope (Phase 2C)', () => {
     const result = validateSnapshot(snapshot, buildObjectIndex(snapshot), { assetCatalog: catalog, timelineReferenceScope: 'partial' });
     // partial：不根据 absent 文件推断 missing。
     expect(result.issues.some((issue) => issue.code === 'TIMELINE_MISSING')).toBe(false);
-    // 但已提供文件的 JSON 结构校验（T005）与 canonical identity（MISMATCH）照常执行。
-    expect(result.issues.some((issue) => issue.code === 'T005' && issue.file === 'content/timelines/broken.json')).toBe(true);
+    // 但已提供文件的 JSON 结构校验（TL005）与 canonical identity（MISMATCH）照常执行。
+    expect(result.issues.some((issue) => issue.code === 'TL005' && issue.file === 'content/timelines/broken.json')).toBe(true);
     expect(result.issues.some((issue) => issue.code === 'TIMELINE_ID_MISMATCH' && issue.file === 'content/timelines/broken.json')).toBe(true);
     expect(result.ok).toBe(false);
   });

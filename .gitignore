@@ -18,3 +18,4 @@ packages/shell/.pack-stage/
 /shot*.mjs
 /shot*.png
 /packages/shell/e2e/artifacts/
+/packages/cli/e2e/artifacts/

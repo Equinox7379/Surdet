@@ -2,11 +2,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { compileScene, computeProjectStats, type CompiledScene } from '@surdet/core';
 import { findGalFiles, sceneIdFromFile } from './scenario-loader.js';
+import { collectConfigSceneRoots } from './lint.js';
 
 function readConfig(projectDir: string): { entryScene: string; customInstructions: string[] } {
   const file = path.join(projectDir, 'game.config.json');
   if (!fs.existsSync(file)) return { entryScene: '', customInstructions: [] };
-  const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) as Record<string, unknown>;
   const custom = raw.customInstructions;
   return {
     entryScene: typeof raw.entryScene === 'string' ? raw.entryScene : '',
@@ -29,7 +30,7 @@ export async function statsCommand(projectDir: string, options: { json?: boolean
       sourceTextByScene[sceneId] = source;
     }
     const entryScene = config.entryScene || scenes[0]!.sceneId;
-    const stats = computeProjectStats({ scenes, entryScene, sourceTextByScene });
+    const stats = computeProjectStats({ scenes, entryScene, sourceTextByScene, additionalSceneRoots: collectConfigSceneRoots(projectDir) });
     if (options.json) {
       process.stdout.write(JSON.stringify(stats) + '\n');
     } else {

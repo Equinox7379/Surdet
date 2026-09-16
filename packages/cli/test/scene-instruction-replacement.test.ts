@@ -25,6 +25,52 @@ import { NodeProjectStorage } from '../src/authoring/node-project-storage.js';
 
 const temporaryRoots: string[] = [];
 
+describe('维护：匿名对象引用绑定当前容器', () => {
+  it.each(['stage', 'apply'] as const)('%s 拒绝删除后移位的同文对白与相同时间轴节点，并保留重试', async policy => {
+    const fixture = makeProject(`anonymous-${policy}`);
+    fs.writeFileSync(path.join(fixture.root, fixture.rootScenePath), '@scene start\n相同正文\n相同正文\n@end\n');
+    fs.mkdirSync(path.join(fixture.root, 'content/timelines'), { recursive: true });
+    const cue = { atMs: 0, durationMs: 100, easing: 'linear', action: 'fade', alpha: 1 };
+    const track = { kind: 'screen', cues: [cue, cue, cue] };
+    fs.writeFileSync(path.join(fixture.root, 'content/timelines/t.json'), JSON.stringify({ version: 1, id: 't', durationMs: 100, tracks: [track, track, track] }));
+    const baseline = fs.readFileSync(path.join(fixture.root, fixture.rootScenePath));
+    const c = await connected(fixture, policy);
+    try {
+      expect((await call(c.client, 'change.begin')).body.ok).toBe(true);
+      const scene = await inspectMcpObject(c.client, 'scene:start');
+      const oldText = await inspectMcpObject(c.client, scene.childRefs!.find(ref => ref.includes('/text:'))!);
+      expect((await call(c.client, 'scene.patch', { operationId: 'remove-text', sceneId: 'start', patch: { kind: 'removeObject', target: oldText.objectRef, expectedFingerprint: oldText.fingerprint } })).body.ok).toBe(true);
+      for (const patch of [
+        { kind: 'replaceText', target: oldText.objectRef, expectedFingerprint: oldText.fingerprint, value: '不应写入' },
+        { kind: 'removeObject', target: oldText.objectRef, expectedFingerprint: oldText.fingerprint },
+        { kind: 'insertAfter', anchor: oldText.objectRef, expectedFingerprint: oldText.fingerprint, blocks: [{ kind: 'text', value: '不应写入' }] },
+      ]) {
+        const before = (await NodeChangeStore.openByChangeId(c.session.activeChangeId!))!.record;
+        expect((await call(c.client, 'scene.patch', { operationId: `stale-${patch.kind}`, sceneId: 'start', patch })).body.ok).toBe(false);
+        expect((await NodeChangeStore.openByChangeId(c.session.activeChangeId!))!.record).toEqual(before);
+      }
+      for (const kind of ['cue', 'track'] as const) {
+        const ref = kind === 'cue' ? 'timeline:t/track:0/cue:0' : 'timeline:t/track:0';
+        const old = await inspectMcpObject(c.client, ref);
+        const patch = kind === 'cue'
+          ? { kind: 'removeCue', cueRef: ref, expectedFingerprint: old.fingerprint }
+          : { kind: 'removeTrack', trackRef: ref, expectedFingerprint: old.fingerprint };
+        const request = { operationId: `remove-${kind}`, timelineId: 't', patch };
+        const first = (await call(c.client, 'timeline.patch', request)).body;
+        expect(first, JSON.stringify(first)).toMatchObject({ ok: true });
+        const before = (await NodeChangeStore.openByChangeId(c.session.activeChangeId!))!.record;
+        expect((await call(c.client, 'timeline.patch', { ...request, operationId: `stale-${kind}` })).body.ok).toBe(false);
+        expect((await NodeChangeStore.openByChangeId(c.session.activeChangeId!))!.record).toEqual(before);
+        expect((await call(c.client, 'timeline.patch', request)).body.result).toEqual(first.result);
+        const current = await inspectMcpObject(c.client, ref);
+        const fresh = (await call(c.client, 'timeline.patch', { operationId: `fresh-${kind}`, timelineId: 't', patch: { ...patch, expectedFingerprint: current.fingerprint } })).body;
+        expect(fresh, JSON.stringify(fresh)).toMatchObject({ ok: true });
+      }
+      expect(fs.readFileSync(path.join(fixture.root, fixture.rootScenePath))).toEqual(baseline);
+    } finally { await closeConnected(c); }
+  });
+});
+
 const realHasher: TextHasher = {
   sha256: async (text) => crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex'),
 };

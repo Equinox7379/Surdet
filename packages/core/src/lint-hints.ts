@@ -21,6 +21,7 @@ export const LINT_CODE_HINTS: Record<string, string> = {
   S007: 'choice 选项内不允许块指令：选项 -> 之后只允许内联单行指令（@set/@mod/@goto/@jump 等），不能嵌 @if/@choice。',
   S008: '@if 嵌套过深（>200 层）：拆分条件结构，通常是 @endif 漏写导致解析吞并。',
   S009: 'choice 行内动作必须以 @ 开头：箭头后写成 "-> @goto target" 等形式，不要省略 @。',
+  S010: 'choice 行内不支持 @switch/@loop/@video；跳转到独立标签后在正文中使用。',
 
   /* ---- 编译（C） ---- */
   C001: '标签重复定义：同一场景内 @label 名必须唯一，给重复的标签改名。',
@@ -30,8 +31,9 @@ export const LINT_CODE_HINTS: Record<string, string> = {
   C005: '@set 右值表达式语法错误：检查表达式文法（运算符/括号/引号），见 dsl-spec "表达式语言"。',
   C006: '@mod 增量非法：形如 @mod 变量 +3 / @mod 变量 -2，增量必须是带符号整数。',
   C007: '@wait 用法错误：形如 @wait 800，参数为正整数毫秒（1..600000）。',
-  C008: '指令参数形状错误：按 dsl-spec 该指令的示例补齐/修正参数。',
-  C009: '指令参数值非法：按 dsl-spec 该指令的参数取值范围修正。',
+  C008: '@switch 需要变量名与 值:标签 条目，例如 @switch chapter 1:c1 2:c2。',
+  C009: '@video 缺少素材键，例如 @video op_01。',
+  C010: '@timeline 只接受一个时间轴 ID 与可选 @ blocking，不要附加行尾注释或额外位置参数。',
 
   /* ---- 跨场景（J） ---- */
   J001: '@jump/@call 目标场景不存在：场景 ID = content/scenario 下文件名去扩展名；创建该场景文件或改正拼写。',
@@ -59,6 +61,17 @@ export const LINT_CODE_HINTS: Record<string, string> = {
   T001: '@set 值类型与声明类型不匹配：调整右值类型或修改变量声明 type（+=/-= 仅用于 number）。',
   T002: '条件表达式静态类型不是 boolean：条件应产出布尔值（比较/逻辑运算），不要用数值/字符串表达式。',
   T003: '运算符操作数类型明显不符：如数值变量与字符串比较、数值与布尔做 &&；修正操作数或补充类型转换逻辑。',
+  T010: '@transition 类型未知：使用已支持的 fade、slide-left、slide-right 或 circle。',
+  TL001: '时间轴 JSON 顶层必须是对象。',
+  TL002: '时间轴 version 必须为 1。',
+  TL003: '时间轴 id 仅用字母、数字、下划线、点号或短横线，且与文件名一致。',
+  TL004: '时间轴总时长 durationMs 必须为 0..600000 的整数毫秒。',
+  TL005: '时间轴需要非空 tracks 数组，每个轨道包含 cues 数组，轨道与节点必须是对象。',
+  TL006: '时间轴节点起点与时长必须为非负整数，结束时间不能超过总时长。',
+  TL007: '时间轴轨道或缓动不受支持；按时间轴类型表选择 kind/easing。',
+  TL008: '时间轴动作与轨道类型不匹配；按该轨道的动作表修改 action。',
+  TL009: '时间轴动作参数不合法；按诊断中的字段路径修正目标、素材、数值范围或粒子预设。',
+  TL010: '时间轴 id 重复；不同文件必须使用不同 id。',
 
   /* ---- 警告（W） ---- */
   W001: '未知指令：若是拼写错误请改正；若是自定义指令，在 game.config.json 的 customInstructions 数组声明以消音。',

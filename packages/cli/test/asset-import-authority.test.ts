@@ -110,6 +110,18 @@ afterEach(async () => {
 });
 
 describe('project asset import authority operations', () => {
+  it('unknown operation queries never establish a project recovery barrier', async () => {
+    const { authority, paths } = await fixture();
+    const unknown = crypto.randomUUID();
+    for (const instance of [authority, reopenedAuthority(paths)]) {
+      await expect(instance.query(unknown)).rejects.toMatchObject({ code: 'IMPORT_OPERATION_NOT_FOUND' });
+      expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(false);
+    }
+    const created = await authority.createOperation({ operationId: crypto.randomUUID(),
+      items: [{ itemId: crypto.randomUUID(), sourceName: 'new.png', declaredBytes: 1 }] });
+    expect(created.status).toBe('UPLOADING');
+  });
+
   it('streams measured bytes, creates a ready plan and seals it deterministically', async () => {
     const { authority } = await fixture();
     const operationId = '22222222-2222-4222-8222-222222222222';

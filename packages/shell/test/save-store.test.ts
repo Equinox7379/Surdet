@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { FileSaveStore, sanitizeSlot, canonicalSlotStem, MAX_SAVE_BYTES } from '../src/save-store.js';
+
+vi.mock('node:fs', async (importOriginal) => ({ ...await importOriginal<typeof import('node:fs')>() }));
 
 function makeDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-save-'));
@@ -20,6 +22,97 @@ function makeSnap(slot: string): Parameters<FileSaveStore['write']>[1] {
 }
 
 describe('FileSaveStore', () => {
+  it('未知 index 槽位不会读取或删除索引文件', () => {
+    const store = new FileSaveStore(makeDir());
+    store.write('s1', makeSnap('s1'));
+    expect(store.read('index')).toBeNull();
+    store.delete('index');
+    expect(store.list()).toEqual(['s1']);
+    store.write('index', makeSnap('index'));
+    expect(store.read('index')?.meta.id).toBe('index');
+  });
+
+  it.each(['corrupt', 'publish'] as const)('删除失败保留原槽位、备份和索引：%s', kind => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    store.write('s1', makeSnap('s1'));
+    store.write('s1', { ...makeSnap('s1'), variables: { trust: 8 } });
+    if (kind === 'corrupt') fs.writeFileSync(path.join(dir, 'index.json'), '{broken');
+    const before = new Map(fs.readdirSync(dir).map(name => [name, fs.readFileSync(path.join(dir, name))]));
+    const internals = store as unknown as { writeIndex(index: unknown): void };
+    const original = internals.writeIndex.bind(store);
+    const fault = kind === 'publish' ? vi.spyOn(internals, 'writeIndex').mockImplementation(index => {
+      original(index);
+      throw new Error('injected delete index failure');
+    }) : null;
+    try {
+      expect(() => store.delete('s1')).toThrow();
+      expect(new Map(fs.readdirSync(dir).map(name => [name, fs.readFileSync(path.join(dir, name))]))).toEqual(before);
+    } finally { fault?.mockRestore(); }
+  });
+  it.each([false, true])('索引损坏时连续保存不改变原主档和备份（已有槽位=%s）', (existing) => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    const main = path.join(dir, `${canonicalSlotStem('s1')}.json`);
+    if (existing) {
+      store.write('s1', { ...makeSnap('s1'), variables: { trust: 0 } });
+      store.write('s1', { ...makeSnap('s1'), variables: { trust: 1 } });
+    }
+    fs.writeFileSync(path.join(dir, 'index.json'), '{"broken":');
+    const before = new Map(fs.readdirSync(dir).map(name => [name, fs.readFileSync(path.join(dir, name))]));
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(() => store.write('s1', { ...makeSnap('s1'), variables: { trust: 2 } })).toThrow(/索引/);
+      expect(new Map(fs.readdirSync(dir).map(name => [name, fs.readFileSync(path.join(dir, name))]))).toEqual(before);
+    }
+    expect(fs.existsSync(main)).toBe(existing);
+  });
+
+  it.each([false, true])('索引发布失败补偿主档/备份/索引，重试保留正确上一版（已有槽位=%s）', (existing) => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    if (existing) {
+      store.write('s1', { ...makeSnap('s1'), variables: { trust: 0 } });
+      store.write('s1', { ...makeSnap('s1'), variables: { trust: 1 } });
+    }
+    const before = new Map(fs.readdirSync(dir).map(name => [name, fs.readFileSync(path.join(dir, name))]));
+    const internals = store as unknown as { writeIndex(index: unknown): void };
+    const writeIndex = internals.writeIndex.bind(store);
+    const fault = vi.spyOn(internals, 'writeIndex').mockImplementation(index => {
+      writeIndex(index);
+      throw new Error('injected index publication failure');
+    });
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        expect(() => store.write('s1', { ...makeSnap('s1'), variables: { trust: 2 } })).toThrow(/publication/);
+        expect(new Map(fs.readdirSync(dir).map(name => [name, fs.readFileSync(path.join(dir, name))]))).toEqual(before);
+      }
+    } finally { fault.mockRestore(); }
+    store.write('s1', { ...makeSnap('s1'), variables: { trust: 2 } });
+    expect(store.read('s1')?.variables).toEqual({ trust: 2 });
+    if (existing) {
+      store.restoreBackup('s1');
+      expect(store.read('s1')?.variables).toEqual({ trust: 1 });
+    }
+  });
+
+  it('主档发布失败不轮换已有备份', () => {
+    const dir = makeDir();
+    const store = new FileSaveStore(dir);
+    store.write('s1', { ...makeSnap('s1'), variables: { trust: 0 } });
+    store.write('s1', { ...makeSnap('s1'), variables: { trust: 1 } });
+    const before = new Map(fs.readdirSync(dir).map(name => [name, fs.readFileSync(path.join(dir, name))]));
+    const rename = fs.renameSync;
+    const main = path.join(dir, `${canonicalSlotStem('s1')}.json`);
+    const fault = vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+      if (String(from) === `${main}.tmp` && String(to) === main) throw new Error('injected main rename failure');
+      return rename(from, to);
+    });
+    try {
+      expect(() => store.write('s1', { ...makeSnap('s1'), variables: { trust: 2 } })).toThrow(/rename/);
+    } finally { fault.mockRestore(); }
+    expect(new Map(fs.readdirSync(dir).map(name => [name, fs.readFileSync(path.join(dir, name))]))).toEqual(before);
+  });
+
   it('write/read 往返一致（JSON 序列化安全）', () => {
     const store = new FileSaveStore(makeDir());
     store.write('slot1', makeSnap('slot1'));

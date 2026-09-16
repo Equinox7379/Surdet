@@ -27,6 +27,7 @@ import {
   assetPathsFromFiles,
   AuthoringOperationError,
   assertBaseStillMatches,
+  assertCurrentCommitEvidence,
   AUTHORING_CAPABILITY_REGISTRY,
   AUTHORING_CONTRACT_VERSION,
   beginChange,
@@ -45,6 +46,9 @@ import {
   ensureVariable,
   applyVariablePatchInitial,
   inspectObject,
+  parseTimelineDefinition,
+  resolveUniqueTimelinePath,
+  timelineSelectionFingerprint,
   inspectProject,
   normalizeTrace,
   nativeCapabilityToMcpTool,
@@ -121,18 +125,20 @@ function hashText(text: string): string {
 
 function validateCurrentScenePatchReferences(snapshot: ProjectSnapshot, input: ScenePatchInput): void {
   const patch = input.patch;
-  if (patch.kind !== 'replaceInstruction'
-    && patch.kind !== 'replaceChoiceGroup'
-    && patch.kind !== 'replaceConditionBlock') return;
-
   const index = buildObjectIndex(snapshot);
-  const target = index.byRef.get(patch.target);
+  const ref = patch.kind === 'insertAfter' ? patch.anchor : patch.target;
+  const target = index.byRef.get(ref);
+  const sceneId = input.sceneId ?? /^scene:([^/]+)\//.exec(ref)?.[1];
+  const scenes = snapshot.scenes.filter(scene => scene.id === sceneId);
   const expectedKind = patch.kind === 'replaceInstruction'
     ? 'instruction'
-    : patch.kind === 'replaceChoiceGroup' ? 'choice' : 'condition';
-  if (target?.kind !== expectedKind) {
-    const label = patch.kind === 'replaceInstruction' ? '指令' : patch.kind === 'replaceChoiceGroup' ? 'choice 结构' : 'condition 结构';
-    throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `${label}引用已过期或不属于当前工作版本，请重新读取对象后再替换`);
+    : patch.kind === 'replaceChoiceGroup' ? 'choice'
+    : patch.kind === 'replaceConditionBlock' ? 'condition'
+    : patch.kind === 'replaceText' ? 'text'
+    : patch.kind === 'replaceChoiceOption' ? 'choice-option' : undefined;
+  if (target === undefined || (expectedKind !== undefined && target.kind !== expectedKind)
+    || scenes.length !== 1 || target.source?.path !== scenes[0]!.path) {
+    throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '目标或 anchor 引用已过期或不属于当前场景，请重新读取对象');
   }
   if (patch.kind !== 'replaceConditionBlock') return;
   for (const branch of patch.condition.branches) {
@@ -639,7 +645,12 @@ export class AuthoringService {
     const object = inspectObject(buildObjectIndex(snapshot), objectRef);
     // timeline/track/cue 附当前 SHA-256 指纹，供后续类型化 patch 的 expectedFingerprint 使用。
     if ((object.kind === 'timeline' || object.kind === 'track' || object.kind === 'cue') && object.details !== undefined) {
-      object.fingerprint = await timelineFingerprint(object.details, { sha256: async (text) => hashText(text) });
+      if (object.kind === 'timeline') object.fingerprint = await timelineFingerprint(object.details, { sha256: async (text) => hashText(text) });
+      else {
+        const file = snapshot.timelines.find(item => item.path === object.source?.path);
+        if (file === undefined) throw new AuthoringOperationError('OBJECT_NOT_FOUND', '时间轴来源不存在');
+        object.fingerprint = await timelineSelectionFingerprint(parseTimelineDefinition(file.text), object.objectRef, { sha256: async text => hashText(text) });
+      }
     }
     // Wave 3：character 附角色表指纹；entry-scene 附 entryScene 字段指纹（供 character.ensure/remove 与 entry-scene.set 使用）。
     if (object.kind === 'character') {
@@ -669,6 +680,22 @@ export class AuthoringService {
 
   async timelinePatch(changeId: string, input: TimelinePatchInput): Promise<ServiceResult<unknown>> {
     return this.withOpenChange(changeId, async (context) => {
+      const patch = input.patch;
+      if (!Object.prototype.hasOwnProperty.call(context.session.record.operations, input.operationId)
+        && patch.kind !== 'addTrack' && patch.kind !== 'setDuration') {
+        const ref = 'trackRef' in patch ? patch.trackRef : patch.cueRef;
+        const index = buildObjectIndex(context.snapshot);
+        const object = index.byRef.get(ref);
+        const path = resolveUniqueTimelinePath(context.session.record.workingFiles, input.timelineId);
+        if (object === undefined || object.kind !== ('trackRef' in patch ? 'track' : 'cue')
+          || path === undefined || object.source?.path !== path) {
+          throw new AuthoringOperationError('OBJECT_NOT_FOUND', `当前时间轴不存在目标对象：${ref}`);
+        }
+        const definition = parseTimelineDefinition(context.session.record.workingFiles[path]!);
+        if (patch.expectedFingerprint !== await timelineSelectionFingerprint(definition, ref, { sha256: async text => hashText(text) })) {
+          throw new AuthoringOperationError('OBJECT_REF_STALE', '时间轴或对象位置已变化，请重新 inspect 目标后再修改');
+        }
+      }
       const result = await applyTimelinePatch(context.session, input, { sha256: async (text) => hashText(text) });
       return { ...metadataForChange(context.session), result };
     });
@@ -947,6 +974,15 @@ export class AuthoringService {
     });
   }
 
+  async assertChangeProject(changeId: string, projectRoot: string): Promise<void> {
+    const change = await NodeChangeStore.openByChangeId(changeId, this.leaseManager.dataRoot);
+    if (change === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+    const project = await NodeProjectStorage.open(projectRoot);
+    if (projectIdentityFromRoot(change.record.projectRootIdentity) !== projectIdentityFromRoot(project.rootIdentity)) {
+      throw new AuthoringOperationError('PROJECT_IDENTITY_MISMATCH', '指定 change 不属于当前项目');
+    }
+  }
+
   async variablePatchInitial(changeId: string, input: VariablePatchInitialInput): Promise<ServiceResult<unknown>> {
     return this.withOpenChange(changeId, async (context) => {
       const result = await applyVariablePatchInitial(context.session, input, { sha256: async (text) => hashText(text) });
@@ -1185,6 +1221,7 @@ export class AuthoringService {
         }
         const rebound = await context.store.read(changeId);
         if (rebound === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', `变更事务不存在：${changeId}`);
+        assertCurrentCommitEvidence(rebound);
         const reboundSession = openChange(rebound, context.store, context.storage);
         const result = await commitChange(reboundSession, context.storage);
         let projectRevision = context.snapshot.revision;
@@ -1311,6 +1348,9 @@ export class AuthoringService {
         }
         if (!hasExistingRecovery) await assertRecoveryBaseRevision(storage, journal, inspection);
         if (!hasExistingRecovery) await assertRecoveryStageIdentities(storage, journal);
+        if (!hasExistingRecovery && inspection.disposition === 'ROLL_BACK_TO_BASE') {
+          await assertHumanWorkspaceAllowsAgentCommit(this.humanWorkspaceStore, storage.rootIdentity);
+        }
         const session = openChange(record, leasedStore, storage);
         const result = await executeTransactionRecovery({
           change: session,

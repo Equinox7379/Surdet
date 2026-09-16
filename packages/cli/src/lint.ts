@@ -17,6 +17,7 @@ import {
 import type { LintIssue } from '@surdet/core';
 import {
   buildObjectIndex,
+  buildAssetCatalog,
   parseSceneDocument,
   validateSnapshot,
   type ProjectSnapshot,
@@ -177,11 +178,31 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
   // Core/authoring 提供唯一的场景、变量、引用和修饰符校验结果；本文件只保留
   // Node 文件系统、配置扩展和 Gallery/growth 等 CLI 专属适配。
   if (scenes.size > 0) {
+    const snapshot = makeAuthoringSnapshot(root, scenes, readConfigRaw(root));
+    const assetPaths: string[] = [];
+    const collect = (directory: string): void => {
+      if (!fs.existsSync(path.join(root, directory))) return;
+      for (const entry of fs.readdirSync(path.join(root, directory), { withFileTypes: true })) {
+        const relative = `${directory}/${entry.name}`;
+        if (entry.isDirectory()) collect(relative);
+        else if (entry.isFile()) assetPaths.push(relative);
+      }
+    };
+    collect('content/assets');
+    collect('public');
+    const assetCatalog = buildAssetCatalog(assetPaths, snapshot);
+    // Editor 预览还支持 public；仅为只读校验适配这组事实，不改变导入目标合同。
+    const publicCatalog = buildAssetCatalog(assetPaths.filter(file => file.startsWith('public/'))
+      .map(file => `content/assets/${file.slice('public/'.length)}`));
+    for (const kind of ['backgrounds', 'portraits', 'avatars'] as const) {
+      assetCatalog[kind].push(...publicCatalog[kind].map(entry => ({ ...entry,
+        sourcePath: `public/${entry.sourcePath.slice('content/assets/'.length)}` })));
+    }
     const shared = validateSnapshot(
-      makeAuthoringSnapshot(root, scenes, readConfigRaw(root)),
+      snapshot,
       undefined,
       // lint 是完整项目静态检查：timeline 引用完整性用 complete（Phase 2C）。
-      { failedScenes, timelineReferenceScope: 'complete' },
+      { failedScenes, timelineReferenceScope: 'complete', assetCatalog },
     );
     issues.push(...shared.issues);
   }
@@ -224,6 +245,9 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
   });
 
   // 按错误码补齐修复建议（M5 支柱1：--json 输出携带，供 AI 自我修正循环消费）
+  if (sceneSourceFiles.size === 0) issues.push({ severity: 'error', code: 'PROJECT_EMPTY',
+    text: '未找到剧本：请检查项目目录及 content/scenario 下的 .gal 文件', file: root, line: 0, col: 0,
+    hint: '传入实际游戏项目目录；校验未检查到任何场景。' });
   attachHints(issues);
 
   const ok = issues.every((i) => i.severity !== 'error');
@@ -550,7 +574,7 @@ function readConfigJson(
 
 /** 收集 content/config/*.json 中配置驱动的 hostJump 目标场景（W007 可达性额外根）。
  *  收集逻辑为 core 共享纯实现（编辑器同源复用，审计轮4 下沉）；本函数只负责文件读取。 */
-function collectConfigSceneRoots(root: string): string[] {
+export function collectConfigSceneRoots(root: string): string[] {
   const configDir = path.join(root, 'content/config');
   const read = (name: string): unknown => {
     const full = path.join(configDir, name);

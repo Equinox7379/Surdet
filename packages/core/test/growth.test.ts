@@ -30,6 +30,20 @@ function makeGrowth(overrides: Partial<GrowthConfig> = {}) {
 }
 
 describe('GrowthSystem（角色成长）', () => {
+  it.each([0, -1, 1.5, Infinity, NaN, 6])('rejects invalid restored level %s without resetting live growth', (level) => {
+    const { growth } = makeGrowth({ profiles: [{ characterId: 'lynn', maxLevel: 5 }] });
+    growth.gainExp('lynn', 12);
+    const before = growth.snapshot();
+    expect(() => growth.restore({ levels: { lynn: level }, experience: { lynn: 0 } })).toThrow();
+    expect(growth.snapshot()).toEqual(before);
+  });
+  it.each([-1, Infinity, NaN])('rejects invalid experience %s without resetting live growth', (xp) => {
+    const { growth } = makeGrowth();
+    growth.gainExp('lynn', 12);
+    const before = growth.snapshot();
+    expect(() => growth.restore({ levels: { lynn: 1 }, experience: { lynn: xp } })).toThrow();
+    expect(growth.snapshot()).toEqual(before);
+  });
   it('经验累积到阈值升级，属性增量写回变量仓库', () => {
     const { store, growth } = makeGrowth();
     expect(growth.levelOf('lynn')).toBe(1);

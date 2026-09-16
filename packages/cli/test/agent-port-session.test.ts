@@ -340,6 +340,7 @@ describe('Surdet Agent Port session and policy contract', () => {
       if (first.ok) throw new Error('expected invocation-ledger failure');
       expect(first.error.message).toContain('调用事实记录写入失败');
       expect(first.error.details).toMatchObject({ operationMayHaveSucceeded: true, operationId: 'op-ledger-retry', changeId });
+      expect(first.error.details?.invocationResult).toMatchObject({ ok: true, changeId });
 
       const second = await session.invoke('scene.create', { operationId: 'op-ledger-retry', sceneId: 'ledger-retry' });
       expect(second.ok).toBe(true);
@@ -433,7 +434,8 @@ describe('Surdet Agent Port session and policy contract', () => {
     expect(description.nextActions).toEqual(['change.recovery.inspect']);
     expect(description.capabilities.find((item) => item.id === 'change.recovery.inspect')).toMatchObject({ availability: 'available' });
     expect(description.capabilities.find((item) => item.id === 'scene.create')).toMatchObject({ availability: 'state-blocked' });
-    expect(description.capabilities.find((item) => item.id === 'project.inspect')).toMatchObject({ availability: 'available' });
+    expect(description.capabilities.find((item) => item.id === 'project.inspect')).toMatchObject({ availability: 'state-blocked' });
+    expect(await resumed.invoke('project.inspect', {})).toMatchObject({ ok: false, error: { code: 'SESSION_STATE_INVALID' } });
     const inspected = await resumed.invoke('change.recovery.inspect', {});
     expect(inspected.ok).toBe(true);
     if (inspected.ok) expect(inspected.result).toMatchObject({ changeId, disposition: 'NO_ACTION', manualRecoveryRequired: false });

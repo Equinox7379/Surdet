@@ -28,6 +28,11 @@ const events = [
 ];
 
 describe('AffectionSystem', () => {
+  it('rejects ambiguous parents and cycles instead of silently selecting one', () => {
+    const event = (id: string, children: string[]) => ({ id, characterId: 'lynn', when: 'true', scene: id, once: true, children });
+    expect(() => new AffectionSystem([], [event('a', ['c']), event('b', ['c']), event('c', [])], new VariableStore([]))).toThrow();
+    expect(() => new AffectionSystem([], [event('a', ['b']), event('b', ['a'])], new VariableStore([]))).toThrow();
+  });
   it('按好感阈值判定阶段', () => {
     const store = new VariableStore(decls);
     const sys = new AffectionSystem(profiles, events, store);

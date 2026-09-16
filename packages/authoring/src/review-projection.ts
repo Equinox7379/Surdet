@@ -265,7 +265,7 @@ function operationSourceFacts(
     });
   }
   for (const required of operation.requiredObjects) {
-    if (!required.objectRef.includes('asset')) continue;
+    if (!required.objectRef.startsWith('asset:')) continue;
     assets.push({ unitId: unit.unitId, assetRef: required.objectRef });
   }
   return { scenes, choices, variables, timelines, assets, excerpts };

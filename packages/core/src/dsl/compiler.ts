@@ -374,6 +374,10 @@ export class SceneCompiler {
   ): void {
     const { name, args, modifiers, pos: p } = ins;
 
+    if (name === 'switch' || name === 'loop' || name === 'video') {
+      throw new DslError('S010', `@${name} 不支持作为 choice 行内动作`, p, '跳转到独立标签，在标签下使用该指令');
+    }
+
     if (name === 'wait') {
       emitter.emit(this.#buildWaitInstr(args, p));
       return;

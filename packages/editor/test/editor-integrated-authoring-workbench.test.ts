@@ -190,7 +190,7 @@ describe('integrated authoring workbench contract', () => {
     expect(mainSource).toMatch(/bindRightNavigation\(\{[\s\S]*?onJumpScene:\s*\(sceneKey\)\s*=>\s*jumpToScene\(sceneKey\)/);
     expect(issueSource).toMatch(/onIssueJumpHook\(key\s*,\s*Math\.max\(0,\s*issue\.line\s*-\s*1\)\)/);
     expect(issueSource).not.toMatch(/state\.current\s*=\s*key/);
-    expect(rightSource).toMatch(/onSceneJumpHook\(key\)/);
+    expect(rightSource).toMatch(/onSceneJumpHook\(/);
     expect(rightSource).not.toMatch(/state\.current\s*=\s*key/);
   });
 

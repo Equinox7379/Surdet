@@ -18,6 +18,13 @@ function makeStore(): VariableStore {
 }
 
 describe('ShopSystem', () => {
+  it.each([-1, NaN, Infinity])('invalid price %s cannot pay the player or change the bag', (price) => {
+    const store = makeStore();
+    const shop = new ShopSystem({ items: [{ id: 'bad', name: 'bad', price }] }, store);
+    const before = store.snapshot();
+    expect(shop.buy('gold', 'bag', 'bad').ok).toBe(false);
+    expect(store.snapshot()).toEqual(before);
+  });
   it('购买成功：扣金币 + 道具入袋', () => {
     const store = makeStore();
     const shop = new ShopSystem(config, store);

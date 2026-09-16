@@ -44,15 +44,15 @@ const migratedCss = [tokensCss, componentsCss, appShellCss]
 describe('editor visual token contract', () => {
   it('declares the approved primitive color family exactly', () => {
     const expected = {
-      '--surdet-color-paper-0': '#f3f1ed',
-      '--surdet-color-paper-50': '#fbfaf8',
-      '--surdet-color-paper-100': '#e9e6e0',
-      '--surdet-color-ink-900': '#242321',
-      '--surdet-color-ink-600': '#66635e',
+      '--surdet-color-paper-0': '#eef0f3',
+      '--surdet-color-paper-50': '#ffffff',
+      '--surdet-color-paper-100': '#f3f4f6',
+      '--surdet-color-ink-900': '#282c34',
+      '--surdet-color-ink-600': '#606873',
       '--surdet-color-frame-900': '#1d2326',
-      '--surdet-color-line-300': '#d2cec6',
-      '--surdet-color-line-600': '#85817a',
-      '--surdet-color-rust-600': '#a34f3b',
+      '--surdet-color-line-300': '#dde1e6',
+      '--surdet-color-line-600': '#929aa6',
+      '--surdet-color-rust-600': '#9b4b35',
       '--surdet-color-provenance-600': '#6f5a45',
       '--surdet-color-success-600': '#3f6851',
       '--surdet-color-warning-600': '#946426',
@@ -69,7 +69,7 @@ describe('editor visual token contract', () => {
       '--surdet-surface-app': 'var(--surdet-color-paper-0)',
       '--surdet-surface-panel': 'var(--surdet-color-paper-50)',
       '--surdet-surface-subtle': 'var(--surdet-color-paper-100)',
-      '--surdet-surface-selected': '#e6e1da',
+      '--surdet-surface-selected': '#eceff2',
       '--surdet-text-primary': 'var(--surdet-color-ink-900)',
       '--surdet-text-secondary': 'var(--surdet-color-ink-600)',
       '--surdet-border-default': 'var(--surdet-color-line-300)',
@@ -103,12 +103,12 @@ describe('editor visual token contract', () => {
       .filter(([name]) => name.startsWith(prefix))
       .map(([, value]) => value);
 
-    expect(scaleValues('--surdet-type-')).toEqual(['13px', '14px', '15px', '17px', '21px', '25px']);
+    expect(scaleValues('--surdet-type-')).toEqual(['12px', '13px', '14px', '17px', '21px', '25px']);
     expect(scaleValues('--surdet-space-')).toEqual([
       '4px', '6px', '8px', '12px', '16px', '20px', '24px', '32px', '40px', '48px', '64px',
     ]);
-    expect(scaleValues('--surdet-radius-')).toEqual(['0', '3px', '6px']);
-    expect(tokenValues.get('--surdet-control-height')).toBe('38px');
+    expect(scaleValues('--surdet-radius-')).toEqual(['0', '3px', '4px']);
+    expect(tokenValues.get('--surdet-control-height')).toBe('32px');
     expect(tokenValues.get('--surdet-focus-width')).toBe('2px');
 
     const motionDurations = scaleValues('--surdet-motion-')
@@ -147,7 +147,7 @@ describe('editor visual token contract', () => {
     );
     const currentRules = ruleBodiesMatching(
       appShellCss,
-      /\[aria-current\s*=\s*["']page["']\]/i,
+      /\[aria-current\s*=\s*["']?page["']?\]/i,
     );
     const focusRules = [
       ...ruleBodiesMatching(componentsCss, /:focus-visible/i),
@@ -164,11 +164,9 @@ describe('editor visual token contract', () => {
 
     expect(currentRules.length).toBeGreaterThan(0);
     expect(currentRules.join('\n')).toMatch(
-      /background(?:-color)?\s*:\s*var\(--surdet-(?:surface-selected|[a-z0-9-]*nav-active-bg)\)/i,
+      /background(?:-color)?\s*:\s*var\(--surdet-(?:surface-panel|surface-selected|[a-z0-9-]*nav-active-bg)\)/i,
     );
-    expect(currentRules.join('\n')).toMatch(
-      /border(?:-color)?\s*:\s*var\(--surdet-(?:border-strong|[a-z0-9-]*selection-outline)\)/i,
-    );
+    expect(currentRules.join('\n')).toMatch(/font-weight\s*:\s*600/i);
 
     expect(focusRules.length).toBeGreaterThan(0);
     expect(focusRules.join('\n')).toMatch(
@@ -211,25 +209,15 @@ describe('editor visual token contract', () => {
   it('keeps the wrapped project bar in flow so narrow commands cannot cover mode navigation', () => {
     const projectBarRules = ruleBodiesMatching(appShellCss, /\.editor-project-bar\s*$/i);
     expect(projectBarRules.length).toBeGreaterThan(0);
-    expect(projectBarRules[0]).toMatch(/flex\s*:\s*0\s+0\s+auto/i);
+    expect(projectBarRules[0]).toMatch(/flex\s*:\s*(?:none|0\s+0\s+auto)/i);
 
-    const narrowStart = appShellCss.indexOf('@media (max-width: 1360px)');
-    const phoneStart = appShellCss.indexOf('@media (max-width: 640px)');
+    const narrowStart = appShellCss.search(/@media\s*\(max-width:\s*1250px\)/);
     expect(narrowStart).toBeGreaterThanOrEqual(0);
-    expect(phoneStart).toBeGreaterThan(narrowStart);
-    const narrowRules = appShellCss.slice(narrowStart, phoneStart);
-    expect(narrowRules).toMatch(/grid-template-areas\s*:\s*["']identity\s+context\s+feedback["']\s*["']commands\s+commands\s+commands["']/i);
-    expect(narrowRules).toMatch(/\.editor-project-commands\s*\{[^}]*grid-area\s*:\s*commands/is);
+    const narrowRules = appShellCss.slice(narrowStart);
+    expect(projectBarRules[0]).toMatch(/grid-template-areas\s*:\s*["']identity\s+context\s+commands["']\s*["']feedback\s+feedback\s+relay["']/i);
+    expect(narrowRules).toMatch(/grid-template-columns\s*:\s*116px\s+minmax\(110px,\s*1fr\)\s+auto/i);
     const statusRules = ruleBodiesMatching(appShellCss, /\.editor-project-bar\s+#status\s*$/i);
     expect(statusRules.join('\n')).toMatch(/min-width\s*:\s*0/i);
-    expect(statusRules.join('\n')).toMatch(/overflow\s*:\s*hidden/i);
-    expect(statusRules.join('\n')).toMatch(/text-overflow\s*:\s*ellipsis/i);
-    expect(statusRules.join('\n')).toMatch(/white-space\s*:\s*nowrap/i);
-    expect(narrowRules).toMatch(/\.editor-operation-feedback\s*\{[^}]*grid-area\s*:\s*feedback/is);
-
-    const phoneRules = appShellCss.slice(phoneStart);
-    expect(phoneRules).toMatch(
-      /\.editor-project-commands\s*\{[^}]*flex-wrap\s*:\s*wrap[^}]*overflow-x\s*:\s*visible/is,
-    );
+    expect(statusRules.join('\n')).toMatch(/overflow-wrap\s*:\s*anywhere/i);
   });
 });

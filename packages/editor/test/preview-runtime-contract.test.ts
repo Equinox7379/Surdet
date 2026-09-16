@@ -55,6 +55,9 @@ describe('editor preview Renderer v2 lifecycle contract', () => {
     expect(invalidationBody).toMatch(/growth\s*=\s*null;/);
     expect(invalidationBody).toMatch(/turnResumeSnap\s*=\s*null;/);
     expect(loadBody.match(/invalidatePreviewSession\(\);/g)).toHaveLength(2);
-    expect(loadBody).toMatch(/catch \(err\) \{\s*\/\/[^\n]+\n\s*invalidatePreviewSession\(\);/);
+    const failureBody = loadBody.slice(loadBody.lastIndexOf('catch (err)'));
+    expect(failureBody).toContain('if (previewDisposed) return;');
+    expect(failureBody.indexOf('invalidatePreviewSession();')).toBeGreaterThan(failureBody.indexOf('if (previewDisposed) return;'));
+    expect(failureBody.indexOf('invalidatePreviewSession();')).toBeLessThan(failureBody.indexOf('failPreviewTrace('));
   });
 });

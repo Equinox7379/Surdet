@@ -3,6 +3,8 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { type ChangeRecord, type CommitJournal } from '@surdet/authoring';
 import { AuthoringService } from '../src/authoring/authoring-service.js';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
@@ -10,6 +12,7 @@ import { NodeProjectStorage } from '../src/authoring/node-project-storage.js';
 import { projectIdentityFromRoot } from '../src/authoring/project-identity.js';
 import { generateDeliveryCapsule } from '../src/agent-port/delivery-capsule.js';
 import { openAgentPortSession } from '../src/agent-port/session.js';
+import { HumanWorkspaceStore } from '../src/authoring/human-workspace-store.js';
 
 type RecoveryMode = 'staging' | 'replacing-mixed' | 'committed';
 type Fixture = { parent: string; dataRoot: string; projectRoot: string };
@@ -145,6 +148,31 @@ async function readRecordAndJournalBytes(fixture: Fixture, rootIdentity: string,
 }
 
 describe('Task 7：Node recovery service 与 fresh-process reopen', () => {
+  it('写回恢复不能越过当前人类草稿；拒绝后保留原恢复计划', async () => {
+    await withFixture('surdet-recovery-human-draft-', async fixture => {
+      const service = new AuthoringService();
+      const changeId = await beginRecoveryChange(fixture.projectRoot, true);
+      const { rootIdentity } = await prepareInterruptedChange(fixture, changeId, 'replacing-mixed');
+      const inspected = await service.inspectRecovery(changeId);
+      expect(inspected.result.disposition).toBe('ROLL_BACK_TO_BASE');
+      const workspaces = new HumanWorkspaceStore({ dataRoot: fixture.dataRoot });
+      const heartbeat = {
+        workspaceSessionId: crypto.randomUUID(), browserSessionId: 'recovery-test',
+        workspaceGeneration: 1, availability: 'dirty' as const, dirtyScopes: ['scene'] as const,
+      };
+      await workspaces.heartbeat(rootIdentity, heartbeat);
+      const diskBefore = filesDigest(fixture.projectRoot);
+      const recordBefore = await readRecordAndJournalBytes(fixture, rootIdentity, changeId);
+      const request = { operationId: 'recover-with-draft', recoveryToken: inspected.result.recoveryToken! };
+      await expect(service.executeRecovery(changeId, request)).rejects.toMatchObject({ code: 'HUMAN_WORKSPACE_DIRTY' });
+      expect(filesDigest(fixture.projectRoot)).toEqual(diskBefore);
+      expect(await readRecordAndJournalBytes(fixture, rootIdentity, changeId)).toEqual(recordBefore);
+      await workspaces.heartbeat(rootIdentity, { ...heartbeat, workspaceGeneration: 2, availability: 'clean', dirtyScopes: [] });
+      expect((await service.executeRecovery(changeId, request)).result.disposition).toBe('ROLL_BACK_TO_BASE');
+      await workspaces.heartbeat(rootIdentity, { ...heartbeat, workspaceGeneration: 3 });
+      expect((await service.executeRecovery(changeId, request)).result.disposition).toBe('ROLL_BACK_TO_BASE');
+    });
+  });
   it.each(['stage', 'apply'] as const)('恢复记录保留 %s 交付包时序与原组合约束', async (policy) => {
     await withFixture(`surdet-recovery-capsule-order-${policy}-`, async (fixture) => {
       const sourceBefore = filesDigest(fixture.projectRoot);
@@ -213,6 +241,8 @@ describe('Task 7：Node recovery service 与 fresh-process reopen', () => {
       const service = new AuthoringService();
       const changeId = await beginRecoveryChange(fixture.projectRoot, true);
       await service.validate(changeId);
+      await service.simulate(changeId);
+      await service.runFrom(changeId, {});
       const original = filesDigest(fixture.projectRoot);
       const replace = NodeProjectStorage.prototype.replaceFromStage;
       let replacements = 0;
@@ -266,6 +296,8 @@ describe('Task 7：Node recovery service 与 fresh-process reopen', () => {
       const service = new AuthoringService();
       const changeId = await beginRecoveryChange(fixture.projectRoot);
       await service.validate(changeId);
+      await service.simulate(changeId);
+      await service.runFrom(changeId, {});
       const { rootIdentity } = await prepareInterruptedChange(fixture, changeId, 'staging');
       const beforeProject = filesDigest(fixture.projectRoot);
       const beforeRecords = await readRecordAndJournalBytes(fixture, rootIdentity, changeId);
@@ -444,23 +476,29 @@ describe('Task 7：Node recovery service 与 fresh-process reopen', () => {
     });
   });
 
-  it('recovery execute operationId 幂等，重复请求不增加 recordVersion', async () => {
+  it.each(['staging', 'replacing-mixed', 'committed'] as const)('recovery execute %s operationId 幂等，重复请求不增加 recordVersion', async (mode) => {
     await withFixture('surdet-task7-idempotent-', async (fixture) => {
-      const changeId = await beginRecoveryChange(fixture.projectRoot);
-      const prepared = await prepareInterruptedChange(fixture, changeId, 'staging');
+      const changeId = await beginRecoveryChange(fixture.projectRoot, true);
+      const prepared = await prepareInterruptedChange(fixture, changeId, mode);
       const inspected = await new AuthoringService().inspectRecovery(changeId);
       const first = await new AuthoringService().executeRecovery(changeId, {
         operationId: 'recovery-idempotent-execute',
         recoveryToken: inspected.result.recoveryToken!,
       });
-      const afterFirst = (await NodeChangeStore.openForProject(changeId, prepared.rootIdentity, { allowStale: true }))!.record.recordVersion;
+      const afterFirst = (await NodeChangeStore.openForProject(changeId, prepared.rootIdentity, { allowStale: true, allowTerminal: true }))!.record.recordVersion;
       const second = await new AuthoringService().executeRecovery(changeId, {
         operationId: 'recovery-idempotent-execute',
         recoveryToken: inspected.result.recoveryToken!,
       });
-      const afterSecond = (await NodeChangeStore.openForProject(changeId, prepared.rootIdentity, { allowStale: true }))!.record.recordVersion;
+      const afterSecond = (await NodeChangeStore.openForProject(changeId, prepared.rootIdentity, { allowStale: true, allowTerminal: true }))!.record.recordVersion;
       expect(second.result).toEqual(first.result);
       expect(afterSecond).toBe(afterFirst);
+      const cli = spawnSync(process.execPath, [fileURLToPath(new URL('../dist/index.js', import.meta.url)), 'change', 'recovery', 'execute', '--change', changeId, '--input', '-', '--json'], {
+        encoding: 'utf8', env: process.env,
+        input: '\uFEFF' + JSON.stringify({ operationId: 'recovery-idempotent-execute', recoveryToken: inspected.result.recoveryToken! }),
+      });
+      expect(cli.status, cli.stdout + cli.stderr).toBe(0);
+      expect(JSON.parse(cli.stdout).result).toEqual(first.result);
     });
   });
 

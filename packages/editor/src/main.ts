@@ -202,6 +202,49 @@ function setSceneAutosaveRecoveryPhase(phase: SceneAutosaveRecoveryPhase): void 
     else main.removeAttribute('aria-busy');
   }
   refreshProjectBarProjection();
+  renderBlockedSceneRecovery();
+}
+
+function renderBlockedSceneRecovery(): void {
+  document.getElementById('scene-recovery-actions')?.remove();
+  const main = document.getElementById('main');
+  if (sceneAutosaveRecoveryPhase !== 'blocked' || !main) return;
+  const payload = blockedSceneAutosave;
+  const projectId = state.autosaveProjectId;
+  const panel = h('section', 'banner');
+  panel.id = 'scene-recovery-actions';
+  panel.setAttribute('aria-label', '处理未完成的自动恢复');
+  panel.append(h('p', undefined, '自动恢复已暂停，原备份仍保留。可以下载备份或重试；没有待确认的磁盘保存时，也可以明确放弃备份并使用当前项目。'));
+  const isCurrent = () => sceneAutosaveRecoveryPhase === 'blocked'
+    && state.autosaveProjectId === projectId && blockedSceneAutosave === payload;
+  const download = h('button', undefined, '下载完整备份');
+  download.disabled = payload === null;
+  download.dataset.action = 'download-scene-recovery';
+  download.onclick = () => {
+    if (!isCurrent() || !payload) return;
+    const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = url; anchor.download = 'surdet-scene-autosave.json'; anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const retry = h('button', undefined, '重试恢复');
+  retry.dataset.action = 'retry-scene-recovery';
+  retry.onclick = () => { if (isCurrent()) startCurrentProjectAutosaveRecovery(Promise.resolve()); };
+  const discard = h('button', undefined, '放弃备份，使用当前项目');
+  discard.dataset.action = 'discard-scene-recovery';
+  discard.disabled = !payload || !!payload.pendingSceneCommit || state.pendingSceneCommit !== null;
+  if (discard.disabled) discard.title = '保存结果尚未查明，不能丢弃原请求；请保留备份并重试恢复。';
+  discard.onclick = () => {
+    if (!isCurrent() || !projectId || !payload || payload.pendingSceneCommit || state.pendingSceneCommit) return;
+    if (!window.confirm('确定放弃这份未保存备份？当前项目文件不会被修改。建议先下载完整备份。')) return;
+    clearAutosave(projectId);
+    if (readAutosave(projectId) !== null) { setStatus('备份未能清除，仍保持暂停。', false, 5000); return; }
+    blockedSceneAutosave = null;
+    setSceneAutosaveRecoveryPhase('idle');
+    setStatus('已放弃备份，可以继续编辑当前项目。', true, 5000);
+  };
+  panel.append(download, retry, discard);
+  main.before(panel);
 }
 
 function startCurrentProjectAutosaveRecovery(bindingReady: Promise<void>): void {
@@ -228,7 +271,7 @@ function startCurrentProjectAutosaveRecovery(bindingReady: Promise<void>): void 
     blockedSceneAutosave = readAutosave(context.projectId);
     setSceneAutosaveRecoveryPhase('blocked');
     setStatus(
-      `自动恢复未完成，为保护未保存内容已暂停编辑。请刷新页面重试：${error instanceof Error ? error.message : String(error)}`,
+      `自动恢复未完成，原备份已保留。请使用恢复面板处理：${error instanceof Error ? error.message : String(error)}`,
       false,
       12000,
     );
@@ -768,7 +811,13 @@ async function checkAssetRelocationImpact(): Promise<void> {
   const current = assetRelocationWorkspace.snapshot();
   if (batch) {
     if (current.mode !== 'batch' || !current.batchEditing || !sameRelocationMoves(requestedMoves, batchRelocationMoves(current))) return;
-  } else if (current.source?.sourcePath !== snapshot.source!.sourcePath) return;
+  } else if (current.source?.sourcePath !== snapshot.source!.sourcePath
+    || current.targetDirectory !== snapshot.targetDirectory || current.fileName.trim() !== snapshot.fileName.trim()) return;
+  if (hasDirtyProjectFiles()) {
+    assetRelocationWorkspace.setMessage('等待期间项目内容发生变化，请先保存后重新检查。');
+    renderMainArea();
+    return;
+  }
   setAssetRelocationWriteLock(true);
   await runAssetRelocationAction(batch ? '正在检查整批引用影响…' : '正在检查引用影响…', async (context) => {
     let planned: Awaited<ReturnType<typeof context.client.relocationPlan>>;
@@ -1037,7 +1086,7 @@ function projectBarProjection(): ProjectBarProjection {
         : '自动恢复需要重试',
       writeLockTitle: sceneAutosaveRecoveryPhase === 'running'
         ? '恢复完成前暂停编辑和项目切换'
-        : '为保护未保存内容，请刷新页面重试自动恢复',
+        : '请在自动恢复面板下载备份、重试或处理冲突',
     } : {}),
   };
 }
@@ -1161,15 +1210,12 @@ async function syncProject(discardDrafts = false): Promise<boolean> {
     const previousSelection = state.selectedObjectRef;
     const previousIndex = state.authoringIndex;
     const reviewWorkspace = state.reviewWorkspace;
-    if (discardDrafts) {
-      if (reviewWorkspace !== null) discardReviewDraft(reviewWorkspace);
-      if (state.autosaveProjectId) clearAutosave(state.autosaveProjectId);
-    }
     disposePreviewPanel();
     disposeScriptV4();
     document.getElementById('main')?.setAttribute('inert', '');
     state.selectedObjectRef = null;
     await reloadCurrentProjectFromHandle({ ...previous, preserveReviewWorkspace: reviewWorkspace !== null });
+    if (discardDrafts && reviewWorkspace !== null) discardReviewDraft(reviewWorkspace);
     state.reviewWorkspace = reviewWorkspace;
     if (reviewWorkspace !== null) await refreshReviewFixtureIdentity(reviewWorkspace);
     await refreshAuthoringIndexImmediately();
@@ -1800,6 +1846,7 @@ function renderAll(): void {
   if (sceneAutosaveRecoveryPhase === 'running') main.setAttribute('aria-busy', 'true');
   appEl.appendChild(main);
   renderMainArea();
+  renderBlockedSceneRecovery();
 }
 
 /** 主区：标签页（块编辑 / 流程图 / 时间轴 / 配置 / 预览 / 统计 / 审计）+ 对应内容 */

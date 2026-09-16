@@ -47,6 +47,16 @@ function choiceCollector(bus: EventBus<CoreEventMap>): ChoiceEventPayload[] {
 }
 
 describe('Interpreter', () => {
+  it('runtime errors leave a failed state that cannot be saved and can be restarted', () => {
+    const { registry, interp } = makeRuntime(baseDecls);
+    registry.register(compileScene('@set missing = 1\n@end', 'bad.gal', 'bad'));
+    registry.register(compileScene('恢复后的正文。\n@end', 'good.gal', 'good'));
+    expect(() => interp.start('bad')).toThrow();
+    expect(interp.status).toBe('error');
+    expect(interp.saveSnapshot()).toBeNull();
+    interp.start('good');
+    expect(interp.status).toBe('awaiting-advance');
+  });
   it('顺序执行文本流，逐行 advance', () => {
     const { bus, registry, interp } = makeRuntime();
     registry.register(compileScene('凛：你好。\n主角：哦。', 's.gal', 's1'));
@@ -502,7 +512,8 @@ describe('Interpreter', () => {
     const { registry, interp } = makeRuntime();
     registry.register(compileScene('@label loop\n@goto loop', 's.gal', 's1'));
     expect(() => interp.start('s1')).toThrow(/疑似死循环/);
-    expect(interp.status).toBe('running'); // 错误抛出后状态不置 ended
+    expect(interp.status).toBe('error');
+    expect(interp.saveSnapshot()).toBeNull();
   });
 
   it('interpolate：{{  }} 转义与未声明变量保留原文', () => {

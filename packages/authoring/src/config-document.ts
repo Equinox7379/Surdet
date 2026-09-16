@@ -22,5 +22,5 @@ export function parseProjectConfigDocument(text: string, filePath = 'game.config
 
 export function serializeProjectConfigDocument(config: Record<string, unknown>, sourceText: string): string {
   const eol = sourceText.match(/\r\n|\n/)?.[0] ?? '\n';
-  return `${JSON.stringify(config, null, 2).replace(/\n/g, eol)}${eol}`;
+  return `${sourceText.startsWith('\uFEFF') ? '\uFEFF' : ''}${JSON.stringify(config, null, 2).replace(/\n/g, eol)}${eol}`;
 }

@@ -331,6 +331,14 @@ export function validateSceneVariables(
             checkNotReadonly(arg0, at(g.file, g.line, g.col), readonlyVars, issues);
           }
         }
+        if (g.name === 'has_item') {
+          const [source, , result] = g.args;
+          if (source !== undefined) checkVarDeclared(source, at(g.file, g.line, g.col), variables, issues, 'V001', '@has_item 来源');
+          if (result !== undefined) {
+            checkVarDeclared(result, at(g.file, g.line, g.col), variables, issues, 'V001', '@has_item 结果');
+            checkNotReadonly(result, at(g.file, g.line, g.col), readonlyVars, issues);
+          }
+        }
         break;
       }
       case 'condJump': {
@@ -358,7 +366,7 @@ export function validateSceneVariables(
 }
 
 /** 直改 store 且第一个参数为变量名的指令（lint 校验声明，运行时 store 也会兜底） */
-const VARIABLE_INSTRUCTIONS = new Set(['inc', 'dec', 'toggle', 'flag', 'unflag']);
+const VARIABLE_INSTRUCTIONS = new Set(['inc', 'dec', 'toggle', 'flag', 'unflag', 'add_item', 'remove_item', 'random']);
 
 /** @show 已被渲染层消费的修饰符白名单（其余修饰符静默丢弃，lint 给 W003 提醒） */
 const SHOW_CONSUMED_MODIFIERS = new Set(['pos', 'left', 'right', 'center']);

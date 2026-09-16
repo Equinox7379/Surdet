@@ -297,7 +297,8 @@ export class PlayerUiSession {
       operation: 'idle',
       interfaceHidden: options.interfaceHidden ?? false,
       videoActive: options.videoActive ?? false,
-      returnStack: [],
+      returnStack: options.overlay === this.#snapshot.overlay && options.overlay !== 'none'
+        && (options.base ?? this.#snapshot.base) === this.#snapshot.base ? this.#snapshot.returnStack : [],
     });
     this.#operationOrigin = null;
     return next;
@@ -434,6 +435,8 @@ export class PlayerInputGate {
 
   consumeCurrentPointer(): void {
     this.#currentPointerConsumed = true;
+    // DOM 冒泡在同一任务内完成；键盘触发控件也可能调用这里，不能吞掉未来的鼠标点击。
+    void Promise.resolve().then(() => { this.#currentPointerConsumed = false; });
   }
 
   reset(): void {

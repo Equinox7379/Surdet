@@ -135,6 +135,20 @@ async function openBrowserPage(browser, baseUrl, bridge, channels) {
   });
   await page.exposeFunction('__surdetNodeFs', bridge);
   await page.addInitScript(nodeBackedFileSystemInit, { initialRootKey: 'project' });
+  // Native handles are structured-cloneable; the Node bridge uses functions.
+  // Persist only its identity fields, which the bridge's isSameEntry consumes.
+  // The actual IndexedDB registry and production recovery path remain in use.
+  await page.addInitScript(() => {
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function(value, ...keys) {
+      if (this.name === 'project-handles' && value?.handle?.__surdetRootKey) {
+        const handle = value.handle;
+        value = { ...value, handle: { kind: handle.kind, name: handle.name,
+          __surdetRootKey: handle.__surdetRootKey, __surdetRelativePath: handle.__surdetRelativePath } };
+      }
+      return put.call(this, value, ...keys);
+    };
+  });
   await page.goto(`${baseUrl}/index.html`, { waitUntil: 'networkidle' });
   await page.locator('[data-action="open-project"]').waitFor({ state: 'visible' });
   return { context, page };
@@ -229,8 +243,15 @@ async function main() {
   let blockedSceneReadCount = 0;
   let repeatReadFailureArmed = false;
   let repeatedSceneReadCount = 0;
+  let syncFailureArmed = false;
+  let syncReadFailures = 0;
   const bridgeBase = createNodeFsBridge({ project: projectRoot, blocked: blockedRoot });
   const bridge = async (request) => {
+    if (syncFailureArmed && request.rootKey === 'project' && request.op === 'read'
+      && request.path === 'content/scenario/start.gal') {
+      syncFailureArmed = false; syncReadFailures += 1;
+      throw Object.assign(new Error(expectedInjectedError), { code: 'EACCES', path: request.path });
+    }
     if (request.rootKey === 'blocked'
       && request.op === 'read'
       && request.path === 'content/scenario/start.gal'
@@ -486,8 +507,61 @@ async function main() {
       'saved scene draft did not survive a normal reopen after the failed same-root open',
     );
 
+    const syncDraft = draftSource.replace('@end', '同步失败也必须保留。\n@end');
+    await reopenedSourceEditor.fill(syncDraft);
+    await activePage.waitForFunction(() => {
+      const state = window.surdetEditorDebug.state;
+      return (localStorage.getItem(`surdet-editor:autosave:${encodeURIComponent(state.autosaveProjectId)}`) ?? '').includes('同步失败也必须保留');
+    });
+    syncFailureArmed = true;
+    await activePage.locator('[data-action="discard-project-drafts"]').click();
+    await activePage.waitForFunction(message => document.getElementById('status')?.textContent.includes(message), expectedInjectedError);
+    assert.equal(syncReadFailures, 1);
+    assert.equal(await activePage.evaluate(() => window.surdetEditorDebug.state.scenes.get('start').text), syncDraft);
+    assert.equal(await activePage.evaluate(() => {
+      const state = window.surdetEditorDebug.state;
+      return (localStorage.getItem(`surdet-editor:autosave:${encodeURIComponent(state.autosaveProjectId)}`) ?? '').includes('同步失败也必须保留');
+    }), true, 'failed explicit sync destroyed the persistent draft backup');
+    await activePage.locator('[data-action="discard-project-drafts"]').click();
+    await activePage.waitForFunction(text => window.surdetEditorDebug.state.scenes.get('start').text === text, draftSource);
+
+    // Search updates only the material list. The real input remains mounted
+    // through a composition sequence; no native IME is claimed here.
+    await activePage.locator('[data-editor-mode="assets"]').click();
+    await activePage.locator('[data-asset-filter="search"]').waitFor();
+    assert.equal(await activePage.evaluate(() => {
+      const search = document.querySelector('[data-asset-filter="search"]');
+      search.focus(); search.dispatchEvent(new CompositionEvent('compositionstart', { data: '' }));
+      search.value = '城'; search.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true, data: '城' }));
+      const stable = search.isConnected && search === document.activeElement;
+      search.value = ''; search.dispatchEvent(new CompositionEvent('compositionend', { data: '城' }));
+      search.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      return stable && document.querySelector('[data-asset-filter="search"]') === search;
+    }), true, 'asset search replaced its active input');
+
+    // A real stored recovery entry for a missing scene used to lock the whole
+    // Editor permanently. Download keeps its exact content; explicit discard
+    // only abandons the backup, leaving the project files intact.
+    const backup = await activePage.evaluate(() => {
+      const state = window.surdetEditorDebug.state;
+      const payload = { projectId: state.autosaveProjectId, dirName: state.dirName, savedAt: Date.now(), scenes: [{ key: 'missing', text: '@scene missing\n备份正文\n@end\n' }] };
+      if (!payload.projectId) throw new Error('fixture has no persistent project identity');
+      localStorage.setItem(`surdet-editor:autosave:${encodeURIComponent(payload.projectId)}`, JSON.stringify(payload));
+      return payload;
+    });
+    await openProject(activePage, 'project', path.basename(projectRoot), channels);
+    await activePage.locator('[data-action="download-scene-recovery"]').waitFor();
+    const downloading = activePage.waitForEvent('download');
+    await activePage.locator('[data-action="download-scene-recovery"]').click();
+    const downloaded = await downloading;
+    assert.deepEqual(JSON.parse(await fs.readFile(await downloaded.path(), 'utf8')), backup);
+    await activePage.locator('[data-action="discard-scene-recovery"]').click();
+    await activePage.waitForFunction(() => document.querySelector('#main')?.getAttribute('data-autosave-recovery') === 'idle');
+    assert.equal(await fs.readFile(path.join(projectRoot, 'content/scenario/start.gal'), 'utf8'), draftSource);
+    assert.equal(await activePage.evaluate(id => localStorage.getItem(`surdet-editor:autosave:${encodeURIComponent(id)}`), backup.projectId), null);
+
     await Promise.all(channels.pendingResponseReads);
-    const expectedResponseFailures = channels.responseFailures.filter((entry) => (
+    const expectedBindingFailures = channels.responseFailures.filter((entry) => (
       entry.status === 409
         && entry.method === 'POST'
         && entry.path.startsWith('/__surdet/project-asset-import/v1/binding/challenges/')
@@ -497,11 +571,17 @@ async function main() {
         && entry.code === 'PROJECT_IDENTITY_MISMATCH'
         && entry.messageKey === 'assetImport.PROJECT_IDENTITY_MISMATCH'
     ));
-    assert(expectedResponseFailures.length <= 1,
-      `expected blocked-project identity rejection more than once: ${JSON.stringify(expectedResponseFailures)}`);
+    assert(expectedBindingFailures.length <= 1,
+      `expected blocked-project identity rejection more than once: ${JSON.stringify(expectedBindingFailures)}`);
+    const expectedStalePreviews = channels.responseFailures.filter(entry => entry.status === 409
+      && entry.method === 'POST' && entry.path === '/__surdet/project-asset-import/v1/workspace/preview'
+      && entry.code === 'PREVIEW_OBSERVATION_STALE'
+      && entry.messageKey === 'assetImport.PREVIEW_OBSERVATION_STALE');
+    assert(expectedStalePreviews.length <= 2, 'unexpected repeated stale preview publication');
+    const expectedResponseFailures = [...expectedBindingFailures, ...expectedStalePreviews];
     const expectedErrors = [...channels.consoleErrors, ...channels.pageErrors];
     assert(
-      expectedErrors.filter(isExpectedInjectedError).length <= 1,
+      expectedErrors.filter(isExpectedInjectedError).length <= 2,
       `injected EACCES surfaced more than once: ${JSON.stringify(expectedErrors)}`,
     );
     let allowedResponseConsoleErrors = expectedResponseFailures.length;
@@ -541,6 +621,7 @@ async function main() {
       samePhysicalDirectory,
       recoveredScore: 77,
       reopenedAfterSameRootFailure: true,
+      failedExplicitSyncPreservedBackup: syncReadFailures === 1,
       browserErrors: expectedErrors.filter(isExpectedInjectedError),
       expectedBrowserResponseErrors: expectedResponseFailures,
     }, null, 2));
