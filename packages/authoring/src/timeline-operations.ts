@@ -17,6 +17,7 @@ import type {
 import { normalizeProjectPath } from './project-storage.js';
 import type { TextHasher } from './project-storage.js';
 import { buildTimelineOperationCompositionDraft } from './operation-composition-facts.js';
+import { resolveUniqueTimelinePath, timelineIdentityConflict, timelineIdentityMismatchMessage } from './timeline-identity.js';
 
 const WAVE2_TRACK_KINDS: ReadonlySet<string> = new Set(['background', 'portrait', 'camera', 'screen', 'particle']);
 const WAVE2_ACTIONS: Record<string, ReadonlySet<string>> = {
@@ -50,6 +51,11 @@ export function canonicalTimelineJson(value: unknown): string {
 
 export async function timelineFingerprint(value: unknown, hasher: TextHasher): Promise<string> {
   return hasher.sha256(canonicalTimelineJson(value));
+}
+
+/** Array-index selections are bound to their complete current container. */
+export async function timelineSelectionFingerprint(definition: unknown, objectRef: string, hasher: TextHasher): Promise<string> {
+  return timelineFingerprint({ definition, objectRef }, hasher);
 }
 
 export function parseTimelineDefinition(text: string): TimelineDefinition {
@@ -152,7 +158,7 @@ export async function applyTimelineCreate(
 ): Promise<TimelineCreateResult> {
   const path = timelinePathFor(input.timelineId);
   return runOperation<TimelineCreateResult>(change, input, async (record) => {
-    if (record.workingFiles[path] !== undefined) {
+    if (resolveUniqueTimelinePath(record.workingFiles, input.timelineId) !== undefined) {
       throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `时间轴已存在：${input.timelineId}`);
     }
     const definition = input.definition;
@@ -206,13 +212,16 @@ export async function applyTimelinePatch(
   input: TimelinePatchInput,
   hasher: TextHasher,
 ): Promise<TimelinePatchResult> {
-  const path = timelinePathFor(input.timelineId);
+  const defaultPath = timelinePathFor(input.timelineId);
   return runOperation<TimelinePatchResult>(change, input, async (record) => {
+    const path = resolveUniqueTimelinePath(record.workingFiles, input.timelineId) ?? defaultPath;
     const source = record.workingFiles[path];
     if (source === undefined) {
       throw new AuthoringOperationError('OBJECT_NOT_FOUND', `时间轴不存在：${input.timelineId}`);
     }
     const definition = parseTimelineDefinition(source);
+    const identityConflict = timelineIdentityConflict(path, definition);
+    if (identityConflict !== null) throw new AuthoringOperationError('PROJECT_INVALID', timelineIdentityMismatchMessage(identityConflict));
     const patch: TimelinePatchOperation = input.patch;
     const fingerprintBefore = await timelineFingerprint(definition, hasher);
     const next = JSON.parse(JSON.stringify(definition)) as TimelineDefinition;
@@ -222,6 +231,13 @@ export async function applyTimelinePatch(
       track.cues.map((_cue, cueIndex) => cueRefFor(input.timelineId, trackIndex, cueIndex))
     ));
     let changedRef: string | null = null;
+    // The external service requires container-bound selection fingerprints.
+    // Sealed replay also accepts old local fingerprints after its own full
+    // object preconditions, preserving already delivered candidates.
+    const matchesSelection = async (ref: string, value: unknown): Promise<boolean> => (
+      patch.expectedFingerprint === await timelineSelectionFingerprint(definition, ref, hasher)
+      || patch.expectedFingerprint === await timelineFingerprint(value, hasher)
+    );
 
     if (patch.kind === 'addTrack') {
       if (patch.expectedFingerprint !== fingerprintBefore) {
@@ -251,8 +267,7 @@ export async function applyTimelinePatch(
           availableTrackRefs: availableTrackRefs(),
         });
       }
-      const trackFingerprint = await timelineFingerprint(tracks[index], hasher);
-      if (patch.expectedFingerprint !== trackFingerprint) {
+      if (!await matchesSelection(patch.trackRef, tracks[index])) {
         throw new AuthoringOperationError('OBJECT_REF_STALE', `track fingerprint 不匹配：${patch.trackRef}`);
       }
       assertEditableTrack(tracks[index]!, patch.trackRef);
@@ -268,8 +283,7 @@ export async function applyTimelinePatch(
           availableTrackRefs: availableTrackRefs(),
         });
       }
-      const trackFingerprint = await timelineFingerprint(tracks[index], hasher);
-      if (patch.expectedFingerprint !== trackFingerprint) {
+      if (!await matchesSelection(patch.trackRef, tracks[index])) {
         throw new AuthoringOperationError('OBJECT_REF_STALE', `track fingerprint 不匹配：${patch.trackRef}`);
       }
       assertEditableTrack(tracks[index]!, patch.trackRef);
@@ -286,8 +300,7 @@ export async function applyTimelinePatch(
           availableTrackRefs: availableTrackRefs(),
         });
       }
-      const trackFingerprint = await timelineFingerprint(tracks[index], hasher);
-      if (patch.expectedFingerprint !== trackFingerprint) {
+      if (!await matchesSelection(patch.trackRef, tracks[index])) {
         throw new AuthoringOperationError('OBJECT_REF_STALE', `track fingerprint 不匹配：${patch.trackRef}`);
       }
       assertEditableTrack(tracks[index]!, patch.trackRef);
@@ -308,8 +321,7 @@ export async function applyTimelinePatch(
           availableCueRefs: availableCueRefs(),
         });
       }
-      const cueFingerprint = await timelineFingerprint(cue, hasher);
-      if (patch.expectedFingerprint !== cueFingerprint) {
+      if (!await matchesSelection(patch.cueRef, cue)) {
         throw new AuthoringOperationError('OBJECT_REF_STALE', `cue fingerprint 不匹配：${patch.kind === 'replaceCue' ? patch.cueRef : patch.cueRef}`);
       }
       assertEditableTrack(track!, patch.cueRef.split('/cue:')[0]!);
@@ -337,7 +349,7 @@ export async function applyTimelinePatch(
     const fingerprintAfter = await timelineFingerprint(next, hasher);
     return {
       compositionDraft: await buildTimelineOperationCompositionDraft({
-        capabilityId: 'timeline.patch', timelineId: input.timelineId, beforeDefinition: definition, afterDefinition: next, hasher,
+        capabilityId: 'timeline.patch', timelineId: input.timelineId, path, beforeDefinition: definition, afterDefinition: next, hasher,
       }),
       result: {
         timelineId: input.timelineId,

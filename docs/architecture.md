@@ -1,90 +1,52 @@
 # Surdet 架构
 
-## 分层
+## 模块和依赖
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  cli（surdet 命令）   new / lint / build / pack               │
-├─────────────────────────────────────────────────────────────┤
-│  shell（Electron）   窗口 + 打包（electron-builder）            │
-├─────────────────────────────────────────────────────────────┤
-│  renderer（PixiJS）  AdvRenderer → PixiStage / 音频           │
-├─────────────────────────────────────────────────────────────┤
-│  core（零依赖）      DSL 编译器 / 解释器 / 状态 / 存档 / 全家桶   │
-└─────────────────────────────────────────────────────────────┘
-```
+- `core`：不依赖 DOM、Node 或第三方运行库，提供 DSL 编译、解释器、变量、存档数据、模拟和系统规则。
+- `authoring`：依赖 Core，提供项目快照、对象索引、逐项创作、差异、校验、候选封装、比较和组合合同。
+- `renderer`：消费 Core 事件，通过 `createRendererRuntime` 的命令、查询与输入接口驱动 Pixi 舞台和表现状态。生产消费方不应直接构造旧 `AdvRenderer`/`PixiStage`；旧导出用于既有测试与兼容调用。
+- `host`：连接 Core 与 Renderer，协调宿主系统、玩家输入、菜单、回退与 `PlayerUiSession`。
+- `cli`：Node 适配、项目文件与租约、恢复、HTTP/MCP 入口，以及 new/lint/simulate/build/pack 命令。共享创作语义仍在 Authoring。
+- `editor`：浏览器工作台，使用共享创作合同、Renderer 预览和正常绑定项目的 HTTP 服务。内存草稿与已保存项目、隔离变更、候选结果分别标识。
+- `shell`：Electron 窗口、preload、受限 IPC、桌面存档与打包；不负责重新解释剧情。
 
-**依赖方向**：core → renderer → shell → cli。core 零第三方依赖，headless 可运行可测。
+依赖箭头表示“消费方依赖提供方”，例如 `authoring → core`、`renderer → core`、`host → core/renderer`，不是一条 `core → renderer → shell → cli` 的依赖链。
 
-## 数据流（一帧剧情如何跑起来）
+## 游戏运行与创作
 
-```
-.gal 剧本 ──compile──▶ CompiledScene（指令流 + 标签索引）
-                              │
-                              ▼
-   game.config.json ─▶ VariableStore ─▶ Interpreter ──▶ EventBus
-                                              │
-              text/choice/instr/system/gallery 事件
-                                              ▼
-                                        AdvRenderer（状态机）
-                                              │
-                                        PixiStage（投影）
-```
+`.gal → compileScene → SceneRegistry → Interpreter → EventBus → RendererRuntime` 是剧情到画面的主要路径。宿主将玩家的推进和选择送回解释器；Renderer 表现反馈与 Core 显式路径运行轨迹是不同证据。
 
-- `Interpreter` 逐条执行指令流；text/choice 阻塞，外部 `advance()`/`choose()` 推进；事件回调内可重入（迭代续跑，无递归栈溢出）。
-- `AdvRenderer` 订阅事件驱动打字机/转场/选择肢，与 Pixi 解耦（可注入 fake stage 测试）。
-- 错误定位贯穿三层：`文件:行:列` + 错误码 + 修复提示。
+现代 Starter 和新项目从 `examples/shared/player/player.ts` 装配 Player、Host、输入和菜单。`examples/starter/src/main.ts` 读取项目内容并调用共享入口，不再承担整套播放器实现。《零点之后》仍保留自己的历史入口，其行为应单独验证，不能由 Starter 通过推定。
 
-## 全家桶系统（数据驱动）
+外部 Agent 经公开能力创建隔离变更。素材导入、对象修改、保存决定、准备结果、批准、明确写回分别遵循已有授权与回执；预览和读取观察不会自动批准或写回。候选需要操作发生时的依赖与重放事实；普通 direct 变更不等于一定可组合的候选。能力发现以共享 Authoring 注册表和启动的 MCP 为准。
 
-| 系统 | 配置源 | 引擎侧 | 触发 |
-|---|---|---|---|
-| 地图日程 | calendar.json | `CalendarRunner` | `@calendar` → system 事件；`baseCommands` 据点指令（AP/限次/when/effects） |
-| 回合战斗 | combat.json | `CombatSolver` | `@battle` → system 事件 |
-| 后宫 | events.json | `AffectionSystem` | `@affection/@event` |
-| 商店 | shop.json | `ShopSystem` | `@shop` → system 事件 |
-| 角色成长 | growth.json | `GrowthSystem` | `@exp` → 解释器内聚驱动 + `growth` 事件 |
-| 成就 | achievements.json | `AchievementSystem` | `@achievement unlock` + 宿主 `check()` 批量判定 |
-| 周目通关 | —（剧本内 `@clear`） | `ClearTracker` | `@clear` → `clear` 事件 + 宿主全局通关记录 |
-| 事件调度 | calendar.json（回合头尾事件 ID）+ events.json scheduled[] | `EventScheduler` | 数值优先级（大者优先）+ once 触发集合 |
-| 周目继承 | ngp 配置 | `NewGamePlus` | clear 判定 + 继承计算 |
+## 系统接线
 
-**存档接线**：系统实例由宿主持有，宿主通过 `Interpreter` 的 `SystemHooks`（`snapshot`/`restore`）接入存档——`SaveSnapshot.systems` 携带 `calendar/combat/affection/achievements/eventScheduler` 快照；`GrowthSystem`（成长）与 `ClearTracker`（周目通关）由解释器**内聚管理**，快照在 `SaveSnapshot.growth`/`SaveSnapshot.clears` 顶层。各系统快照必须 JSON 安全（无 Map/Set/函数）。
+Core 提供 Calendar、Combat、Affection、Shop、Growth、Achievement、EventScheduler 和 NewGamePlus 等规则模块。规则模块存在不等于任意项目配置或指令参数都已由 Player 接通。
 
-**演示接线（接近闭环）**：`examples/starter` 演示了全家桶**实例接线与存档往返**——`@calendar`/`@battle`/`@affection`/`@event`/`@shop`/`@achievement` 的 `system` 事件由 `src/main.ts` 驱动对应 System，并经 `SystemHooks` 随存档保存/恢复（见 `content/config/*.json` 与 `ch02.gal`）。已闭环的部分：`calendar.enter()` 的 `eventId` 经 `hostJump` 跳事件场景、`@calendar` 打开地图前/结束回合时统一调度回合头尾事件（`turnStartEventId`/`turnEndEventId` → `EventScheduler.dispatch`；头事件只结算 effects，尾事件带演出场景时经 `hostJump` 进演出、场景结束经 `sceneEnd` 恢复挂起快照续跑剧情）、`baseCommands` 据点指令面板（AP/限次/when/effects 写回变量）、`@exp` 成长 + `levelEvents`、`@clear` 全局通关记录 + NGP 继承、成就 check/unlock 横幅、回想（Gallery）UI。仍可再深化：`@event` 的 `consumeEvent` 未先经 `availableEvents()` 校验、回合头尾事件的演出场景需项目自备。
+共享 Player 读取可选配置并安装对应宿主系统；日历选点与据点指令、成长和 CG 解锁沿各自已有路径执行。Calendar 配置中的 `turnStartEventId`/`turnEndEventId` 当前没有接到通用事件分发，不应宣称已完成这条接线。战斗入口目前使用共享 Player 中的既有演示编排，不提供任意 encounter ID 的通用加载器。
 
-## 素材注入（渲染层）
+## 素材与存档
 
-`PixiStage` 默认对未注册 key 生成程序化占位素材；真实项目在 `init()` 后用 `registerBackground(key, url|Texture)` / `registerPortrait(charId, costume, expression, url|Texture)` 注入真实素材（URL 经 Pixi `Assets` 异步加载），注册后的 key 优先使用真实素材，其余仍回退占位。
+素材通过 Runtime 的资源接口注册，缺失 key 可呈现程序化占位图。占位图不是正式项目图片的替代，也不是素材已成功导入的证据。
 
-## 存档契约
+`SaveSnapshot` 包含变量、运行位置、已读与解锁状态，以及注册的系统、成长和表现快照。系统实例由宿主持有，经 `SystemHooks.snapshot/validate/restore` 接入。内建校验在主要状态替换前运行；任意第三方恢复回调抛错的完整事务回滚不属于当前保证。
 
-`SaveSnapshot` = 变量快照 + 场景定位（sceneId+pc）+ 已读标记 + 解锁状态 + 全家桶系统状态（`systems`，宿主经 `SystemHooks` 提供）。`SaveStorage` 接口可注入 localStorage / 文件系统。剧本 `@autosave`/`@savepoint` 由解释器发对应事件（载荷为完整快照，position 已前移到下一条指令，读档不会重跑存档点），宿主订阅后写入自动/手动槽位。
+桌面存档经 `window.surdetSave` 的异步 `invoke` IPC 进入 `FileSaveStore`，文件位于 `userData/saves`，物理槽位文件名按实现编码，不能直接拼接用户槽位 ID。写入采用暂存、替换和失败补偿；本地失败测试不等于断电原子性证明。浏览器使用 localStorage，写入失败必须报告，不能当成成功。
 
-**桌面文件存档**：`@surdet/shell` 经 preload（`window.surdetSave`，sandbox 下用同步 IPC）暴露 `list/read/write/delete`，主进程用 `FileSaveStore`（`packages/shell/src/save-store.ts`）读写 `userData/saves/<slot>.json`（原子写 + 10MB 大小上限）；浏览器环境回退 localStorage（见 `examples/starter/src/main.ts`）。
+`@autosave`/`@savepoint` 由解释器发出完整快照，宿主负责写入。`loadSnapshot` 必须在解释器事件回调之外执行；读档后重新发出 text/choice 等事件。`sceneEnd` 回调允许 `start()`，通过迭代续跑避免递归。
 
-> **读档时序约定**：`Interpreter.loadSnapshot` 先恢复变量/已读/解锁与全家桶系统状态（`SystemHooks.restore`），再 `#step()` 从恢复点重新执行指令流（text/choice 会重新发出事件驱动 UI 挂起）。宿主**必须在 UI 线程（非事件回调）调用** `loadSnapshot`——在 `text`/`choice` 等事件回调内调用会撞解释器的 `#stepping` 重入守卫。
+## 命令与证据
 
-> **sceneEnd 回调**：`@end` 触发 `sceneEnd` 事件时解释器正处事件回调上下文；回调内可调用 `start(sceneId)`（如"结局 → 返回标题"），经 `#resumeRequested` 延迟重启，不撞重入守卫。`loadSnapshot` 则不可在事件回调内调用。
-
-## 场景结束
-
-`Interpreter` 执行到 `@end`（或文件末尾自动追加的 end）时置 `ended` 并发 `sceneEnd` 事件（载荷 `{ sceneId }`），宿主可接结局演出/ED/返回标题画面。`sceneEnd` 回调内支持 `start()` 重启新场景。
-
-## AI 产出游戏的工作流
-
-```
-surdet new mygame        # 脚手架 + workspace 注册
-# 编辑 content/scenario/*.gal + game.config.json（见 docs/dsl-spec.md）
-surdet lint mygame       # 静态校验：语法/引用/变量声明/跨场景跳转
-npm run dev -w surdet-mygame   # 浏览器预览
-surdet build mygame      # vite 构建
-surdet pack [gameDir]    # electron-builder 打包 exe（缺省打包 starter；指定游戏目录打包该游戏）
+```text
+surdet new mygame
+surdet lint mygame
+surdet simulate mygame
+npm run dev -w surdet-mygame
+surdet build mygame
+surdet pack mygame
 ```
 
-## 关键设计约束
+`surdet pack` 必须明确指定游戏目录。已有项目的 workspace 名称读取自己的 `package.json`，例如《零点之后》是 `zero-after-midnight`，不按目录机械添加前缀。
 
-- **core 零依赖**：逻辑层不依赖 DOM/Node/console，宿主注入 logger/存储。
-- **引号契约**：词法器引号感知切分但保留引号；表达式语境当字符串字面量，通用指令值由渲染层 `dequote`。
-- **短路求值**：`&&`/`||` 只对实际求值侧做类型校验。
-- **事件回调可重入**：`advance()/choose()` 在事件回调内通过 `#resumeRequested` 迭代续跑。
+`capability-matrix.md` 是历史玩家运行能力与证据路径索引，不覆盖完整 Authoring/Editor 能力。路径存在检查和源码文本契约测试只证明静态约束；真实浏览器、真实文件保存、Electron 和正式游戏验证分别记录。当前状态与授权由原长期台账维护，九月托管 CI 暂停。

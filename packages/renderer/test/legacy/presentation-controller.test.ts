@@ -122,6 +122,41 @@ function controllerFor(
 }
 
 describe('PresentationController', () => {
+  it('state reset clears hidden interface state in both controller and stage', () => {
+    const stage = stageHarness();
+    const controller = controllerFor(stage);
+    const bus = new EventBus<CoreEventMap>();
+    const off = controller.connect(bus);
+    controller.toggleHideInterface();
+    expect(controller.interfaceHidden).toBe(true);
+    bus.emit('stateReset', { reason: 'load' });
+    expect(controller.interfaceHidden).toBe(false);
+    expect(stage.hidden.at(-1)).toBe(false);
+    off(); controller.dispose();
+  });
+  it('does not replace a restored timeline when starting another on a fresh controller', () => {
+    const stage = stageHarness();
+    const controller = controllerFor(stage);
+    const bus = new EventBus<CoreEventMap>();
+    const off = controller.connect(bus);
+    const definition = { version: 1 as const, id: 'running', durationMs: 1000, tracks: [{ kind: 'screen' as const,
+      cues: [{ atMs: 0, durationMs: 1000, easing: 'linear' as const, action: 'fade', alpha: 1 }] }] };
+    try {
+      bus.emit('timeline', { id: 'running', blocking: false, definition });
+      const saved = controller.snapshotPresentation() as { timelines: { id: number }[] };
+      saved.timelines[0]!.id = 2;
+      const second = controllerFor(stageHarness());
+      const nextBus = new EventBus<CoreEventMap>();
+      const disconnect = second.connect(nextBus);
+      try {
+        second.restorePresentation(saved);
+        nextBus.emit('timeline', { id: 'another', blocking: false, definition: { ...definition, id: 'another' } });
+        const restored = second.snapshotPresentation() as { timelines: { id: number }[] };
+        expect(restored.timelines).toHaveLength(2);
+        expect(new Set(restored.timelines.map(run => run.id)).size).toBe(2);
+      } finally { disconnect(); second.dispose(); }
+    } finally { off(); controller.dispose(); }
+  });
   it('is an independent state machine and does not inherit AdvRenderer', () => {
     expect(Object.getPrototypeOf(PresentationController.prototype)).not.toBe(AdvRenderer.prototype);
   });
@@ -155,6 +190,20 @@ describe('PresentationController', () => {
 
     off();
     controller.dispose();
+  });
+
+  it('does not carry all-text skip across a choice into read-only skip', () => {
+    const controller = controllerFor(stageHarness());
+    const bus = new EventBus<CoreEventMap>();
+    const off = controller.connect(bus);
+    try {
+      controller.toggleSkipAll();
+      bus.emit('choice', choiceEvent());
+      expect(controller.skipAll).toBe(false);
+      controller.toggleSkip();
+      bus.emit('text', { speaker: null, value: '未读正文', wasRead: false });
+      expect(controller.skipMode).toBe(false);
+    } finally { off(); controller.dispose(); }
   });
 
   it('blocks rollback checkpoint capture while a real FadeTween is active', () => {

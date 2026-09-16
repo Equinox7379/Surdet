@@ -24,6 +24,7 @@ import type { FrameRequestHandler, PortraitView } from '../../types.js';
 
 export interface WorldPresentationSnapshot {
   version: 1;
+  activeSpeakerId?: string | null;
   backgroundKey: string | null;
   portraits: readonly { key: string; view: PortraitView }[];
   cameraScale: number;
@@ -703,6 +704,7 @@ export class WorldLayer implements WorldProjectionPort {
   snapshotPresentation(): WorldPresentationSnapshot {
     return {
       version: 1,
+      activeSpeakerId: this.#activeSpeakerId,
       backgroundKey: this.#backgroundKey,
       portraits: [...this.#portraitViews.entries()].map(([key, view]) => ({ key, view: { ...view } })),
       cameraScale: this.worldContainer.scale.x,
@@ -1044,11 +1046,9 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   #clearVisibleState(): void {
-    const activeSpeakerId = this.#activeSpeakerId;
     this.#clearPortraits();
     this.#clearBackground();
     this.#clearEffects({ preserveWorld: false });
-    this.#activeSpeakerId = activeSpeakerId;
     this.#syncEffectRegistration();
   }
 
@@ -1056,6 +1056,7 @@ export class WorldLayer implements WorldProjectionPort {
     if (typeof snapshot !== 'object' || snapshot === null || Array.isArray(snapshot)) throw invalidSnapshot('Presentation snapshot must be an object');
     const raw = snapshot as Record<string, unknown>;
     if (raw.version !== 1) throw invalidSnapshot('Presentation snapshot version must be 1');
+    if (raw.activeSpeakerId !== undefined && raw.activeSpeakerId !== null && typeof raw.activeSpeakerId !== 'string') throw invalidSnapshot('activeSpeakerId is invalid');
     if (!(raw.backgroundKey === null || typeof raw.backgroundKey === 'string')) throw invalidSnapshot('backgroundKey is invalid');
     if (!Array.isArray(raw.portraits)) throw invalidSnapshot('portraits must be an array');
     const portraits: { key: string; view: PortraitView }[] = [];
@@ -1085,6 +1086,7 @@ export class WorldLayer implements WorldProjectionPort {
     }
     return {
       version: 1,
+      activeSpeakerId: typeof raw.activeSpeakerId === 'string' ? raw.activeSpeakerId : null,
       backgroundKey: raw.backgroundKey,
       portraits,
       cameraScale: raw.cameraScale,
@@ -1100,6 +1102,7 @@ export class WorldLayer implements WorldProjectionPort {
     this.#clearVisibleState();
     if (snapshot.backgroundKey !== null) this.setBackground(snapshot.backgroundKey);
     for (const record of snapshot.portraits) this.setPortrait(record.key, record.view);
+    this.setPortraitFocus(snapshot.activeSpeakerId ?? null);
     this.worldContainer.scale.set(snapshot.cameraScale);
     this.#cameraPanX = snapshot.cameraPan.x;
     this.#cameraPanY = snapshot.cameraPan.y;

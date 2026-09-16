@@ -25,7 +25,7 @@ if (!['--write', '--check'].includes(mode)) {
         console.error(`能力矩阵不存在或不可读：${path.relative(ROOT, targetPath)}`);
         process.exitCode = 1;
       }
-      if (current !== undefined && current !== output) {
+      if (current !== undefined && current.replace(/\r\n/g, '\n') !== output.replace(/\r\n/g, '\n')) {
         console.error(`能力矩阵已漂移，请运行 npm run docs:capabilities：${path.relative(ROOT, targetPath)}`);
         process.exitCode = 1;
       }

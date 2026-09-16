@@ -9,6 +9,7 @@ import type { SystemSnapshots } from '../src/save/save-manager.js';
 import type { VarDeclaration } from '../src/state/types.js';
 import type { CoreEventMap } from '../src/runtime/interpreter.js';
 import { createSeededRandomSource } from '../src/runtime/random-source.js';
+import { GrowthSystem } from '../src/systems/growth.js';
 
 const decls: VarDeclaration[] = [
   { name: 'trust', type: 'number', initial: 0 },
@@ -23,6 +24,58 @@ function makeInterp(variableDecls: VarDeclaration[] = decls) {
 }
 
 describe('Interpreter 存档', () => {
+  it('旧档缺少成长状态时恢复配置初值，不继承当前等级和经验', () => {
+    const { store, registry, interp } = makeInterp();
+    const growth = new GrowthSystem({ curve: { base: 10 }, profiles: [{ characterId: 'rin', initialLevel: 2 }] }, store);
+    interp.setGrowth(growth);
+    registry.register(compileScene('正文。', 's.gal', 's1'));
+    interp.start('s1');
+    const saved = interp.saveSnapshot()!;
+    delete saved.growth;
+    growth.gainExp('rin', 15);
+    expect(growth.levelOf('rin')).toBe(3);
+    interp.loadSnapshot(saved);
+    expect(growth.levelOf('rin')).toBe(2);
+    expect(growth.experienceOf('rin')).toBe(0);
+  });
+
+  it('refuses non-JSON-safe system state instead of silently losing Map contents', () => {
+    const store = new VariableStore(decls);
+    const bus = new EventBus<CoreEventMap>();
+    const registry = new SceneRegistry();
+    const interp = new Interpreter(store, bus, registry, undefined, undefined, {
+      snapshot: () => ({ custom: new Map([['key', 1]]) }) as unknown as SystemSnapshots,
+      restore: () => {},
+    });
+    registry.register(compileScene('正文。', 's.gal', 's1')); interp.start('s1');
+    expect(() => interp.saveSnapshot()).toThrow(/JSON/);
+  });
+
+  it('empty quoted clear IDs use the current scene identity', () => {
+    const { bus, registry, interp } = makeInterp();
+    const endings: string[] = [];
+    bus.on('clear', event => endings.push(event.ending));
+    registry.register(compileScene('@clear ""\n正文。', 's.gal', 's1')); interp.start('s1');
+    expect(endings).toEqual(['s1']);
+  });
+  it('旧档缺少后来新增的变量时恢复声明初值，不继承当前会话', () => {
+    const { store, registry, interp } = makeInterp();
+    registry.register(compileScene('正文。', 's.gal', 's1')); interp.start('s1');
+    const saved = interp.saveSnapshot()!; delete saved.variables['trust'];
+    store.set('trust', 99); interp.loadSnapshot(saved);
+    expect(store.getNumber('trust')).toBe(0);
+  });
+
+  it('外部修改导出的调用栈不会改动运行中的返回位置', () => {
+    const { registry, interp } = makeInterp();
+    registry.register(compileScene('@call sub\n返回正文。', 'main.gal', 'main'));
+    registry.register(compileScene('子场景。\n@return', 'sub.gal', 'sub'));
+    interp.start('main');
+    const saved = interp.saveSnapshot()!;
+    const pc = saved.callStack![0]!.pc;
+    saved.callStack![0]!.pc = 999;
+    expect(interp.saveSnapshot()!.callStack![0]!.pc).toBe(pc);
+  });
   it('saveSnapshot 捕获变量/定位/已读/解锁', () => {
     const { store, registry, interp } = makeInterp();
     registry.register(compileScene('@set trust = 7\n凛：甲。\n凛：乙。', 's.gal', 's1'));

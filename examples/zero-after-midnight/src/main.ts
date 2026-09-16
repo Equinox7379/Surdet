@@ -311,6 +311,7 @@ async function main(): Promise<void> {
   commands.preferences.setTheme(createRendererTheme());
   dialogue.setSpeakerProfiles(speakerProfiles);
   settings.apply(typewriter, audio);
+  bus.on('video', () => { uiSession.setVideoActive(true); });
   renderer.connect(bus);
   const presentationConnection = connectInterpreterPresentation({
     interpreter: interp,
@@ -321,7 +322,7 @@ async function main(): Promise<void> {
   const isTitleScreen = (): boolean => uiSnapshot().base === 'title';
   const isOverlay = (overlay: PlayerOverlay): boolean => uiSnapshot().overlay === overlay;
   const isVideoActive = (): boolean => uiSnapshot().videoActive;
-  const isUiBusy = (): boolean => uiSnapshot().operation !== 'idle';
+  const isUiBusy = (): boolean => uiSnapshot().operation !== 'idle' || queries.overlay.system().type !== 'none';
   const restoreCommandRailForPlayerContext = (): void => {
     const snapshot = uiSnapshot();
     if (snapshot.base === 'game' && snapshot.overlay === 'none' && snapshot.operation === 'idle' && !snapshot.interfaceHidden) {
@@ -432,7 +433,6 @@ async function main(): Promise<void> {
   const canRollback = (): boolean => rollbackRuntime.canRollback();
   const performRollback = (): boolean => rollbackRuntime.perform();
 
-  bus.on('video', () => { uiSession.setVideoActive(true); });
   bus.on('stateReset', () => { uiSession.setVideoActive(false); });
   bus.on('text', () => rollbackRuntime.captureText());
 
@@ -654,7 +654,7 @@ async function main(): Promise<void> {
     if (rollbackRuntime.isRestoring()) return;
     void saves.save(AUTO_SLOT, enrichSnapshot(snap)).then(() => {
       console.info('[zero] 自动存档（ngp cleared:', ngp.isCleared(), '）');
-    });
+    }).catch(error => console.error('[zero] 自动存档失败：', error));
   });
 
   // 存档场景哈希不匹配：存档后剧本被编辑，pc 定位可能漂移（引擎仍照常加载，此处提醒玩家）
@@ -1163,6 +1163,7 @@ async function main(): Promise<void> {
 
   function completeLoadedSnapshot(snap: SaveSnapshot): void {
     interp.loadSnapshot(snap);
+    sessionStart = Date.now() - Math.max(0, snap.meta.playTimeSec ?? 0) * 1000;
     menu.hideTitle();
     clearRollback();
     playerShell!.commands.completeOperation({ base: 'game', overlay: 'none' });
@@ -1371,6 +1372,7 @@ async function main(): Promise<void> {
       const snap = await saves.load(QUICK_SLOT);
       clearRollback();
       interp.loadSnapshot(snap);
+      sessionStart = Date.now() - Math.max(0, snap.meta.playTimeSec ?? 0) * 1000;
       playerShell!.commands.completeOperation({ base: 'game', overlay: 'none' });
       if (railWasVisible) dialogue.restoreCommandRail();
       clearCountedThisSession = false;

@@ -8,6 +8,22 @@ interface TestEvents extends EventMap {
 }
 
 describe('EventBus', () => {
+  it('once is removed before a handler emits the same event again', () => {
+    const bus = new EventBus<TestEvents>();
+    const seen: number[] = [];
+    bus.once('tick', p => { seen.push(p.n); if (p.n === 0) bus.emit('tick', { n: 1 }); });
+    bus.emit('tick', { n: 0 });
+    expect(seen).toEqual([0]);
+  });
+
+  it('a handler can cancel a later subscription in the current emission', () => {
+    const bus = new EventBus<TestEvents>();
+    const seen: number[] = [];
+    bus.on('tick', () => off());
+    const off = bus.on('tick', p => seen.push(p.n));
+    bus.emit('tick', { n: 0 });
+    expect(seen).toEqual([]);
+  });
   it('订阅/发布/退订', () => {
     const bus = new EventBus<TestEvents>();
     const seen: string[] = [];

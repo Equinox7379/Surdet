@@ -54,6 +54,21 @@ function makeHarness(
 }
 
 describe('PlayerShellController', () => {
+  it('saving with a retained nested overlay keeps providers and their return stack', () => {
+    const { controller, events } = makeHarness({ base: 'game' });
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    controller.commands.open({ slot: 'settings', source: 'system-menu' });
+    const before = controller.queries.snapshot();
+    controller.commands.beginOperation('saving');
+    expect(() => controller.commands.close()).toThrow(/operation=idle/);
+    controller.commands.completeOperation({ base: 'game', overlay: 'settings' });
+    expect(controller.queries.snapshot()).toEqual(before);
+    expect(events.filter(event => event.kind === 'close')).toEqual([]);
+    controller.commands.close();
+    expect(controller.queries.snapshot().overlay).toBe('system-menu');
+    controller.commands.close();
+    expect(controller.queries.canAdvance()).toBe(true);
+  });
   it('coordinates title/gallery and closes gallery back to title', () => {
     const { controller, events } = makeHarness({ base: 'title' });
 

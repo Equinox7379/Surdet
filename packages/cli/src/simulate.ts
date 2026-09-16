@@ -181,6 +181,9 @@ export async function cmdSimulate(projectDir: string, argv: string[]): Promise<n
 
   let report: SimulateReport;
   try {
+    for (const [name, value] of [['--max-paths', opts.maxPaths], ['--max-steps', opts.maxStepsPerPath]] as const) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) throw new Error(`${name} 必须是正整数`);
+    }
     report = simulateProject(projectDir, opts);
   } catch (err) {
     process.stderr.write(`simulate 失败：${err instanceof Error ? err.message : String(err)}\n`);

@@ -143,39 +143,43 @@ connectSystemRouter(bus, host);
 
 ## 2. DSL 速查
 
-```
-# 场景文件 content/scenario/ch01_01.gal（场景 ID = 文件名去扩展名）
+注释必须独占一行，以 `//` 开头；行尾的 `#` 或 `//` 不具有注释语义。选项箭头两侧留空格。
 
-@scene ch01_01          # 声明场景（须与文件名一致）
-@bg castle              # 背景
-@bgm tense_01           # 音乐
-@timeline intro_arrival @ blocking  # 播放多轨开场，完成前暂停剧情
+```gal
+// 场景文件 content/scenario/ch01_01.gal（场景 ID = 文件名去扩展名）
+@scene ch01_01
+@bg castle
+@bgm tense_01
+// 播放多轨开场，完成前暂停剧情
+@timeline intro_arrival @ blocking
 
-@label start            # 标签（跳转锚点）
-凛：你来了。            # 说话人：内容（中/英文冒号）
+@label start
+凛：你来了。
 主角：这是哪？
-（旁白）                # 无说话人文本
+（旁白）
 
-@set lynn.trust = 0     # 赋值（= / := / += / -=）
-@mod lynn.trust +3      # 数值增减
-@flag hasSword          # 置 flag 为 true
-@if lynn.trust >= 30    # 条件分支（表达式：算术/比较/&&/||/!/括号）
+@set lynn.trust = 0
+@mod lynn.trust +3
+@flag hasSword
+@if lynn.trust >= 30
 凛：好感到了。
 @else
 凛：还不够。
 @endif
 
-@choice                 # 选择肢（选项行必须缩进）
-  拔剑 -> @goto sword   # 选中后跳本场景标签
+// 选择组的选项行必须缩进
+@choice
+  拔剑 -> @goto sword
   表白 [if:lynn.trust >= 50] -> @mod lynn.trust +5 @jump ch02.start
   沉默
 @label sword
 凛：你拔剑了。
-@end                    # 场景结束（可省略，引擎自动补）
+@end
 
-@jump ch02.start        # 跨场景跳转：sceneId 或 sceneId.label
-@unlock_cg cg_end       # 解锁 CG（回想鉴赏）
-@autosave               # 存档点：触发 autosave 事件，宿主写入自动存档槽位
+// 以下为独立指令示例：实际创作时放在可达位置
+@jump ch02.start
+@unlock_cg cg_end
+@autosave
 ```
 
 ### 时间轴 JSON 速查
@@ -226,7 +230,7 @@ connectSystemRouter(bus, host);
     "items": { "type": "string[]", "initial": [] },
     "chapter": { "type": "number", "initial": 1, "readonly": true }
   },
-  "customInstructions": ["mypower"]   // 可选：声明自定义指令消 W001 告警
+  "customInstructions": ["mypower"]
 }
 ```
 
@@ -242,7 +246,7 @@ connectSystemRouter(bus, host);
 6. 每个 `.gal` 文件的**场景 ID 全局唯一**（= 文件名），`@scene` 声明须与文件名一致（SCENE_ID）；**文件名不能含点号**（会破坏 `@jump` 的 sceneId.label 寻址）。
 7. **每次改完剧本必须跑 lint 到 0 错误再交付**。错误信息带 `文件:行:列` + 错误码 + 可操作的修复建议（hint），按 §5 自我修正循环处理。
 8. **类型自洽**：`@set` 右值类型须与变量声明匹配（`@set x = "a"` 但 x 声明为 number 会报 T001）；`@if`/`[if:]` 条件必须结果为 boolean；数字/字符串别混用比较与逻辑运算符（T002/T003）。字符串字面量必须带引号。
-9. **字符串内引号**：表达式字符串字面量只支持 `\n` `\t` `\\` 转义，**不支持 `\"`**——`"say "hi""` 会在词法层提前闭合引号导致解析错误。字符串内容里需要引号时，改用另一种引号包裹（如 `'say "hi"'`）或调整措辞。
+9. **表达式字符串**：支持 `\n`、`\t`、`\\`、`\"`、`\'`；未知转义保留原反斜杠。路径中的反斜杠建议明确写成 `\\`，防止 `\n`/`\t` 被解释为换行/制表符。也可用另一种引号包裹，如 `'say "hi"'`。通用指令的素材标识以公开目录返回值为准，不套用表达式字符串转义规则。
 
 ## 5. 自我修正循环（AI 质量闭环）
 

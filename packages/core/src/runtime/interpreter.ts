@@ -45,7 +45,7 @@ export interface PresentationSnapshotHooks {
 }
 
 /** 运行时状态。paused = 宿主暂停（如交互式战斗进行中），resumeHost() 恢复 */
-export type RuntimeStatus = 'idle' | 'running' | 'awaiting-advance' | 'awaiting-choice' | 'awaiting-timer' | 'paused' | 'ended';
+export type RuntimeStatus = 'idle' | 'running' | 'awaiting-advance' | 'awaiting-choice' | 'awaiting-timer' | 'paused' | 'ended' | 'error';
 
 /** 指令参数去引号（引号契约：解释器侧消费的 ID 类参数在此去引号，与渲染层 dequote 语义一致）；
  *  例：@clear "ed1" → 结局标识 ed1（避免引号被写进结局/成就 ID） */
@@ -222,7 +222,7 @@ export class Interpreter {
 
   /** 注入有状态随机源；只能在一轮运行开始前或结束后切换，避免静默重置运行中序列。 */
   setRandomSource(source: RandomSource): void {
-    if (this.#status !== 'idle' && this.#status !== 'ended') {
+    if (this.#status !== 'idle' && this.#status !== 'ended' && this.#status !== 'error') {
       throw new RuntimeError('运行中的解释器不能替换随机源');
     }
     if (typeof source.next !== 'function') {
@@ -287,11 +287,14 @@ export class Interpreter {
   /** 完整存档快照（变量 + 定位 + 已读 + 解锁 + 全家桶系统状态）。未运行/空闲时返回 null。
    *  kind 用于标记手动/快速/自动存档（默认 manual，宿主可覆盖）。 */
   saveSnapshot(kind: SaveSnapshot['kind'] = 'manual'): SaveSnapshot | null {
-    if (!this.#scene || this.#status === 'idle') return null;
+    if (!this.#scene || this.#status === 'idle' || this.#status === 'error') return null;
     const { position, hash } = this.#currentSavePosition();
     if (!position) return null;
     if (hash !== undefined) position.sceneHash = hash;
     const systems = this.#systemHooks.snapshot?.();
+    if (systems !== undefined && !isJsonSafeValue(systems)) {
+      throw new RuntimeError('宿主系统快照必须是 JSON 安全值');
+    }
     const presentationPayload = this.#presentationHooks?.snapshot();
     const random = this.#randomSource.snapshot?.();
     if (random !== undefined) {
@@ -317,7 +320,7 @@ export class Interpreter {
       },
       variables: this.#store.snapshot(),
       position,
-      callStack: [...this.#callStack],
+      callStack: this.#callStack.map(frame => ({ ...frame })),
       kind,
       readSet: this.readTracker.snapshot(),
       gallery: this.gallery.snapshot(),
@@ -381,9 +384,11 @@ export class Interpreter {
         `存档调用栈返回点场景 '${frame.sceneId}' 未注册（读档后剧本可能已重构）`,
       );
     }
-    if (snap.systems) this.#systemHooks.validate?.(snap.systems);
+    this.#systemHooks.validate?.(snap.systems ?? {});
     this.#presentationHooks?.validate?.(snap.presentation?.payload ?? null);
-    this.#store.validateRestore(snap.variables, { allowReadonly: true });
+    const restoredVariables = { ...Object.fromEntries(this.#store.declarations().map(decl => [decl.name, decl.initial])), ...snap.variables };
+    this.#store.validateRestore(restoredVariables, { allowReadonly: true });
+    if (snap.growth && this.#growth) this.#growth.validateSnapshot(snap.growth);
     if (snap.random !== undefined) {
       if (this.#randomSource.restore === undefined) {
         throw new RuntimeError('该存档包含 seeded 随机状态，但当前解释器没有可恢复的随机源');
@@ -404,15 +409,15 @@ export class Interpreter {
     if (version === undefined || version < SAVE_SCHEMA_VERSION) {
       this.#bus.emit('saveMigrated', { from: version ?? 1, to: SAVE_SCHEMA_VERSION });
     }
-    this.#store.restore(snap.variables, { allowReadonly: true }); // 可信快照：readonly 系统变量随档恢复
+    this.#store.restore(restoredVariables, { allowReadonly: true }); // 旧档缺少的新增变量回到初值；readonly 随档恢复
     this.readTracker.restore(snap.readSet);
     this.gallery.restore(snap.gallery);
     this.clearTracker.restore(snap.clears); // 旧档无 clears 字段按未通关
-    if (snap.growth && this.#growth) this.#growth.restore(snap.growth); // 旧档无 growth 按初始等级
-    if (snap.systems) this.#systemHooks.restore?.(snap.systems);
+    this.#growth?.restore(snap.growth ?? { levels: {}, experience: {} }); // 旧档无 growth 按配置初值恢复
+    this.#systemHooks.restore?.(snap.systems ?? {});
     this.#pendingChoice = null;
     // v1 旧档无 callStack 字段 → 按空栈加载（@call 引入前的存档不受影响）
-    this.#callStack = snap.callStack ? [...snap.callStack] : [];
+    this.#callStack = snap.callStack ? snap.callStack.map(frame => ({ ...frame })) : [];
     // 读档状态重置（审计修复 C1/M1）：置于 position 早退分支之前，保证退化路径同样闭合（审计复核补全）
     this.#hostPaused = false;
     this.#jumpOverride = false;
@@ -531,6 +536,11 @@ export class Interpreter {
     this.#stepping = true;
     try {
       this.#runLoop();
+    } catch (error) {
+      this.#status = 'error';
+      this.#resumeRequested = false;
+      this.#hostPaused = false;
+      throw error;
     } finally {
       this.#stepping = false;
     }
@@ -1028,7 +1038,7 @@ export class Interpreter {
       case 'clear': {
         // @clear [结局ID]：周目通关记录。缺省结局标识 = 当前场景 ID（多结局各放一条 @clear）。
         // 引擎只记录与广播；全局通关记录（跨周目）由宿主在 clear 事件回调中落盘。
-        const ending = arg0 !== undefined ? dequoteInstrArg(arg0) : this.#scene!.sceneId;
+        const ending = (arg0 === undefined ? '' : dequoteInstrArg(arg0)) || this.#scene!.sceneId;
         const fresh = this.clearTracker.markClear(ending);
         this.#bus.emit('clear', { ending, fresh });
         return;

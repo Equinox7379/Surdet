@@ -435,7 +435,7 @@ export async function openAssetImportAuthorityPaths(options: {
   if (!path.isAbsolute(options.projectRoot)) {
     throw new AssetImportAuthorityError('INVALID_REQUEST', 'projectRoot 必须是绝对路径', { field: 'projectRoot' });
   }
-  const requestedDataRoot = options.dataRoot ?? defaultDataRoot();
+  const requestedDataRoot = options.dataRoot ?? process.env['SURDET_EDITOR_ASSET_IMPORT_DATA_ROOT'] ?? defaultDataRoot();
   if (!path.isAbsolute(requestedDataRoot)) {
     throw new AssetImportAuthorityError('INVALID_REQUEST', 'dataRoot 必须是绝对路径', { field: 'dataRoot' });
   }

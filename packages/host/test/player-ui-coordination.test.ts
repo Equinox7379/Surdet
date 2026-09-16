@@ -19,6 +19,16 @@ const overlays: readonly Exclude<PlayerOverlay, 'none'>[] = [
 ];
 
 describe('public player UI coordination', () => {
+  it('only consumes the current event turn, not a later click after keyboard activation', async () => {
+    const gate = new PlayerInputGate();
+    const session = createPlayerUiSession({ base: 'game' });
+    session.setInterfaceHidden(true);
+    gate.consumeCurrentPointer();
+    expect(gate.decidePointer(session.snapshot(), { button: 0 })).toBe('ignore');
+    gate.consumeCurrentPointer();
+    await Promise.resolve();
+    expect(gate.decidePointer(session.snapshot(), { button: 0 })).toBe('restore-interface');
+  });
   it.each(overlays)('keeps %s as the exclusive blocking overlay', (overlay) => {
     const session = createPlayerUiSession({ base: 'game' });
     expect(session.openOverlay(overlay).overlay).toBe(overlay);

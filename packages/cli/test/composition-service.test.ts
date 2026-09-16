@@ -104,6 +104,44 @@ async function planFromComparison(
 }
 
 describe('CompositionService compare/plan/dry-run', () => {
+  it('封装与重放保留配置字面键、BOM、大小写场景和子目录时间轴', async () => {
+    const fixture = await setup('maintenance-identities');
+    fs.renameSync(path.join(fixture.projectRoot, 'content/scenario/start.gal'), path.join(fixture.projectRoot, 'content/scenario/start.GAL'));
+    fs.writeFileSync(path.join(fixture.projectRoot, 'game.config.json'), '\uFEFF' + JSON.stringify({ entryScene: 'start', variables: {}, characters: { rin: { name: '凛', custom: true } }, untouched: true }));
+    const timelinePath = 'content/timelines/chapter/opening.json';
+    fs.mkdirSync(path.dirname(path.join(fixture.projectRoot, timelinePath)), { recursive: true });
+    fs.writeFileSync(path.join(fixture.projectRoot, timelinePath), JSON.stringify({ version: 1, id: 'opening', durationMs: 100, tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 100, easing: 'linear', action: 'fade', alpha: 1 }] }] }));
+    const baseline = treeSnapshot(fixture.projectRoot);
+    const first = await sealCandidate(fixture.projectRoot, 'config', async session => {
+      for (const name of ['_score', '好感']) {
+        const result = await session.invoke('variable.ensure', { operationId: `var-${name}`, name, type: 'number', initial: 1 });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+      }
+      const character = await session.invoke('object.inspect', { objectRef: 'character:rin' });
+      if (!character.ok) throw new Error(JSON.stringify(character));
+      const renamed = await session.invoke('character.ensure', { operationId: 'rename', id: 'rin', name: '小凛', expectedFingerprint: (character.result as AuthoringObject).fingerprint });
+      expect(renamed, JSON.stringify(renamed)).toMatchObject({ ok: true });
+    });
+    const second = await sealCandidate(fixture.projectRoot, 'timeline', async session => {
+      const target = await session.invoke('object.inspect', { objectRef: 'timeline:opening/track:0/cue:0' });
+      if (!target.ok) throw new Error(JSON.stringify(target));
+      const changed = await session.invoke('timeline.patch', { operationId: 'fade', timelineId: 'opening', patch: { kind: 'replaceCue', cueRef: 'timeline:opening/track:0/cue:0', expectedFingerprint: (target.result as AuthoringObject).fingerprint, cue: { atMs: 0, durationMs: 100, easing: 'linear', action: 'fade', alpha: 0.5 } } });
+      expect(changed, JSON.stringify(changed)).toMatchObject({ ok: true });
+    });
+    const planned = await planFromComparison(fixture, [first.ref, second.ref]);
+    expect(planned.plan.dryRun.status, JSON.stringify(planned.plan.dryRun)).toBe('passed');
+    const result = await fixture.service.executePlan({ planId: planned.plan.planId, artifactSha256: planned.identity.sha256, executeOperationId: 'maintenance-combine' });
+    expect(result.status).toBe('READY');
+    const files = (await NodeChangeStoreStatic.openByChangeId(result.changeId))!.record.workingFiles;
+    expect(files['content/scenario/start.GAL']).toContain('小凛：开始。');
+    expect(files['game.config.json']!.startsWith('\uFEFF')).toBe(true);
+    const config = JSON.parse(files['game.config.json']!.slice(1));
+    expect(config).toMatchObject({ untouched: true, variables: { _score: { initial: 1 }, '好感': { initial: 1 } }, characters: { rin: { custom: true } } });
+    expect(JSON.parse(files[timelinePath]!).tracks[0].cues[0].alpha).toBe(0.5);
+    expect(files['content/timelines/opening.json']).toBeUndefined();
+    expect(treeSnapshot(fixture.projectRoot)).toEqual(baseline);
+  });
+
   it('combines independent CG entries and unlock scenes, then resumes their exact integration', async () => {
     const fixture = await setup('gallery-combination');
     const galleryPath = 'content/config/gallery.json';

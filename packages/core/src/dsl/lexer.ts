@@ -101,7 +101,7 @@ export class Lexer {
     if (!first) {
       throw new LexError('L001', '指令行缺少指令名（@name ...）', file, line, indent + 1);
     }
-    const firstParts = this.#tokenizeArgs(first, file, line, indent);
+    const firstParts = this.#tokenizeArgs(first, file, line, indent + 1);
     const name = firstParts[0];
     if (name === undefined || name.length === 0) {
       throw new LexError('L001', '指令行缺少指令名（@name ...）', file, line, indent + 1);
@@ -109,10 +109,15 @@ export class Lexer {
     const args = firstParts.slice(1);
     const modifiers = new Map<string, string>();
 
+    let segmentOffset = 1 + first.length;
     for (let s = 2; s < segments.length; s++) {
-      const seg = segments[s]!.trim();
+      const rawSegment = segments[s]!;
+      segmentOffset += 1;
+      const argumentOffset = segmentOffset + rawSegment.length - rawSegment.trimStart().length;
+      const seg = rawSegment.trim();
+      segmentOffset += rawSegment.length;
       if (seg.length === 0) continue;
-      const parts = this.#tokenizeArgs(seg, file, line, indent);
+      const parts = this.#tokenizeArgs(seg, file, line, indent + argumentOffset);
       const keyToken = parts[0];
       if (keyToken === undefined || keyToken.length === 0) {
         throw new LexError('L002', '修饰符缺少键名（@key value）', file, line, indent + 1);
@@ -127,6 +132,7 @@ export class Lexer {
         key = keyToken;
         value = parts.slice(1).join(' ');
       }
+      if (!key) throw new LexError('L002', '修饰符缺少键名（@key value）', file, line, indent + argumentOffset + 1);
       modifiers.set(key, value);
     }
 
@@ -217,7 +223,7 @@ function firstColonIndex(s: string): number {
 
 /** 引号感知：按分隔符切段，跳过引号内的分隔符（保留引号字符，供后续剥除）。
  *  引号内支持反斜杠转义（\" / \' / \\）：转义序列原样保留，由消费方（表达式解析器/dequote）还原。 */
-function splitOutsideQuotes(input: string, sep: string): string[] {
+export function splitOutsideQuotes(input: string, sep: string): string[] {
   const out: string[] = [];
   let cur = '';
   let quote: '"' | "'" | null = null;

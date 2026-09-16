@@ -1,5 +1,6 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
+import { syncFileAndParent, syncParentDirectories } from './node-durable-file.js';
 import * as path from 'node:path';
 import {
   AuthoringOperationError,
@@ -219,6 +220,7 @@ export class NodeProjectStorage implements ProjectWriteStorage {
       stagedIdentity = path.join(parent, `.surdet-${safeStageName(changeId)}-${crypto.randomUUID()}.tmp`);
       const bytes = Buffer.from(text, 'utf8');
       await fs.writeFile(stagedIdentity, bytes, { flag: 'wx' });
+      await syncFileAndParent(stagedIdentity);
       await this.assertSafeStage(stagedIdentity);
       const reread = await fs.readFile(stagedIdentity);
       const digest = sha256(reread);
@@ -237,6 +239,7 @@ export class NodeProjectStorage implements ProjectWriteStorage {
     const target = await this.assertSafeTarget(relativePath, true);
     const staged = await this.assertSafeStage(stagedIdentity);
     await replaceFileByRename(staged, target);
+    await syncFileAndParent(target);
   }
 
   async restoreText(relativePath: string, originalText: string): Promise<void> {
@@ -265,6 +268,7 @@ export class NodeProjectStorage implements ProjectWriteStorage {
   async removePath(relativePath: string): Promise<void> {
     const target = await this.assertSafeTarget(relativePath);
     await fs.rm(target, { force: true });
+    await syncParentDirectories(path.dirname(target));
   }
 
   private async cleanupDirectories(directories: readonly string[]): Promise<void> {

@@ -1,8 +1,9 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HumanWorkspaceStore } from '../src/authoring/human-workspace-store.js';
+import * as records from '../src/authoring/node-json-record.js';
 
 const roots: string[] = [];
 async function fixture() {
@@ -18,6 +19,31 @@ afterEach(async () => {
 });
 
 describe('HumanWorkspaceStore', () => {
+  it('serializes independent store writers so an older clean heartbeat cannot erase newer dirty state', async () => {
+    const value = await fixture();
+    const first = new HumanWorkspaceStore({ dataRoot: value.dataRoot });
+    const second = new HumanWorkspaceStore({ dataRoot: value.dataRoot });
+    const base = { workspaceSessionId: '11111111-1111-4111-8111-111111111111', browserSessionId: 'browser-1' };
+    await first.heartbeat(value.projectRoot, { ...base, workspaceGeneration: 0, availability: 'clean' });
+    const replace = records.replaceJsonRecord;
+    let release!: () => void;
+    let reached!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { reached = resolve; });
+    const spy = vi.spyOn(records, 'replaceJsonRecord').mockImplementation(async (file, record) => {
+      if ((record as { workspaceGeneration?: number }).workspaceGeneration === 1) { reached(); await waiting; }
+      return replace(file, record);
+    });
+    try {
+      const old = first.heartbeat(value.projectRoot, { ...base, workspaceGeneration: 1, availability: 'clean' });
+      await started;
+      const current = second.heartbeat(value.projectRoot, { ...base, workspaceGeneration: 2, availability: 'dirty', dirtyScopes: ['scene'] });
+      await Promise.race([current, new Promise(resolve => setTimeout(resolve, 100))]);
+      release();
+      await Promise.all([old, current]);
+      expect(await second.readSession(value.projectRoot, base.workspaceSessionId)).toMatchObject({ workspaceGeneration: 2, availability: 'dirty' });
+    } finally { release(); spy.mockRestore(); }
+  });
   it('keeps active dirty state visible and lets it expire through grace to absent', async () => {
     const value = await fixture();
     let now = Date.parse('2026-09-09T00:00:00.000Z');

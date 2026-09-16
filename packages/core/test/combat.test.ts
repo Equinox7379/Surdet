@@ -25,6 +25,17 @@ const config: CombatConfig = {
 const fixedRng = (): number => 0.5;
 
 describe('CombatSolver', () => {
+  it.each(['alive', 'winner', 'unfinished'] as const)('rejects contradictory %s snapshot before replacing live battle', (kind) => {
+    const solver = new CombatSolver(config, fixedRng);
+    solver.start({ allies: ['sword'], enemies: ['goblin'] });
+    const before = solver.snapshot();
+    const bad = structuredClone(before);
+    if (kind === 'alive') bad.units[0]!.hp = 0;
+    if (kind === 'winner') bad.winner = 'allies';
+    if (kind === 'unfinished') { bad.units[1]!.hp = 0; bad.units[1]!.alive = false; }
+    expect(() => solver.restore(bad)).toThrow();
+    expect(solver.snapshot()).toEqual(before);
+  });
   it('开局实例化并轮替行动', () => {
     const s = new CombatSolver(config, fixedRng);
     s.start({ allies: ['sword', 'archer'], enemies: ['goblin', 'wolf'] });

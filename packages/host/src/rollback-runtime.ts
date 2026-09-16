@@ -85,7 +85,8 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
       // stateReset → host.reset → system-boundary cleanup must not clear history.
       options.renderer.resetSession({ preserveWorld: false });
       options.interpreter.loadSnapshot(frame.snapshot);
-      options.renderer.restorePresentation(frame.presentation);
+      // Hook-backed snapshots are restored by Core before it replays the text.
+      if (frame.snapshot.presentation === undefined) options.renderer.restorePresentation(frame.presentation);
       options.audio.restorePlayback?.(frame.audio);
       lastRollbackKey = checkpointKey(frame.snapshot);
       // Keep the restored boundary available for the next real text cycle.

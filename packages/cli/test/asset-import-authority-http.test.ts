@@ -753,6 +753,16 @@ describe('project asset import authority HTTP boundary', () => {
     for (const secret of ['C:\\secret', authorityToken, operationToken, 'hidden-cause', 'stack']) {
       expect(failed.text.toLowerCase()).not.toContain(secret.toLowerCase());
     }
+    fixture.target.error = new AssetImportAuthorityError('PATH_OUTSIDE_PROJECT', 'C:\\private\\junction');
+    const unsafePath = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/operations/${operationId}/commit`, {
+      method: 'POST', headers: headers(fixture.origin, {
+        [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken,
+        [ASSET_IMPORT_AUTHORITY_OPERATION_HEADER]: operationToken,
+      }), body: JSON.stringify({ planFingerprint: '2'.repeat(64) }),
+    });
+    expect(unsafePath.response.status).toBe(400);
+    expect(JSON.parse(unsafePath.text)).toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_PROJECT', retryDisposition: 'after-human-action' } });
+    expect(unsafePath.text).not.toContain('private');
   });
 
   it('requires a project binding before dispatching scene plan or commit', async () => {

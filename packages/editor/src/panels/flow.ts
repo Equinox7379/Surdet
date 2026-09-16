@@ -19,10 +19,11 @@ import {
   sceneFileIdentity,
   sceneProjectPath,
 } from '../project-io.js';
-import { collectConfigSceneRoots } from '@surdet/core';
+import { collectConfigSceneRoots, splitOutsideQuotes } from '@surdet/core';
+import { parseSceneDocument, serializeSceneDocument } from '@surdet/authoring';
 import { buildFlowGraph } from '../graph/build.js';
 import type { FlowGraph, FlowNode, FlowEdge } from '../graph/build.js';
-import { setSceneText } from '../history.js';
+import { histories, setSceneText } from '../history.js';
 import { renderSidebar } from './sidebar.js';
 import {
   flowEdgeKindLabel,
@@ -74,16 +75,34 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** 跨场景引用行级改写：只改 @jump/@call 的目标 token（行首指令位置），不误伤台词文本 */
+function visitSceneRefs(text: string, sceneId: string, replacement?: string): { text: string; count: number } {
+  let count = 0;
+  const pattern = new RegExp(`^([ \\t]*@(?:jump|call)[ \\t]+)${escapeRe(sceneId)}(?=[.\\s]|$)`);
+  const rewrite = (raw: string) => raw.replace(pattern, (match, prefix: string) => {
+    count++;
+    return replacement === undefined ? match : prefix + replacement;
+  });
+  const lines = parseSceneDocument(text);
+  for (const line of lines) {
+    if (line.kind === 'instr') line.raw = rewrite(line.raw);
+    if (line.kind !== 'choice-option') continue;
+    const arrow = /\s->(?:\s|$)/.exec(line.raw);
+    if (!arrow) continue;
+    const end = arrow.index + arrow[0].length;
+    const parts = splitOutsideQuotes(line.raw.slice(end), '@');
+    line.raw = line.raw.slice(0, end) + parts.map((part, index) => index === 0 ? part : rewrite(`@${part}`).slice(1)).join('@');
+  }
+  return { text: serializeSceneDocument(lines), count };
+}
+
+/** 同步改写普通指令和选择项内联指令，不匹配对白中的指令文字。 */
 export function rewriteSceneRefs(text: string, oldId: string, newId: string): string {
-  const re = new RegExp(`^([ \\t]*@(?:jump|call)[ \\t]+)${escapeRe(oldId)}(?=[.\\s]|$)`, 'gm');
-  return text.replace(re, `$1${newId}`);
+  return visitSceneRefs(text, oldId, newId).text;
 }
 
 /** 统计场景被 @jump/@call 引用次数（删除前检查用） */
 export function countSceneRefs(text: string, sceneId: string): number {
-  const re = new RegExp(`^[ \\t]*@(?:jump|call)[ \\t]+${escapeRe(sceneId)}(?=[.\\s]|$)`, 'gm');
-  return (text.match(re) ?? []).length;
+  return visitSceneRefs(text, sceneId).count;
 }
 
 /** 构造拖拽建链的插入行：同场景 → @goto 标签（场景开头 → @jump 本场景）；跨场景 → @jump 场景[.标签] */
@@ -272,6 +291,21 @@ async function renameSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
   scene.file = targetFile;
 
   const newKey = renamedSceneKey(sceneKey, newId);
+  // 场景身份改变后，撤销正文仍必须属于新身份；同步历史内的跳转，不能撤回到失效文件。
+  for (const [key, history] of histories) {
+    const rewrite = (text: string): string => {
+      const next = rewriteSceneRefs(text, sceneId, newId);
+      return key === sceneKey
+        ? next.replace(new RegExp(`^([ \\t]*)@scene[ \\t]+${escapeRe(sceneId)}(?=\\s|$)`, 'gm'), `$1@scene ${newId}`)
+        : next;
+    };
+    history.past = history.past.map(rewrite);
+    history.future = history.future.map(rewrite);
+  }
+  const history = histories.get(sceneKey);
+  histories.delete(sceneKey);
+  histories.delete(newKey);
+  if (history) histories.set(newKey, history);
   state.scenes = new Map([...state.scenes].map(([key, value]) => (
     key === sceneKey ? [newKey, value] as const : [key, value] as const
   )));
@@ -347,6 +381,7 @@ async function deleteSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
     : null;
 
   state.scenes.delete(sceneKey);
+  histories.delete(sceneKey);
   remapPendingSceneKey(sceneKey, null);
   if (state.current === sceneKey) state.current = [...state.scenes.keys()][0] ?? null;
   if (scene.handle && state.dirHandle) {
@@ -653,6 +688,7 @@ export function resolveFlowLinkSceneKeys(
 
 /** 右键上下文菜单（简单 DOM 浮层） */
 let menuOutsideHandler: ((e: PointerEvent) => void) | null = null;
+let menuBindTimer: ReturnType<typeof setTimeout> | null = null;
 let menuReturnFocus: SVGElement | null = null;
 
 function showSceneMenu(container: HTMLElement, sceneId: string, cx: number, cy: number, returnFocus: SVGElement): void {
@@ -701,7 +737,8 @@ function showSceneMenu(container: HTMLElement, sceneId: string, cx: number, cy: 
   rename.focus();
   // 点菜单外部才关闭（验收反馈：原实现任意 pointerdown 都关，按钮还没收到 click 菜单就被删了）；
   // 延迟一帧绑定，避开打开菜单那次右键的 pointerdown
-  setTimeout(() => {
+  menuBindTimer = setTimeout(() => {
+    menuBindTimer = null;
     menuOutsideHandler = (e: PointerEvent) => {
       const m = document.getElementById('flow-menu');
       if (m && !m.contains(e.target as Node)) closeSceneMenu();
@@ -711,6 +748,7 @@ function showSceneMenu(container: HTMLElement, sceneId: string, cx: number, cy: 
 }
 
 function closeSceneMenu(restoreFocus = false): void {
+  if (menuBindTimer !== null) { clearTimeout(menuBindTimer); menuBindTimer = null; }
   const returnFocus = menuReturnFocus;
   document.getElementById('flow-menu')?.remove();
   if (menuOutsideHandler) {

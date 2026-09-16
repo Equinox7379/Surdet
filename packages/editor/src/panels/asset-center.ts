@@ -881,7 +881,8 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
   if (state.assetCenterFolder !== 'all' && !folderOptions.some((option) => option.path === state.assetCenterFolder)) {
     state.assetCenterFolder = 'all';
   }
-  const filtered = filterAssetItems(items);
+  let filtered = filterAssetItems(items);
+  let refreshSearchResults = (): void => {};
   const effectiveAssetView = relocationProjection.mode === 'batch' ? 'list' : state.assetCenterView;
   const thumbnailSession = beginAssetThumbnailSession();
   if (relocationProjection.mode === 'batch') hooks.assetRelocation.onSetVisibleBatchItems(filtered.map((item) => item.assetId));
@@ -940,9 +941,9 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
   search.value = state.assetCenterQuery;
   search.dataset.assetFilter = 'search';
   search.oninput = () => {
+    if (!search.isConnected || state.assetIntelligence !== intelligence) return;
     state.assetCenterQuery = search.value;
-    renderAssetCenter(container, hooks);
-    requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-asset-filter="search"]')?.focus());
+    refreshSearchResults();
   };
   searchLabel.appendChild(search);
   const viewSwitch = h('div', 'asset-center-view-switch');
@@ -1126,7 +1127,8 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
   const libraryHeader = h('div', 'asset-center-library-header');
   const libraryTitle = h('div', 'asset-center-library-title');
   const scopeLabel = state.assetCenterFolder === 'all' ? '当前显示' : '当前目录显示';
-  libraryTitle.append(h('h2', undefined, '素材库'), h('p', undefined, `${scopeLabel} ${filtered.length} 项，共 ${items.length} 项`));
+  const resultCount = h('p', undefined, `${scopeLabel} ${filtered.length} 项，共 ${items.length} 项`);
+  libraryTitle.append(h('h2', undefined, '素材库'), resultCount);
 
   const libraryControls = h('div', 'asset-center-library-controls');
   const batchControls = h('div', 'asset-center-batch-controls');
@@ -1234,10 +1236,20 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
     list.id = 'asset-center-library-items';
     list.setAttribute('role', batchSelecting ? 'list' : 'listbox');
     list.setAttribute('aria-label', batchSelecting ? '选择要批量整理的素材' : '项目素材');
+    const rowCache = new Map<string, HTMLElement>();
+    refreshSearchResults = () => {
+    filtered = filterAssetItems(items);
+    container.dataset.assetQuery = state.assetCenterQuery;
+    container.dataset.visibleCount = library.dataset.visibleCount = String(filtered.length);
+    resultCount.textContent = `${scopeLabel} ${filtered.length} 项，共 ${items.length} 项`;
+    if (batchSelecting) hooks.assetRelocation.onSetVisibleBatchItems(filtered.map(item => item.assetId));
+    list.replaceChildren();
     if (filtered.length === 0) {
       list.appendChild(h('div', 'asset-center-no-results', '当前筛选下没有素材。可以清除搜索，或切换位置、分类与状态。'));
     }
     for (const item of filtered) {
+      const cached = rowCache.get(item.assetId);
+      if (cached) { list.appendChild(cached); continue; }
       const row = batchSelecting
         ? h('div', 'asset-center-item asset-center-item-selecting')
         : h('button', 'asset-center-item') as HTMLElement;
@@ -1302,8 +1314,11 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
         };
       }
       list.appendChild(row);
+      rowCache.set(item.assetId, row);
       if (thumbnailSession) thumbnailSession.mount(thumbnail, item, dirAssetFor(item));
     }
+    };
+    refreshSearchResults();
     library.appendChild(list);
   }
 

@@ -206,12 +206,19 @@ function commit(
   historySelection: TimelineCueSelection | null = state.currentTimelineCue,
 ): void {
   const active = activeDefinition();
-  if (!active || active.issues.length > 0) return;
+  if (!active || active.issues.length > 0 || state.projectLoading || state.projectWriteLock || state.reviewWorkspace) return;
   const focusKey = activeTimelineFocusKey();
   const next = cloneTimeline(active.definition);
   mutator(next);
   normalizeTiming(next);
   const nextText = stringifyTimeline(next, active.entry.eol);
+  const checked = parseTimelineText(nextText);
+  if (checked.issues.length > 0) {
+    setStatus(`未修改时间轴：${checked.issues[0]}`, false, 6000);
+    renderTimelinePanel(rootContainer);
+    restoreTimelineFocus(focusKey);
+    return;
+  }
   if (nextText === active.entry.text) return;
   pushTimelineSnapshot(active.entry.id, active.entry.text, historySelection);
   active.entry.text = nextText;
@@ -765,6 +772,8 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
       resize.title = '拖动调整时长';
       resize.onpointerdown = (event) => {
         event.stopPropagation();
+        const dragEntry = entryFor();
+        const dragText = dragEntry?.text;
         selectCueInMountedPanel(definition, trackIndex, cueIndex);
         resize.setPointerCapture(event.pointerId);
         const startX = event.clientX;
@@ -782,7 +791,7 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
           resize.removeEventListener('pointercancel', finish);
           if (resize.hasPointerCapture(endEvent.pointerId)) resize.releasePointerCapture(endEvent.pointerId);
           if (endEvent.type === 'pointercancel') updateGeometry(cue.atMs, originalDuration);
-          else updateCue({ trackIndex, cueIndex }, (next) => { next.durationMs = nextDuration; });
+          else if (resize.isConnected && entryFor() === dragEntry && dragEntry?.text === dragText) updateCue({ trackIndex, cueIndex }, (next) => { next.durationMs = nextDuration; });
         };
         resize.addEventListener('pointermove', move);
         resize.addEventListener('pointerup', finish, { once: true });
@@ -793,6 +802,8 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
       block.title = `${timelineActionLabel(track.kind, cue.action)} · ${cue.atMs}ms + ${cue.durationMs}ms · ${timelineEasingLabel(cue.easing)}`;
       block.onpointerdown = (event) => {
         if (event.button !== 0) return;
+        const dragEntry = entryFor();
+        const dragText = dragEntry?.text;
         block.setPointerCapture(event.pointerId);
         selectCueInMountedPanel(definition, trackIndex, cueIndex);
         const startX = event.clientX;
@@ -810,7 +821,7 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
           block.removeEventListener('pointercancel', finish);
           if (block.hasPointerCapture(endEvent.pointerId)) block.releasePointerCapture(endEvent.pointerId);
           if (endEvent.type === 'pointercancel') updateGeometry(originalAt, cue.durationMs);
-          else updateCue({ trackIndex, cueIndex }, (next) => { next.atMs = nextAt; });
+          else if (block.isConnected && entryFor() === dragEntry && dragEntry?.text === dragText) updateCue({ trackIndex, cueIndex }, (next) => { next.atMs = nextAt; });
         };
         block.addEventListener('pointermove', move);
         block.addEventListener('pointerup', finish, { once: true });

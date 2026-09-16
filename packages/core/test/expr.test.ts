@@ -15,6 +15,11 @@ function env() {
 }
 
 describe('ExprParser', () => {
+  it('preserves unknown escapes instead of silently dropping literal backslashes', () => {
+    expect(parseExpr(String.raw`"C:\path"`)).toMatchObject({ kind: 'string', value: String.raw`C:\path` });
+    expect(parseExpr(String.raw`"\d+"`)).toMatchObject({ kind: 'string', value: String.raw`\d+` });
+    expect(parseExpr(String.raw`"a\nb\tc\\d\"e"`)).toMatchObject({ kind: 'string', value: 'a\nb\tc\\d"e' });
+  });
   it('解析字面量与变量', () => {
     expect(parseExpr('5')).toMatchObject({ kind: 'number', value: 5 });
     expect(parseExpr('"abc"')).toMatchObject({ kind: 'string', value: 'abc' });

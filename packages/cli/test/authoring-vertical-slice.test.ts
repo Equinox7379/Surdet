@@ -39,7 +39,7 @@ function body(result: { stdout: string }): any {
 describe('agent authoring CLI vertical slice', () => {
   // 主链串行 spawn 多个 CLI 子进程；R5 change-isolation 测试加入后并行负载挤爆默认 5s
   // 预算——按 wave2 先例显式放宽为纯时间预算修正（非生产回归）。
-  it('keeps changes outside the project until commit and then commits only the intended files', { timeout: 15000 }, () => {
+  it('keeps changes outside the project until commit and then commits only the intended files', { timeout: 30000 }, () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-authoring-cli-'));
     const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-authoring-data-'));
     fs.mkdirSync(path.join(root, 'content/scenario'), { recursive: true });
@@ -53,6 +53,11 @@ describe('agent authoring CLI vertical slice', () => {
     expect(begun.status).toBe(0);
     const changeId = body(begun).changeId as string;
     expect(changeId).toMatch(/^chg_/);
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-authoring-other-'));
+    fs.writeFileSync(path.join(other, 'game.config.json'), '{}');
+    const mismatched = runCli(['change', 'diff', '--project', other, '--change', changeId, '--json'], env);
+    expect(body(mismatched)).toMatchObject({ ok: false, error: { code: 'PROJECT_IDENTITY_MISMATCH' } });
+    expect(body(runCli(['asset', 'sources', '--project', root, '--json'], env))).toMatchObject({ ok: true });
 
     const requestDir = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-authoring-input-'));
     const variableInput = writeJson(requestDir, 'variable.json', {
@@ -105,10 +110,13 @@ describe('agent authoring CLI vertical slice', () => {
     const valid = runCli(['project', 'validate', '--change', changeId, '--json'], env);
     expect(valid.status).toBe(0);
     expect(body(valid).result.ok).toBe(true);
+    expect(body(runCli(['change', 'commit', '--change', changeId, '--json'], env))).toMatchObject({ ok: false, error: { code: 'SIMULATION_REQUIRED' } });
+    expect(fs.existsSync(path.join(root, 'content/scenario/agent.gal'))).toBe(false);
 
     const simulated = runCli(['project', 'simulate', '--change', changeId, '--json'], env);
     expect(simulated.status).toBe(0);
     expect(body(simulated).result.choiceBranches).toEqual({ total: 2, visited: 2 });
+    expect(body(runCli(['change', 'commit', '--change', changeId, '--json'], env))).toMatchObject({ ok: false, error: { code: 'RUNTIME_EVIDENCE_REQUIRED' } });
 
     const runtimeAInput = writeJson(requestDir, 'runtime-a.json', { sceneId: 'agent', choices: [0], seed: 701 });
     const runtimeBInput = writeJson(requestDir, 'runtime-b.json', { sceneId: 'agent', choices: [1], seed: 702 });

@@ -303,7 +303,7 @@ describe('WorldLayer direct presentation contract', () => {
     }
   });
 
-  it('preserves the active speaker projection across clear and restore', async () => {
+  it('restores the saved speaker instead of retaining the later scene speaker', async () => {
     const runtime = makeRuntime();
     try {
       await registerWorldAssets(runtime.assets);
@@ -317,11 +317,11 @@ describe('WorldLayer direct presentation contract', () => {
       runtime.layer.clearPresentation();
       runtime.layer.setPortrait('lynn:armor', lynn);
       runtime.layer.setPortrait('mio:uniform', mio);
-      expect(findSprites(runtime.layer.worldContainer).map((sprite) => sprite.alpha)).toEqual([1, 0.46]);
+      expect(findSprites(runtime.layer.worldContainer).map((sprite) => sprite.alpha)).toEqual([1, 1]);
 
       runtime.layer.setPortraitFocus('mio');
       runtime.layer.restorePresentation(saved);
-      expect(findSprites(runtime.layer.worldContainer).map((sprite) => sprite.alpha)).toEqual([0.46, 1]);
+      expect(findSprites(runtime.layer.worldContainer).map((sprite) => sprite.alpha)).toEqual([1, 0.46]);
     } finally {
       disposeRuntime(runtime);
     }

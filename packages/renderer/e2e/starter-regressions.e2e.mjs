@@ -17,13 +17,14 @@ const failures = [];
 try {
   await server.listen();
   browser = await chromium.launch({ headless: true });
-  const run = async (name, check) => {
+  const run = async (name, check, prepare = async () => {}) => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await context.newPage(); page.setDefaultTimeout(15000);
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     try {
+      await prepare(page);
       await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/`); await waitTitle(page);
       await check(page, errors);
       evidence.push({ name, passed: true }); console.log(`PASS ${name}`);
@@ -34,6 +35,41 @@ try {
       console.error(`FAIL ${name}: ${error.message}`, errors);
     } finally { await context.close(); }
   };
+  await run('quickload-clears-hidden-and-overlay-state', async (page, errors) => {
+    await activate(page, '开始游戏'); await advanceToChoice(page);
+    assert.equal(await page.evaluate(() => window.__surdetDebug.quickSave()), true);
+    await page.keyboard.press('l'); await waitOverlay(page, 'backlog');
+    assert.equal(await page.evaluate(() => window.__surdetDebug.quickSave()), true);
+    assert.equal((await state(page)).ui.overlay, 'backlog');
+    assert.equal(await page.evaluate(() => window.__surdetDebug.quickLoad()), true);
+    await waitOverlay(page, 'none');
+    await page.keyboard.press('l'); await waitOverlay(page, 'backlog');
+    await page.keyboard.press('Escape'); await waitOverlay(page, 'none');
+    await page.keyboard.press('h');
+    assert.equal((await state(page)).ui.interfaceHidden, true);
+    assert.equal(await page.evaluate(() => window.__surdetDebug.quickLoad()), true);
+    assert.equal((await state(page)).ui.interfaceHidden, false);
+    assert.equal(await page.evaluate(() => window.__surdetDebug.commandRailVisible), true);
+    assert.deepEqual(errors, []);
+    await page.screenshot({ path: path.join(output, 'quickload-interface-restored.png') });
+  });
+  await run('skipped-video-releases-input', async (page, errors) => {
+    await activate(page, '开始游戏');
+    await page.waitForFunction(() => window.__surdetDebug.position.sceneId === 'ch01_01');
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.keyboard.press('x');
+    await page.waitForFunction(() => window.__surdetDebug.rendererStatus === 'choice');
+    assert.equal((await state(page)).ui.videoActive, false);
+    await activate(page, '继续检查');
+    await page.waitForFunction(() => window.__surdetDebug.position.pc > 3);
+    assert.equal((await state(page)).ui.videoActive, false);
+    assert.deepEqual(errors, []);
+    await page.screenshot({ path: path.join(output, 'skipped-video-input.png') });
+  }, async page => {
+    await page.route(/\/content\/scenario\/ch01_01\.gal\?.*raw/, route => route.fulfill({
+      contentType: 'application/javascript', body: `export default ${JSON.stringify('@scene ch01_01\n旁白：快进前。\n@video deliberately_absent\n旁白：快进后。\n@choice\n  继续检查 -> @goto after\n@label after\n旁白：输入仍然有效。\n@choice\n  停留\n@end\n')};`,
+    }));
+  });
   await run('title-text-replay', async (page, errors) => {
     await activate(page, '开始游戏'); await advanceToChoice(page);
     await page.keyboard.press('Escape'); await waitOverlay(page, 'system-menu');
@@ -45,6 +81,63 @@ try {
     await advanceToChoice(page);
     assert.equal((await state(page)).session, session);
     assert.deepEqual(errors, []);
+  });
+  await run('save-failure-preserves-slot-and-retry', async (page, errors) => {
+    await activate(page, '开始游戏'); await advanceToChoice(page);
+    await page.keyboard.press('Escape'); await waitOverlay(page, 'system-menu');
+    await activate(page, '存档'); await waitOverlay(page, 'save-load');
+    await activate(page, '保存到槽位 1：空槽位'); await waitOverlay(page, 'none');
+    const before = await page.evaluate(() => localStorage.getItem('surdet:save:1'));
+    await page.evaluate(() => {
+      window.restoreStorageWrite = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key, value) {
+        if (key.startsWith('surdet:save:')) throw new DOMException('维护测试：存储空间不足', 'QuotaExceededError');
+        return window.restoreStorageWrite.call(this, key, value);
+      };
+    });
+    assert.equal(await page.evaluate(() => window.__surdetDebug.quickSave()), false);
+    await page.keyboard.press('Escape'); await waitOverlay(page, 'system-menu');
+    await activate(page, '存档'); await waitOverlay(page, 'save-load');
+    const label = await page.getByRole('button', { name: /^保存到槽位 1：/ }).getAttribute('aria-label');
+    await activate(page, label);
+    await activate(page, '覆盖存档');
+    await page.waitForFunction(() => window.__surdetDebug.uiSession.operation === 'idle');
+    assert.equal((await state(page)).ui.overlay, 'save-load');
+    assert.equal(await page.evaluate(() => localStorage.getItem('surdet:save:1')), before);
+    assert(errors.some(error => error.includes('维护测试：存储空间不足')));
+    await page.evaluate(() => { Storage.prototype.setItem = window.restoreStorageWrite; });
+    await activate(page, label); await activate(page, '覆盖存档'); await waitOverlay(page, 'none');
+    assert.equal(await page.evaluate(() => window.__surdetDebug.quickSave()), true);
+    await page.evaluate(() => {
+      const save = JSON.parse(localStorage.getItem('surdet:save:quick'));
+      save.meta.playTimeSec = 600;
+      localStorage.setItem('surdet:save:quick', JSON.stringify(save));
+    });
+    assert.equal(await page.evaluate(() => window.__surdetDebug.quickLoad()), true);
+    assert.equal(await page.evaluate(() => window.__surdetDebug.quickSave()), true);
+    assert((await page.evaluate(() => JSON.parse(localStorage.getItem('surdet:save:quick')).meta.playTimeSec)) >= 600, 'loading lost prior play time');
+  });
+  await run('autosave-failure-and-hidden-interface', async (page, errors) => {
+    const unhandled = [];
+    page.on('pageerror', error => unhandled.push(error.message));
+    await page.evaluate(() => {
+      const original = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key, value) {
+        if (key.startsWith('surdet:save:')) throw new DOMException('维护测试：自动存档被拒绝', 'QuotaExceededError');
+        return original.call(this, key, value);
+      };
+    });
+    await activate(page, '开始游戏'); await advanceToChoice(page);
+    await page.waitForFunction(() => window.__surdetDebug.uiSession.operation === 'idle');
+    assert(errors.some(error => error.includes('自动存档失败')));
+    assert.deepEqual(unhandled, []);
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.keyboard.press('h');
+    assert.equal((await state(page)).ui.interfaceHidden, true);
+    assert.equal(await page.evaluate(() => window.__surdetDebug.commandRailVisible), false);
+    await page.mouse.click(700, 500);
+    await page.waitForFunction(() => window.__surdetDebug.uiSession.interfaceHidden === false);
+    await page.screenshot({ path: path.join(output, 'interface-restored.png') });
   });
   await run('incompatible-save-recovery', async (page, errors) => {
     await activate(page, '开始游戏'); await advanceToChoice(page);
@@ -76,12 +169,21 @@ try {
   });
   await run('practice-completion', async (page, errors) => {
     await activate(page, '自由探索'); await advanceToChoice(page);
+    assert.equal(await page.evaluate(() => window.__surdetDebug.quickSave()), true);
     await activate(page, '进行一次演练');
     for (let i = 0; i < 15 && await page.evaluate(() => window.__surdetDebug.queries.overlay.system().type !== 'battle'); i++) {
       await page.evaluate(() => document.activeElement?.blur());
       await page.keyboard.press('Space'); await page.waitForTimeout(80);
     }
     await page.waitForFunction(() => window.__surdetDebug.queries.overlay.system().type === 'battle');
+    const beforeBattle = await page.evaluate(() => ({ ui: window.__surdetDebug.uiSession, save: localStorage.getItem('surdet:save:quick') }));
+    assert(beforeBattle.save, 'the pre-battle quick save must exist');
+    assert.equal(await page.evaluate(() => window.__surdetDebug.quickSave()), false);
+    assert.equal(await page.evaluate(() => window.__surdetDebug.quickLoad()), false);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(() => window.__surdetDebug.queries.overlay.system().type), 'battle');
+    assert.deepEqual((await state(page)).ui, beforeBattle.ui);
+    assert.equal(await page.evaluate(() => localStorage.getItem('surdet:save:quick')), beforeBattle.save);
     await page.getByRole('button', { name: '向右移动', exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: '向左移动', exact: true }).count(), 1);
     assert.equal(await page.getByRole('button', { name: '向右移动', exact: true }).count(), 1);

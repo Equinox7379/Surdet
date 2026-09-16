@@ -45,6 +45,7 @@ export class ShopSystem {
   buy(goldVar: string, itemsVar: string, itemId: string): { ok: boolean; reason?: string } {
     const item = this.#config.items.find((i) => i.id === itemId);
     if (!item) return { ok: false, reason: `商品 '${itemId}' 不存在` };
+    if (!Number.isFinite(item.price) || item.price < 0) return { ok: false, reason: `商品 '${itemId}' 价格必须是非负有限数值` };
     const gold = this.#store.getNumber(goldVar);
     if (gold < item.price) {
       return { ok: false, reason: `金币不足（需 ${item.price}，当前 ${gold}）` };

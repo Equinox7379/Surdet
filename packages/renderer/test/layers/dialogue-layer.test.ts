@@ -161,6 +161,29 @@ describe('DialogueLayer visual layout contracts', () => {
     }
   });
 
+  it('remembers awaiting changes while hidden and does not invent a continue indicator', () => {
+    const runtime = makeRuntime();
+    try {
+      const indicator = dialogueRoot(runtime.root).children[4]!;
+      runtime.layer.setAwaiting(true);
+      runtime.layer.hideInterface(true);
+      runtime.layer.setAwaiting(false);
+      runtime.layer.hideInterface(false);
+      expect(indicator.visible).toBe(false);
+      runtime.layer.hideInterface(true);
+      runtime.layer.setAwaiting(true);
+      runtime.layer.showCommandRail(railItems, () => undefined);
+      runtime.layer.layout();
+      expect(indicator.visible).toBe(false);
+      runtime.layer.hideInterface(false);
+      expect(indicator.visible).toBe(true);
+      runtime.layer.setNvlMode(true);
+      runtime.layer.showCommandRail(railItems, () => undefined);
+      runtime.layer.layout();
+      expect(indicator.visible).toBe(false);
+    } finally { disposeRuntime(runtime); }
+  });
+
   it('keeps the continue indicator clear of the visible command rail', () => {
     const runtime = makeRuntime();
     try {

@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import {
   fingerprintProjectAssetRelocationInventory,
   fingerprintProjectAssetRelocationOpaqueScan,
+  isSnapshotPath,
   loadProjectSnapshot,
   planProjectAssetRelocationBatch,
   stableStringify,
@@ -595,6 +596,36 @@ export class ProjectAssetRelocationAuthority {
         },
       }, this.textHasher),
     };
+  }
+
+  private async assertRecoveryReferencesFresh(record: AssetRelocationStoredOperation): Promise<void> {
+    await this.assertLeaseHeld();
+    await assertAssetImportProjectRootIdentity(this.paths);
+    const storage = await NodeProjectStorage.open(this.paths.projectRoot);
+    const opaque = await this.opaqueScan(storage);
+    const currentPaths = new Set([
+      ...(await storage.listFiles()).filter(isSnapshotPath),
+      ...opaque.files.map((file) => file.path),
+    ]);
+    // A journalled replacement may have displaced its original file already.
+    // continueCommit still verifies the displaced/prepared file identities.
+    for (const [index, file] of record.textFiles.entries()) {
+      if (record.journal.textStates[index] === 'REPLACE_INTENT') currentPaths.add(file.path);
+    }
+    if (currentPaths.size !== record.scannedFiles.length
+      || record.scannedFiles.some((file) => !currentPaths.has(file.path))) {
+      throw new AssetImportAuthorityError('IMPORT_PLAN_STALE', '恢复前引用文件清单已变化，请保留现场并回滚原操作');
+    }
+    for (const file of record.scannedFiles) {
+      const index = record.textFiles.findIndex((change) => change.path === file.path);
+      const change = record.textFiles[index];
+      if (!await storage.exists(file.path) && change !== undefined
+        && record.journal.textStates[index] === 'REPLACE_INTENT') continue;
+      const current = await storage.readText(file.path);
+      if (current.sha256 !== file.sha256 && current.sha256 !== change?.afterSha256) {
+        throw new AssetImportAuthorityError('IMPORT_PLAN_STALE', `恢复前引用文件已变化：${file.path}`);
+      }
+    }
   }
 
   private async captureTextFiles(
@@ -1694,6 +1725,7 @@ export class ProjectAssetRelocationAuthority {
       if (request.action === 'rollback' || phase === 'rollback') {
         return this.detail(await this.continueRollback(record));
       }
+      await this.assertRecoveryReferencesFresh(record);
       if (record.journal.status === 'RECOVERY_REQUIRED') {
         record = await this.update(record, { journal: { status: 'PUBLISHING', recoveryPhase: 'commit' } });
       }

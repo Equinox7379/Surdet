@@ -1120,7 +1120,10 @@ function exportTerminology(): void {
 
 /** 名词表导入（替换内存行模型；不自动写盘，需点“保存名词表”） */
 function importTerminology(file: File): void {
+  const revision = configSessionRevision;
   void file.text().then((txt) => {
+    if (revision !== configSessionRevision || state.projectLoading) return;
+    assertProjectWriteUnlocked();
     let raw: unknown;
     try {
       raw = JSON.parse(txt);
@@ -1137,6 +1140,8 @@ function importTerminology(file: File): void {
     termRows = { terms: res.terms };
     rerenderConfig();
     setStatus(`已导入 ${res.terms.length} 条名词（未写盘，确认后点“保存名词表”）`, true, 6000);
+  }).catch(error => {
+    if (revision === configSessionRevision) setStatus(`名词表导入失败：${error instanceof Error ? error.message : String(error)}`, false, 6000);
   });
 }
 

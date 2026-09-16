@@ -16,6 +16,23 @@ const hasher: TextHasher = {
   sha256: async (text) => createHash('sha256').update(text, 'utf8').digest('hex'),
 };
 
+it('素材改名更新选择项内的实际指令，保留选项、引号内 @ 与行尾', async () => {
+  const input = await makeInput({
+    files: {
+      'game.config.json': JSON.stringify({ entryScene: 'start' }),
+      'content/scenario/start.gal': '@scene start\r\n@choice\r\n  night 选项 -> @bg night  @custom "mail@night" @goto end\r\n@label end\r\n@end\r\n',
+    },
+    assets: [{ path: 'content/assets/bg/night.png', bytes: 1 }],
+    sourcePath: 'content/assets/bg/night.png', targetPath: 'content/assets/bg/dawn.png',
+  });
+  const plan = await planProjectAssetRelocation(input, hasher);
+  expect(plan.plan.blockers).toEqual([]);
+  expect(plan.textChanges).toEqual(expect.arrayContaining([expect.objectContaining({
+    path: 'content/scenario/start.gal',
+    afterText: '@scene start\r\n@choice\r\n  night 选项 -> @bg dawn  @custom "mail@night" @goto end\r\n@label end\r\n@end\r\n',
+  })]));
+});
+
 function projectFile(path: string, text: string): ProjectFile {
   return {
     path,

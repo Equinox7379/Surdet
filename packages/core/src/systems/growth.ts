@@ -198,7 +198,22 @@ export class GrowthSystem {
     return updates;
   }
 
+  validateSnapshot(snap: GrowthSnapshot): void {
+    for (const profile of this.#config.profiles) {
+      const level = snap.levels?.[profile.characterId];
+      const xp = snap.experience?.[profile.characterId];
+      if (level !== undefined && (!Number.isSafeInteger(level) || level < 1
+        || (profile.maxLevel !== undefined && level > profile.maxLevel))) {
+        throw new Error(`GrowthSystem: '${profile.characterId}' 存档等级非法`);
+      }
+      if (xp !== undefined && (!Number.isFinite(xp) || xp < 0)) {
+        throw new Error(`GrowthSystem: '${profile.characterId}' 存档经验非法`);
+      }
+    }
+  }
+
   restore(snap: GrowthSnapshot): void {
+    this.validateSnapshot(snap);
     // 读档：只恢复配置中已注册角色的状态（旧档含已删除角色时静默忽略，新角色按初始等级）
     this.#levels = new Map(this.#config.profiles.map((p) => [p.characterId, p.initialLevel ?? 1]));
     this.#experience = new Map(this.#config.profiles.map((p) => [p.characterId, 0]));

@@ -107,6 +107,14 @@ export class CalendarRunner {
   #commandCounts = new Map<string, number>();
 
   constructor(config: CalendarConfig, env: ExprEnv) {
+    if (!Number.isSafeInteger(config.weeksPerMonth ?? 4) || (config.weeksPerMonth ?? 4) < 1
+      || !Number.isFinite(config.maxAp) || config.maxAp < 0
+      || !Number.isSafeInteger(config.maxTurns) || config.maxTurns < -1
+      || config.nodes.some((node) => !Number.isFinite(node.apCost) || node.apCost < 0)
+      || config.baseCommands?.some((command) => !Number.isFinite(command.apCost) || command.apCost < 0
+        || (command.perTurn !== undefined && (!Number.isSafeInteger(command.perTurn) || command.perTurn < 0)))) {
+      throw new Error('日历配置的周数、回合数、行动力或指令次数非法');
+    }
     this.#config = config;
     this.#env = env;
     this.#ap = config.maxAp;

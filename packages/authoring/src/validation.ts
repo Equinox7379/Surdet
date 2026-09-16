@@ -368,6 +368,22 @@ export function validateSnapshot(
         .filter((entry) => entry.resolved)
         .map((entry) => [`${entry.role ?? ''}:${entry.outfit ?? ''}:${entry.expression ?? ''}`, entry]),
     );
+    // 编译结果包含 choice 的内联指令块，复用真实运行参数而非另扫 DSL 文本。
+    const unquote = (value: string): string => value.length >= 2
+      && (value[0] === '"' || value[0] === "'") && value.at(-1) === value[0] ? value.slice(1, -1) : value;
+    for (const scene of scenes.values()) {
+      for (const instruction of scene.instructions) {
+        if (instruction.op !== 'instr' || !['bg', 'show'].includes(instruction.name)) continue;
+        const key = unquote(instruction.args[0] ?? '');
+        if (!key) continue;
+        const target = key.includes(':') ? key : `${key}:normal`;
+        const expression = unquote(instruction.args[1] ?? 'normal');
+        if (instruction.name === 'bg' ? resolvedBackgrounds.has(key) : resolvedPortraits.has(`${target}:${expression}`)) continue;
+        rawIssues.push({ severity: 'warning', code: 'ASSET_UNRESOLVED',
+          text: `${instruction.file}:${instruction.line}: ${instruction.name === 'bg' ? '背景' : '立绘'}资源 '${key}'${instruction.name === 'show' ? ` / ${expression}` : ''} 未解析`,
+          file: instruction.file, line: instruction.line, col: instruction.col });
+      }
+    }
     for (const timeline of snapshot.timelines) {
       // 仅 identity-valid 且结构可用的 definition 参与 asset traversal（Phase 2A/2B）。
       const definition = usableTimelineDefinitions.get(timelineIdFromPath(timeline.path));

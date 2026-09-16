@@ -478,6 +478,7 @@ export class CombatSolver {
     if (!isRecord(snap)) throw new Error('战斗快照必须是对象');
     const teamSet = new Set(this.#config.teams);
     if (!Array.isArray(snap.units)) throw new Error('战斗快照 units 必须是数组');
+    const units = snap.units;
     if (typeof snap.turn !== 'number' || !Number.isInteger(snap.turn) || snap.turn < 1) {
       throw new Error('战斗快照 turn 必须是 >= 1 的整数');
     }
@@ -528,11 +529,18 @@ export class CombatSolver {
       if (typeof raw.alive !== 'boolean' || !isRecord(raw.cooldowns)) {
         throw new Error(`战斗快照单位 '${uid}' alive/cooldowns 非法`);
       }
+      if (raw.alive !== (hp > 0)) throw new Error(`战斗快照单位 '${uid}' alive 与 HP 不一致`);
       for (const [skillId, cooldown] of Object.entries(raw.cooldowns)) {
         if (!skillId || typeof cooldown !== 'number' || !Number.isInteger(cooldown) || cooldown < 0) {
           throw new Error(`战斗快照单位 '${uid}' cooldowns 非法`);
         }
       }
+    }
+    if (snap.finished === false && (snap.winner !== null
+      || (snap.units.length > 0 && this.#config.winCondition === 'all_down'
+        && this.#config.teams.some((team) => !units.some((unit) => unit.team === team && unit.alive)))
+      || (this.#config.maxTurns !== undefined && this.#config.maxTurns > 0 && snap.turn > this.#config.maxTurns))) {
+      throw new Error('战斗快照的结束状态与胜者、存活单位或回合数不一致');
     }
     if (snap.moved !== undefined) {
       if (!Array.isArray(snap.moved) || snap.moved.some((uid) => typeof uid !== 'string' || !seen.has(uid))) {

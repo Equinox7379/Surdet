@@ -1,6 +1,6 @@
 import { AuthoringOperationError, stableStringify } from './change-session.js';
 import { parseProjectConfigDocument } from './config-document.js';
-import { timelinePathFor } from './timeline-operations.js';
+import { resolveUniqueTimelinePath } from './timeline-identity.js';
 import type { TextHasher } from './contracts.js';
 import { resolveUniqueScenarioPath } from './scenario-identity.js';
 import { GALLERY_PATH, readGalleryDocument } from './gallery-operations.js';
@@ -85,7 +85,8 @@ function readWorkingObject(workingFiles: Readonly<Record<string, string>>, objec
   }
   if (objectRef.startsWith('timeline:')) {
     const id = assertSafeSemanticId(objectRef.slice('timeline:'.length), objectRef);
-    const text = workingFiles[timelinePathFor(id)];
+    const path = resolveUniqueTimelinePath(workingFiles, id);
+    const text = path === undefined ? undefined : workingFiles[path];
     if (text === undefined) return absent();
     try {
       return present(JSON.parse(text.replace(/^\uFEFF/, '')));
@@ -105,13 +106,13 @@ function readWorkingObject(workingFiles: Readonly<Record<string, string>>, objec
 
   const config = parseConfigObject(workingFiles['game.config.json']);
   if (objectRef.startsWith('variable:')) {
-    const id = assertSafeSemanticId(objectRef.slice('variable:'.length), objectRef);
+    const id = objectRef.slice('variable:'.length);
     return Object.prototype.hasOwnProperty.call(config.variables, id)
       ? present(config.variables[id])
       : absent();
   }
   if (objectRef.startsWith('character:')) {
-    const id = assertSafeSemanticId(objectRef.slice('character:'.length), objectRef);
+    const id = objectRef.slice('character:'.length);
     return Object.prototype.hasOwnProperty.call(config.characters, id)
       ? present(config.characters[id])
       : absent();

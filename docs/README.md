@@ -21,7 +21,7 @@
 
 ## 当前阶段
 
-主线 Stage 6 Wave 6 已闭合；Editor V4、Frontend Pass 8 玩家界面与 Pass 9 Windows Electron 消费验证已通过云端终审。当前 Frontend Pass 10 负责退出 Editor 旧兼容样式、九模式一致性与可访问性收口，并按 Owner 后续授权全面重做 Starter 和新项目模板，结果见上方两份记录；不以本地验证代签云端终审或 Owner 体验。主线 Wave 7、发行与部署未开始。下列 Wave 4 文档保留为该阶段的既有证据。
+当前状态、授权与技术复审结论统一查看[原长期台账](superpowers/plans/2026-08-13-project-roadmap-and-decision-ledger.md)。本入口不另行维护波次完成状态。2026-09-16 的三份独立维护审查及本地处理见[维护执行记录](superpowers/plans/2026-09-16-maintenance-reports.md)；本地验证不代签云端复审或 Owner 体验。下列 Wave 4 文档为历史阶段证据。
 
 - [Wave 4 设计规格](superpowers/specs/2026-08-20-surdet-agent-port-stage-6-wave-4-design.md)
 - [Wave 4 总任务书与 Execution Ledger](superpowers/plans/2026-08-20-surdet-agent-port-stage-6-wave-4.md)

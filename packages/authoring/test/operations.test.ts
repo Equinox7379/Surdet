@@ -35,6 +35,61 @@ function fixtureStorage(configText = '{"entryScene":"prologue","variables":{}}',
 }
 
 describe('typed authoring operations', () => {
+  it('rejects inserting blocks inside a choice without changing its remaining options', async () => {
+    const source = '@scene prologue\n@choice\n    甲 -> @goto done\n    乙\n    丙\n@label done\n@end\n';
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, source), hasher);
+    const objects = buildObjectIndex(snapshot).objects;
+    const first = objects.find(item => item.source?.raw === '    甲 -> @goto done')!;
+    for (const blocks of [[{ kind: 'text' as const, value: '正文' }], [{ kind: 'instruction' as const, name: 'wait', args: ['10'] }]]) {
+      const change = await beginChange(snapshot, new InMemoryChangeRepository());
+      const before = structuredClone(change.record);
+      await expect(applyScenePatch(change, { operationId: 'insert', patch: { kind: 'insertAfter', anchor: first.objectRef,
+        expectedFingerprint: first.fingerprint!, blocks } }, hasher)).rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED' });
+      expect(change.record).toEqual(before);
+    }
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    await applyScenePatch(change, { operationId: 'option', patch: { kind: 'replaceChoiceOption', target: first.objectRef,
+      expectedFingerprint: first.fingerprint!, option: { label: '改名', target: { kind: 'goto', value: 'done' } } } }, hasher);
+    expect(change.record.workingFiles['content/scenario/prologue.gal']).toBe(source.replace('甲', '改名'));
+  });
+
+  it.each(['// 想显示的正文', '@set gold = 999', '新正文\n@set gold = 999\n@end', '正文\r@end', '正文\r\n@end', '角色：不能变成说话人', ''])('rejects text that changes DSL meaning without persisting (%j)', async (value) => {
+    const source = '@scene prologue\n原文\n尾段应该保留\n@end\n';
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, source), hasher);
+    const target = buildObjectIndex(snapshot).objects.find(item => item.kind === 'text' && item.source?.raw === '原文')!;
+    for (const mode of ['create', 'insert', 'replace'] as const) {
+      const change = await beginChange(snapshot, new InMemoryChangeRepository());
+      const before = structuredClone(change.record);
+      const request = mode === 'create'
+        ? applySceneCreate(change, { operationId: 'text', sceneId: 'new_scene', blocks: [{ kind: 'text', value }] }, hasher)
+        : applyScenePatch(change, { operationId: 'text', patch: mode === 'replace'
+          ? { kind: 'replaceText', target: target.objectRef, expectedFingerprint: target.fingerprint!, value }
+          : { kind: 'insertAfter', anchor: target.objectRef, expectedFingerprint: target.fingerprint!, blocks: [{ kind: 'text', value }] } }, hasher);
+      await expect(request).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+      expect(change.record).toEqual(before);
+    }
+  });
+
+  it.each(['\u2028', '\u2029'])('typed text preserves supported Unicode characters and the following paragraph (%j)', async separator => {
+    const source = '@scene prologue\n原文\n尾段应该保留\n@end\n';
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, source), hasher);
+    const target = buildObjectIndex(snapshot).objects.find(item => item.kind === 'text' && item.source?.raw === '原文')!;
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    const value = `前半句${separator}后半句`;
+    await applyScenePatch(change, { operationId: 'replace', patch: { kind: 'replaceText', target: target.objectRef, expectedFingerprint: target.fingerprint!, value } }, hasher);
+    expect(change.record.workingFiles['content/scenario/prologue.gal']).toBe(source.replace('原文', value));
+    await applySceneCreate(change, { operationId: 'create', sceneId: 'new_scene', blocks: [{ kind: 'text', speaker: '凛', value }] }, hasher);
+    expect(change.record.workingFiles['content/scenario/new_scene.gal']).toContain(`凛：${value}`);
+  });
+
+  it('ensures variables in BOM configuration while preserving unrelated fields and retries', async () => {
+    const snapshot = await loadProjectSnapshot(fixtureStorage('\uFEFF{"entryScene":"prologue","variables":{},"custom":{"keep":true}}'), hasher);
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    const input = { operationId: 'bom', name: 'score', type: 'number' as const, initial: 0 };
+    expect(await ensureVariable(change, input, hasher)).toEqual({ name: 'score', created: true });
+    expect(await ensureVariable(change, input, hasher)).toEqual({ name: 'score', created: true });
+    expect(JSON.parse(change.record.workingFiles['game.config.json']!.replace(/^\uFEFF/, ''))).toMatchObject({ custom: { keep: true }, variables: { score: { type: 'number', initial: 0 } } });
+  });
   it.each(['\n', '\r\n'])('replaces one instruction in place, preserving surrounding bytes and persistent retries (%j)', async (eol) => {
     const raw = '  @show lynn:coat hesitant @ right  ';
     const source = ['@scene prologue', '// 保留注释', raw, '', '凛：开场。', '@end'].join(eol);

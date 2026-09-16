@@ -694,8 +694,8 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   setAwaiting(awaiting: boolean): void {
-    if (this.#nvlActive || this.#interfaceHidden) return;
     this.#continueAwaiting = awaiting;
+    if (this.#nvlActive || this.#interfaceHidden) return;
     this.#continueIndicator.visible = awaiting;
     if (awaiting) this.#dialogPanel.visible = true;
     else if (!this.#lineActive && this.#speakerText.text.length === 0 && this.#dialogText.text.length === 0) this.#dialogPanel.visible = false;
@@ -831,7 +831,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#speakerText.visible = !hidden;
     this.#dialogText.visible = !hidden;
     this.#dialogRubyLayer.visible = !hidden;
-    this.#continueIndicator.visible = !hidden;
+    this.#continueIndicator.visible = !hidden && !this.#nvlActive && this.#continueAwaiting;
     this.#commandRail.visible = !hidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
     this.#drawSpeakerPlate();
     this.#updateSpeakerAvatar();
@@ -1388,7 +1388,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   #applyContinueIndicatorAnchor(): void {
-    if (!this.#continueAwaiting) {
+    if (!this.#continueAwaiting || this.#interfaceHidden || this.#nvlActive) {
       this.#continueIndicator.visible = false;
       return;
     }

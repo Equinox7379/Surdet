@@ -35,6 +35,19 @@ const cases = [
 ] as const;
 
 describe('working object fingerprint resolver', () => {
+  it.each(['_score', '好感', '𠮷', 'score.value$'])('fingerprints supported configuration keys without treating them as paths (%s)', async name => {
+    const files = { 'game.config.json': JSON.stringify({ variables: { [name]: { type: 'number', initial: 1 } }, characters: { [name]: { name: '凛' } } }) };
+    for (const kind of ['variable', 'character']) {
+      expect((await fingerprintWorkingObject(files, `${kind}:${name}`, hasher)).state).toBe('present');
+    }
+  });
+
+  it('resolves the unique nested timeline and rejects duplicate identities', async () => {
+    const text = workingFiles['content/timelines/intro_opening.json']!;
+    const nested = { 'content/timelines/chapter/intro_opening.json': text };
+    expect(await fingerprintWorkingObject(nested, 'timeline:intro_opening', hasher)).toEqual(await fingerprintWorkingObject(workingFiles, 'timeline:intro_opening', hasher));
+    await expect(fingerprintWorkingObject({ ...nested, 'content/timelines/intro_opening.json': text }, 'timeline:intro_opening', hasher)).rejects.toMatchObject({ code: 'OBJECT_AMBIGUOUS' });
+  });
   it('uses a nested scene path without changing semantic identity or inventing a root file', async () => {
     const text = workingFiles['content/scenario/intro.gal']!;
     const nested = { 'content/scenario/chapter/intro.gal': text };

@@ -6,16 +6,24 @@ import {
   renameSceneAtKey,
   resolveFlowLinkSceneKeys,
   resolveSceneKeyForOperation,
+  rewriteSceneRefs,
+  countSceneRefs,
 } from '../src/panels/flow.js';
 import type { FlowNode } from '../src/graph/build.js';
 import { newScene } from '../src/panels/sidebar.js';
 import { bindProjectIoHooks } from '../src/project-io.js';
+import { histories, setCurrentText, undo, redo } from '../src/history.js';
 
 function scene(id: string, file: string, handle: FileSystemFileHandle | null): SceneEntry {
   return { id, file, text: `@scene ${id}\n`, eol: '\n', dirty: false, handle };
 }
 
 describe('场景路径安全生命周期', () => {
+  it('改名与删除检查包含选项内联跳转，保留对白、引号和换行', () => {
+    const source = '@scene start\r\n旁白：文字 @jump old\r\n@choice\r\n  前往 -> @set note = "@jump old" @jump old.end\r\n  返回 -> @call old\r\n@jump old\r\n';
+    expect(countSceneRefs(source, 'old')).toBe(3);
+    expect(rewriteSceneRefs(source, 'old', 'new')).toBe(source.replace(' @jump old.end', ' @jump new.end').replace(' @call old', ' @call new').replace('\r\n@jump old', '\r\n@jump new'));
+  });
   const status = { textContent: '', title: '', className: '' };
   const requestValidate = vi.fn();
   const diskHandle = { kind: 'file', name: 'old.gal' } as FileSystemFileHandle;
@@ -27,6 +35,7 @@ describe('场景路径安全生命周期', () => {
     });
     vi.stubGlobal('window', { prompt: vi.fn(), confirm: vi.fn() });
     state.scenes = new Map();
+    histories.clear();
     state.pendingSceneDeletes = [];
     state.pendingSceneCommit = null;
     state.current = null;
@@ -63,6 +72,35 @@ describe('场景路径安全生命周期', () => {
     state.scenes.set('chapter-b/shared', scene('shared', 'chapter-b/shared.gal', diskHandle));
     expect(resolveSceneKeyForOperation('shared')).toBeNull();
     expect(resolveSceneKeyForOperation('missing')).toBeNull();
+  });
+
+  it('改名迁移正文历史并同步历史中的引用，删除后同名新建不继承旧正文', async () => {
+    state.scenes.set('old', scene('old', 'old.gal', null));
+    state.scenes.set('reader', { ...scene('reader', 'reader.gal', null), text: '@scene reader\n@jump old\n' });
+    state.current = 'old';
+    setCurrentText('@scene old\n修改正文\n');
+    state.current = 'reader';
+    setCurrentText('@scene reader\n其他正文\n@jump old\n');
+    state.current = 'old';
+    vi.mocked(window.prompt).mockReturnValue('new');
+    await renameSceneAtKey('old');
+    undo();
+    expect(state.scenes.get('new')!.text).toBe('@scene new\n');
+    redo();
+    expect(state.scenes.get('new')!.text).toBe('@scene new\n修改正文\n');
+    state.current = 'reader';
+    undo();
+    expect(state.scenes.get('reader')!.text).toContain('@jump new');
+    state.current = 'new';
+    vi.mocked(window.confirm).mockReturnValue(true);
+    await deleteSceneAtKey('new');
+    vi.mocked(window.prompt).mockReturnValueOnce('new').mockReturnValueOnce('0');
+    await newScene();
+    state.current = 'new';
+    const fresh = state.scenes.get('new')!.text;
+    undo();
+    expect(state.scenes.get('new')!.text).toBe(fresh);
+    expect(histories.has('old')).toBe(false);
   });
 
   it('嵌套场景重命名保持目录，改写引用并登记旧文件而不立即删除', async () => {

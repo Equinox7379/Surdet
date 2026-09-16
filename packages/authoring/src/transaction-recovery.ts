@@ -82,8 +82,8 @@ function stageIsLegal(storage: ProjectWriteStorage, stagedIdentity: string): boo
   return candidate.startsWith(expectedPrefix);
 }
 
-function operationHash(operationId: string, recoveryToken: string, disposition: RecoveryInspection['disposition']): string {
-  return stableStringify({ operationId, recoveryToken, disposition });
+function operationHash(operationId: string, recoveryToken: string): string {
+  return stableStringify({ operationId, recoveryToken });
 }
 
 async function webSha256(value: string): Promise<string> {
@@ -280,12 +280,17 @@ export async function executeTransactionRecovery(input: {
   const existing = Object.prototype.hasOwnProperty.call(input.change.record.operations, input.operationId)
     ? input.change.record.operations[input.operationId]
     : undefined;
-  const requestedHash = operationHash(input.operationId, input.recoveryToken, input.inspection.disposition);
+  const requestedHash = operationHash(input.operationId, input.recoveryToken);
   if (existing !== undefined) {
-    if (existing.requestHash !== requestedHash) {
+    const legacyMatch = ['REOPEN_OPEN', 'ROLL_BACK_TO_BASE', 'FINALIZE_COMMITTED'].some(disposition => (
+      existing.requestHash === stableStringify({ operationId: input.operationId, recoveryToken: input.recoveryToken, disposition })
+    ));
+    if (existing.requestHash !== requestedHash && !legacyMatch) {
       throw new AuthoringOperationError('OPERATION_ID_CONFLICT', `operationId 已用于不同恢复请求：${input.operationId}`);
     }
-    return existing.result as { changeId: string; status: 'OPEN' | 'COMMITTED'; disposition: string };
+    const result = existing.result as { changeId: string; status: 'OPEN' | 'COMMITTED'; disposition: string };
+    if (result.disposition === 'MANUAL_RECOVERY_REQUIRED') throw new AuthoringOperationError('RECOVERY_AMBIGUOUS', '原恢复请求未成功，需要检查保留的恢复记录');
+    return result;
   }
   if (input.inspection.recoveryToken !== input.recoveryToken) {
     throw new AuthoringOperationError('RECOVERY_PLAN_STALE', '恢复计划 token 与 inspect 事实不匹配');
@@ -308,7 +313,7 @@ export async function executeTransactionRecovery(input: {
     throw new AuthoringOperationError('RECOVERY_NOT_REQUIRED', '当前事务不需要恢复');
   }
 
-  const requestHash = operationHash(input.operationId, input.recoveryToken, fresh.disposition);
+  const requestHash = requestedHash;
   if (fresh.disposition === 'REOPEN_OPEN') {
     let journal = input.journal;
     if (journal.status === 'STAGING') {

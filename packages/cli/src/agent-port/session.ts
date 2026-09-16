@@ -4,7 +4,7 @@ import {
   AUTHORING_CAPABILITY_REGISTRY,
   AUTHORING_CONTRACT_VERSION,
   AuthoringOperationError,
-  assertIntegrationReadyForCommit,
+  assertCurrentCommitEvidence,
   createFailureEnvelope,
   createSuccessEnvelope,
   evidenceFreshness,
@@ -39,6 +39,8 @@ import { generateDeliveryCapsule, type SealedDeliveryCapsule } from './delivery-
 import { isCapabilityAllowed } from './policy.js';
 import type { AgentPortOptions } from './args.js';
 import { authorizeImageSources, type AuthorizedImageSource } from '../authoring/agent-image-import-service.js';
+import { openAssetImportAuthorityPaths } from '../asset-import-authority/filesystem.js';
+import { AssetImportRecordStore } from '../asset-import-authority/record-store.js';
 
 export interface SessionCapability {
   id: AuthoringCapabilityId;
@@ -129,12 +131,6 @@ const ACTIVE_CHANGE_CAPABILITIES = new Set<AuthoringCapabilityId>([
   'change.rollback',
   'change.recovery.inspect',
   'change.recovery.execute',
-]);
-
-const CHANGE_STATUS_SENSITIVE_CAPABILITIES = new Set<AuthoringCapabilityId>([
-  ...ACTIVE_CHANGE_CAPABILITIES,
-  'project.validate',
-  'project.simulate',
 ]);
 
 function hashText(text: string): string {
@@ -245,10 +241,9 @@ function capabilityAvailability(
   } else if (capability.id === 'change.recovery.execute' && activeRecord?.status === 'STALE') {
     availability = 'available';
   } else if (activeRecord !== undefined
-    && activeRecord.status !== 'OPEN'
-    && CHANGE_STATUS_SENSITIVE_CAPABILITIES.has(capability.id)) {
+    && activeRecord.status !== 'OPEN') {
     availability = 'state-blocked';
-    reason = `当前 change 状态 '${activeRecord.status}' 不允许普通 mutation；先使用 recovery capability`;
+    reason = `当前 change 状态 '${activeRecord.status}' 需要先使用 recovery capability`;
   } else if (['change.commit', 'asset.import.commit', 'asset.import.recover'].includes(capability.id) && humanWorkspaceCommitBlock(humanWorkspace) !== null) {
     availability = 'state-blocked';
     reason = `human-workspace-${humanWorkspace.availability}`;
@@ -343,25 +338,7 @@ export class AgentPortSession {
   private async commitEvidenceGate(): Promise<void> {
     const record = await this.activeRecord();
     if (record === undefined) throw stateBlocked('change.commit');
-    assertIntegrationReadyForCommit(record);
-    if (record.latestValidation === undefined) throw new AuthoringOperationError('VALIDATION_REQUIRED', '提交前缺少校验证据');
-    if (record.latestValidation.workingRevision !== record.workingRevision) {
-      throw new AuthoringOperationError('VALIDATION_STALE', '提交前校验证据不是当前 workingRevision');
-    }
-    if (record.latestValidation.errors !== 0) throw new AuthoringOperationError('VALIDATION_FAILED', '提交前校验仍有 error');
-    if (record.latestSimulation === undefined) throw new AuthoringOperationError('SIMULATION_REQUIRED', '提交前缺少模拟证据');
-    if (record.latestSimulation.workingRevision !== record.workingRevision) {
-      throw new AuthoringOperationError('SIMULATION_REQUIRED', '提交前模拟证据不是当前 workingRevision');
-    }
-    if (record.latestSimulation.status === 'incomplete') {
-      throw new AuthoringOperationError('SIMULATION_INCOMPLETE', '提交前模拟未完成');
-    }
-    if (record.latestSimulation.status !== 'passed') {
-      throw new AuthoringOperationError('SIMULATION_REQUIRED', '提交前模拟未通过');
-    }
-    if (!record.runtimeTraces?.some((trace) => trace.status === 'passed' && trace.workingRevision === record.workingRevision)) {
-      throw new AuthoringOperationError('RUNTIME_EVIDENCE_REQUIRED', '提交前缺少当前 workingRevision 的 runtime trace');
-    }
+    assertCurrentCommitEvidence(record);
   }
 
   private context(capability: AuthoringCapabilityId): {
@@ -514,6 +491,7 @@ export class AgentPortSession {
               `调用事实记录写入失败：${error instanceof Error ? error.message : String(error)}`,
               {
                 operationMayHaveSucceeded: envelope!.ok,
+                invocationResult: envelope,
                 ...(operationId === undefined ? {} : { operationId }),
                 changeId: beforeChangeId,
               },
@@ -547,6 +525,7 @@ export class AgentPortSession {
           `调用事实记录写入失败：${error instanceof Error ? error.message : String(error)}`,
           {
             operationMayHaveSucceeded: envelope.ok,
+            invocationResult: envelope,
             ...(operationId === undefined ? {} : { operationId }),
             changeId,
           },
@@ -565,6 +544,9 @@ export class AgentPortSession {
 
   async describe(): Promise<SessionDescription> {
     const { summary: humanWorkspace } = await this.humanWorkspaceStore.inspect(this.projectRoot);
+    const assetRecoveryRequired = await new AssetImportRecordStore(
+      await openAssetImportAuthorityPaths({ projectRoot: this.projectRoot, dataRoot: this.assetImportDataRoot }),
+    ).hasUnresolvedBarrier();
     // A notice is only a hint. Its loss cannot hide workspace state or prevent re-inspection.
     const projectMutation = await this.mutationNoticeStore.readLatest(this.projectRoot).catch(() => null);
     const opened = await this.activeOpenedChange();
@@ -617,6 +599,15 @@ export class AgentPortSession {
       }
     }
     const capabilities = AUTHORING_CAPABILITY_REGISTRY.map((definition) => capabilityAvailability(this.policy, this.activeChangeIdValue, record, definition, humanWorkspace));
+    if (assetRecoveryRequired) {
+      for (const capability of capabilities) {
+        if (capability.availability === 'available'
+          && ['asset.import.stage', 'asset.import.commit', 'change.commit'].includes(capability.id)) {
+          capability.availability = 'state-blocked';
+          capability.reason = '素材操作存在未解决的恢复屏障，请先检查原操作并明确恢复';
+        }
+      }
+    }
     const activeIntegration = record?.integration;
     const candidateReadiness = record === undefined ? undefined : inspectCandidateCompositionReadiness(record);
     const review = reviewFor(record);
@@ -679,12 +670,14 @@ export class AgentPortSession {
       journal,
       recoveryDisposition,
       manualRecoveryRequired: record?.status === 'STALE'
+        || assetRecoveryRequired
         || journal.manualRecoveryRequired
         || changeLease.manualRecoveryRequired
         || projectLease.manualRecoveryRequired
         || humanWorkspace.blockedReasons.some(reason => reason === 'workspace-state-corrupt' || reason === 'write-settlement-failed')
         || recoveryDisposition === 'MANUAL_RECOVERY_REQUIRED',
-      nextActions: humanWorkspaceCommitBlock(humanWorkspace) === null
+      nextActions: assetRecoveryRequired ? ['asset.import.inspect', ...(this.policy === 'apply' ? ['asset.import.recover'] : [])]
+        : humanWorkspaceCommitBlock(humanWorkspace) === null
         ? nextActions
         : humanWorkspace.availability === 'blocked' && humanWorkspace.retryAfterMs === undefined
           ? []

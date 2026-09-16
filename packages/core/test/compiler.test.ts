@@ -8,6 +8,9 @@ import type { ChoiceInstr, CondJumpInstr, CompiledScene, JumpInstr } from '../sr
 const compile = (src: string, sceneId = 'ch01_01') => compileScene(src, 'ch01_01.gal', sceneId);
 
 describe('Parser', () => {
+  it.each(['video clip.mp4', 'loop 3 target', 'switch score 1:target'])('rejects unsupported inline control rather than emitting an inert generic instruction (%s)', instruction => {
+    expect(() => compile(`@choice\n  继续 -> @${instruction}\n@label target\n@end`)).toThrow(/S010/);
+  });
   it('解析基本块', () => {
     const src = `@label start\n凛：你好。\n@bg castle\n主角：哦。`;
     const ast = new Parser().parse(new Lexer().tokenize(src, 't.gal'), 'ch01_01');

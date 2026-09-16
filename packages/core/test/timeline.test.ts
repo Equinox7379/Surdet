@@ -25,8 +25,8 @@ describe('timeline validation', () => {
         { atMs: 80, durationMs: 40, easing: 'linear', action: 'explode', expression: 'normal' },
       ] }],
     });
-    expect(diagnostics.map((d) => d.code)).toContain('T006');
-    expect(diagnostics.map((d) => d.code)).toContain('T008');
+    expect(diagnostics.map((d) => d.code)).toContain('TL006');
+    expect(diagnostics.map((d) => d.code)).toContain('TL008');
   });
 
   it('rejects malformed track payloads and unsupported easing', () => {
@@ -36,7 +36,7 @@ describe('timeline validation', () => {
       durationMs: 100,
       tracks: [{ kind: 'camera', cues: [{ atMs: 0, durationMs: 10, easing: 'bounce', action: 'zoom', scale: -1 }] }],
     });
-    expect(diagnostics.map((d) => d.code)).toEqual(['T007', 'T009']);
+    expect(diagnostics.map((d) => d.code)).toEqual(['TL007', 'TL009']);
   });
 
   it('accepts cinematic camera pan/shake and rejects unsafe ranges', () => {
@@ -79,7 +79,7 @@ describe('TimelineRegistry', () => {
     try {
       registry.register(valid);
     } catch (err) {
-      expect((err as TimelineValidationError).diagnostics[0]!.code).toBe('T010');
+      expect((err as TimelineValidationError).diagnostics[0]!.code).toBe('TL010');
     }
   });
 });

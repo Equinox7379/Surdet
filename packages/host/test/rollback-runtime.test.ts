@@ -8,6 +8,7 @@ function createRollbackFixture(options: {
   failRestore?: boolean;
   reenterOnReset?: boolean;
   checkpointSafe?: boolean;
+  presentationHooks?: boolean;
 } = {}) {
   let pc = 0;
   let failRestore = options.failRestore === true;
@@ -24,12 +25,14 @@ function createRollbackFixture(options: {
     kind: 'manual',
     readSet: [],
     gallery: { cgs: [], music: [] },
+    ...(options.presentationHooks ? { presentation: { version: 1 as const, payload: { visible: true } } } : {}),
   });
   const interpreter = {
     status: 'awaiting-advance',
     saveSnapshot: vi.fn(() => structuredClone(snapshotAt())),
     loadSnapshot: vi.fn((snapshot: SaveSnapshot) => {
       pc = snapshot.position?.pc ?? pc;
+      if (snapshot.presentation) renderer.restorePresentation(snapshot.presentation.payload);
       runtime.captureText();
     }),
   } as unknown as Interpreter;
@@ -75,6 +78,12 @@ function createRollbackFixture(options: {
 }
 
 describe('rollback runtime — consecutive player rollback', () => {
+  it('restores presentation only once when Core already owns presentation hooks', async () => {
+    const fixture = createRollbackFixture({ presentationHooks: true });
+    for (const pc of [1, 2]) { fixture.setPosition(pc); fixture.runtime.captureText(); await Promise.resolve(); }
+    expect(fixture.runtime.perform()).toBe(true);
+    expect(fixture.renderer.restorePresentation).toHaveBeenCalledOnce();
+  });
   it('keeps earlier checkpoints while restore crosses the real state-reset boundary', async () => {
     const fixture = createRollbackFixture();
     for (let frame = 1; frame <= 10; frame += 1) {

@@ -44,7 +44,7 @@ function digest(text: string): string {
 }
 
 function lines(text: string): { raw: string; eol: string }[] {
-  const chunks = text.match(/.*?(?:\r\n|\n|\r|$)/g)?.filter((chunk) => chunk.length > 0) ?? [];
+  const chunks = text.match(/[^\r\n]*(?:\r\n|\n|\r|$)/g)?.filter((chunk) => chunk.length > 0) ?? [];
   return chunks.map((chunk) => {
     const match = /(\r\n|\n|\r)$/.exec(chunk);
     const eol = match?.[1] ?? '';

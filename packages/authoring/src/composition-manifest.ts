@@ -2,6 +2,7 @@ import { AuthoringOperationError, stableStringify } from './change-session.js';
 import type { ChangeRecord, TextHasher } from './contracts.js';
 import type { ChangeDiff } from './diff.js';
 import { resolveUniqueScenarioPath } from './scenario-identity.js';
+import { resolveUniqueTimelinePath } from './timeline-identity.js';
 import { analyzeSceneCompositionReferences, analyzeTimelineCompositionReferences } from './composition-reference-analysis.js';
 import { inspectCandidateCompositionReadiness } from './candidate-readiness.js';
 import { resolveOperationRequirementsAtSequence, resolveReplayStateRequirementsAtSequence } from './candidate-composition-guard.js';
@@ -375,7 +376,10 @@ async function finalProductionFingerprint(record: ChangeRecord, objectRef: strin
   }
   let value: unknown;
   if (objectRef.startsWith('gallery:cgs:')) value = readGalleryDocument(record.workingFiles[GALLERY_PATH]).cgs.find((entry) => entry.id === objectRef.slice('gallery:cgs:'.length));
-  else if (objectRef.startsWith('timeline:')) value = readWorkingJson(record, timelinePath(objectRef.slice('timeline:'.length)));
+  else if (objectRef.startsWith('timeline:')) {
+    const path = resolveUniqueTimelinePath(record.workingFiles, objectRef.slice('timeline:'.length));
+    value = path === undefined ? undefined : readWorkingJson(record, path);
+  }
   else {
     const config = readWorkingJson(record, CONFIG_PATH);
     if (objectRef === 'config:characters') value = config?.['characters'] ?? {};

@@ -5,7 +5,7 @@ import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuthoringOperationError, type ChangeRecord } from '@surdet/authoring';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
 import {
@@ -131,6 +131,37 @@ afterEach(async () => {
 });
 
 describe('NodeLocalLeaseManager', () => {
+  it('stops renewing its lease even when the release identity read fails', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-lease-release-read-'));
+    temporaryRoots.push(root);
+    const state = makeState();
+    const manager = makeManager(root, state);
+    const lease = await manager.acquire({ scope: 'change', resourceId: 'release-read' });
+    const load = vi.spyOn(manager as any, 'loadLease').mockRejectedValueOnce(new AuthoringOperationError('LEASE_CORRUPT', 'test read failure'));
+    await expect(lease.release()).rejects.toMatchObject({ code: 'LEASE_CORRUPT' });
+    load.mockRestore();
+    state.clock.advance(30_000);
+    await flushHeartbeats(state);
+    expect((await manager.inspect('change', 'release-read')).state).toBe('stale-candidate');
+    await lease.release();
+    expect((await manager.inspect('change', 'release-read')).state).toBe('free');
+  });
+
+  it('preserves both operation and release errors', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-lease-dual-error-'));
+    temporaryRoots.push(root);
+    const manager = makeManager(root, makeState());
+    const operationError = new Error('operation failed');
+    const releaseError = new Error('release failed');
+    let handle!: LeaseHandle;
+    const result = manager.withLease({ scope: 'change', resourceId: 'dual-error' }, async lease => {
+      handle = lease;
+      vi.spyOn(lease, 'release').mockRejectedValueOnce(releaseError);
+      throw operationError;
+    });
+    await expect(result).rejects.toMatchObject({ errors: [operationError, releaseError], cause: operationError });
+    await handle.release();
+  });
   it.each([
     ['project', 'C:/canonical/project/root'],
     ['change', 'chg_heartbeat_drain'],

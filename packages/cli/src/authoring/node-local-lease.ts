@@ -6,7 +6,7 @@ import { AuthoringOperationError } from '@surdet/authoring';
 import { createJsonRecord, readJsonRecord, replaceJsonRecord } from './node-json-record.js';
 import { projectIdentityFromRoot } from './project-identity.js';
 
-export type LeaseScope = 'change' | 'project' | 'review';
+export type LeaseScope = 'change' | 'project' | 'review' | 'workspace';
 
 export interface LeaseHandle {
   scope: LeaseScope;
@@ -93,7 +93,7 @@ function errorCode(error: unknown): string | undefined {
 
 function busyCode(scope: LeaseScope): 'CHANGE_BUSY' | 'PROJECT_BUSY' | 'REVIEW_BUSY' {
   if (scope === 'change') return 'CHANGE_BUSY';
-  if (scope === 'project') return 'PROJECT_BUSY';
+  if (scope === 'project' || scope === 'workspace') return 'PROJECT_BUSY';
   return 'REVIEW_BUSY';
 }
 
@@ -188,7 +188,7 @@ export class NodeLocalLeaseManager {
       ? 'changes'
       : scope === 'project'
         ? 'projects'
-        : 'reviews';
+        : scope === 'workspace' ? 'workspaces' : 'reviews';
     return path.join(this.dataRoot, '.locks', directory);
   }
 
@@ -284,7 +284,7 @@ export class NodeLocalLeaseManager {
       const transientRecordRead = recordReadChanged
         && (currentPath === null
           || (currentPath !== undefined && currentPath.isFile() && !currentPath.isSymbolicLink()));
-      const transientRead = rawCode === 'ENOENT' || rawCode === 'EBUSY' || rawCode === 'EPERM'
+      const transientRead = rawCode === 'ENOENT' || rawCode === 'EBUSY' || rawCode === 'EPERM' || details?.['recordReadRaced'] === true
         || transientRecordRead;
       throw leaseCorrupt(`lease.json 无法读取：${file}`, {
         path: file,
@@ -469,13 +469,12 @@ export class NodeLocalLeaseManager {
 
   async release(handle: LeaseReleaseInput): Promise<void> {
     this.validateHandle(handle);
-    const beforeClosing = await this.loadLease(handle.scope, handle.resourceId);
-    if (beforeClosing.ownerToken !== handle.ownerToken) {
-      const inspection = this.inspectionFor(handle.scope, handle.resourceId, beforeClosing);
-      throw busyError(handle.scope, handle.resourceId, inspection, `资源 '${handle.resourceId}' 的 lease ownerToken 不匹配`);
-    }
     const controller = this.heartbeatControllers.get(handle.ownerToken);
     if (controller === undefined) {
+      const current = await this.loadLease(handle.scope, handle.resourceId);
+      if (current.ownerToken !== handle.ownerToken) {
+        throw busyError(handle.scope, handle.resourceId, this.inspectionFor(handle.scope, handle.resourceId, current), `资源 '${handle.resourceId}' 的 lease ownerToken 不匹配`);
+      }
       throw leaseCorrupt(`lease heartbeat controller 缺失：${handle.directory}`, {
         path: handle.directory,
         scope: handle.scope,
@@ -555,10 +554,20 @@ export class NodeLocalLeaseManager {
     callback: (lease: LeaseHandle) => Promise<T>,
   ): Promise<T> {
     const lease = await this.acquire(input);
+    let failed = false;
+    let callbackError: unknown;
     try {
       return await callback(lease);
+    } catch (error) {
+      failed = true;
+      callbackError = error;
+      throw error;
     } finally {
-      await lease.release();
+      try { await lease.release(); }
+      catch (releaseError) {
+        if (failed) throw new AggregateError([callbackError, releaseError], '操作失败，且释放租约时再次失败', { cause: callbackError });
+        throw releaseError;
+      }
     }
   }
 

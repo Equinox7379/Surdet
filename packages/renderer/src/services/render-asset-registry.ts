@@ -72,6 +72,7 @@ export class RenderAssetRegistry {
   #backgrounds: AssetMap = new Map();
   #portraits: AssetMap = new Map();
   #avatars: AssetMap = new Map();
+  #registrations = new WeakMap<AssetMap, Map<string, object>>();
   #sourceRefs = new Map<string, number>();
   #sourceLoads = new Map<string, Promise<void>>();
   #sourceReleases = new Map<string, { promise: Promise<void>; failed: boolean }>();
@@ -235,8 +236,13 @@ export class RenderAssetRegistry {
 
   async #register(map: AssetMap, key: string, source: RenderAssetSource, format?: string): Promise<void> {
     const token = this.#generation.token();
+    let requests = this.#registrations.get(map);
+    if (!requests) { requests = new Map(); this.#registrations.set(map, requests); }
+    const request = {};
+    requests.set(key, request);
     if (typeof source !== 'string') {
       this.#commit(map, key, { texture: source, ownership: 'caller' });
+      requests.delete(key);
       return;
     }
     const previous = this.#sourceLoads.get(source);
@@ -248,12 +254,13 @@ export class RenderAssetRegistry {
       if (release) await release.promise;
       if (!token.current) return;
       const texture = await this.#load(source, format);
-      if (token.current) this.#commit(map, key, { texture, ownership: 'loaded', source });
+      if (token.current && requests.get(key) === request) this.#commit(map, key, { texture, ownership: 'loaded', source });
       else if ((this.#sourceRefs.get(source) ?? 0) === 0) await this.#unloadSource(source);
     })();
     this.#sourceLoads.set(source, pending);
     const settled = (): void => {
       if (this.#sourceLoads.get(source) === pending) this.#sourceLoads.delete(source);
+      if (requests.get(key) === request) requests.delete(key);
     };
     void pending.then(settled, settled);
     await pending;
@@ -297,7 +304,7 @@ export class RenderAssetRegistry {
       const refs = (this.#generatedRefs.get(slot.texture) ?? 1) - 1;
       if (refs <= 0) {
         this.#generatedRefs.delete(slot.texture);
-        slot.texture.destroy();
+        slot.texture.destroy(true);
       } else {
         this.#generatedRefs.set(slot.texture, refs);
       }

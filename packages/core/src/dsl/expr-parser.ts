@@ -160,7 +160,8 @@ export class ExprParser {
       if (c === '\\') {
         const next = this.#src[this.#pos + 1];
         if (next === undefined) this.#fail('字符串未闭合');
-        out += next === 'n' ? '\n' : next === 't' ? '\t' : next;
+        out += next === 'n' ? '\n' : next === 't' ? '\t'
+          : next === '\\' || next === '"' || next === "'" ? next : `\\${next}`;
         this.#pos += 2;
         continue;
       }

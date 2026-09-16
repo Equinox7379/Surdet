@@ -683,6 +683,34 @@ describe('project asset relocation authority', () => {
       .resolves.toContain('new');
   });
 
+  it('rejects new references before resuming publication and still permits rollback', async () => {
+    const value = await fixture({ faultPoint: 'after_target_link_intent' });
+    const planned = await plan(value);
+    await expect(value.authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint }))
+      .rejects.toBeInstanceOf(AssetRelocationInjectedTermination);
+    const before = await value.store.read(operationId);
+    const added = absolute(value.projectRoot, 'content/scenario/added.gal');
+    const text = '@scene added\n@bg old\n@end\n';
+    await writeFile(added, text);
+    const recovered = makeAuthority(value.paths);
+    await expect(recovered.recover(operationId, { action: 'resume' }))
+      .rejects.toMatchObject({ code: 'IMPORT_PLAN_STALE' });
+    expect(await value.store.read(operationId)).toEqual(before);
+    expect(await readFile(added, 'utf8')).toBe(text);
+    expect((await recovered.recover(operationId, { action: 'rollback' })).operation.status).toBe('ROLLED_BACK');
+    expect(await readFile(value.sourceFile, 'utf8')).toBe('source-bytes');
+  });
+
+  it('rewrites choice inline references on disk without changing quoted at signs or dialogue', async () => {
+    const value = await fixture();
+    const original = '@scene start\r\n@choice\r\n  old text -> @bg old @goto done\r\n@label done\r\n旁白：mail@old\r\n@end\r\n';
+    await writeFile(absolute(value.projectRoot, scenePath), original);
+    const planned = await plan(value);
+    const result = await value.authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+    expect(result.operation.status).toBe('COMMITTED');
+    expect(await readFile(absolute(value.projectRoot, scenePath), 'utf8')).toBe(original.replace('@bg old', '@bg new'));
+  });
+
   it('resumes rollback after interruption between displacing and publishing a text file', async () => {
     const fixtureValue = await fixture({ faultPoint: 'after_text_replace_before_journal' });
     const planned = await plan(fixtureValue);

@@ -9,6 +9,7 @@ import {
 } from '@surdet/authoring';
 import { dispatchAuthoringCapability, type InvocationContext } from './authoring/authoring-dispatcher.js';
 import { AuthoringService, type ServiceResult } from './authoring/authoring-service.js';
+import { authorizeImageSources } from './authoring/agent-image-import-service.js';
 
 interface ParsedArgs {
   project?: string;
@@ -17,6 +18,8 @@ interface ParsedArgs {
   input?: string;
   trace?: string;
   query?: string;
+  assetSources?: string[];
+  assetImportDataRoot?: string;
   json: boolean;
   debug: boolean;
 }
@@ -39,6 +42,8 @@ function parseArgs(args: readonly string[]): ParsedArgs {
     else if (arg === '--input') parsed.input = nextValue(args, index++, arg);
     else if (arg === '--trace') parsed.trace = nextValue(args, index++, arg);
     else if (arg === '--query') parsed.query = nextValue(args, index++, arg);
+    else if (arg === '--asset-source') (parsed.assetSources ??= []).push(nextValue(args, index++, arg));
+    else if (arg === '--asset-import-data-root') parsed.assetImportDataRoot = nextValue(args, index++, arg);
     else throw new Error(`不支持的 authoring 参数：${arg}`);
   }
   return parsed;
@@ -47,17 +52,12 @@ function parseArgs(args: readonly string[]): ParsedArgs {
 function readJsonFile(file: string | undefined): unknown {
   if (file === undefined) throw new Error('写操作需要 --input <json-file> 或 --input -');
   const text = file === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(file, 'utf8');
-  return JSON.parse(text) as unknown;
+  return JSON.parse(text.replace(/^\uFEFF/, '')) as unknown;
 }
 
 function readOptionalJsonFile(file: string | undefined): unknown {
   if (file === undefined) return {};
   return readJsonFile(file);
-}
-
-function required(value: string | undefined, flag: string): string {
-  if (value === undefined || value.length === 0) throw new Error(`缺少 ${flag}`);
-  return value;
 }
 
 function capabilityFor(command: string, subcommand: string, subsubcommand = ''): AuthoringCapabilityId {
@@ -75,25 +75,24 @@ async function dispatchCli(
   capability: AuthoringCapabilityId,
   args: ParsedArgs,
 ): Promise<{ value: ServiceResult<unknown>; operationId?: string }> {
+  if (args.change !== undefined && args.project !== undefined) {
+    await service.assertChangeProject(args.change, args.project);
+  }
   const context: InvocationContext = {
     sessionId: `cli_${crypto.randomUUID()}`,
     policy: 'apply',
+    assetSources: await authorizeImageSources(args.assetSources ?? []),
+    ...(args.assetImportDataRoot === undefined ? {} : { assetImportDataRoot: args.assetImportDataRoot }),
     ...(args.project === undefined ? {} : { projectRoot: args.project }),
     ...(args.change === undefined ? {} : { activeChangeId: args.change }),
   };
-  let input: unknown = {};
-  if (capability === 'object.inspect') input = { objectRef: required(args.ref, '--ref') };
-  else if (capability === 'scene.create' || capability === 'scene.patch' || capability === 'variable.ensure' || capability === 'variable.patch-initial'
-    || capability === 'character.ensure' || capability === 'character.remove' || capability === 'timeline.create'
-    || capability === 'gallery.cg.create' || capability === 'gallery.cg.patch'
-    || capability === 'timeline.patch' || capability === 'project.entry-scene.set' || capability === 'runtime.run-from') {
-    input = readJsonFile(args.input);
-  } else if (capability === 'project.simulate' || capability === 'runtime.read-preview') {
-    input = readOptionalJsonFile(args.input);
-  } else if (capability === 'runtime.read-trace') {
-    input = {
-      traceId: required(args.trace, '--trace'),
-      ...(args.query === undefined ? {} : { query: readJsonFile(args.query) }),
+  let input = readOptionalJsonFile(args.input);
+  if (args.ref !== undefined || args.trace !== undefined || args.query !== undefined) {
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new Error('--input 必须是 JSON 对象');
+    input = { ...input,
+      ...(capability === 'object.inspect' && args.ref !== undefined ? { objectRef: args.ref } : {}),
+      ...(capability === 'runtime.read-trace' && args.trace !== undefined ? { traceId: args.trace } : {}),
+      ...(capability === 'runtime.read-trace' && args.query !== undefined ? { query: readJsonFile(args.query) } : {}),
     };
   }
   return dispatchAuthoringCapability(context, capability, input, service);

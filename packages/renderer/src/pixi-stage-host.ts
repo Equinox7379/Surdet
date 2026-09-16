@@ -825,11 +825,11 @@ export class RendererStageHost {
     this.hideEnding();
     this.#dialogue.reset();
     this.#system.reset();
-    this.#assetRegistry.reset({ clearAssets, preserveAssets: preserveWorld });
     this.#world.reset({ preserveWorld });
 
     this.#gallery.reset();
     this.#menu.reset();
+    this.#assetRegistry.reset({ clearAssets, preserveAssets: preserveWorld });
 
   }
 

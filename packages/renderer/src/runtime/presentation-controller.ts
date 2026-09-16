@@ -169,6 +169,7 @@ export function preparePresentationRestore(
       : ++timelineSequence;
     if (ids.has(id)) throw invalidPresentation(`Duplicate presentation timeline id '${id}'`);
     ids.add(id);
+    timelineSequence = Math.max(timelineSequence, id);
     timelines.push({
       id,
       blocking: item.blocking === true,
@@ -663,7 +664,7 @@ export class PresentationController {
   /** 切换快进（瞬时文本 + 连续推进；默认仅跳已读行） */
   toggleSkip(): boolean {
     this.#skipMode = !this.#skipMode;
-    if (!this.#skipMode) this.#skipAll = false;
+    this.#skipAll = false;
     this.#requestFrame();
     return this.#skipMode;
   }
@@ -757,6 +758,7 @@ export class PresentationController {
   #onChoice(p: ChoiceEventPayload): void {
     // 遇选择肢自动退出快进/自动播放：玩家必须做出选择，不应被连续推进越过
     this.#skipMode = false;
+    this.#skipAll = false;
     this.#status = 'choice';
     this.#choiceIndices = p.options.map((o) => o.index);
     this.#choiceCursor = -1;
@@ -804,6 +806,8 @@ export class PresentationController {
   /** 读档状态重置（审计修复 C1）：作废等待计时并递增会话号，
    *  残留的 video 结束/计时到点回调不再调 onWaitEnd → finishWait 状态失配抛错 */
   #onStateReset(): void {
+    this.#backlogOpen = false;
+    this.#commands.dialogue.hideBacklog();
     this.#clearRestoreInteractiveTransients();
     this.#waitDeadline = null;
     this.#waitSession += 1;
@@ -824,6 +828,8 @@ export class PresentationController {
    * or the broader Player/Renderer session.
    */
   #clearRestoreInteractiveTransients(): void {
+    this.#interfaceHidden = false;
+    this.#commands.dialogue.hideInterface(false);
     this.#status = 'idle';
     this.#current = null;
     this.#fade = null;

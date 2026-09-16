@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -104,6 +104,22 @@ class FailingReplaceStorage implements ProjectWriteStorage {
 }
 
 describe('NodeProjectStorage safe parent creation', () => {
+  it('does not report a staged write when its real file flush fails', async () => {
+    const root = createProjectRoot('surdet-stage-flush-');
+    const storage = await NodeProjectStorage.open(root);
+    const probe = await fs.promises.open(path.join(root, 'game.config.json'), 'r+');
+    const prototype = Object.getPrototypeOf(probe);
+    await probe.close();
+    const sync = vi.spyOn(prototype, 'sync').mockRejectedValueOnce(new Error('injected flush failure'));
+    try {
+      await expect(storage.stageText('new.txt', 'staged content', 'flush-check')).rejects.toThrow('injected flush failure');
+      expect(fs.existsSync(path.join(root, 'new.txt'))).toBe(false);
+      expect(temporaryFiles(root)).toEqual([]);
+    } finally { sync.mockRestore(); }
+    const staged = await storage.stageText('new.txt', 'durable content', 'flush-retry');
+    await storage.replaceFromStage('new.txt', staged.stagedIdentity);
+    expect((await storage.readText('new.txt')).text).toBe('durable content');
+  });
   it('stages and commits a new file when its parent directory is absent', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-node-storage-red-'));
     const scenarioDirectory = path.join(root, 'content', 'scenario');

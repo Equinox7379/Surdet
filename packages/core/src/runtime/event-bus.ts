@@ -71,15 +71,16 @@ export class EventBus<E extends EventMap = EventMap> {
     const subs = this.#subs.get(event);
     if (!subs) return;
     for (const sub of [...subs]) {
+      if (this.#subs.get(event) !== subs || !subs.has(sub)) continue;
+      if (sub.once) subs.delete(sub);
       try {
         sub.handler(payload);
       } catch (err) {
         this.#logger.error(`[EventBus] handler for '${event}' threw:`, err);
         this.#onHandlerError?.(err, event);
       }
-      if (sub.once) subs.delete(sub);
     }
-    if (subs.size === 0) this.#subs.delete(event);
+    if (subs.size === 0 && this.#subs.get(event) === subs) this.#subs.delete(event);
   }
 
   /** 清空全部事件 */
