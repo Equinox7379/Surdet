@@ -650,16 +650,34 @@ export async function commitChange(
   }
 
   await writeJournal('REPLACING');
+  let pendingReplacement: CommitJournal['files'][number] | undefined;
   try {
     for (const entry of journal.files) {
+      pendingReplacement = entry;
       await storage.replaceFromStage(entry.path, entry.stagedIdentity);
       entry.replaced = true;
+      pendingReplacement = undefined;
       await writeJournal('REPLACING');
       const finalFile = await storage.readText(entry.path);
       if (finalFile.sha256 !== entry.targetSha256) throw new Error(`最终文件身份不匹配：${entry.path}`);
     }
   } catch (error) {
     let recoveryError: unknown;
+    // A storage error may follow a successful rename (for example fsync).
+    // Classify the in-flight target from its bytes before deciding what to undo.
+    if (pendingReplacement !== undefined) {
+      try {
+        const current = await storage.exists(pendingReplacement.path)
+          ? await storage.readText(pendingReplacement.path) : null;
+        if (current?.sha256 === pendingReplacement.targetSha256) {
+          pendingReplacement.replaced = true;
+        } else if (current?.sha256 !== pendingReplacement.originalSha256) {
+          throw new Error(`无法确认失败写入的文件身份：${pendingReplacement.path}`);
+        }
+      } catch (inspectionError) {
+        recoveryError = inspectionError;
+      }
+    }
     for (const entry of [...journal.files].reverse()) {
       if (!entry.replaced) continue;
       try {
@@ -676,13 +694,13 @@ export async function commitChange(
         recoveryError = restoreError;
       }
     }
-    for (const entry of journal.files) {
-      try { await storage.removeStage(entry.stagedIdentity); } catch { /* 失败证据由 journal 保留 */ }
-    }
     if (recoveryError !== undefined) {
       await writeJournal('RECOVERY_FAILED');
       await markStale(change);
       throw new AuthoringOperationError('COMMIT_RECOVERY_FAILED', `提交失败且恢复失败：${String(recoveryError)}`, { cause: String(error) });
+    }
+    for (const entry of journal.files) {
+      try { await storage.removeStage(entry.stagedIdentity); } catch { /* 失败证据由 journal 保留 */ }
     }
     await writeJournal('RECOVERED');
     throw new AuthoringOperationError('COMMIT_FAILED_RECOVERED', `提交失败但已恢复：${String(error)}`);

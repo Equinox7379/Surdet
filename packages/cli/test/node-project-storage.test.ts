@@ -104,6 +104,186 @@ class FailingReplaceStorage implements ProjectWriteStorage {
 }
 
 describe('NodeProjectStorage safe parent creation', () => {
+  it.each(['new', 'existing'] as const)('recovers an already renamed %s target when its real file flush fails', async kind => {
+    const root = createProjectRoot('surdet-commit-post-rename-');
+    const relative = kind === 'new' ? 'content/scenario/agent_support.gal' : 'game.config.json';
+    const target = path.join(root, relative);
+    try {
+      const storage = await NodeProjectStorage.open(root);
+      const before = fileTree(root);
+      const change = await beginSceneChange(storage, true);
+      const probe = await fs.promises.open(path.join(root, 'game.config.json'), 'r+');
+      const prototype = Object.getPrototypeOf(probe);
+      await probe.close();
+      const originalSync = prototype.sync as fs.promises.FileHandle['sync'];
+      let failures = 0;
+      // The staged file has a different inode. Inject only when the real rename
+      // has published that inode under the final target name, not during staging.
+      const sync = vi.spyOn(prototype, 'sync').mockImplementation(function(this: fs.promises.FileHandle) {
+        const targetStat = fs.existsSync(target) ? fs.statSync(target) : null;
+        const opened = fs.fstatSync(this.fd);
+        if (failures === 0 && targetStat?.isFile()
+          && opened.dev === targetStat.dev && opened.ino === targetStat.ino) {
+          failures += 1;
+          return Promise.reject(Object.assign(new Error('injected target fsync failure after rename'), { code: 'EIO' }));
+        }
+        return originalSync.call(this);
+      });
+      try {
+        await expect(commitChange(change, storage)).rejects.toMatchObject({ code: 'COMMIT_FAILED_RECOVERED' });
+        expect(failures).toBe(1);
+        expect(fileTree(root)).toEqual(before);
+        expect(temporaryFiles(root)).toEqual([]);
+        expect(change.record.status).toBe('OPEN');
+        expect(await change.repository.readLatestJournal(change.record.changeId)).toMatchObject({ status: 'RECOVERED' });
+      } finally { sync.mockRestore(); }
+      // Recovery must preserve the original change and allow an explicit retry.
+      expect((await commitChange(change, storage)).status).toBe('COMMITTED');
+      expect(fs.readFileSync(path.join(root, 'content/scenario/agent_support.gal'), 'utf8')).toContain('新场景。');
+      expect(JSON.parse(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8')).variables.trust.initial).toBe(0);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('does not overwrite an unrecognized post-rename target or discard its remaining recovery stages', async () => {
+    const root = createProjectRoot('surdet-commit-unknown-target-');
+    try {
+      const storage = await NodeProjectStorage.open(root);
+      const change = await beginSceneChange(storage, true);
+      const relative = 'content/scenario/agent_support.gal';
+      const target = path.join(root, relative);
+      const foreignText = '@scene agent_support\n事务外的正文不能被自动覆盖。\n@end\n';
+      const replace = storage.replaceFromStage.bind(storage);
+      let injected = false;
+      const fault = vi.spyOn(storage, 'replaceFromStage').mockImplementation(async (file, stage) => {
+        await replace(file, stage);
+        if (file === relative && !injected) {
+          injected = true;
+          fs.writeFileSync(target, foreignText);
+          throw new Error('injected unknown post-publication outcome');
+        }
+      });
+      try {
+        await expect(commitChange(change, storage)).rejects.toMatchObject({ code: 'COMMIT_RECOVERY_FAILED' });
+        expect(injected).toBe(true);
+        expect(change.record.status).toBe('STALE');
+        expect(fs.readFileSync(target, 'utf8')).toBe(foreignText);
+        const journal = await change.repository.readLatestJournal(change.record.changeId) as {
+          status: string; files: Array<{ path: string; stagedIdentity: string }>;
+        };
+        expect(journal.status).toBe('RECOVERY_FAILED');
+        const pending = journal.files.find(file => file.path === 'game.config.json');
+        expect(pending).toBeDefined();
+        expect(fs.existsSync(pending!.stagedIdentity)).toBe(true);
+      } finally { fault.mockRestore(); }
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it.each(['exists', 'readText'] as const)('keeps recovery evidence when post-rename inspection fails in %s', async method => {
+    const root = createProjectRoot('surdet-commit-unreadable-target-');
+    try {
+      const storage = await NodeProjectStorage.open(root);
+      const change = await beginSceneChange(storage, true);
+      const relative = 'content/scenario/agent_support.gal';
+      const originalConfig = fs.readFileSync(path.join(root, 'game.config.json'), 'utf8');
+      const replace = storage.replaceFromStage.bind(storage);
+      let injected = false;
+      const fault = vi.spyOn(storage, 'replaceFromStage').mockImplementation(async (file, stage) => {
+        await replace(file, stage);
+        if (file === relative) {
+          injected = true;
+          throw new Error('injected post-publication failure');
+        }
+      });
+      const exists = storage.exists.bind(storage);
+      const readText = storage.readText.bind(storage);
+      const existsFault = vi.spyOn(storage, 'exists').mockImplementation(async file => {
+        if (injected && file === relative && method === 'exists') throw new Error('injected inspection failure');
+        return exists(file);
+      });
+      const readFault = vi.spyOn(storage, 'readText').mockImplementation(async file => {
+        if (injected && file === relative && method === 'readText') throw new Error('injected inspection failure');
+        return readText(file);
+      });
+      try {
+        await expect(commitChange(change, storage)).rejects.toMatchObject({
+          code: 'COMMIT_RECOVERY_FAILED', details: { cause: 'Error: injected post-publication failure' },
+        });
+        expect(injected).toBe(true);
+        expect(change.record.status).toBe('STALE');
+        expect(fs.readFileSync(path.join(root, relative), 'utf8')).toContain('新场景。');
+        expect(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8')).toBe(originalConfig);
+        const journal = await change.repository.readLatestJournal(change.record.changeId) as {
+          status: string; files: Array<{ path: string; stagedIdentity: string }>;
+        };
+        expect(journal.status).toBe('RECOVERY_FAILED');
+        const pending = journal.files.find(file => file.path === 'game.config.json');
+        expect(pending).toBeDefined();
+        expect(fs.existsSync(pending!.stagedIdentity)).toBe(true);
+      } finally { fault.mockRestore(); existsFault.mockRestore(); readFault.mockRestore(); }
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('does not touch an absent target when replacement fails before publication', async () => {
+    const root = createProjectRoot('surdet-commit-before-rename-');
+    try {
+      const inner = await NodeProjectStorage.open(root);
+      const storage = new FailingReplaceStorage(inner, 1);
+      const change = await beginSceneChange(storage, true);
+      const before = fileTree(root);
+      const restore = vi.spyOn(inner, 'restoreText');
+      const remove = vi.spyOn(inner, 'removePath');
+      try {
+        await expect(commitChange(change, storage)).rejects.toMatchObject({ code: 'COMMIT_FAILED_RECOVERED' });
+        expect(fileTree(root)).toEqual(before);
+        expect(temporaryFiles(root)).toEqual([]);
+        expect(restore).not.toHaveBeenCalled();
+        expect(remove).not.toHaveBeenCalled();
+        expect(change.record.status).toBe('OPEN');
+        expect(await change.repository.readLatestJournal(change.record.changeId)).toMatchObject({ status: 'RECOVERED' });
+        expect((await commitChange(change, storage)).status).toBe('COMMITTED');
+      } finally { restore.mockRestore(); remove.mockRestore(); }
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('does not report recovery success when the restored target also fails its real flush', async () => {
+    const root = createProjectRoot('surdet-commit-restore-flush-');
+    try {
+      const storage = await NodeProjectStorage.open(root);
+      const target = path.join(root, 'game.config.json');
+      const originalConfig = fs.readFileSync(target, 'utf8');
+      const change = await beginSceneChange(storage, true);
+      const probe = await fs.promises.open(target, 'r+');
+      const prototype = Object.getPrototypeOf(probe);
+      await probe.close();
+      const originalSync = prototype.sync as fs.promises.FileHandle['sync'];
+      let failures = 0;
+      const sync = vi.spyOn(prototype, 'sync').mockImplementation(function(this: fs.promises.FileHandle) {
+        const targetStat = fs.statSync(target);
+        const opened = fs.fstatSync(this.fd);
+        if (targetStat.isFile() && opened.dev === targetStat.dev && opened.ino === targetStat.ino) {
+          failures += 1;
+          return Promise.reject(Object.assign(new Error(`injected target flush failure ${failures}`), { code: 'EIO' }));
+        }
+        return originalSync.call(this);
+      });
+      try {
+        await expect(commitChange(change, storage)).rejects.toMatchObject({
+          code: 'COMMIT_RECOVERY_FAILED', details: { cause: 'Error: injected target flush failure 1' },
+        });
+        expect(failures).toBe(2);
+        expect(change.record.status).toBe('STALE');
+        expect(fs.readFileSync(target, 'utf8')).toBe(originalConfig);
+        expect(fs.existsSync(path.join(root, 'content/scenario/agent_support.gal'))).toBe(false);
+        expect(await change.repository.readLatestJournal(change.record.changeId)).toMatchObject({
+          status: 'RECOVERY_FAILED', files: expect.arrayContaining([
+            expect.objectContaining({ path: 'game.config.json', replaced: true, restored: false }),
+          ]),
+        });
+      } finally { sync.mockRestore(); }
+      await expect(commitChange(change, storage)).rejects.toMatchObject({ code: 'CHANGE_NOT_OPEN' });
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   it('does not report a staged write when its real file flush fails', async () => {
     const root = createProjectRoot('surdet-stage-flush-');
     const storage = await NodeProjectStorage.open(root);

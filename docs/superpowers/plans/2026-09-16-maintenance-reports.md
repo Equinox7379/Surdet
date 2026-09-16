@@ -85,8 +85,37 @@ CLI 大组最初 187 项中 5 项超过默认 5 秒；导入权威/存储最初 
 
 R4 披露其探针写入平台默认 authority 数据区。本轮只读核对：`projects/fb30cfb8bd1891b6bae45ff13638d147cfa68a0fb9aa2f33012993e736229a44/project-identity.json` 明确绑定 `D:/surdet-review/cli/project-b`；`operation-33333333-3333-4333-8333-333333333333-workspace-invalid.json` 创建于 `2026-09-16T01:38:37.547Z`。这是审查隔离项目的既有屏障，未删除、未修改，也没有证据据此称正式作品被污染。新未知编号调用不再制造这类屏障；旧屏障没有被自动当作安全可删数据。
 
-## Git、CI 与停止点
+## 首批提交与当时停止点
 
 提交前实时远端 main 仍为开工 `0f198faa7bac7d061df3b392a27873628171b533`；CI 工作流实时查询仍为 `disabled_manually`。本批按 Owner 持续授权普通提交并推送，提交说明按上述修复组、验证与限制展开，精确最终身份以包含本记录的 Git 提交为准；不自引用预先猜测的提交哈希。保留未跟踪资料，不改历史、不发布、不部署。
 
 当前交付是**本机已实现并验证的维护修复，等待云端独立复审**。未修/未核实边界在上文列明，不代签四份外部报告全部关闭，也不重开已通过的旧 Wave 或增加 Owner 体验任务。
+
+## 9750765 复审整改：替换后刷新失败的补偿（2026-09-16）
+
+Owner 转交云端独立复审与 `Surdet_9750765_post_rename_recovery.patch`。复审结论为 **9750765 暂不通过，主体成果保留，唯一已确认的本批阻断是提交补偿漏掉已经替换的目标**。本机接续 HEAD 为 `97507651b5e52304dc7db617e9b7f1559717b3ea`，跟踪工作树及暂存区干净；按原授权核验、局部修复、详细普通提交并直接推送。本次未派子代理。
+
+### 本机复现与修正
+
+先只应用候选测试，重新构建尚未修正的 Authoring，再运行真实 `NodeProjectStorage` 与共享 `commitChange()`：11 项中 8 通过、3 失败。新文件与覆盖已有文件的目标句柄 `sync()` 在真实 rename 后注入一次 EIO，两者都返回 `COMMIT_FAILED_RECOVERED`，但文件树仍包含新字节；未知目标内容同样误报已恢复。红灯日志保留为 `post-rename-recovery/node-storage-red.log`，断言含原文件摘要分隔符 NUL，不是日志损坏。
+
+生产修正仅在 `packages/authoring/src/change-session.ts`，采用已核对的候选方案：记录正在替换的 entry，失败后通过原 `exists/readText` 核对实际目标指纹。已是本次目标则纳入原逆序补偿；仍是原文，或新文件仍不存在，则不额外写入。无法识别或检查失败时保留该文件，进入原 `RECOVERY_FAILED` / `STALE`，并保留原提交错误。仅在恢复成功后清理剩余暂存材料，恢复失败留待原检查/显式恢复能力处理。
+
+没有删除或放宽 `fsync`，没有新增事务状态、公开 API、后台重试或第二套恢复系统。未知目标不会被自动覆盖；补偿过程中再次刷新失败仍明确报告恢复失败，即使内存可读字节已回到原文，也不冒称落盘保证已恢复。这是正常异常返回路径的正确性修复，不扩大为断电原子性承诺。
+
+### 定向验证结果
+
+日志沿用原根目录下 `post-rename-recovery/`，临时磁盘项目在其 `temp/`。应用候选的 3 个回归，并补足检查接口失败、替换前失败及补偿刷新失败的相关边界；生产补丁未再扩大。
+
+| 本轮执行 | 结果 | 日志 |
+| --- | --- | --- |
+| `node-project-storage.test.ts` | 15 项通过（7 项新增、8 项既有）。真实最终句柄 EIO 覆盖新建/覆盖及各自显式重试；未知内容不覆盖、exists/readText 失败保留证据、发布前无目标不多余改写、恢复时最终句柄再失败；包含 Windows 文件占用回归 | `node-storage-green.log` |
+| Authoring `change-session / commit-recovery / transaction-recovery` | 3 文件 / 29 项通过，既有批准门、恢复幂等、提交与清理约束保留 | `authoring-regression.log` |
+| CLI `agent-transaction-recovery / authoring-vertical-slice` | 2 文件 / 20 项通过；含真实 NodeChangeStore、服务恢复、fresh-process 重开和原生 CLI 正常提交纵向路径 | `cli-regression.log` |
+| Authoring / CLI 类型检查与新鲜构建 | 均通过；先构建 Authoring 再让 CLI 消费本轮 dist | `authoring-typecheck.log`、`cli-typecheck.log`、`authoring-build.log`、`cli-build.log` |
+
+上面三组是本轮实际执行，不与首批整包数字相加。新增最终句柄故障注入使用本机 Windows 的真实文件系统和 Node 存储，change repository 为内存夹具；既有服务回归另用真实持久仓库，不能把二者拼成“通过 MCP/Editor 注入了最终句柄失败”。本轮不重跑 Starter、Q1、历史 Wave、整体视觉或 Electron；旧结果仅按其原覆盖范围保留。
+
+### 当前停止点
+
+本机已复现并修正该阻断，定向验证通过；详细普通提交、推送后等待云端针对该边界复审，**不代签最终 PASS**。原未修项和范围冻结继续有效。CI 本轮实时查询仍为 `disabled_manually`，未启用托管运行、发行或部署；首次 Git 远端查询发生 TLS 握手失败，未改安全配置。最终提交/推送身份以 Git 实际回执为准，不为填写自身哈希另增文档提交。
