@@ -387,7 +387,7 @@ export class AgentPortSession {
     const beforeChangeId = this.activeChangeIdValue;
     let beforeRecord: ChangeRecord | undefined;
     let envelope: AuthoringEnvelope<unknown> | undefined;
-    let operationId: string | undefined;
+    let operationId = typeof input['operationId'] === 'string' ? input['operationId'] : undefined;
     let invocationRecorded = false;
 
     const dispatchOnce = async (service: AuthoringService): Promise<AuthoringEnvelope<unknown>> => {
@@ -411,7 +411,7 @@ export class AgentPortSession {
         if (executing?.integration === undefined) throw stateBlocked(capability);
       }
       const dispatched = await dispatchAuthoringCapability(this.context(capability), capability, input, service);
-      operationId = dispatched.operationId ?? (typeof input['operationId'] === 'string' ? input['operationId'] : undefined);
+      operationId = dispatched.operationId ?? operationId;
       const value = dispatched.value;
       if (capability === 'composition.execute') {
         const result = (value.result ?? {}) as { integrationChangeId?: unknown };

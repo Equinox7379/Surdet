@@ -938,19 +938,21 @@ export class PresentationController {
     this.#requestFrame();
   }
 
-  /** 先恢复舞台静态状态，再恢复仍在运行的时间轴游标。 */
+  /** 重建对话后恢复舞台静态状态，再恢复仍在运行的时间轴游标。 */
   restorePresentation(payload: unknown): void {
     const prepared = this.#preparePresentationRestore(payload);
     this.#clearTimelines();
     this.#timelineSeq = prepared.timelineSequence;
-    if (prepared.stage === null) this.#commands.presentation.clear();
-    else this.#commands.presentation.restore(prepared.stage);
     this.#nvl = prepared.dialogue.nvlActive;
     this.#commands.dialogue.setNvlMode(this.#nvl);
     this.#commands.dialogue.clearNvlText();
     for (const entry of prepared.dialogue.nvlEntries) {
       this.#commands.dialogue.appendNvlText(entry.speaker, entry.text);
     }
+    // Rebuilding the saved NVL page projects older speakers. The saved World
+    // focus belongs to the current line, which the Interpreter replays next.
+    if (prepared.stage === null) this.#commands.presentation.clear();
+    else this.#commands.presentation.restore(prepared.stage);
     for (const timeline of prepared.timelines) {
       this.#timelineRuns.set(timeline.id, { player: timeline.player, blocking: timeline.blocking });
       if (timeline.blocking) this.#blockingTimelineId = timeline.id;

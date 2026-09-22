@@ -140,3 +140,26 @@ authority 从已验证 journal generation 链推导 `hasSealedPlan`，拒绝通�
 - `npm run verify:docs`、`git diff --check` 通过。检查了公共恢复方法的 Agent 与 Editor 调用方；本轮未扩展 Editor HTTP 契约、未更改旧 action 恢复请求。没有运行无关游戏、视觉或 Electron 矩阵。
 
 提交前远端 main 仍为 `5b13bf8`，实时 CI 状态为 `disabled_manually`。按持续授权普通提交、推送后停止等待 I-1 独立复审，不把本机验证记成云端通过。I-2 的查询排队、I-3 的现有租约窗口及其他旧限制维持原结论，不在本轮改造。
+
+## E-1 / M-1：补审剩余确认缺陷（2026-09-22）
+
+Owner 在 I-1 的 `31af5a7` 推送后明确要求完成剩余修复，再提供严格全量审核指令；原逐项停止点被本次授权取代。本批处理 E-1 和 M-1，以及 E-1 同一焦点契约涉及的真实调用路径。没有启动新功能 Wave。
+
+E-1 的生产控制器经 `createPresentationPorts` 调用 stage，绕过了 facade 已有的对白/世界焦点协调。现在该公共接线读取 Dialogue 的既有投影状态，在实际文本更新后同步 World 焦点，显式角色选择同样同步；未配置或未知角色按原映射得到空焦点。定向检查另确认 NVL 追加没有产生说话人身份，facade 和 Legacy 清空对白也遗漏世界焦点，因此一起补齐三条入口及 NVL 清页。读档时先重建 NVL 历史文本，再恢复保存的世界快照，避免历史行的说话人覆盖当前行焦点；Interpreter 随后正常重放当前行。未增加跨层依赖、状态机或新的存档字段。
+
+M-1 在调用开始时保留字符串 operationId，成功后仍采用 dispatcher 的规范结果。语义失败、权限失败均能落下请求身份；无效的非字符串编号仍被原 schema 拒绝，不进入编号字段，也不产生成功操作记录或推进版本。保持台账不存原始输入正文的原合同。
+
+### 本机验证
+
+验证根为 `<local-path>`，临时项目、数据、截图和脚本不提交。
+
+- 修复前：`speaker-red.log` 复现生产接线、NVL 和 facade 清空焦点遗漏；其中两个存档断言最初误读外层 envelope，修正为 `presentation.payload.stage` 后，`speaker-red-corrected.log` 再确认 ADV/NVL 保存焦点为空和 Legacy 清空遗漏，未把夹具错误计为生产缺陷。`ledger-red.log` 复现业务失败与 policy 失败均缺 operationId。
+- 修复后：Renderer 8 文件 / 64 项通过（`renderer-regression.log`），覆盖生产 ports→controller→真实 Dialogue/World、双角色 alpha、旁白/未知角色、空文本、ADV/NVL 保存恢复、facade、Legacy 及相邻表现回归。CLI 4 文件 / 56 项通过（`cli-regression.log`），覆盖调用台账、胶囊、会话、权限与 MCP 投影。
+- Renderer / CLI 类型检查及构建通过。新 Renderer 测试曾直接调用类型上可选的 clearText，补上明确存在的测试调用标记后类型检查通过，没有改断言或放宽生产类型。Zero 使用本轮 Renderer 新构建到隔离输出目录，保留既有大 chunk 提示。
+- `verify-electron.mjs` 启动真实 Electron、新 userData 和本轮 Zero 构建，通过实际开始按钮与键盘推进到 `common_0017 / pc 18`；对白与世界 speaker 均为 `zhirao`，保存快照携带该值，切换旁白后载入恢复，两侧再次一致，无 pageerror。`electron-U0rM7c/result.json` 为 `passed: true`，实际截图已查看。双角色 alpha 与 NVL 由真实图层/解释器集成回归覆盖；本次 Electron 正式剧情仍只有一位角色，不将其记成多角色视觉实测或整部游戏体验验收。
+- `verify-ledger.mjs` 通过真实 stdio MCP 创建隔离 change，发送失败旧引用操作并随后创建有效场景；服务退出后直接读取持久台账，失败条目保留原 operationId / 错误码且版本不推进，成功条目身份与版本正确，原项目字节未变。结果见 `ledger-WVBLVx/result.json`。
+- Renderer 边界检查及其 3 项测试通过；能力文档一致性与 diff 检查通过。I-1 上一轮的接口与真实强杀恢复结果按原覆盖范围保留，不重复相加为一次全仓检查。
+
+I-2 的排队和 I-3 的 15 秒租约等待不是新增数据损坏或独立死锁：inspect 确有协调写入，不能按纯只读请求绕过串行/租约。README 补入长调用期间先 describe、再查原操作的实际指引。M-2 的无 change 统一台账、失败未受理请求是否占用编号、长负载吞吐与超长 objectRef 等保留为合同/能力限制或待证实疑点，本次没有证据将它们计为已确认缺陷并擅自重做协议。下一轮全量审核应独立验证其实际影响，不能据本段豁免。
+
+本批沿持续授权普通提交与推送，九月托管 CI 继续暂停。完成后交付固定提交基线的全量审核任务书，由外部 AI 独立审核；本机通过声明仅覆盖上述实际执行，不代签全引擎终审。

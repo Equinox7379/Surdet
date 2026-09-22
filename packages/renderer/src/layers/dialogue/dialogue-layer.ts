@@ -955,6 +955,9 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   appendNvlText(speaker: string | null, text: string): void {
     const normalizedSpeaker = speaker !== null && speaker.length > 0 ? speaker : null;
+    const profile = normalizedSpeaker ? this.#speakerProfiles.get(normalizedSpeaker.trim()) : undefined;
+    this.setActiveSpeaker(profile?.id ?? null);
+    this.#projectionVersion += 1;
     const raw = normalizedSpeaker !== null ? `${normalizedSpeaker}：${text}` : text;
     const wrapped = wrapCjk(raw, this.#nvlCharsPerLine);
     const textNode = bindThemeTextProjection(new PText({
@@ -987,6 +990,10 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#nvlLines = [];
     this.#nvlLineCounts = [];
     this.#nvlEntries = [];
+    if (this.#nvlActive) {
+      this.setActiveSpeaker(null);
+      this.#projectionVersion += 1;
+    }
     this.#requestFrame();
   }
 

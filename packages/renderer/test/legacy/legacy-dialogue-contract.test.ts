@@ -242,4 +242,19 @@ describe('legacy dialogue stage contract', () => {
       stage.destroy();
     }).not.toThrow();
   });
+
+  it('keeps cleared dialogue and NVL focus consistent through the legacy adapter', () => {
+    const stage = new PixiStage();
+    try {
+      stage.setSpeakerProfiles([{ id: 'lynn', name: '凛' }]);
+      stage.showText('凛', '普通对白。');
+      stage.clearText();
+      expect(stage.snapshotPresentation()).toMatchObject({ activeSpeakerId: null });
+      stage.setNvlMode(true);
+      stage.appendNvlText('凛', '全屏对白。');
+      expect(stage.snapshotPresentation()).toMatchObject({ activeSpeakerId: 'lynn' });
+      stage.clearNvlText();
+      expect(stage.snapshotPresentation()).toMatchObject({ activeSpeakerId: null });
+    } finally { stage.destroy(); }
+  });
 });

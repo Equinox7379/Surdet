@@ -56,6 +56,8 @@ Agent 通过 `asset.sources` 发现授权来源、列目录并读取文件摘要
 
 `stage` 不写项目，`asset.import.commit` 和 `asset.import.recover` 需要启动时明确选择 `--policy apply`，并遵守现有项目锁与草稿保护。收到不确定响应后，用 `asset.import.inspect` 查询原 `operationId`：可继续的上传重试原暂存请求；若进程中断留下上传恢复屏障，检查错误中的 `recoveryAction=discard-unpublished`，用原 `operationId` 与返回的 `manifestFingerprint` 调用 `asset.import.recover`，安全放弃该次未封存上传，收到 `ROLLED_BACK` 后再用新编号导入。该恢复不会写项目素材，无法确认归属的暂存文件仍保留并报错。已封存的来源和目标不可替换；发布中断继续用原 `planFingerprint` 恢复，返回 `ROLLED_BACK` 不等于导入成功。修正未封存计划的文件名可以使用同一操作编号。导入完成后先重新读取项目和素材事实，再 `change.begin` 创建剧情变更；不把导入塞入现有候选，也不开放项目素材删除、移动或撤销。
 
+客户端超时不表示服务端已经停止。`asset.import.inspect` 包含持久状态协调，仍需同会话排队和项目租约；长调用期间可先用不经过该调用队列的 `session.describe` 查看会话与租约状态，再查询原操作。进程退出后，现有 15 秒租约窗口内可能返回 `PROJECT_BUSY`，窗口结束后再查询、按结果恢复；不要因等待创建替代编号或手动删除锁、恢复屏障。
+
 图像导入后，可以用 `project.gallery` 读取 CG 条目及当前指纹，在隔离 change 中调用 `gallery.cg.create` 新增条目，或用 `gallery.cg.patch` 逐条修改 `name` / `src`。`src` 使用 `project.assets.backgrounds[].key`；省略时使用 CG 的 `id`，修改时传 `src: null` 恢复这一规则。其他 CG、音乐、文本回想及未修改字段会保留，不提供删除或 ID 改名。
 
 在剧情中使用 `@unlock_cg <id>` 解锁对应条目。候选应先建立 CG，再编排引用它的剧情；不同条目可组合，同一条目的不同修改需要明确选择。CG 解锁遵循既有存读档状态，不是跨周目永久收集。`surdet new` 的播放器会读取可选的 `content/config/gallery.json`，不需要另外接入鉴赏界面。
