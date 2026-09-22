@@ -390,11 +390,13 @@ export class RendererFacade {
           else this.#callDialogue('clearText', undefined, this.#stage.showText, null, '');
           return;
         }
+        const before = this.#dialoguePort.projectionVersion;
         if (this.#dialoguePort.clearText) {
           this.#callDialogue('clearText', this.#dialoguePort.clearText, this.#stage.clearText);
         } else {
           this.#callDialogue('clearText', this.#dialoguePort.showText, this.#stage.showText, null, '');
         }
+        if (this.#dialoguePort.projectionVersion !== before) this.#coordinateWorldFocus(this.#dialoguePort.activeSpeakerId);
       },
       showChoices: (options) => this.#callDialogue('showChoices', this.#dialoguePort?.showChoices, this.#stage.showChoices, options.slice()),
       hideChoices: () => this.#callDialogue('hideChoices', this.#dialoguePort?.hideChoices, this.#stage.hideChoices),
@@ -402,8 +404,16 @@ export class RendererFacade {
       showBacklog: (entries, onReplayVoice, query) => this.#callDialogue('showBacklog', this.#dialoguePort?.showBacklog, this.#stage.showBacklog, entries.map((entry) => ({ ...entry })), onReplayVoice, query),
       hideBacklog: () => this.#callDialogue('hideBacklog', this.#dialoguePort?.hideBacklog, this.#stage.hideBacklog),
       setNvlMode: (on) => this.#callDialogue('setNvlMode', this.#dialoguePort?.setNvlMode, this.#stage.setNvlMode, on),
-      appendNvlText: (speaker, text) => this.#callDialogue('appendNvlText', this.#dialoguePort?.appendNvlText, this.#stage.appendNvlText, speaker, text),
-      clearNvlText: () => this.#callDialogue('clearNvlText', this.#dialoguePort?.clearNvlText, this.#stage.clearNvlText),
+      appendNvlText: (speaker, text) => {
+        const before = this.#dialoguePort?.projectionVersion;
+        this.#callDialogue('appendNvlText', this.#dialoguePort?.appendNvlText, this.#stage.appendNvlText, speaker, text);
+        if (this.#dialoguePort && this.#dialoguePort.projectionVersion !== before) this.#coordinateWorldFocus(this.#dialoguePort.activeSpeakerId);
+      },
+      clearNvlText: () => {
+        const before = this.#dialoguePort?.projectionVersion;
+        this.#callDialogue('clearNvlText', this.#dialoguePort?.clearNvlText, this.#stage.clearNvlText);
+        if (this.#dialoguePort && this.#dialoguePort.projectionVersion !== before) this.#coordinateWorldFocus(this.#dialoguePort.activeSpeakerId);
+      },
       showBanner: (text, variant) => this.#callDialogue('showBanner', this.#dialoguePort?.showBanner, this.#stage.showBanner, text, variant),
       setChoiceHighlight: (position) => this.#callDialogue('setChoiceHighlight', this.#dialoguePort?.setChoiceHighlight, this.#stage.setChoiceHighlight, position),
       scrollBacklog: (delta) => this.#callDialogue('scrollBacklog', this.#dialoguePort?.scrollBacklog, this.#stage.scrollBacklog, delta),

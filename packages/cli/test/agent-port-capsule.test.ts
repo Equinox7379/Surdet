@@ -60,7 +60,11 @@ describe('Surdet Agent Port invocation ledger and delivery capsule', () => {
     expect(opened).not.toBeNull();
     const invocations = await opened!.store.readInvocations(changeId);
     expect(invocations).toHaveLength(3);
-    expect(invocations.some((item) => item.ok === false)).toBe(true);
+    expect(invocations[1]).toMatchObject({
+      operationId: 'op-stale', ok: false,
+      workingRevisionBefore: 0, workingRevisionAfter: 0,
+    });
+    expect(invocations[2]).toMatchObject({ operationId: 'op-repair', ok: true });
     for (const item of invocations) {
       expect(item.inputSha256).toMatch(/^[0-9a-f]{64}$/);
       expect(item).not.toHaveProperty('input');
@@ -68,6 +72,25 @@ describe('Surdet Agent Port invocation ledger and delivery capsule', () => {
       expect(item).not.toHaveProperty('prompt');
     }
     await session.close();
+  });
+
+  it('keeps request identity on policy failures without accepting an invalid operationId', async () => {
+    const session = await openSession('failure-identity');
+    try {
+      expect((await session.invoke('change.begin', {})).ok).toBe(true);
+      const denied = await session.invoke('change.recovery.execute', {
+        operationId: 'op-policy-denied', recoveryToken: 'unused',
+      });
+      expect(denied).toMatchObject({ ok: false, error: { code: 'POLICY_BLOCKED' } });
+      expect(await session.invoke('scene.create', { operationId: 42, sceneId: 'invalid' }))
+        .toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } });
+      const opened = await NodeChangeStore.openByChangeId(session.activeChangeId!);
+      const facts = await opened!.store.readInvocations(session.activeChangeId!);
+      expect(facts[1]).toMatchObject({ operationId: 'op-policy-denied', ok: false, errorCode: 'POLICY_BLOCKED' });
+      expect(facts[2]).not.toHaveProperty('operationId');
+      expect(opened!.record.workingRevision).toBe(0);
+      expect(Object.keys(opened!.record.operations)).toEqual([]);
+    } finally { await session.close(); }
   });
 
   it.each(['__proto__', 'constructor'])('persists and replays prototype-named operationId %s through Agent Port', async (operationId) => {

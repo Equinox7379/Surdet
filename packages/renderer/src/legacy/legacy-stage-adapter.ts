@@ -105,7 +105,10 @@ export class LegacyStageAdapter implements AdvStage {
       this.setPortraitFocus(this.host.dialogueLayer.activeSpeakerId);
     }
   }
-  clearText(): void { this.host.clearText(); }
+  clearText(): void {
+    this.host.clearText();
+    this.setPortraitFocus(this.host.dialogueLayer.activeSpeakerId);
+  }
   setAwaiting(awaiting: boolean): void { this.host.setAwaiting(awaiting); }
   needsUpdate(): boolean { return this.host.needsUpdate(); }
   updateContinuePulse(deltaMs: number): void { this.host.updateContinuePulse(deltaMs); }
@@ -140,8 +143,15 @@ export class LegacyStageAdapter implements AdvStage {
   showBanner(text: string, variant: 'chapter' | 'tip'): void { this.host.showBanner(text, variant); }
   setNvlMode(on: boolean): void { this.host.setNvlMode(on); }
   get nvlLines(): readonly PixiText[] { return this.host.nvlLines; }
-  appendNvlText(speaker: string | null, text: string): void { this.host.appendNvlText(speaker, text); }
-  clearNvlText(): void { this.host.clearNvlText(); }
+  appendNvlText(speaker: string | null, text: string): void {
+    this.host.appendNvlText(speaker, text);
+    this.setPortraitFocus(this.host.dialogueLayer.activeSpeakerId);
+  }
+  clearNvlText(): void {
+    const before = this.host.dialogueLayer.projectionVersion;
+    this.host.clearNvlText();
+    if (this.host.dialogueLayer.projectionVersion !== before) this.setPortraitFocus(this.host.dialogueLayer.activeSpeakerId);
+  }
   hideVideo(): void { this.host.hideVideo(); }
   showVideo(src: string, onEnd: () => void): void { this.host.showVideo(src, onEnd); }
 

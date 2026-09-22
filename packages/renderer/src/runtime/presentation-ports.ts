@@ -85,8 +85,8 @@ export interface PresentationPortOptions {
   readonly worldLayer?: WorldProjectionPort;
   /** Composition-root read model; returns plain semantic data, never a Layer. */
   readonly projectionSnapshot?: () => RendererProjectionSnapshot;
-  /** Narrow read-only source for the current visible NVL page. */
-  readonly dialogueLayer?: Pick<import('../api/renderer-commands.js').DialogueProjectionPort, 'nvlPresentationEntries'>;
+  /** Read-only dialogue projection used for NVL snapshots and World focus coordination. */
+  readonly dialogueLayer?: Pick<import('../api/renderer-commands.js').DialogueProjectionPort, 'nvlPresentationEntries' | 'activeSpeakerId' | 'projectionVersion'>;
 }
 
 const EMPTY_RESOURCE_SNAPSHOT: RendererResourceSnapshot = {
@@ -166,30 +166,41 @@ export function createPresentationPorts(
     setPortraitFocus: (characterId) => { if (options.worldLayer) options.worldLayer.setPortraitFocus(characterId); else stage.setPortraitFocus?.(characterId); },
   };
 
+  const projectDialogue = (project: () => void): void => {
+    const dialogue = options.dialogueLayer;
+    const before = dialogue?.projectionVersion;
+    project();
+    if (dialogue && dialogue.projectionVersion !== before) {
+      worldCommands.setPortraitFocus(dialogue.activeSpeakerId);
+    }
+  };
   const dialogueCommands: RendererCommands['dialogue'] = {
-    showText: (speaker, value) => stage.showText(speaker, value),
-    beginText: (speaker) => {
+    showText: (speaker, value) => projectDialogue(() => stage.showText(speaker, value)),
+    beginText: (speaker) => projectDialogue(() => {
       if (stage.beginText) stage.beginText(speaker);
       else stage.showText(speaker, '');
-    },
-    clearText: () => {
+    }),
+    clearText: () => projectDialogue(() => {
       if (stage.clearText) stage.clearText();
       else stage.showText(null, '');
-    },
+    }),
     showChoices: (options) => stage.showChoices([...options]),
     hideChoices: () => stage.hideChoices(),
     setAwaiting: (awaiting) => stage.setAwaiting?.(awaiting),
     showBacklog: (entries, onReplayVoice, query) => stage.showBacklog?.(entries, onReplayVoice, query),
     hideBacklog: () => stage.hideBacklog?.(),
     setNvlMode: (on) => stage.setNvlMode?.(on),
-    appendNvlText: (speaker, text) => stage.appendNvlText?.(speaker, text),
-    clearNvlText: () => stage.clearNvlText?.(),
+    appendNvlText: (speaker, text) => projectDialogue(() => stage.appendNvlText?.(speaker, text)),
+    clearNvlText: () => projectDialogue(() => stage.clearNvlText?.()),
     showBanner: (text, variant) => stage.showBanner?.(text, variant),
     setChoiceHighlight: (position) => stage.setChoiceHighlight?.(position),
     scrollBacklog: (delta) => stage.scrollBacklog?.(delta),
     hideInterface: (hidden) => stage.hideInterface?.(hidden),
     setSpeakerProfiles: (profiles) => stage.setSpeakerProfiles?.([...profiles]),
-    setActiveSpeaker: (characterId) => stage.setActiveSpeaker?.(characterId),
+    setActiveSpeaker: (characterId) => {
+      stage.setActiveSpeaker?.(characterId);
+      if (options.dialogueLayer) worldCommands.setPortraitFocus(options.dialogueLayer.activeSpeakerId);
+    },
     showCommandRail: (items, onSelect) => stage.showCommandRail?.([...items], onSelect),
     setCommandRailItems: (items) => stage.setCommandRailItems?.([...items]),
     hideCommandRail: () => stage.hideCommandRail?.(),
