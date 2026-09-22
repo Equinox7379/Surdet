@@ -630,6 +630,19 @@ describe('lintProject', () => {
     expect(r.issues.some((i) => i.code === 'V002' && i.text.includes("'lynn.atk'"))).toBe(false); // 已声明不误报
   });
 
+  it('损坏 growth.json 报单个结构化 CONFIG 错误并包含文件位置', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ entryScene: 'a', variables: {} }),
+      'content/scenario/a.gal': '@scene a\n凛：好。\n@end\n',
+      'content/config/growth.json': '{',
+    });
+    const r = lintProject(dir);
+    const configIssues = r.issues.filter((issue) => issue.code === 'CONFIG');
+    expect(r.ok).toBe(false);
+    expect(configIssues).toHaveLength(1);
+    expect(configIssues[0]!.file).toContain(path.join('content', 'config', 'growth.json'));
+  });
+
   it('W007：配置引用的 hostJump 目标场景（events.json scheduled[]）不算孤儿（审计轮4）', () => {
     const dir = makeProject({
       'game.config.json': JSON.stringify({ entryScene: 'a', variables: { trust: { type: 'number', initial: 0 } } }),

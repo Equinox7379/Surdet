@@ -241,9 +241,9 @@ export function dryRunProject(
       if (st === 'awaiting-choice') {
         const opts = choiceState.payload?.options ?? [];
         if (opts.length === 0) return finish('stall', '选择肢全部被条件过滤，自动试跑无法选择（参考 W005）', steps, choices);
+        choiceState.payload = null;
         interp.choose(opts[0]!.index);
         choices++;
-        choiceState.payload = null;
         continue;
       }
       if (st === 'paused') return finish('system', null, steps, choices);

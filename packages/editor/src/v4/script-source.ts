@@ -168,20 +168,38 @@ function modifierRanges(raw: string): ModifierRange[] {
   return boundaries.map((start, index) => ({ start, end: boundaries[index + 1] ?? raw.length, text: raw.slice(start, boundaries[index + 1] ?? raw.length) }));
 }
 
+function positionModifier(text: string): Position | null {
+  const bare = /^@\s*(left|center|right)\s*$/.exec(text);
+  if (bare) return bare[1] as Position;
+  const explicit = /^@\s*pos=(left|center|right)\s*$/.exec(text);
+  return explicit ? explicit[1] as Position : null;
+}
+
+function malformedPositionModifier(text: string): boolean {
+  return (/^@\s*(left|center|right)(?:\s|=)/.test(text) && positionModifier(text) === null)
+    || (/^@\s*pos(?:=|\s)/.test(text) && positionModifier(text) === null);
+}
+
 export function instructionPosition(raw: string): Position | 'default' | 'ambiguous' {
   try {
-    const matches = modifierRanges(raw).filter((part) => /^@\s*(left|center|right)\s*$/.test(part.text));
-    if (matches.length > 1 || modifierRanges(raw).some((part) => /^@\s*(left|center|right)(?:\s|=)/.test(part.text) && !/^@\s*(left|center|right)\s*$/.test(part.text))) return 'ambiguous';
-    return matches.length === 1 ? matches[0]!.text.match(/left|center|right/)![0] as Position : 'default';
+    const modifiers = modifierRanges(raw);
+    const matches = modifiers.filter((part) => positionModifier(part.text) !== null);
+    if (matches.length > 1 || modifiers.some((part) => malformedPositionModifier(part.text))) return 'ambiguous';
+    return matches.length === 1 ? positionModifier(matches[0]!.text)! : 'default';
   } catch { return 'ambiguous'; }
 }
 
 export function setInstructionPosition(raw: string, position: Position): string {
   if (!(['left', 'center', 'right'] as string[]).includes(position)) throw new Error('未知的位置');
-  const positions = modifierRanges(raw).filter((part) => /^@\s*(left|center|right)\s*$/.test(part.text));
+  const positions = modifierRanges(raw).filter((part) => positionModifier(part.text) !== null);
   if (instructionPosition(raw) === 'ambiguous') throw new Error('当前行有多个位置设置，请先在原始行确认');
   const existing = positions[0];
-  if (existing) return raw.slice(0, existing.start) + existing.text.replace(/left|center|right/, position) + raw.slice(existing.end);
+  if (existing) {
+    const next = /^@\s*pos=/.test(existing.text)
+      ? existing.text.replace(/=(left|center|right)(?=\s*$)/, `=${position}`)
+      : existing.text.replace(/left|center|right/, position);
+    return raw.slice(0, existing.start) + next + raw.slice(existing.end);
+  }
   const tail = raw.match(/[ \t]*$/)?.[0] ?? '';
   return raw.slice(0, raw.length - tail.length) + ' @ ' + position + tail;
 }
@@ -236,7 +254,7 @@ export function projectEditLayout(lines: readonly LineModel[], selected: number)
     let modifiers: ModifierRange[] = [];
     try { if (name === 'bg' || name === 'show') modifiers = modifierRanges(line.raw); }
     catch { result.reason = '指令尚未输入完整，保留原文等待继续编辑'; break; }
-    if ((name === 'bg' || name === 'show') && modifiers.some((part) => !/^@\s*(left|center|right)\s*$/.test(part.text))) { result.reason = '包含其他演出修饰；请运行以确认画面'; break; }
+    if ((name === 'bg' || name === 'show') && modifiers.some((part) => positionModifier(part.text) === null)) { result.reason = '包含其他演出修饰；请运行以确认画面'; break; }
     if (name === 'bg') { result.background = values[0] ? { key: values[0], line: index } : null; }
     else if (name === 'show') {
       const position = instructionPosition(line.raw);

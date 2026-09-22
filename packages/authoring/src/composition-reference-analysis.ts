@@ -1,3 +1,4 @@
+import { compareCanonicalText } from './canonical-order.js';
 import {
   collectVars,
   parseExpr,
@@ -238,15 +239,15 @@ export function sortRawCompositionReferences(
   values: readonly RawCompositionReference[],
 ): RawCompositionReference[] {
   return [...values].sort((a, b) => (
-    a.source.path.localeCompare(b.source.path)
+    compareCanonicalText(a.source.path, b.source.path)
     || (a.source.line ?? -1) - (b.source.line ?? -1)
     || (a.source.trackIndex ?? -1) - (b.source.trackIndex ?? -1)
     || (a.source.cueIndex ?? -1) - (b.source.cueIndex ?? -1)
     || (a.source.blockIndex ?? -1) - (b.source.blockIndex ?? -1)
     || (a.source.optionIndex ?? -1) - (b.source.optionIndex ?? -1)
-    || a.kind.localeCompare(b.kind)
-    || a.token.localeCompare(b.token)
-    || (a.objectRef ?? '').localeCompare(b.objectRef ?? '')
+    || compareCanonicalText(a.kind, b.kind)
+    || compareCanonicalText(a.token, b.token)
+    || compareCanonicalText((a.objectRef ?? ''), b.objectRef ?? '')
   ));
 }
 

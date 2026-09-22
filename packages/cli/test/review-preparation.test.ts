@@ -58,6 +58,16 @@ async function fixture(branching = false) {
 const request = (decision: ReviewPreparationReference, action = 'prepare-result') => ({ protocolVersion: '1.0.0' as const,
   action: action as 'prepare-result' | 'inspect-preparation', decision });
 
+it('does not claim preparation is running when an unrelated project lease prevented it starting', async () => {
+  const f = await fixture();
+  const lease = await new NodeLocalLeaseManager(f.dataRoot).acquire({ scope: 'project', resourceId: f.projectRoot });
+  try {
+    await expect(f.service.execute(request(f.ref))).rejects.toMatchObject({ code: 'PROJECT_BUSY' });
+    expect(await fs.stat(f.progressFile).then(() => true, () => false)).toBe(false);
+  } finally { await lease.release(); }
+  expect(await f.service.execute(request(f.ref))).toMatchObject({ started: true, working: false, stage: 'compose' });
+}, 30_000);
+
 it('runs a completed branching simulation path and resumes a lost runtime acknowledgement', async () => {
   const f = await fixture(true);
   for (const stage of ['compose', 'diff', 'validate', 'simulate']) {

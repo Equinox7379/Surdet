@@ -136,6 +136,8 @@ describe('WorldLayer direct presentation contract', () => {
       runtime.layer.movePortrait('lynn:armor', 'right', 100);
       runtime.layer.update(50);
       expect(portrait.x).toBeCloseTo(800, 5);
+      runtime.layer.update(50);
+      expect(snapshot(runtime).portraits[0]?.view.pos).toBe('right');
 
       runtime.layer.setFade(0.4);
       expect(runtime.layer.fadeOverlay.alpha).toBeCloseTo(0.4);
@@ -178,6 +180,10 @@ describe('WorldLayer direct presentation contract', () => {
       runtime.layer.setPortrait('lynn:armor', {
         charId: 'lynn', costume: 'armor', expression: 'normal', pos: 'left',
       });
+      const moveCue = { atMs: 0, durationMs: 100, easing: 'linear' as const, action: 'move' as const, position: 'right' };
+      runtime.layer.applyTimelineFrame({ track: 'portrait', target: 'lynn:armor', cue: moveCue, started: true, final: false, progress: 0.5, elapsedMs: 50 });
+      runtime.layer.applyTimelineFrame({ track: 'portrait', target: 'lynn:armor', cue: moveCue, started: false, final: true, progress: 1, elapsedMs: 100 });
+      expect(snapshot(runtime).portraits[0]?.view.pos).toBe('right');
       const panCue = { atMs: 0, durationMs: 100, easing: 'linear' as const, action: 'pan' as const, x: 180, y: -40 };
       runtime.layer.applyTimelineFrame({ track: 'camera', cue: panCue, started: true, final: false, progress: 0.5, elapsedMs: 50 });
       expect(snapshot(runtime).cameraPan).toEqual({ x: 90, y: -20 });
@@ -201,6 +207,61 @@ describe('WorldLayer direct presentation contract', () => {
       expect(runtime.layer.getPostProcess()).toMatchObject({ enabled: true, saturation: 0.8 });
       expect(runtime.layer.captureThumbnail()).toBe('thumbnail');
       expect(runtime.requests.count).toBeGreaterThan(0);
+    } finally {
+      disposeRuntime(runtime);
+    }
+  });
+
+  it('keeps expression replacement fades within the current speaker focus alpha', async () => {
+    const runtime = makeRuntime();
+    try {
+      await registerWorldAssets(runtime.assets);
+      runtime.layer.setPortrait('lynn:armor', {
+        charId: 'lynn', costume: 'armor', expression: 'normal', pos: 'left',
+      });
+      runtime.layer.setPortrait('mio:uniform', {
+        charId: 'mio', costume: 'uniform', expression: 'normal', pos: 'right',
+      });
+      runtime.layer.setPortraitFocus('mio');
+      runtime.layer.setPortrait('lynn:armor', {
+        charId: 'lynn', costume: 'casual', expression: 'happy', pos: 'left',
+      });
+
+      runtime.layer.update(130);
+      const lynnSprites = () => findSprites(runtime.layer.worldContainer).filter((sprite) => sprite.x === 320);
+      expect(lynnSprites().map((sprite) => sprite.alpha)).toEqual([
+        expect.closeTo(0.23, 5),
+        expect.closeTo(0.23, 5),
+      ]);
+
+      runtime.layer.setPortraitFocus('lynn');
+      runtime.layer.update(65);
+      const alphas = lynnSprites().map((sprite) => sprite.alpha);
+      expect(Math.min(...alphas)).toBeCloseTo(0.25, 5);
+      expect(Math.max(...alphas)).toBeCloseTo(0.75, 5);
+    } finally {
+      disposeRuntime(runtime);
+    }
+  });
+
+  it('clears stale portrait transition sprites while preserving the current scene', async () => {
+    const runtime = makeRuntime();
+    try {
+      await registerWorldAssets(runtime.assets);
+      runtime.layer.setPortrait('lynn:armor', {
+        charId: 'lynn', costume: 'armor', expression: 'normal', pos: 'left',
+      });
+      runtime.layer.setPortrait('lynn:armor', {
+        charId: 'lynn', costume: 'casual', expression: 'happy', pos: 'left',
+      });
+      expect(findSprites(runtime.layer.worldContainer)).toHaveLength(2);
+
+      runtime.layer.reset({ preserveWorld: true });
+
+      expect(snapshot(runtime).portraits).toHaveLength(1);
+      expect(snapshot(runtime).portraits[0]?.view.expression).toBe('happy');
+      expect(findSprites(runtime.layer.worldContainer)).toHaveLength(1);
+      expect(runtime.layer.needsUpdate).toBe(false);
     } finally {
       disposeRuntime(runtime);
     }

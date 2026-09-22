@@ -4,6 +4,9 @@ import {
   beginChange,
   commitChange,
   rollbackChange,
+  loadProjectSnapshot,
+  buildObjectIndex,
+  validateSnapshot,
   type ChangeSession,
   type TextHasher,
 } from '../src/index.js';
@@ -237,6 +240,23 @@ async function created(): Promise<{ change: ChangeSession; repo: InMemoryChangeR
 }
 
 describe('timeline.patch', () => {
+  it('indexes and patches the same uppercase-extension identity already accepted by the loader', async () => {
+    const file = 'content/timelines/chapter/foo.JSON';
+    const definition = { version: 1 as const, id: 'foo.JSON', durationMs: 100, tracks: [{ kind: 'camera' as const, cues: [] }] };
+    const text = JSON.stringify(definition);
+    const project = await loadProjectSnapshot({ rootIdentity: 'uppercase-timeline', listFiles: async () => [file],
+      exists: async value => value === file, readText: async () => ({ path: file, text, bytes: text.length, sha256: await hasher.sha256(text) }) }, hasher);
+    const index = buildObjectIndex(project);
+    expect(index.byRef.has('timeline:foo.JSON')).toBe(true);
+    expect(validateSnapshot(project, index).issues.some(issue => issue.code === 'TIMELINE_ID_MISMATCH')).toBe(false);
+    const change = await beginChange(project, new InMemoryChangeRepository());
+    await applyTimelinePatch(change, { operationId: 'duration', timelineId: 'foo.JSON', patch: {
+      kind: 'setDuration', durationMs: 200, expectedFingerprint: await timelineFingerprint(definition, hasher),
+    } }, hasher);
+    expect(JSON.parse(change.record.workingFiles[file]!).durationMs).toBe(200);
+    expect(Object.keys(change.record.workingFiles)).toEqual([file]);
+  });
+
   it('supports a single atomic patch per call with fingerprint gates', async () => {
     const { change } = await created();
     const createResult = change.record.operations['op-create']?.result as { fingerprint: string };

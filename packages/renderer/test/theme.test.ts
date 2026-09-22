@@ -506,6 +506,41 @@ describe('live Pixi player-layer theme projection', () => {
     lifecycle.dispose();
   });
 
+  it('keeps fixed battle HP colors when a previous theme used the same numeric color', () => {
+    const { root, lifecycle, assets } = makeProjectionHarness();
+    const layer = new SystemPanelLayer({ uiLayer: root, width: 1280, height: 720, assets, lifecycle });
+    const previous = createRendererTheme({ colors: { accent: 0x57c26a } });
+    const next = createRendererTheme({ colors: { accent: 0x2244cc } });
+
+    layer.showBattle({
+      turn: 1,
+      actingTeam: 'player',
+      finished: false,
+      winner: null,
+      units: [{
+        uid: 'hero',
+        name: '林恩',
+        team: 'player',
+        hp: 10,
+        maxHp: 10,
+        hpRatio: 1,
+        alive: true,
+        skills: [],
+        canMove: false,
+      }],
+    }, { onAttack: vi.fn(), onPass: vi.fn() });
+    const fixedHp = findGraphicsWithColor(root, 0x57c26a);
+
+    layer.setTheme(previous);
+    layer.setTheme(next);
+
+    expect(graphicsColors(fixedHp)).toContain(0x57c26a);
+
+    layer.dispose();
+    assets.dispose();
+    lifecycle.dispose();
+  });
+
   it('repaints an already visible Loading overlay without replacing its objects', () => {
     const loading = new LoadingLayer(1280, 720);
     const theme = customTheme();

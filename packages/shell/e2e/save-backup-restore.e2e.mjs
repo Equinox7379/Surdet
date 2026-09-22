@@ -137,6 +137,15 @@ const clickTarget = async (targetId) => {
   await clickLogical(target.x + target.width / 2, target.y + target.height / 2);
 };
 
+const clickAccessibleControl = async (name) => {
+  const control = page.getByRole('button', { name, exact: true });
+  await control.waitFor({ state: 'visible' });
+  const bounds = await control.boundingBox();
+  if (!bounds) throw new Error(`找不到按钮布局：${name}`);
+  await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await waitForPresentedFrame(`真实鼠标点击 ${name} 后的呈现帧`);
+};
+
 const waitForOverlay = (overlay) => waitFor(`overlay=${overlay}`, (expected) => window.__surdetDebug?.activeOverlay === expected, overlay);
 const pressKey = async (key) => {
   await page.keyboard.press(key);
@@ -237,6 +246,7 @@ try {
   await clickTarget('system:save');
   await waitForOverlay('save-load');
   await clickTarget('save-load:slot-1');
+  await clickAccessibleControl('覆盖存档');
   await waitFor('覆盖保存完成并回到游戏', () => window.__surdetDebug?.activeOverlay === null && window.__surdetDebug?.status !== 'idle');
   await waitForPlayerGameIdle();
 
@@ -246,15 +256,11 @@ try {
   await waitForOverlay('save-load');
   await waitFor('读档页出现独立恢复按钮的备份槽位', () => window.__surdetDebug?.activeOverlay === 'save-load');
 
-  // Slot 1 card is at (150, 180); its independent restore label starts at
-  // (cardW - 174, 70), so this is a real click on the visible label, not the card.
-  const restoreLabel = await page.evaluate(() => {
-    const targets = window.__surdetDebug?.interactionTargets ?? [];
-    return targets.find((item) => item.id === 'save-load:slot-1') ?? null;
-  });
-  backupRestoreTargetVisible = restoreLabel !== null;
-  check(restoreLabel !== null, '读档页公开槽位命中区域存在');
-  await clickLogical(515, 258);
+  const restoreLabel = page.getByRole('button', { name: '恢复槽位 1 的备份并读取', exact: true });
+  backupRestoreTargetVisible = await restoreLabel.isVisible();
+  check(backupRestoreTargetVisible, '读档页独立备份恢复按钮可见');
+  await clickAccessibleControl('恢复槽位 1 的备份并读取');
+  await clickAccessibleControl('恢复并读取');
   await waitFor('恢复备份并读取完成并关闭读档页', () => window.__surdetDebug?.activeOverlay === null && window.__surdetDebug?.status !== 'idle');
   restoredPosition = await page.evaluate(() => window.__surdetDebug.position);
   check(JSON.stringify(restoredPosition) === JSON.stringify(firstSavePosition), '恢复后位置等于第一次保存位置');

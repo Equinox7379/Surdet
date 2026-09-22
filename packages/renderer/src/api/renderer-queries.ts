@@ -1,3 +1,4 @@
+import type { PresentationSnapshotContext } from '@surdet/core';
 import type { BacklogEntry } from '../backlog.js';
 import type { PostProcessSettings } from '../post-process.js';
 import type { PresentationPreferences } from '../presentation.js';
@@ -61,7 +62,7 @@ export interface PreferenceQueries {
 }
 
 export interface PresentationQueries {
-  snapshot(): unknown;
+  snapshot(context?: PresentationSnapshotContext): unknown;
   /** Whether the current presentation can be captured as a stable rollback checkpoint. */
   canCaptureRollbackCheckpoint(): boolean;
 }
@@ -95,6 +96,7 @@ export interface DialogueProjectionSnapshot {
 export interface MenuProjectionSnapshot {
   readonly overlay: MenuOverlayState;
   readonly titleItemCount: number;
+  readonly titleTargets?: readonly { id: string; x: number; y: number; width: number; height: number }[];
   readonly systemMenuItemCount: number;
   readonly settingsRowCount: number;
   readonly saveLoadSlotCount: number;

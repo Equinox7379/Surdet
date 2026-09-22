@@ -53,6 +53,7 @@ export interface MenuLayerOptions {
 export interface MenuLayerDebugSnapshot {
   readonly overlay: MenuOverlayState;
   readonly titleItemCount: number;
+  readonly titleTargets: readonly { id: string; x: number; y: number; width: number; height: number }[];
   readonly systemMenuItemCount: number;
   readonly settingsRowCount: number;
   readonly saveLoadSlotCount: number;
@@ -101,6 +102,7 @@ export class MenuLayer implements MenuProjectionPort {
   #menuLayer: Container;
   #menuPanel: Container | null = null;
   #titleItemCount = 0;
+  #titleTargets: { id: string; x: number; y: number; width: number; height: number }[] = [];
   #systemMenuItemCount = 0;
   #menuMotionRemain = 0;
   #menuMotionDur = 260;
@@ -179,6 +181,7 @@ export class MenuLayer implements MenuProjectionPort {
     return {
       overlay: this.menu(),
       titleItemCount: this.#titleItemCount,
+      titleTargets: this.#titleLayer.visible ? this.#titleTargets.map((target) => ({ ...target })) : [],
       systemMenuItemCount: this.#systemMenuItemCount,
       settingsRowCount: this.#settingsRows.length,
       saveLoadSlotCount: this.#saveLoadSlotCount,
@@ -243,6 +246,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#clearLayer(this.#titleLayer, 'title');
     this.#titleHandler = onSelect;
     this.#titleItemCount = view.items.length;
+    this.#titleTargets = [];
     const layer = this.#titleLayer;
     markPlayerModal(layer, {});
     const titleTexture = this.#assets.resolveBackground(view.backgroundKey ?? 'title_bg');
@@ -294,6 +298,7 @@ export class MenuLayer implements MenuProjectionPort {
     view.items.forEach((item, i) => {
       const enabled = item.enabled !== false;
       const rowY = startY + i * 58;
+      if (enabled) this.#titleTargets.push({ id: item.id, x: title.x, y: rowY, width: 332, height: 46 });
       const frame = drawPlayerFrame(new Graphics(), this.#theme, title.x, rowY, 332, 46,
         { alpha: 0.56, ornament: i === 0 });
       const label = bindThemeTextProjection(new PText({

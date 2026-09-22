@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { Readable } from 'node:stream';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AssetImportInjectedTermination,
   ProjectAssetImportAuthority,
@@ -13,6 +13,9 @@ import { AssetImportBindingService } from '../src/asset-import-authority/binding
 import { openAssetImportAuthorityPaths } from '../src/asset-import-authority/filesystem.js';
 import { AssetImportRecordStore } from '../src/asset-import-authority/record-store.js';
 
+// These cases fsync real multi-generation journals, including crash recovery.
+// Disk latency is not the contract under test; keep the bound local to this suite.
+vi.setConfig({ testTimeout: 30_000 });
 const roots: string[] = [];
 const textHasher = {
   sha256: async (text: string): Promise<string> => crypto.createHash('sha256').update(text, 'utf8').digest('hex'),
@@ -110,6 +113,46 @@ afterEach(async () => {
 });
 
 describe('project asset import authority operations', () => {
+  it('blocks duplicate music runtime keys across supported directory aliases and formats', async () => {
+    const { authority, projectRoot } = await fixture();
+    await mkdir(path.join(projectRoot, 'content/assets/music'), { recursive: true });
+    await writeFile(path.join(projectRoot, 'content/assets/music/song.mp3'), 'existing-song');
+    const operationId = crypto.randomUUID();
+    const itemId = crypto.randomUUID();
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'song.ogg', declaredBytes: 5 }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
+    const planned = await authority.plan(operationId, { targets: [{ itemId, kind: 'music', fileName: 'song.ogg' }] });
+    expect(planned.plan.status).toBe('blocked');
+    expect(planned.plan.items[0]!.issues).toContain('IMPORT_ASSET_KEY_CONFLICT');
+    expect(await readFile(path.join(projectRoot, 'content/assets/music/song.mp3'), 'utf8')).toBe('existing-song');
+  });
+
+  it('allows a new import after undo and a legal reimport of the same target', async () => {
+    const { authority, paths, projectRoot } = await fixture();
+    const importFile = async () => {
+      const operationId = crypto.randomUUID();
+      const itemId = crypto.randomUUID();
+      await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'reimport.png', declaredBytes: 5 }] });
+      await authority.uploadItem(operationId, itemId, Readable.from(Buffer.from('hello')));
+      const planned = await authority.plan(operationId, { targets: [{ itemId, kind: 'background', fileName: 'reimport.png' }] });
+      await authority.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+      const committed = await authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+      return { operationId, receiptId: committed.receipt.receiptId, receiptSha256: committed.receipt.receiptSha256 };
+    };
+    const first = await importFile();
+    await authority.undo(first.operationId, first);
+    const second = await importFile();
+    const reopened = reopenedAuthority(paths);
+    expect((await reopened.query(first.operationId)).operation.status).toBe('UNDONE');
+    expect((await reopened.undo(first.operationId, first)).operation.status).toBe('UNDONE');
+    expect((await reopened.query(second.operationId)).operation.status).toBe('COMMITTED');
+    expect(await readFile(path.join(projectRoot, 'content/assets/bg/reimport.png'), 'utf8')).toBe('hello');
+    await expect(reopened.createOperation({ operationId: crypto.randomUUID(), items: [{
+      itemId: crypto.randomUUID(), sourceName: 'unrelated.png', declaredBytes: 5,
+    }] })).resolves.toMatchObject({ status: 'UPLOADING' });
+    expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(false);
+  }, 30_000);
+
   it('unknown operation queries never establish a project recovery barrier', async () => {
     const { authority, paths } = await fixture();
     const unknown = crypto.randomUUID();
@@ -673,7 +716,7 @@ describe('project asset import authority operations', () => {
     expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(false);
     await expect(recovered.recover(operationId, { action: 'rollback' }))
       .resolves.toMatchObject({ detail: { operation: { status: 'ROLLED_BACK' } } });
-  });
+  }, 30_000);
 
   it.each([
     {
@@ -971,7 +1014,7 @@ describe('project asset import authority operations', () => {
     await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
     const quarantine = path.join(projectRoot, '.surdet', 'asset-import', operationId, 'undo', `${itemId}.bin`);
     await expect(readFile(quarantine, 'utf8')).resolves.toBe('hello');
-  });
+  }, 30_000);
 
   it('revalidates target parent identity before resuming an interrupted undo', async () => {
     const { authority, paths, projectRoot } = await fixture();

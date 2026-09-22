@@ -344,7 +344,7 @@ function makePreviewSettingsStorage(): SettingsStorage {
   };
 }
 
-/** 预览存档按项目名隔离；项目切换后同一编辑器不会显示另一项目的槽位。 */
+/** 预览存档按项目身份隔离；项目切换后同一编辑器不会显示另一项目的槽位。 */
 function makePreviewSaveStorage(getProjectKey: () => string): SaveStorage {
   const prefix = (): string => `surdet:preview:save:${encodeURIComponent(getProjectKey() || 'untitled')}:`;
   return {
@@ -357,11 +357,9 @@ function makePreviewSaveStorage(getProjectKey: () => string): SaveStorage {
       }
     },
     write: (slot, data) => {
-      try {
-        browserStorage()?.setItem(`${prefix()}${slot}`, JSON.stringify(data));
-      } catch (err) {
-        console.warn('[preview] 存档写入失败：', err);
-      }
+      const storage = browserStorage();
+      if (storage === null) throw new Error('预览存储不可用');
+      storage.setItem(`${prefix()}${slot}`, JSON.stringify(data));
     },
     delete: (slot) => {
       try {
@@ -603,7 +601,9 @@ async function boot(): Promise<void> {
       case 'qsave': {
         const snap = interp?.saveSnapshot('quick');
         if (snap) {
-          void saves.save(QUICK_SLOT, enrichSnapshot(snap)).then(() => dialogue.showBanner('快速存档已保存', 'tip'));
+          void saves.save(QUICK_SLOT, enrichSnapshot(snap)).then(() => dialogue.showBanner('快速存档已保存', 'tip')).catch((err) => {
+            dialogue.showBanner(`快速存档失败：${err instanceof Error ? err.message : String(err)}`, 'tip');
+          });
         }
         break;
       }
@@ -651,9 +651,21 @@ async function boot(): Promise<void> {
   });
 
   let ctrlTempSkip = false;
+  const releaseCtrlTempSkip = (): void => {
+    if (!ctrlTempSkip) return;
+    ctrlTempSkip = false;
+    if (controller.skipMode) controller.dispatchInput({ type: 'skip.toggle', scope: 'read' });
+    refreshCommandRail();
+  };
+  bus.on('stateReset', () => { releaseCtrlTempSkip(); });
   previewLifecycle.listen(window, 'keydown', (e) => {
     if (e.key === 'Control') {
-      if (!ctrlTempSkip && !controller.skipMode) {
+      if (e.repeat) return;
+      if (ctrlTempSkip) {
+        if (controller.skipMode) return;
+        ctrlTempSkip = false;
+      }
+      if (!controller.skipMode) {
         ctrlTempSkip = true;
         controller.dispatchInput({ type: 'skip.toggle', scope: 'read' });
         refreshCommandRail();
@@ -764,18 +776,11 @@ async function boot(): Promise<void> {
     refreshCommandRail();
   });
   previewLifecycle.listen(window, 'keyup', (e) => {
-    if (e.key === 'Control' && ctrlTempSkip) {
-      ctrlTempSkip = false;
-      controller.dispatchInput({ type: 'skip.toggle', scope: 'read' });
-      refreshCommandRail();
-    }
+    if (e.key === 'Control') releaseCtrlTempSkip();
   });
   previewLifecycle.listen(window, 'blur', () => {
     // 窗口切走时 Ctrl 可能收不到 keyup，避免临时快进永久卡住。
-    if (ctrlTempSkip) {
-      ctrlTempSkip = false;
-      controller.dispatchInput({ type: 'skip.toggle', scope: 'read' });
-    }
+    releaseCtrlTempSkip();
   });
 
   // ===== system 事件 → 轻宿主驱动（日历可交互；战斗/商店无配置走占位横幅） =====

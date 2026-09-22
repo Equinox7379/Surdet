@@ -55,6 +55,7 @@ export function buildAssetCatalog(
   const avatars: AssetEntry[] = [];
   const seen = new Set<string>();
   for (const sourcePath of [...paths].sort((a, b) => a.localeCompare(b))) {
+    if (sourcePath.includes('\\')) continue; // retained in intelligence as ASSET_NAME_INVALID
     if (sourcePath.startsWith(BG_PREFIX)) {
       const key = stemOf(sourcePath);
       if (key.length === 0 || key.startsWith('.')) continue;

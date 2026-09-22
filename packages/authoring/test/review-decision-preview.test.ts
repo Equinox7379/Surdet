@@ -103,7 +103,7 @@ function readyCandidate(
     manifestFingerprint: `manifest-${changeId}`,
   };
   return {
-    candidateId: `cand-${changeId}`,
+    candidateId: `cand-${changeId}-capsule-${changeId}`,
     ref: {
       changeId,
       capsuleId: `capsule-${changeId}`,

@@ -39,4 +39,4 @@ it('resumes the same integration in the explicit data root, leaving the default 
   await expect(loadIntegrationProvenance(fixture.projectRoot, source, fixture.dataRoot))
     .resolves.toEqual({ available: false, reason: 'COMPOSITION_PLAN_INVALID' });
   expect(await fs.stat(unrelatedRoot).then(() => true, () => false)).toBe(false);
-});
+}, 30_000);

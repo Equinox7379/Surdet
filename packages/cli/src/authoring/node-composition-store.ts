@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import {
   AuthoringOperationError,
+  candidateCapsuleIdentity,
   stableStringify,
   type CandidateCapsuleRef,
   type EvidenceFreshness,
@@ -190,7 +191,7 @@ function projectPayloadToCandidate(payload: unknown, ref: CandidateCapsuleRef): 
     }
   }
   return {
-    candidateId: `cand-${ref.changeId}`,
+    candidateId: candidateCapsuleIdentity(ref),
     ref,
     capsuleVersion: '2.0.0',
     projectIdentity,

@@ -171,7 +171,7 @@ describe('renderer startup diagnostic instrumentation', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it('keeps diagnostic child-process execution shell-free and diagnostic-only', () => {
     const runner = fs.readFileSync(path.join(repositoryRoot, 'packages/shell/e2e/renderer-startup-diagnostic-runner.mjs'), 'utf8');

@@ -81,13 +81,13 @@ describe('Wave 3A browser runner contract', () => {
     expect(source).toContain('[data-flow-node-kind]');
     expect(source).toContain('[data-flow-edge-kind]');
     expect(source).toContain('s:ch01_01');
-    expect(source).toContain('l:ch01_01.answer_silence');
+    expect(source).toContain('l:ch01_01.keep_moving');
     expect(source).toContain('l:ch01_02.start');
     expect(source).toContain('humanConditionPresent');
     expect(source).toContain('有条件');
     expect(source).toContain("facts.nodeKinds.scene === 2");
     expect(source).toContain("facts.choiceCount === 0");
-    expect(source).toContain("facts.statusChoiceCount === 3");
+    expect(source).toContain("facts.statusChoiceCount === 13");
   });
 
   it('proves the writer-facing narrative map instead of the compiler-shaped graph', () => {
@@ -109,9 +109,9 @@ describe('Wave 3A browser runner contract', () => {
     expect(source).toContain('[data-flow-route-label]');
     expect(source).toContain('[data-flow-action="toggle-technical-edges"]');
     expect(source).toContain('path.includes(\'C\') === false');
-    expect(source).toContain("'选择“沉默”后'");
-    expect(source).toContain("'选择“拔出剑”后'");
-    expect(source).toContain("'选择“转身离开”后'");
+    expect(source).toContain("'选择“先问凛和沈岳的关系”后'");
+    expect(source).toContain("'选择“在窗口查退回章的理由”后'");
+    expect(source).toContain("'选择“先收下信，等她自己开口”后'");
     expect(source).toContain("'当前聚焦路径'");
     expect(source).toContain("'全局场景概览'");
     expect(source).toContain("'其他入口'");
@@ -121,20 +121,20 @@ describe('Wave 3A browser runner contract', () => {
     expect(source).toContain("focus scene projection is not ch01_01 + ch01_02");
     expect(source).toContain('focused scene is not expanded while its neighbour stays compact');
     expect(source).toContain('default focus projection rendered a choice route');
-    expect(source).toContain("route.kind === 'jump' && route.to === 'l:ch01_02.start'");
+    expect(source).toContain("route.kind === 'jump' && route.to === 's:ch01_02'");
     expect(source).toContain('three jumps do not share one terminal trunk');
-    expect(source).not.toContain("route.kind === 'jump' && route.to === 's:ch01_02'");
-    expect(source).toContain('overview is not a four-scene projection');
-    expect(source).toContain("overview return marker is not ↩ 返回 ch01_01");
-    expect(source).toContain('overview rendered the long ch02 → ch01_01 return route');
+    expect(source).not.toContain("route.kind === 'jump' && route.to === 'l:ch01_02.start'");
+    expect(source).toContain('overview is not the current seven-scene projection');
+    expect(source).toContain("marker.text === '↩ 返回 playground'");
+    expect(source).toContain('overview rendered a non-existent ch02 → ch01_01 return route');
     expect(source).toContain('technical route toggle did not reveal more real routes');
     expect(source).not.toContain('const unprojectableRawEdgeCount = flowFacts.statusEdgeCount - revealedRouteCount');
     expect(source).toContain('technicalMap.unprojectableExplanation');
     expect(source).toContain('technicalMap.unprojectableExplanationVisible');
-    expect(source).toContain("'另有 2 条连接因端点缺失未显示'");
+    expect(source).toContain("'另有 13 条连接因端点缺失未显示'");
     expect(source).toContain('const unprojectableRawEdgeCount = Number(unprojectableMatch[1])');
     expect(source).toContain('const projectableNarrativeRouteCount = flowFacts.statusEdgeCount - unprojectableRawEdgeCount');
-    expect(source).toContain('expected 2 raw Starter connections with missing endpoints');
+    expect(source).toContain('expected 13 raw Starter connections with missing endpoints');
     expect(source).toContain("mode switch did not retain keyboard focus on view-focus");
     expect(source).toContain("'flow-global-overview'");
     expect(source).toContain("'flow-technical-connections'");
@@ -143,7 +143,7 @@ describe('Wave 3A browser runner contract', () => {
 
   it('proves the existing navigation, viewport, context-menu and edit paths rather than decorative controls', () => {
     expect(source).toContain("await enableTechnicalConnections(page)");
-    expect(source).toContain("keyboardOpenFlowNode(page, 'l:ch01_01.answer_silence', 'Enter')");
+    expect(source).toContain("keyboardOpenFlowNode(page, 'l:ch01_01.keep_moving', 'Enter')");
     expect(source).toContain("keyboardOpenFlowNode(page, 'l:ch01_02.start', 'Space')");
     expect(source).toContain("page.locator('[data-flow-action=\"fit-canvas\"]')");
     expect(source).toContain("page.locator('[data-flow-action=\"focus-current\"]')");

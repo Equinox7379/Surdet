@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { AUTHORING_CAPABILITY_REGISTRY } from '@surdet/authoring';
 
 const MODES = new Set(['preflight', 'diagnostic', 'formal', 'acceptance-prep']);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -220,7 +221,19 @@ const resultBlocks = [
 
 async function authoringWorkflow(port, { pendingMutation = false } = {}) {
   const capabilities = resultOf(await callTool(port, 'surdet_capabilities_describe'), 'capabilities.describe');
-  assert(capabilities.capabilities?.length === 20, 'capabilities.describe did not return 20 registry entries');
+  const expectedCapabilities = AUTHORING_CAPABILITY_REGISTRY.map(({ id, minimumPolicy }) => ({ id, minimumPolicy }));
+  const advertisedCapabilities = capabilities.capabilities;
+  assert(Array.isArray(advertisedCapabilities), 'capabilities.describe did not return a capability list');
+  assert(advertisedCapabilities.length === expectedCapabilities.length,
+    `capabilities.describe returned ${advertisedCapabilities.length}/${expectedCapabilities.length} registry entries`);
+  const advertisedById = new Map(advertisedCapabilities.map((capability) => [capability.id, capability]));
+  assert(advertisedById.size === advertisedCapabilities.length, 'capabilities.describe returned duplicate capability ids');
+  for (const expected of expectedCapabilities) {
+    const advertised = advertisedById.get(expected.id);
+    assert(advertised !== undefined, `capabilities.describe omitted ${expected.id}`);
+    assert(advertised.minimumPolicy === expected.minimumPolicy,
+      `${expected.id} minimum policy ${advertised.minimumPolicy} != ${expected.minimumPolicy}`);
+  }
   resultOf(await callTool(port, 'surdet_project_inspect'), 'project.inspect');
   const assets = resultOf(await callTool(port, 'surdet_project_assets'), 'project.assets');
   assert(assets.backgrounds.some((asset) => asset.key === 'harbor' && asset.resolved), 'harbor asset missing');
@@ -266,11 +279,11 @@ async function authoringWorkflow(port, { pendingMutation = false } = {}) {
   }), 'timeline repair with fingerprint B');
 
   resultOf(await callTool(port, 'surdet_scene_create', {
-    operationId: 'op-agent-entry', sceneId: 'agent_port_entry', blocks: entryBlocks,
-  }), 'scene.create entry');
-  resultOf(await callTool(port, 'surdet_scene_create', {
     operationId: 'op-agent-result', sceneId: 'agent_port_result', blocks: resultBlocks,
   }), 'scene.create result');
+  resultOf(await callTool(port, 'surdet_scene_create', {
+    operationId: 'op-agent-entry', sceneId: 'agent_port_entry', blocks: entryBlocks,
+  }), 'scene.create entry');
   const entryBefore = resultOf(await callTool(port, 'surdet_object_inspect', { objectRef: 'config:entryScene' }), 'object.inspect entryScene');
   resultOf(await callTool(port, 'surdet_project_entry_scene_set', {
     operationId: 'op-agent-entry-scene', sceneId: 'agent_port_entry', expectedFingerprint: entryBefore.fingerprint,

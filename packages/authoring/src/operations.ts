@@ -471,7 +471,7 @@ function validateSceneCandidate(path: string, sceneId: string, text: string): vo
 export async function applySceneCreate(change: ChangeSession, input: SceneCreateInput, hasher: TextHasher = compositionTextHasher): Promise<{ sceneId: string; path: string }> {
   const path = scenePath(input.sceneId);
   return runOperation(change, input, async (record) => {
-    if (record.workingFiles[path] !== undefined) {
+    if (resolveUniqueScenarioPath(record.workingFiles, input.sceneId) !== undefined) {
       throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `场景已存在：${input.sceneId}`);
     }
     const body = renderBlocks(input.blocks ?? []);

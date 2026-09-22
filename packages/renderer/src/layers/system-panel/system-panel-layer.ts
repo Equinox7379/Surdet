@@ -714,6 +714,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#mapHandlers = null;
     this.#shopHandlers = null;
     this.#baseHandlers = null;
+    this.#battleSelectedSkill = null;
     this.#battleUnitCount = 0;
     this.#mapNodeCount = 0;
     this.#shopItemCount = 0;

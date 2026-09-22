@@ -1,3 +1,4 @@
+import { compareCanonicalText } from './canonical-order.js';
 import { AuthoringOperationError, stableStringify } from './change-session.js';
 import type { ChangeRecord, TextHasher } from './contracts.js';
 import type { ChangeDiff } from './diff.js';
@@ -397,7 +398,7 @@ export async function buildCompositionManifestFromRecordedFacts(
   const readiness = inspectCandidateCompositionReadiness(input.record);
   const reasons: CompositionIneligibility[] = readiness.issues.map(({ code, operationId, message }) => ({ code, ...(operationId === undefined ? {} : { operationId }), message }));
   const operations: CompositionOperation[] = [];
-  const entries = Object.entries(input.record.operations).sort((a, b) => (a[1].sequence ?? -1) - (b[1].sequence ?? -1) || a[0].localeCompare(b[0]));
+  const entries = Object.entries(input.record.operations).sort((a, b) => (a[1].sequence ?? -1) - (b[1].sequence ?? -1) || compareCanonicalText(a[0], b[0]));
   const priorOperations = entries.filter(([, item]) => item.compositionFacts !== undefined && item.sequence !== undefined)
     .map(([operationId, item]) => ({ operationId, sequence: item.sequence!, facts: item.compositionFacts! }));
   for (const [operationId, recorded] of entries) {
@@ -457,7 +458,7 @@ export async function buildCompositionManifestFromRecordedFacts(
     }
   }
   if (reasons.length > 0 || operations.length !== entries.length) {
-    return { eligibility: 'unavailable', reasons: reasons.sort((a, b) => (a.operationId ?? '').localeCompare(b.operationId ?? '') || a.code.localeCompare(b.code) || a.message.localeCompare(b.message)) };
+    return { eligibility: 'unavailable', reasons: reasons.sort((a, b) => compareCanonicalText((a.operationId ?? ''), b.operationId ?? '') || compareCanonicalText(a.code, b.code) || compareCanonicalText(a.message, b.message)) };
   }
   const manifest = {
     manifestVersion: '1.0.0' as const, projectIdentity: input.projectIdentity,
@@ -486,7 +487,7 @@ export async function buildCompositionManifest(
   const reasons: CompositionIneligibility[] = [];
   const operations: CompositionOperation[] = [];
   const entries = Object.entries(input.record.operations).sort((a, b) =>
-    (a[1].sequence ?? -1) - (b[1].sequence ?? -1) || a[0].localeCompare(b[0]));
+    (a[1].sequence ?? -1) - (b[1].sequence ?? -1) || compareCanonicalText(a[0], b[0]));
 
   for (let sequence = 0; sequence < entries.length; sequence += 1) {
     const [sourceOperationId, recorded] = entries[sequence]!;

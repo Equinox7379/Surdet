@@ -12,7 +12,7 @@
     "simulate": "node ../../packages/cli/dist/index.js simulate . --max-paths 500 --max-steps 20000",
     "audio:audit": "node scripts/audio-audit.mjs --json",
     "audio:normalize": "node scripts/audio-audit.mjs --normalize --target-rms-dbfs -23 --max-peak-dbfs -1",
-    "test": "node scripts/verify-simulation.mjs && vitest run test/player-ui-session.test.ts test/player-input-gate.test.ts test/gallery-music-playback.test.ts test/audio-assets.test.ts",
+    "test": "node scripts/verify-simulation.mjs && vitest run test/player-ui-session.test.ts test/player-input-gate.test.ts test/player-ui-integration.test.ts test/gallery-music-playback.test.ts test/audio-assets.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

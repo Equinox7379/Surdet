@@ -205,6 +205,38 @@ describe('Asset Center thumbnail presentation', () => {
     expect(host.dataset.assetThumbnailState).toBe('loading');
   });
 
+  it('finishes an in-flight read while a cached row is temporarily detached by search', async () => {
+    const { createUrl } = installThumbnailDom();
+    let resolveFile!: (file: File) => void;
+    let reads = 0;
+    const file = new File(['image'], 'harbor.png', { type: 'image/png' });
+    const host = new FakeElement();
+    const session = beginAssetThumbnailSession();
+    session.mount(
+      host as unknown as HTMLElement,
+      projectItem('background', 'content/assets/bg/harbor.png'),
+      handledImage('content/assets/bg/harbor.png', () => {
+        reads += 1;
+        return new Promise((resolve) => { resolveFile = resolve; });
+      }),
+    );
+
+    const observer = FakeIntersectionObserver.instances.at(-1)!;
+    observer.reveal(host);
+    host.isConnected = false;
+    resolveFile(file);
+    await settleAsyncThumbnail();
+
+    expect(reads).toBe(1);
+    expect(createUrl).toHaveBeenCalledOnce();
+    const image = host.children[0] as FakeImage;
+    image.onload?.();
+    host.isConnected = true;
+    expect(host.dataset.assetThumbnailState).toBe('ready');
+    observer.reveal(host);
+    expect(reads).toBe(1);
+  });
+
   it('releases every created Object URL once across image events and disposal', async () => {
     const { createUrl, revokeUrl } = installThumbnailDom();
     const session = beginAssetThumbnailSession();

@@ -1,19 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Interpreter } from '@surdet/core';
+import type { Interpreter, PresentationSnapshotHooks } from '@surdet/core';
 import type { RendererRuntime } from '@surdet/renderer';
 import { connectInterpreterPresentation } from '../src/presentation-connection.js';
 
 describe('Interpreter Presentation connection', () => {
   it('connects public Renderer presentation query/commands and disconnects idempotently', () => {
-    let hooks: {
-      snapshot: () => unknown;
-      validate?: (payload: unknown) => void;
-      restore: (payload: unknown) => void;
-    } | null = null;
+    let hooks: PresentationSnapshotHooks | null = null;
     const setPresentationHooks = vi.fn((next: typeof hooks) => { hooks = next; });
     const snapshot = vi.fn(() => ({ version: 1, stage: { backgroundKey: 'night' } }));
     const validate = vi.fn();
-    const restore = vi.fn();
+    const restore = vi.fn(() => ({ awaitingTimer: true }));
     const renderer = {
       queries: { presentation: { snapshot } },
       commands: { presentation: { validate, restore } },
@@ -27,10 +23,11 @@ describe('Interpreter Presentation connection', () => {
     expect(setPresentationHooks).toHaveBeenCalledTimes(1);
     expect(hooks).not.toBeNull();
     const connectedHooks = hooks!;
-    expect(connectedHooks.snapshot()).toEqual({ version: 1, stage: { backgroundKey: 'night' } });
+    expect(connectedHooks.snapshot({ replayCurrentText: false })).toEqual({ version: 1, stage: { backgroundKey: 'night' } });
     connectedHooks.validate?.({ version: 1 });
-    connectedHooks.restore({ version: 1 });
+    expect(connectedHooks.restore({ version: 1 })).toEqual({ awaitingTimer: true });
     expect(snapshot).toHaveBeenCalledTimes(1);
+    expect(snapshot).toHaveBeenCalledWith({ replayCurrentText: false });
     expect(validate).toHaveBeenCalledWith({ version: 1 });
     expect(restore).toHaveBeenCalledWith({ version: 1 });
 

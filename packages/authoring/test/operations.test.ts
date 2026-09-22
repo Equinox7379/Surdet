@@ -35,6 +35,15 @@ function fixtureStorage(configText = '{"entryScene":"prologue","variables":{}}',
 }
 
 describe('typed authoring operations', () => {
+  it('rejects scene creation when that semantic ID exists in a nested directory', async () => {
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, undefined, 'content/scenario/chapter/prologue.GAL'), hasher);
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    const before = structuredClone(change.record);
+    await expect(applySceneCreate(change, { operationId: 'duplicate', sceneId: 'prologue' }, hasher))
+      .rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED' });
+    expect(change.record).toEqual(before);
+  });
+
   it('rejects inserting blocks inside a choice without changing its remaining options', async () => {
     const source = '@scene prologue\n@choice\n    甲 -> @goto done\n    乙\n    丙\n@label done\n@end\n';
     const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, source), hasher);

@@ -375,11 +375,11 @@ describe('integration capsule provenance (wave 5 task 6)', () => {
       } }).result;
       const selectionRequired = (comparisonView.conflicts ?? []).find((conflict) => conflict.severity === 'selection-required');
       const sceneUnitA = comparisonView.units.find((unit) =>
-        unit.primaryObject === 'scene:wave5_alpha' && unit.candidateId === `cand-${a.changeId}`);
+        unit.primaryObject === 'scene:wave5_alpha' && unit.candidateId === `cand-${a.changeId}-${a.capsuleId}`);
       const sceneUnitC = comparisonView.units.find((unit) =>
-        unit.primaryObject === 'scene:wave5_alpha' && unit.candidateId === `cand-${c.changeId}`);
+        unit.primaryObject === 'scene:wave5_alpha' && unit.candidateId === `cand-${c.changeId}-${c.capsuleId}`);
       const sceneUnitD = comparisonView.units.find((unit) =>
-        unit.primaryObject === 'scene:wave5_alpha' && unit.candidateId === `cand-${d.changeId}`);
+        unit.primaryObject === 'scene:wave5_alpha' && unit.candidateId === `cand-${d.changeId}-${d.capsuleId}`);
       expect(sceneUnitA).toBeDefined();
       expect(sceneUnitC).toBeDefined();
       expect(sceneUnitD).toBeDefined();

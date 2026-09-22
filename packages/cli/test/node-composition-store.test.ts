@@ -78,7 +78,7 @@ describe('NodeCompositionStore', () => {
     const identity = sealed.session.projectIdentity;
     const store = new NodeCompositionStore(path.join(fixture.dataDir, identity), identity);
     const candidate = await store.readCandidate(sealed.ref);
-    expect(candidate.candidateId).toBe(`cand-${sealed.ref.changeId}`);
+    expect(candidate.candidateId).toBe(`cand-${sealed.ref.changeId}-${sealed.ref.capsuleId}`);
     expect(candidate.capsuleVersion).toBe('2.0.0');
     expect(candidate.composition.eligibility).toBe('ready');
 

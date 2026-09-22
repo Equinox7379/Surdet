@@ -257,6 +257,26 @@ describe('calendar ⇄ JSON', () => {
     expect(insNodes[1]!.custom).toBeUndefined();
     expect(insNodes[2]!.custom).toBe('B私有');
   });
+
+  it('据点指令改名仍保留 eventId/未知字段，且插入行不串用原条目', () => {
+    const raw = {
+      baseCommands: [
+        { id: 'rest', name: '休息', apCost: 1, eventId: 'rest_scene', future: 'rest-only' },
+        { id: 'patrol', name: '巡逻', apCost: 2, eventId: 'patrol_scene', future: 'patrol-only' },
+      ],
+    };
+    const rows = parseCalendarRows(raw);
+    rows.baseCommands[0]!.id = 'rest_evening';
+    rows.baseCommands.splice(1, 0, { id: 'new', name: '', apCost: '', when: '', effects: '', perTurn: '' });
+
+    const { json, errors } = rowsToCalendar(raw, rows);
+    expect(errors).toEqual([]);
+    expect(json.baseCommands).toEqual([
+      { id: 'rest_evening', name: '休息', apCost: 1, eventId: 'rest_scene', future: 'rest-only' },
+      { id: 'new' },
+      { id: 'patrol', name: '巡逻', apCost: 2, eventId: 'patrol_scene', future: 'patrol-only' },
+    ]);
+  });
 });
 
 describe('N1：calendar node 开放条件 canonical visibleWhen（Editor → Runtime 语义一致）', () => {

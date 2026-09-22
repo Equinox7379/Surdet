@@ -164,6 +164,34 @@ describe('simulateProject（无头自动模拟）', () => {
     expect(JSON.parse(stdout).endings).toEqual([{ ending: 'proto_ok', times: 1 }]);
   });
 
+  it('--assume 缺少等号或变量名时明确失败', async () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ entryScene: 'ch1' }),
+      'content/scenario/ch1.gal': '@scene ch1\n凛：好。\n@end\n',
+    });
+    let stderr = '';
+    const originalWrite = process.stderr.write;
+    process.stderr.write = ((chunk: unknown) => {
+      stderr += String(chunk);
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      expect(await cmdSimulate(dir, ['--assume', 'battleWon'])).toBe(1);
+      expect(stderr).toContain('--assume');
+      expect(stderr).toContain('name=value');
+      stderr = '';
+      expect(await cmdSimulate(dir, ['--assume', '=true'])).toBe(1);
+      expect(stderr).toContain('--assume');
+      expect(stderr).toContain('name=value');
+      stderr = '';
+      expect(await cmdSimulate(dir, ['--assume'])).toBe(1);
+      expect(stderr).toContain('--assume');
+      expect(stderr).toContain('name=value');
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+  });
+
   it('缺 entryScene / 入口场景文件缺失 → 明确报错', () => {
     const noEntry = makeProject({ 'content/scenario/ch1.gal': '@scene ch1\n凛：好。\n' });
     expect(() => simulateProject(noEntry)).toThrow(/entryScene/);

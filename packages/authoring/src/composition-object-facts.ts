@@ -1,4 +1,5 @@
 import { buildObjectIndex } from './object-index.js';
+import { compareCanonicalText } from './canonical-order.js';
 import { buildAssetCatalog, backgroundAssetRef, portraitAssetRef, avatarAssetRef } from './asset-catalog.js';
 import type { ManifestObjectFact, ManifestObjectFacts } from './composition-contracts.js';
 import type { ProjectSnapshot } from './project-snapshot.js';
@@ -25,7 +26,7 @@ export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, has
     { objectRef: 'config:characters', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.config['characters'] ?? {})) },
     ...snapshot.scenes.map((scene) => ({ objectRef: `scene:${scene.id}`, expectedFingerprint: scene.file.sha256 })),
     ...timelineObjects,
-    ...await Promise.all(Object.entries(snapshot.variables).sort(([left], [right]) => left.localeCompare(right)).map(async ([name, declaration]) => ({
+    ...await Promise.all(Object.entries(snapshot.variables).sort(([left], [right]) => compareCanonicalText(left, right)).map(async ([name, declaration]) => ({
       objectRef: `variable:${name}`,
       expectedFingerprint: await hasher.sha256(stableStringify(declaration)),
     }))),

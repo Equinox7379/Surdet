@@ -70,6 +70,8 @@ function actionFor(code: string): string {
 }
 
 function objectRefFor(index: ObjectIndex, issue: LintIssue): string | undefined {
+  // JSON declarations share synthetic line 1; it does not identify one field.
+  if (issue.file === 'game.config.json') return undefined;
   const candidates = index.objects.filter((object) => (
     object.source?.path === issue.file && object.source.line === issue.line
   ));
@@ -77,8 +79,8 @@ function objectRefFor(index: ObjectIndex, issue: LintIssue): string | undefined 
     ?? candidates[0]?.objectRef;
 }
 
-function enrich(index: ObjectIndex, issue: LintIssue): AuthoringValidationIssue {
-  const objectRef = objectRefFor(index, issue);
+function enrich(index: ObjectIndex, issue: LintIssue & { objectRef?: string }): AuthoringValidationIssue {
+  const objectRef = issue.objectRef ?? objectRefFor(index, issue);
   return {
     ...issue,
     ...(objectRef === undefined ? {} : { objectRef }),
@@ -95,7 +97,7 @@ export function validateSnapshot(
   index: ObjectIndex = buildObjectIndex(snapshot),
   options: ValidationOptions = {},
 ): ValidationResult {
-  const rawIssues: LintIssue[] = [];
+  const rawIssues: Array<LintIssue & { objectRef?: string }> = [];
   const firstSceneById = new Map<string, typeof snapshot.scenes[number]>();
   const scenes = new Map<string, CompiledScene>();
   for (const physicalScene of snapshot.scenes) {
@@ -208,6 +210,7 @@ export function validateSnapshot(
         severity: 'error',
         code: 'CHARACTER_INVALID',
         text: `${configPath}: 角色 '${id}' 必须包含非空 name`,
+        objectRef: `character:${id}`,
         file: configPath,
         line: 1,
         col: 1,
@@ -226,6 +229,7 @@ export function validateSnapshot(
         severity: 'warning',
         code: 'ASSET_UNRESOLVED',
         text: `${configPath}: 角色 '${id}' 的头像资源 '${avatar}' 未解析（catalog 中不存在或格式不受支持）`,
+        objectRef: `character:${id}`,
         file: configPath,
         line: 1,
         col: 1,
@@ -239,6 +243,7 @@ export function validateSnapshot(
       severity: 'error',
       code: 'ENTRY_SCENE_MISSING',
       text: `${configPath}: 入口场景 '${entryScene}' 不存在`,
+      objectRef: 'config:entryScene',
       file: configPath,
       line: 1,
       col: 1,

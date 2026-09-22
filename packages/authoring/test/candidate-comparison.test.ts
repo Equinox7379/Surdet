@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { compareCandidates } from '../src/candidate-comparison.js';
 import type {
   CandidateCapsuleRef,
@@ -117,6 +117,22 @@ async function compare(candidates: VerifiedCompositionCandidate[], currentRevisi
     candidates,
   }, hasher);
 }
+
+it('keeps comparison identity independent from the host collation locale', async () => {
+  const candidates = ['z', 'ä', '中', 'A'].map((name) => readyCandidate(name, [
+    operation(1, `create-${name}`, 'variable.ensure', `variable:${name}`, [production(`variable:${name}`, 'create', name)]),
+  ]));
+  const collation = vi.spyOn(String.prototype, 'localeCompare');
+  try {
+    collation.mockImplementation(function (this: string, other: string) { return new Intl.Collator('en').compare(String(this), other); });
+    const english = await compare(candidates);
+    collation.mockImplementation(function (this: string, other: string) { return new Intl.Collator('sv').compare(String(this), other); });
+    const swedish = await compare(candidates);
+    expect(swedish).toEqual(english);
+  } finally {
+    collation.mockRestore();
+  }
+});
 
 
 /** 规格 5.4 要求至少两个候选；无关候选用于单侧场景。 */

@@ -125,6 +125,14 @@ export async function applyCharacterEnsure(
     const oldSpeakerToken = existingName !== undefined ? existingName.trim() : undefined;
     const newSpeakerKey = input.name.trim();
 
+    if (created) {
+      for (const [otherId, otherRaw] of Object.entries(characters)) {
+        if (isRecord(otherRaw) && typeof otherRaw['name'] === 'string' && otherRaw['name'].trim() === input.id) {
+          throw new AuthoringOperationError('OBJECT_AMBIGUOUS', `新角色 ID '${input.id}' 与角色 '${otherId}' 的显示名冲突（speaker 解析会改变）`);
+        }
+      }
+    }
+
     // 语义冲突前置检查（任何写入之前 fail-loud）：新显示名不得与其它角色的显示名或 ID
     // 冲突——任一情况都会让 speaker 令牌解析产生歧义或静默失配（比较用 trim 语义）。
     if (nameChanges) {

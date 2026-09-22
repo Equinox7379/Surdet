@@ -13,7 +13,7 @@
 import { state, h, setStatus } from './state.js';
 import { bindEditorWorkspaceHooks, connectEditorWorkspace, disconnectEditorWorkspace, editorWorkspaceStatus,
   publishEditorWorkspaceState, pollEditorWorkspace, readEditorWorkspaceBaseline, currentEditorWorkspaceWrite,
-  editorWorkspaceTextChanges } from './editor-workspace.js';
+  editorWorkspaceTextChanges, enqueueEditorAssetRequest } from './editor-workspace.js';
 import type { ProjectDiskBaseline } from './project-disk-baseline.js';
 import { hasReviewDraft, discardReviewDraft, openReviewWorkspace, type ReviewWorkspaceState } from './review-workspace.js';
 import { createReviewPreparationClient, preparationErrorMessage } from './review-preparation-client.js';
@@ -37,8 +37,8 @@ import {
   reconcileAuthoringSelection,
   selectAuthoringObject,
 } from './causal-selection.js';
-import { bindHistoryHooks, undo, redo } from './history.js';
-import { takeTimelineRedo, takeTimelineUndo } from './timeline-history.js';
+import { bindHistoryHooks, histories, undo, redo } from './history.js';
+import { takeTimelineRedo, takeTimelineUndo, timelineHistoryDepth } from './timeline-history.js';
 import {
   bindProjectIoHooks,
   openProject,
@@ -132,7 +132,14 @@ let saveAttemptLeftDirty = false;
 let blockedSceneAutosave: AutosavePayload | null = null;
 let pendingAutosaveTimelineConflicts: TimelineAutosaveRestoreConflict[] = [];
 let assetImportGeneration = 0;
-let assetImportClient = createAssetImportAuthorityClient();
+const assetRequestFetcher: typeof fetch = (input, init) => {
+  // Workspace requests are already queued by editor-workspace; nesting them
+  // would deadlock. Other requests must not race its preview/snapshot reads.
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  return url.includes('/workspace/') ? fetch(input, init)
+    : enqueueEditorAssetRequest(() => fetch(input, init));
+};
+let assetImportClient = createAssetImportAuthorityClient({ fetcher: assetRequestFetcher });
 type SceneAutosaveRecoveryPhase = 'idle' | 'running' | 'blocked';
 type SceneAutosaveRecoveryOutcome = 'complete' | 'blocked' | 'stale';
 interface SceneAutosaveRecoveryContext {
@@ -170,7 +177,7 @@ function resetAssetImportRuntime(): void {
   assetImportPanelOpen = false;
   const closingClient = assetImportClient;
   void disconnectEditorWorkspace().finally(() => closingClient.dispose());
-  assetImportClient = createAssetImportAuthorityClient();
+  assetImportClient = createAssetImportAuthorityClient({ fetcher: assetRequestFetcher });
   assetImportWorkspace.reset();
   assetRelocationActionSequence += 1;
   assetRelocationWorkspace.reset();
@@ -1066,6 +1073,13 @@ function projectBarProjection(): ProjectBarProjection {
     : 'saved';
   const sceneRecoveryLocked = sceneAutosaveRecoveryPhase !== 'idle';
   const relay = editorWorkspaceStatus();
+  const sceneHistory = state.current === null ? undefined : histories.get(state.current);
+  let depth = { past: sceneHistory?.past.length ?? 0, future: sceneHistory?.future.length ?? 0 };
+  if (state.mainTab === 'config') depth = configHistoryDepth();
+  else if (state.mainTab === 'timeline') {
+    const timeline = state.currentTimeline === null ? { undo: 0, redo: 0 } : timelineHistoryDepth(state.currentTimeline);
+    depth = { past: timeline.undo, future: timeline.redo };
+  }
   return {
     relayProtection: relay.protection,
     relayUpdate: relay.update,
@@ -1073,8 +1087,8 @@ function projectBarProjection(): ProjectBarProjection {
     projectName: state.dirName || '未打开项目',
     objectLabel: currentObjectLabel(),
     saveState,
-    canUndo: true,
-    canRedo: true,
+    canUndo: depth.past > 0,
+    canRedo: depth.future > 0,
     fsSupported: state.fsSupported,
     hasScenes: state.scenes.size > 0,
     writeLocked: state.projectWriteLock !== null || sceneRecoveryLocked || relay.saving || sceneLifecycleActionRunning
@@ -1203,7 +1217,9 @@ async function syncProject(discardDrafts = false): Promise<boolean> {
       || pendingAutosaveTimelineConflicts.length > 0) {
       throw new Error('当前操作尚未完成，请稍后同步项目。');
     }
+    if (state.pendingSceneCommit !== null) throw new Error('上次保存的结果尚未确认，请先重试保存或完成恢复；当前草稿会保留。');
     if (hasDirtyProjectFiles() && !discardDrafts) throw new Error('草稿仍未保存，请选择保留或放弃草稿。');
+    if (discardDrafts && hasDirtyProjectFiles() && !window.confirm('要放弃未保存的修改，重新读取硬盘上的项目吗？')) return false;
     const previous = { mainTab: state.mainTab, sceneKey: state.current,
       sceneId: state.current === null ? undefined : state.scenes.get(state.current)?.id,
       timelineId: state.currentTimeline, selectedAssetId: state.assetCenterSelectedId };

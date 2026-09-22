@@ -1410,6 +1410,7 @@ function renderResultReview(
   reload.disabled = resultWriteLocked || resultPreviewLocked || resultFixtureLocked || pendingTerminalAction !== null;
   reload.onclick = () => {
     if (resultWrites.has(workspace) || resultPreviews.has(workspace) || resultFixtureOperations.has(workspace) || pendingTerminalActionOf(workspace) !== null) return;
+    if (workspace.projectHandle !== null && !window.confirm('重新加载会丢弃此审阅结果副本中的探索修改和新增文件，恢复正式结果。来源项目不会改变。确定继续吗？')) return;
     resultFixtureOperations.add(workspace);
     approve.disabled = true;
     returned.disabled = true;
@@ -1572,7 +1573,7 @@ export async function openReviewPanelWorkspace(): Promise<void> {
   state.mainTab = 'review';
   state.selectedObjectRef = null;
   state.previewChoices = null;
-  state.dirName = `审阅：${state.reviewWorkspace.projection.task.title}`;
+  if (state.dirHandle === null) state.dirName = `审阅：${state.reviewWorkspace.projection.task.title}`;
 }
 
 /** 仅供预览状态探针调用，保持变化只在当前 review workspace 内。 */

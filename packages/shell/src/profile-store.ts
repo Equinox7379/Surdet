@@ -19,7 +19,13 @@ export class FileProfileStore implements ProfileStorage {
 
   #fileFor(key: string): string {
     assertProfileKey(key);
-    return path.join(this.dir, `${encodeURIComponent(key)}.json`);
+    // Preserve the existing lowercase game keys while making every capital
+    // distinct on case-insensitive filesystems. '%' is not a legal profile key.
+    let name = key.replace(/[A-Z]/g, letter => `%${letter.charCodeAt(0).toString(16)}`);
+    if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) {
+      name = `%${name.charCodeAt(0).toString(16)}${name.slice(1)}`;
+    }
+    return path.join(this.dir, `${name}.json`);
   }
 
   async read<T = unknown>(key: string): Promise<T | null> {

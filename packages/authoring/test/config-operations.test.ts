@@ -64,6 +64,18 @@ async function open(): Promise<{ change: ChangeSession; repo: InMemoryChangeRepo
 }
 
 describe('character.ensure', () => {
+  it('rejects a new ID that would shadow an existing display-name speaker', async () => {
+    const { change } = await open();
+    const config = JSON.parse(change.record.workingFiles['game.config.json']!);
+    config.characters.lynn.name = 'Alice';
+    change.record.workingFiles['game.config.json'] = JSON.stringify(config);
+    const before = structuredClone(change.record);
+    await expect(applyCharacterEnsure(change, { operationId: 'shadow', id: 'Alice', name: 'Bob',
+      expectedFingerprint: await charactersFingerprint(config, hasher) }, hasher))
+      .rejects.toMatchObject({ code: 'OBJECT_AMBIGUOUS' });
+    expect(change.record).toEqual(before);
+  });
+
   it('creates a new character through the isolated transaction', async () => {
     const { change } = await open();
     // 当前角色表已含 lynn：新建 nova 必须携带当前表指纹。

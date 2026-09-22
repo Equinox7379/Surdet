@@ -323,12 +323,13 @@ function installSceneTarget(service: ReturnType<typeof target>): ReturnType<type
   return service;
 }
 
-async function harness(service: ReturnType<typeof target> = target()): Promise<{ origin: string; target: ReturnType<typeof target> }> {
+async function harness(service: ReturnType<typeof target> = target(), now = Date.now): Promise<{ origin: string; target: ReturnType<typeof target> }> {
   let expectedOrigin = '';
   const server = http.createServer(createAssetImportAuthorityHttpHandler({
     authority: service,
     token: authorityToken,
     expectedOrigin: () => expectedOrigin,
+    now,
   }));
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -595,7 +596,8 @@ describe('project asset import authority HTTP boundary', () => {
       'UNDONE',
     ],
   ] as const)('allows only an idempotent %s replay after its operation token expires', async (action, body, differentBody, status) => {
-    const fixture = await harness();
+    let time = Date.now();
+    const fixture = await harness(target(), () => time);
     await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/operations`, {
       method: 'POST',
       headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken }),
@@ -631,6 +633,11 @@ describe('project asset import authority HTTP boundary', () => {
       });
       expect(differentTerminalAction.response.status).toBe(403);
     }
+    time += 5 * 60_000 + 1;
+    const expiredReplay = await request(fixture.origin, `${route}/${action}`, {
+      method: 'POST', headers: authorized, body,
+    });
+    expect(expiredReplay.response.status).toBe(403);
   });
 
   it('forgets operation-token scope after the project binding is invalidated', async () => {

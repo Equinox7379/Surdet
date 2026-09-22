@@ -236,6 +236,18 @@ function projectionSignature(root: Container): unknown {
 }
 
 describe('Menu v2 characterization contract', () => {
+  it('reports the actual title control bounds instead of a second hard-coded layout', () => {
+    const runtime = makeRealMenuRuntime();
+    try {
+      runtime.layer.showTitle({ title: 'Surdet', items: [{ id: 'new', label: '开始游戏' }] }, vi.fn());
+      const label = findTextDeep(runtime.root, '开始游戏');
+      expect(runtime.layer.debugSnapshot().titleTargets).toEqual([
+        { id: 'new', x: label.x - 166, y: label.y - 23, width: 332, height: 46 },
+      ]);
+      runtime.layer.hideTitle();
+      expect(runtime.layer.debugSnapshot().titleTargets).toEqual([]);
+    } finally { disposeRealMenuRuntime(runtime); }
+  });
   it('forwards copied menu view models and preserves callbacks', () => {
     const runtime = makeHarness();
     const onSelect = vi.fn();

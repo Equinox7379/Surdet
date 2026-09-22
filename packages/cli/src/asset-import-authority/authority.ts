@@ -3,7 +3,8 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {
   buildProjectAssetImportPlan,
-  buildAssetCatalog,
+  describeProjectAssetPath,
+  isProjectAssetFormatSupported,
   destinationDirectoryForAssetKind,
   stableStringify,
   type ProjectAssetImportPlan,
@@ -728,17 +729,20 @@ export class ProjectAssetImportAuthority {
   private async targetFacts(targets: ProjectAssetImportTargetRequest[]): Promise<ProjectAssetImportTargetFact[]> {
     const facts: ProjectAssetImportTargetFact[] = [];
     const storage = await NodeProjectStorage.open(this.paths.projectRoot);
-    const catalog = buildAssetCatalog([...new Set([
+    const files = [...new Set([
       ...(await storage.listFiles()).filter(file => file.startsWith('content/assets/')),
       ...targets.flatMap(target => { const file = targetRelativePath(target); return file === null ? [] : [file]; }),
-    ])]);
-    const entries = [...catalog.backgrounds, ...catalog.portraits, ...catalog.avatars].filter(entry => entry.resolved);
-    const key = (entry: typeof entries[number]): string => `${entry.kind}:${entry.key}:${entry.expression ?? ''}`.normalize('NFC').toLowerCase();
+    ])];
+    const entries = files.flatMap(file => {
+      const entry = describeProjectAssetPath(file);
+      return entry !== null && !entry.invalidName && isProjectAssetFormatSupported(entry.kind, entry.format) ? [entry] : [];
+    });
+    const key = (entry: typeof entries[number]): string => `${entry.kind}:${entry.key}:${entry.variant ?? ''}`.normalize('NFC').toLowerCase();
     for (const target of targets) {
       const relativePath = targetRelativePath(target);
       if (relativePath === null) continue;
-      const entry = entries.find(item => item.sourcePath === relativePath);
-      const conflicts = entry === undefined ? [] : entries.filter(item => item.sourcePath !== relativePath && key(item) === key(entry)).map(item => item.sourcePath).sort();
+      const entry = entries.find(item => item.path === relativePath);
+      const conflicts = entry === undefined ? [] : entries.filter(item => item.path !== relativePath && key(item) === key(entry)).map(item => item.path).sort();
       facts.push({ ...await inspectAssetImportTarget(this.paths, relativePath), ...(conflicts.length === 0 ? {} : { conflictingAssetPaths: conflicts }) });
     }
     return facts;
@@ -1083,11 +1087,9 @@ export class ProjectAssetImportAuthority {
       if (file.state !== 'UNDO_VERIFIED' || file.undoIdentity === undefined) {
         return this.enterRecovery(operationId, 'UNDONE 操作的撤销证据状态不完整');
       }
-      const target = absoluteAssetImportProjectPath(this.paths, file.targetPath);
-      if (await this.fileIdentityOrNull(target).catch(() => this.enterRecovery(
-        operationId,
-        'UNDONE 操作的目标路径不安全',
-      )) !== null) return this.enterRecovery(operationId, 'UNDONE 操作的目标路径重新出现');
+      // A completed undo releases the target path. Later imports or author
+      // edits may legitimately reuse it; the retained undo evidence, not its
+      // continued absence, proves this historical operation completed.
       const quarantine = absoluteAssetImportProjectPath(this.paths, file.undoRelativePath);
       const evidence = await this.readFileEvidence(quarantine).catch(() => this.enterRecovery(
         operationId,

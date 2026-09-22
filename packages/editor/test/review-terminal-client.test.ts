@@ -55,6 +55,14 @@ function response(body: unknown, status = 200): Response {
 }
 
 describe('ReviewTerminalClient', () => {
+  it('keeps a real busy response as a business error instead of reporting an invalid envelope', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ ok: false, error: {
+      code: 'PROJECT_BUSY', message: '项目正在处理其他操作',
+    } }, 400));
+    const client = createReviewTerminalClient({ configuration: config, fetcher });
+    await expect(client.describe(describeInput)).rejects.toMatchObject({ code: 'PROJECT_BUSY' });
+  });
+
   it('uses the existing protected transport for readonly previews and rejects a reply for another decision', async () => {
     const input = { ...describeInput, decisionIntent: { mode: 'custom-mix' as const }, customSelection: { selectedUnitIds: [], conflictResolutions: [] } };
     const preview: ReviewDecisionPreview = {

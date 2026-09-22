@@ -87,7 +87,10 @@ function stemOf(path: string): string {
 }
 
 export function describeProjectAssetPath(input: string): ProjectAssetPathDescriptor | null {
-  const normalizedPath = normalizeProjectPath(input);
+  // POSIX may enumerate a literal backslash in a file/directory name. Keep
+  // that physical spelling for the invalid-name diagnostic, never alias it.
+  const invalidPath = input.startsWith(ASSET_ROOT) && input.includes('\\');
+  const normalizedPath = invalidPath ? input : normalizeProjectPath(input);
   if (!normalizedPath.startsWith(ASSET_ROOT)) return null;
   const relative = normalizedPath.slice(ASSET_ROOT.length);
   const segments = relative.split('/');
@@ -104,11 +107,11 @@ export function describeProjectAssetPath(input: string): ProjectAssetPathDescrip
       kind,
       key: stem,
       format,
-      invalidName: !isProjectAssetFileNameSafe(fileName),
+      invalidName: invalidPath || !isProjectAssetFileNameSafe(fileName),
     };
   }
   const portrait = stem.split('_');
-  if (!isProjectAssetFileNameSafe(fileName)
+  if (invalidPath || !isProjectAssetFileNameSafe(fileName)
     || portrait.length !== 3
     || portrait.some((segment) => segment.length === 0)) {
     return {
@@ -148,7 +151,7 @@ function classifyFile(fact: ProjectAssetFileFact): ClassifiedFile | null {
     };
 }
 
-function isSupportedFormat(kind: ProjectAssetKind, format: string): boolean {
+export function isProjectAssetFormatSupported(kind: ProjectAssetKind, format: string): boolean {
   if (format.length === 0) return false;
   if (kind === 'background' || kind === 'portrait' || kind === 'avatar') return IMAGE_FORMATS.has(format);
   if (kind === 'music' || kind === 'ambience' || kind === 'sound-effect' || kind === 'voice') return AUDIO_FORMATS.has(format);
@@ -400,7 +403,9 @@ export function buildProjectAssetIntelligence(
 ): ProjectAssetIntelligence {
   const groupedFacts = new Map<string, { path: string; measuredBytes: Set<number> }>();
   for (const fact of files) {
-    const path = normalizeProjectPath(fact.path);
+    const descriptor = describeProjectAssetPath(fact.path);
+    if (descriptor === null) continue;
+    const path = descriptor.path;
     const group = groupedFacts.get(path) ?? { path, measuredBytes: new Set<number>() };
     if (fact.bytes !== undefined) group.measuredBytes.add(fact.bytes);
     groupedFacts.set(path, group);
@@ -446,7 +451,7 @@ export function buildProjectAssetIntelligence(
         [],
       ));
     }
-    if (!isSupportedFormat(entry.kind, entry.format)) {
+    if (!isProjectAssetFormatSupported(entry.kind, entry.format)) {
       item.issues.push('ASSET_FORMAT_UNSUPPORTED');
       issues.push(createIssue(
         'ASSET_FORMAT_UNSUPPORTED',

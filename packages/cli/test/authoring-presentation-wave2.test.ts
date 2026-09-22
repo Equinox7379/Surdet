@@ -351,7 +351,7 @@ describe('agent authoring presentation wave 2 CLI vertical slice', () => {
     expect(validatedBody.result.ok).toBe(false);
     const timelineError = validatedBody.result.issues.find((issue: any) => issue.file === 'content/timelines/broken.json' && issue.severity === 'error');
     expect(timelineError).toBeDefined();
-    expect(timelineError.code).toMatch(/^T\d{3}$/);
+    expect(timelineError.code).toBe('TL005');
     expect(timelineError.text).toContain('content/timelines/broken.json');
   });
 

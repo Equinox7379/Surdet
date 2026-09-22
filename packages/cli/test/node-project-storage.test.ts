@@ -5,7 +5,9 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   applySceneCreate,
+  applyScenePatch,
   beginChange,
+  buildObjectIndex,
   commitChange,
   ensureVariable,
   InMemoryChangeRepository,
@@ -104,6 +106,49 @@ class FailingReplaceStorage implements ProjectWriteStorage {
 }
 
 describe('NodeProjectStorage safe parent creation', () => {
+  it.each(['new', 'existing'] as const)('preserves an externally edited earlier %s file when a later publication fails', async kind => {
+    const root = createProjectRoot('surdet-commit-earlier-external-');
+    const relative = 'content/scenario/agent_support.gal';
+    const target = path.join(root, relative);
+    try {
+      if (kind === 'existing') {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, '@scene agent_support\n原来的正文。\n@end\n');
+      }
+      const storage = await NodeProjectStorage.open(root);
+      const snapshot = await loadProjectSnapshot(storage, hasher);
+      const change = await beginChange(snapshot, new InMemoryChangeRepository(), storage);
+      if (kind === 'existing') {
+        const object = buildObjectIndex(snapshot).objects.find(item => item.kind === 'text')!;
+        await applyScenePatch(change, { operationId: 'patch', patch: {
+          kind: 'replaceText', target: object.objectRef, expectedFingerprint: object.fingerprint!, value: '事务写入的正文。',
+        } });
+      } else {
+        await applySceneCreate(change, { operationId: 'create', sceneId: 'agent_support' });
+      }
+      await ensureVariable(change, { operationId: 'variable', name: 'trust', type: 'number', initial: 0 });
+      await recordValidation(change, { evidenceId: 'validation', errors: 0 });
+      const foreignText = '@scene agent_support\n外部编辑器刚保存的正文。\n@end\n';
+      const replace = storage.replaceFromStage.bind(storage);
+      const fault = vi.spyOn(storage, 'replaceFromStage').mockImplementation(async (file, stage) => {
+        if (file === 'game.config.json') {
+          fs.writeFileSync(target, foreignText);
+          throw new Error('later publication failed after an external edit');
+        }
+        await replace(file, stage);
+      });
+      try {
+        await expect(commitChange(change, storage)).rejects.toMatchObject({ code: 'COMMIT_RECOVERY_FAILED' });
+        expect(fs.readFileSync(target, 'utf8')).toBe(foreignText);
+        expect(change.record.status).toBe('STALE');
+        expect(await change.repository.readLatestJournal(change.record.changeId)).toMatchObject({
+          status: 'RECOVERY_FAILED', files: [expect.objectContaining({ path: relative, restored: false }), expect.anything()],
+        });
+        expect(temporaryFiles(root)).not.toEqual([]);
+      } finally { fault.mockRestore(); }
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   it.each(['new', 'existing'] as const)('recovers an already renamed %s target when its real file flush fails', async kind => {
     const root = createProjectRoot('surdet-commit-post-rename-');
     const relative = kind === 'new' ? 'content/scenario/agent_support.gal' : 'game.config.json';
@@ -120,8 +165,8 @@ describe('NodeProjectStorage safe parent creation', () => {
       // The staged file has a different inode. Inject only when the real rename
       // has published that inode under the final target name, not during staging.
       const sync = vi.spyOn(prototype, 'sync').mockImplementation(function(this: fs.promises.FileHandle) {
-        const targetStat = fs.existsSync(target) ? fs.statSync(target) : null;
-        const opened = fs.fstatSync(this.fd);
+        const targetStat = fs.existsSync(target) ? fs.statSync(target, { bigint: true }) : null;
+        const opened = fs.fstatSync(this.fd, { bigint: true });
         if (failures === 0 && targetStat?.isFile()
           && opened.dev === targetStat.dev && opened.ino === targetStat.ino) {
           failures += 1;
@@ -258,8 +303,8 @@ describe('NodeProjectStorage safe parent creation', () => {
       const originalSync = prototype.sync as fs.promises.FileHandle['sync'];
       let failures = 0;
       const sync = vi.spyOn(prototype, 'sync').mockImplementation(function(this: fs.promises.FileHandle) {
-        const targetStat = fs.statSync(target);
-        const opened = fs.fstatSync(this.fd);
+        const targetStat = fs.statSync(target, { bigint: true });
+        const opened = fs.fstatSync(this.fd, { bigint: true });
         if (targetStat.isFile() && opened.dev === targetStat.dev && opened.ino === targetStat.ino) {
           failures += 1;
           return Promise.reject(Object.assign(new Error(`injected target flush failure ${failures}`), { code: 'EIO' }));

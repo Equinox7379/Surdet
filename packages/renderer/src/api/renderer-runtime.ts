@@ -1,5 +1,5 @@
 import type { Backlog } from '../backlog.js';
-import type { CoreEventMap, EventBus, Unsubscribe } from '@surdet/core';
+import type { CoreEventMap, EventBus, Unsubscribe, PresentationRestoreResult, PresentationSnapshotContext } from '@surdet/core';
 import type { AudioHandle, FrameLoopTarget } from '../types.js';
 import type { RendererPluginHost } from '../plugin-host.js';
 import type { RenderPerformanceMonitor } from '../performance.js';
@@ -31,8 +31,8 @@ export interface PresentationController extends FrameLoopTarget {
   /** True only when the presentation is safe to capture as a rollback checkpoint. */
   canCaptureRollbackCheckpoint(): boolean;
   validatePresentation(snapshot: unknown): void;
-  snapshotPresentation(): unknown;
-  restorePresentation(snapshot: unknown): void;
+  snapshotPresentation(context?: PresentationSnapshotContext): unknown;
+  restorePresentation(snapshot: unknown): PresentationRestoreResult | void;
   clearPresentation(): void;
   advance(): boolean;
   select(index: number): boolean;

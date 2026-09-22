@@ -206,10 +206,10 @@ try {
   await openMenu(); await activate('设置'); await overlay('settings');
   await activate('声音设置');
   await activate('减小主音量');
-  await page.waitForFunction(() => JSON.parse(localStorage.getItem('surdet:settings') ?? '{}').masterVolume === 0.9);
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('surdet:game:surdet-starter:settings') ?? '{}').masterVolume === 0.9);
   await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '减小主音量');
   await page.keyboard.press('ArrowRight');
-  await page.waitForFunction(() => JSON.parse(localStorage.getItem('surdet:settings') ?? '{}').masterVolume === 1);
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('surdet:game:surdet-starter:settings') ?? '{}').masterVolume === 1);
   await page.screenshot({ path: path.join(output, '02-settings.png') });
   const settingsState = await state();
   await page.mouse.wheel(0, 300);
@@ -335,7 +335,7 @@ try {
   assert.equal(actualZoom, 2);
   await page.waitForFunction(() => window.innerWidth === 720 && window.devicePixelRatio === 2);
   await activate('声音设置'); await activate('减小主音量');
-  await page.waitForFunction(() => JSON.parse(localStorage.getItem('surdet:settings') ?? '{}').masterVolume === 0.9);
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('surdet:game:surdet-starter:settings') ?? '{}').masterVolume === 0.9);
   for (const button of await page.getByRole('button').all()) {
     const box = await button.boundingBox(); if (!box) continue;
     assert(box.x >= -2 && box.y >= -2 && box.x + box.width <= 722 && box.y + box.height <= 452, '200% zoom control outside CSS viewport');

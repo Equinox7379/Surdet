@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { loadProjectSnapshot } from '@surdet/authoring';
 import { getCurrentPreviewTrace, renderPreviewPanel } from '../src/panels/preview-panel.js';
 import { state } from '../src/state.js';
 import * as workspace from '../src/editor-workspace.js';
+import { previewTextHash } from '../src/preview-content.js';
 
 class FakeElement {
   readonly tagName: string;
@@ -52,6 +54,7 @@ class FakeElement {
 
   setAttribute(name: string, value: string): void { this.attributes[name] = value; }
   replaceChildren(...children: FakeElement[]): void { this.children.splice(0); this.append(...children); }
+  remove(): void { this.isConnected = false; }
 
   querySelector(tagName: string): FakeElement | null {
     const selector = /^(\w+)(?:\[aria-label="([^"]+)"\])?$/.exec(tagName);
@@ -101,6 +104,9 @@ const documentStub = {
 
 const originalState = {
   current: state.current,
+  dirName: state.dirName,
+  dirHandle: state.dirHandle,
+  autosaveProjectId: state.autosaveProjectId,
   previewTimelineId: state.previewTimelineId,
   reviewWorkspace: state.reviewWorkspace,
   scenes: state.scenes,
@@ -111,8 +117,10 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   postedPreviewMessages.splice(0);
-  previewMessageListener = null;
   state.current = originalState.current;
+  state.dirName = originalState.dirName;
+  state.dirHandle = originalState.dirHandle;
+  state.autosaveProjectId = originalState.autosaveProjectId;
   state.previewTimelineId = originalState.previewTimelineId;
   state.reviewWorkspace = originalState.reviewWorkspace;
   state.scenes = originalState.scenes;
@@ -128,6 +136,8 @@ describe('timeline preview replay', () => {
       }),
     });
     state.current = 'intro.gal';
+    state.dirName = 'same-project-name';
+    state.autosaveProjectId = 'project-unique-a';
     state.scenes = new Map([
       ['intro.gal', {
         id: 'intro',
@@ -158,6 +168,7 @@ describe('timeline preview replay', () => {
     container.isConnected = true;
     previewMessageListener!({ data: { type: 'surdet-preview-ready' }, source: frame!.contentWindow } as unknown as MessageEvent);
     await vi.waitFor(() => expect(postedPreviewMessages).toHaveLength(1));
+    expect((postedPreviewMessages[0] as { payload: { projectKey: string } }).payload.projectKey).toBe('project-unique-a');
     const reload = container.findButton('重新播放');
     expect(reload).not.toBeNull();
     reload!.onclick?.();
@@ -235,5 +246,92 @@ describe('timeline preview replay', () => {
     reload!.onclick?.();
     await vi.waitFor(() => expect(postedPreviewMessages).toHaveLength(5));
     expect((postedPreviewMessages[4] as { payload: { traceId: string } }).payload.traceId).not.toBe(savedTraceId);
+  });
+
+  it('restores memory labels after switching back from a saved preview source', async () => {
+    vi.stubGlobal('document', documentStub);
+    vi.stubGlobal('window', {
+      addEventListener: vi.fn((type: string, listener: (event: MessageEvent) => void) => {
+        if (type === 'message') previewMessageListener = listener;
+      }),
+    });
+    const target = { kind: 'saved-project' as const };
+    const files = {
+      'game.config.json': '{"entryScene":"intro","variables":{}}',
+      'content/scenario/intro.gal': '@scene intro\n@label saved_label\n凛：Saved\n@end\n',
+    };
+    const savedSnapshot = await loadProjectSnapshot({
+      rootIdentity: 'saved-project',
+      listFiles: async () => Object.keys(files),
+      exists: async (path) => Object.hasOwn(files, path),
+      readText: async (path) => {
+        const text = files[path as keyof typeof files];
+        if (text === undefined) throw new Error(`missing ${path}`);
+        return { path, text, sha256: await previewTextHash(text), bytes: new TextEncoder().encode(text).byteLength };
+      },
+    }, { sha256: previewTextHash });
+    const savedContent = {
+      target,
+      projectIdentity: 'saved-project',
+      contentRevision: savedSnapshot.revision,
+      projectRevision: 'project-revision',
+      coordinationRevision: 'coordination-revision',
+      title: 'Saved project',
+      files,
+    };
+    const publisher = {
+      baseline: { projectRevision: 'project-revision', coordinationRevision: 'coordination-revision', files: [] },
+      publish: vi.fn(async () => ({ previewId: null, previewGeneration: 0 })),
+      sources: vi.fn(async () => [{ target, title: 'Saved project' }]),
+      content: vi.fn(async () => savedContent),
+    };
+    vi.spyOn(workspace, 'editorPreviewPublisher').mockReturnValue(publisher);
+    vi.spyOn(workspace, 'editorWorkspaceStatus').mockReturnValue({
+      protection: 'unavailable', update: 'none', dirty: false, saving: false, baseline: null, latest: null,
+    });
+    state.current = 'intro.gal';
+    state.dirName = 'same-project-name';
+    state.dirHandle = null;
+    state.autosaveProjectId = null;
+    state.dirAssets = [];
+    state.previewTimelineId = null;
+    state.reviewWorkspace = null;
+    state.gameConfigText = '{"entryScene":"intro","variables":{}}';
+    state.scenes = new Map([
+      ['intro.gal', {
+        id: 'intro',
+        file: 'intro.gal',
+        text: '@scene intro\n@label memory_label\n凛：Draft\n@end\n',
+        eol: '\n',
+        dirty: false,
+        handle: null,
+      }],
+    ]);
+    const container = new FakeElement('div');
+    renderPreviewPanel(container as unknown as HTMLElement);
+    const labels = container.querySelector('select[aria-label="播放入口"]')!;
+    const source = container.querySelector('select[aria-label="试玩内容"]')!;
+    const labelValues = () => labels.children.map((child) => child.value);
+    await vi.waitFor(() => expect(source.children).toHaveLength(2));
+    previewMessageListener!({ data: { type: 'surdet-preview-ready' }, source: container.querySelector('iframe')!.contentWindow } as unknown as MessageEvent);
+    await vi.waitFor(() => expect(postedPreviewMessages).toHaveLength(1));
+    const memoryProjectKey = (postedPreviewMessages[0] as { payload: { projectKey: string } }).payload.projectKey;
+    expect(memoryProjectKey).not.toBe('same-project-name');
+
+    source.value = '0';
+    source.onchange?.();
+    await vi.waitFor(() => expect(postedPreviewMessages).toHaveLength(2));
+    expect((postedPreviewMessages[1] as { payload: { projectKey: string } }).payload.projectKey)
+      .toBe('saved-project:{"kind":"saved-project"}');
+    expect(labelValues()).toContain('saved_label');
+
+    source.value = '';
+    source.onchange?.();
+    await vi.waitFor(() => expect(postedPreviewMessages).toHaveLength(3));
+    expect((postedPreviewMessages[2] as { payload: { projectKey: string } }).payload.projectKey).toBe(memoryProjectKey);
+    await vi.waitFor(() => expect(labelValues()).toContain('memory_label'));
+    container.findButton('重新播放')?.onclick?.();
+    await vi.waitFor(() => expect(postedPreviewMessages).toHaveLength(4));
+    expect(labelValues()).toContain('memory_label');
   });
 });

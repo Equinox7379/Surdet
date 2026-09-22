@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compileScene } from '@surdet/core';
+import { compileScene, Lexer } from '@surdet/core';
 import { parseScript, serializeScript } from '../src/model.js';
 import { InstructionFieldSource } from '../src/instruction-field-source.js';
 import {
@@ -39,6 +39,16 @@ describe('V4 source adapters use shared rows and preserve B01', () => {
   });
   it('does not mistake a quoted at-sign for a modifier', () => {
     expect(setInstructionPosition('@show "lynn@night" normal', 'right')).toBe('@show "lynn@night" normal @ right');
+  });
+  it('recognizes and edits the explicit key=value position modifier', () => {
+    const raw = '@show lynn:coat smile @pos=left';
+    expect(instructionPosition(raw)).toBe('left');
+    const edited = setInstructionPosition(raw, 'right');
+    expect(edited).toBe('@show lynn:coat smile @pos=right');
+    expect(new Lexer().tokenize(edited, 'position.gal').find((token) => token.type === 'instruction'))
+      .toMatchObject({ modifiers: new Map([['pos', 'right']]) });
+    expect(projectEditLayout(parseScript(`@scene s\n${edited}\n岚：继续`), 2).actors[0])
+      .toMatchObject({ target: 'lynn:coat', position: 'right' });
   });
   it('rejects competing positions and non-bare position values', () => {
     expect(instructionPosition('@show lynn normal @ left @ right')).toBe('ambiguous');

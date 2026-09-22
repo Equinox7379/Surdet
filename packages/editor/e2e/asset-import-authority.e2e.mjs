@@ -450,7 +450,7 @@ export const nodeBackedFileSystemInit = ({ initialRootKey }) => {
   window.showDirectoryPicker = async () => makeDirectory(selectedRootKey, '');
 };
 
-function observePage(page, channels, tokenEvidence, phaseRef, pendingHeaderReads) {
+function observePage(page, channels, tokenEvidence, phaseRef) {
   page.on('console', (message) => {
     if (message.type() === 'error') channels.consoleErrors.push(message.text());
   });
@@ -459,18 +459,20 @@ function observePage(page, channels, tokenEvidence, phaseRef, pendingHeaderReads
     `${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}`,
   ));
   page.on('request', (request) => {
-    const promise = request.allHeaders().then((headers) => {
-      const phase = phaseRef.value;
-      const binding = headers['x-surdet-project-binding'];
-      const operation = headers['x-surdet-import-operation'];
-      if (binding) tokenEvidence.bindingTokenHashes[phase].add(sha256(binding));
-      if (operation) tokenEvidence.operationTokenHashes[phase].add(sha256(operation));
-    }).catch((error) => channels.errors.push(`header capture: ${errorText(error)}`));
-    pendingHeaderReads.push(promise);
+    // Custom authority headers are available on the request event. Waiting for
+    // allHeaders across navigation can leave an old-page protocol call pending.
+    const headers = request.headers();
+    const phase = phaseRef.value;
+    const binding = headers['x-surdet-project-binding'];
+    const operation = headers['x-surdet-import-operation'];
+    if (binding) tokenEvidence.bindingTokenHashes[phase].add(sha256(binding));
+    if (operation) tokenEvidence.operationTokenHashes[phase].add(sha256(operation));
   });
-  page.on('response', (response) => {
+  page.on('response', async (response) => {
     if (response.status() < 400) return;
     const pathname = new URL(response.url()).pathname;
+    const body = await response.json().catch(() => null);
+    (channels.responseDetails ??= []).push({ status: response.status(), pathname, error: body?.error ?? null });
     const record = `${response.status()} ${response.request().method()} ${pathname}`;
     if (response.status() === 409 && pathname.endsWith('/undo')) {
       channels.expectedBusinessResponses.push({ status: 409, method: response.request().method(), pathname, code: null, record });
@@ -489,6 +491,7 @@ async function openProject(page, rootKey, expectedEntryState) {
   await page.waitForFunction((expected) => (
     window.surdetEditorDebug?.state?.assetImportWorkspace?.entryState === expected
   ), expectedEntryState);
+  await page.waitForFunction(() => window.surdetEditorDebug?.state?.projectLoading === false);
 }
 
 async function openImportWorkbench(page) {
@@ -606,7 +609,6 @@ async function run() {
     operationTokenHashes: { 'before-reload': new Set(), 'after-reload': new Set() },
   };
   const phaseRef = { value: 'before-reload' };
-  const pendingHeaderReads = [];
   const serverStdout = [];
   let server = null;
   let browser = null;
@@ -628,6 +630,7 @@ async function run() {
     assert(name === expected, `milestone sequence mismatch: expected ${expected}, got ${name}`);
     completedMilestoneNames.push(name);
     milestones.push({ name, status: 'PASSED', evidence });
+    console.log(`PASS ${name}`);
   };
 
   try {
@@ -698,7 +701,7 @@ async function run() {
 
     browser = await chromium.launch({ headless: true });
     page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    observePage(page, channels, tokenEvidence, phaseRef, pendingHeaderReads);
+    observePage(page, channels, tokenEvidence, phaseRef);
     await page.addInitScript(() => {
       window.__surdetE2eUnhandled = [];
       const describe = (value) => ({
@@ -731,8 +734,30 @@ async function run() {
 
     const rejectedChallengeProbePaths = fs.readdirSync(projectRoot)
       .filter((name) => name.startsWith('.surdet-bind-'));
-    assert(rejectedChallengeProbePaths.length === 1,
-      `expected one rejected challenge probe before binding, got ${rejectedChallengeProbePaths}`);
+    assert(rejectedChallengeProbePaths.length === 2,
+      `expected preflight and formal rejected challenge probes before binding, got ${rejectedChallengeProbePaths}`);
+    const rejectedChallengeEvidence = rejectedChallengeProbePaths.map((challengeName) => {
+      const match = /^\.surdet-bind-(.+)\.json$/.exec(challengeName);
+      assert(match !== null, `invalid rejected challenge probe name: ${challengeName}`);
+      const challenge = JSON.parse(fs.readFileSync(path.join(projectRoot, challengeName), 'utf8'));
+      assert(challenge.schemaVersion === 1, `rejected challenge ${challengeName} schema version drifted`);
+      assert(challenge.authority === 'surdet-asset-import', `rejected challenge ${challengeName} authority drifted`);
+      assert(challenge.challengeId === match[1], `rejected challenge ${challengeName} identity does not match its filename`);
+      assert(typeof challenge.nonce === 'string' && /^[0-9a-f]{64}$/.test(challenge.nonce),
+        `rejected challenge ${challengeName} nonce is not a safe opaque identity`);
+      assert(typeof challenge.expiresAt === 'string' && Number.isFinite(Date.parse(challenge.expiresAt)),
+        `rejected challenge ${challengeName} expiry is not an ISO timestamp`);
+      return {
+        name: challengeName,
+        challengeId: challenge.challengeId,
+        nonceSha256: sha256(Buffer.from(challenge.nonce, 'utf8')),
+        expiresAt: challenge.expiresAt,
+      };
+    });
+    assert(new Set(rejectedChallengeEvidence.map((challenge) => challenge.challengeId)).size === 2,
+      'preflight and formal rejected challenges did not keep distinct challenge identities');
+    assert(new Set(rejectedChallengeEvidence.map((challenge) => challenge.nonceSha256)).size === 2,
+      'preflight and formal rejected challenges did not keep distinct nonce identities');
     for (const challengeName of rejectedChallengeProbePaths) registeredRootChallengeNames.add(challengeName);
     const projectRootEntriesBeforeBinding = new Set(fs.readdirSync(projectRoot));
     await openProject(page, 'project', 'ready');
@@ -753,6 +778,7 @@ async function run() {
       projectName: bound.projectName,
       successfulChallengeRemoved: true,
       rejectedChallengeProbeRetainedFailClosed: retainedRootChallengePaths,
+      rejectedChallengeEvidence,
     });
 
     await openImportWorkbench(page);
@@ -917,8 +943,8 @@ async function run() {
     ));
     pass('asset-facts-refreshed', { importedAssetIds });
 
-    phaseRef.value = 'after-reload';
     await page.reload({ waitUntil: 'networkidle' });
+    phaseRef.value = 'after-reload';
     await openProject(page, 'project', 'ready');
     await openImportWorkbench(page);
     await page.locator('.asset-import-receipt-row', { hasText: '2 个文件' }).getByRole('button', { name: '查看导入回执' }).click();
@@ -929,7 +955,6 @@ async function run() {
     ), operationEvidence.operationId);
     const reopened = await workspaceSnapshot(page);
     assert(reopened.operation.receipt.receiptSha256 === operationEvidence.receiptSha256, 'reopened receipt identity drifted');
-    await Promise.all(pendingHeaderReads);
     const beforeBindings = tokenEvidence.bindingTokenHashes['before-reload'];
     const afterBindings = tokenEvidence.bindingTokenHashes['after-reload'];
     assert(beforeBindings.size > 0 && afterBindings.size > 0, 'binding token hashes were not observed on both sides of reload');
@@ -1213,7 +1238,12 @@ async function run() {
 
     await page.locator('[data-editor-mode="assets"]').click();
     await page.locator('.asset-relocation-result', { hasText: '素材整理完成（2 项）' }).waitFor({ state: 'visible' });
-    await page.getByRole('button', { name: '撤销整批整理' }).click();
+    const [batchUndoResponse] = await Promise.all([
+      page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/undo')),
+      page.getByRole('button', { name: '撤销整批整理' }).click(),
+    ]);
+    const batchUndoResult = await batchUndoResponse.json();
+    assert(batchUndoResult.ok === true, `batch undo failed: ${JSON.stringify(batchUndoResult)}`);
     await page.waitForFunction(() => (
       window.surdetEditorDebug.state.mainTab === 'assets'
         && window.surdetEditorDebug.state.assetCenterSelectedId === 'file:content/assets/bg/castle_hall.svg'
@@ -1266,7 +1296,6 @@ async function run() {
     await stopServer(server, channels.childCleanupFailures);
     if (port !== null) portReleased = await portIsAvailable(port);
     channels.activeLeaseDirectories = findActiveLeaseDirectories(dataRoot);
-    await Promise.allSettled(pendingHeaderReads);
     await new Promise((resolve) => setImmediate(resolve));
     originalStarterAfter = hashProjectTree(starterRoot);
     repositoryTreeAfter = repositoryTreeIdentity();

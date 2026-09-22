@@ -211,10 +211,16 @@ function registerAppIpc(): void {
   });
   ipcMain.handle('asset:read', (e, relPath: unknown) => {
     assertTrustedSender(e);
-    if (typeof relPath !== 'string' || relPath.includes('..') || path.isAbsolute(relPath)) {
+    if (typeof relPath !== 'string' || relPath.length === 0 || relPath.includes('\0')
+      || relPath.split(/[\\/]/).some(segment => segment === '..') || path.isAbsolute(relPath)) {
       throw new Error(`非法素材路径：${String(relPath)}`);
     }
-    const full = path.join(gameRoot(), 'content', 'assets', relPath);
+    const root = fs.realpathSync(path.join(gameRoot(), 'content', 'assets'));
+    const full = fs.realpathSync(path.resolve(root, relPath));
+    const relative = path.relative(root, full);
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error(`非法素材路径：${relPath}`);
+    }
     const data = fs.readFileSync(full);
     if (data.subarray(0, 5).toString() === 'SDAT2') {
       // AES-256-GCM 加密素材：'SDAT2' + iv(12) + authTag(16) + 密文；篡改/密钥错误即抛错

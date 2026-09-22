@@ -89,7 +89,7 @@ test('Frontend Pass 3B runner derives the fixture from Starter and adds one CRLF
   assert.match(source, /path\.join\(repoRoot, 'examples', 'starter'\)/);
   assert.match(source, /fileMapForDirectory\(starterRoot\)/);
   assert.match(source, /browserFileMapTreeIdentity/);
-  assert.match(source, /content\/timelines\/intro_arrival\.json/);
+  assert.match(source, /content\/timelines\/harbor_arrival\.json/);
   assert.match(source, /replace\(\/\\r\?\\n\/g, '\\r\\n'\)/);
   assert.match(source, /fixtureAugmentations/);
   assert.match(source, /originalStarterUnchanged/);

@@ -261,6 +261,9 @@ export function collectReferencedVars(scenes: Map<string, CompiledScene>): Map<s
 /** 行模型：文本列 string、勾选列 boolean（统一形状便于通用表格 UI） */
 export type RowMap = Record<string, string | boolean>;
 
+/** 据点指令行保留来源主键，支持 ID 改名时认领原条目；仅为表格内部标记，不写入配置输出。 */
+const ROW_SOURCE_PRIMARY_KEY = '__sourcePrimaryKey';
+
 /** 值 → 行单元格：boolean 保留、对象 JSON 字符串化、其余 String、空值 '' */
 function toCell(v: unknown): string | boolean {
   if (typeof v === 'boolean') return v;
@@ -270,7 +273,7 @@ function toCell(v: unknown): string | boolean {
 }
 
 /** 列表字段 → 行数组（只取枚举的键；未枚举字段在保存时经原条目合并保留） */
-function listToRows(raw: unknown, field: string, keys: string[]): RowMap[] {
+function listToRows(raw: unknown, field: string, keys: string[], sourcePrimaryKey?: string): RowMap[] {
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const list = Array.isArray(obj[field]) ? obj[field] : [];
   return list
@@ -278,6 +281,7 @@ function listToRows(raw: unknown, field: string, keys: string[]): RowMap[] {
     .map((e) => {
       const row: RowMap = {};
       for (const k of keys) row[k] = toCell(e[k]);
+      if (sourcePrimaryKey !== undefined) row[ROW_SOURCE_PRIMARY_KEY] = String(e[sourcePrimaryKey] ?? '');
       return row;
     });
 }
@@ -289,7 +293,7 @@ function origList(raw: unknown, field: string): unknown[] {
 
 /** 行数组 → 列表条目：按主键（id/characterId）匹配原条目合并（保留未编辑字段），
  *  避免删行/中间插行时按索引合并导致未知字段错位（M4 批次审阅轮 Major 1 修复）；
- *  新增行（主键无匹配）或主键被改名时从空条目起步。
+ *  新增行（主键无匹配）从空条目起步；由解析器保留来源主键的行在改名时仍认领原条目。
  *  numberKeys 由各配置字段契约显式提供；未列出的非 JSON 列一律按文本保存，
  *  避免标识、场景和表达式等数字样式文本被静默改型。 */
 function applyRowsToList(
@@ -299,12 +303,15 @@ function applyRowsToList(
   const claimed = new Set<unknown>(); // 一个原条目最多被一行认领（重复主键时后续行从空起步）
   const findOrig = (row: RowMap): Record<string, unknown> | null => {
     const key = String(row[primaryKey] ?? '').trim();
-    if (key.length === 0) return null;
-    for (const candidate of origArr) {
-      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || claimed.has(candidate)) continue;
-      if (String((candidate as Record<string, unknown>)[primaryKey] ?? '').trim() === key) {
-        claimed.add(candidate);
-        return { ...(candidate as Record<string, unknown>) };
+    const sourceKey = String(row[ROW_SOURCE_PRIMARY_KEY] ?? '').trim();
+    for (const lookupKey of [sourceKey, key]) {
+      if (lookupKey.length === 0) continue;
+      for (const candidate of origArr) {
+        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || claimed.has(candidate)) continue;
+        if (String((candidate as Record<string, unknown>)[primaryKey] ?? '').trim() === lookupKey) {
+          claimed.add(candidate);
+          return { ...(candidate as Record<string, unknown>) };
+        }
       }
     }
     return null;
@@ -418,7 +425,7 @@ export function parseCalendarRows(raw: unknown): CalendarRows {
   return {
     scalars,
     nodes,
-    baseCommands: listToRows(raw, 'baseCommands', CALENDAR_CMD_KEYS),
+    baseCommands: listToRows(raw, 'baseCommands', CALENDAR_CMD_KEYS, 'id'),
   };
 }
 

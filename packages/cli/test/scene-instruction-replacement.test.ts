@@ -729,7 +729,7 @@ describe('Wave15 replaceInstruction through the CLI service and disk', () => {
     })).rejects.toMatchObject({ code: 'COMPOSITION_CONFLICT_UNRESOLVED' });
 
     const chosen = compared.comparison.units.find((unit) => (
-      unit.candidateId === `cand-${first.ref.changeId}` && unit.primaryObject === 'scene:start'
+      unit.candidateId === `cand-${first.ref.changeId}-${first.ref.capsuleId}` && unit.primaryObject === 'scene:start'
     ));
     expect(chosen).toBeDefined();
     const resolved = await service.plan({

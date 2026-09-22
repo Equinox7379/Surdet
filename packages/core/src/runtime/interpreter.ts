@@ -38,10 +38,19 @@ export interface SystemHooks {
 }
 
 /** 宿主演出状态钩子；payload 必须是 JSON 安全值。 */
+export interface PresentationSnapshotContext {
+  readonly replayCurrentText: boolean;
+}
+
+export interface PresentationRestoreResult {
+  /** A restored presentation still owns the timer continuation. */
+  readonly awaitingTimer: boolean;
+}
+
 export interface PresentationSnapshotHooks {
-  snapshot: () => unknown;
+  snapshot: (context: PresentationSnapshotContext) => unknown;
   validate?: (payload: unknown) => void;
-  restore: (payload: unknown) => void;
+  restore: (payload: unknown) => PresentationRestoreResult | void;
 }
 
 /** 运行时状态。paused = 宿主暂停（如交互式战斗进行中），resumeHost() 恢复 */
@@ -295,7 +304,9 @@ export class Interpreter {
     if (systems !== undefined && !isJsonSafeValue(systems)) {
       throw new RuntimeError('宿主系统快照必须是 JSON 安全值');
     }
-    const presentationPayload = this.#presentationHooks?.snapshot();
+    const presentationPayload = this.#presentationHooks?.snapshot({
+      replayCurrentText: this.#status === 'awaiting-advance' && this.#scene.instructions[position.pc]?.op === 'text',
+    });
     const random = this.#randomSource.snapshot?.();
     if (random !== undefined) {
       try {
@@ -422,7 +433,7 @@ export class Interpreter {
     this.#hostPaused = false;
     this.#jumpOverride = false;
     this.#bus.emit('stateReset', { reason: 'load' });
-    this.#presentationHooks?.restore(snap.presentation?.payload ?? null);
+    const presentationRestore = this.#presentationHooks?.restore(snap.presentation?.payload ?? null);
     if (!snap.position) {
       this.#scene = null;
       this.#pc = 0;
@@ -444,6 +455,10 @@ export class Interpreter {
     this.#scene = scene!;
     const max = Math.max(0, scene!.instructions.length - 1);
     this.#pc = Math.min(Math.max(0, snap.position.pc), max);
+    if (presentationRestore?.awaitingTimer) {
+      this.#status = 'awaiting-timer';
+      return;
+    }
     this.#status = 'running';
     this.#step(); // 重新挂起到当前指令（text/choice/wait 会重新发出事件）
   }

@@ -209,6 +209,17 @@ describe('simulateSnapshot', () => {
     expect(report.paths.some((path) => path.termination === 'budget-exhausted')).toBe(true);
   });
 
+  it('carries the step budget into each choice branch instead of resetting it', async () => {
+    const snapshot = await loadProjectSnapshot(fixtureStorage(), hasher);
+    const report = await simulateSnapshot(snapshot, { maxStepsPerPath: 2 });
+    expect(report.status).toBe('failed');
+    expect(report.paths).toHaveLength(2);
+    expect(report.paths.every((path) => path.error?.includes('单路径步数超过 2'))).toBe(true);
+    const sufficient = await simulateSnapshot(snapshot, { maxStepsPerPath: 3 });
+    expect(sufficient.status).toBe('passed');
+    expect(sufficient.paths).toHaveLength(2);
+  });
+
   it('runs only the explicitly selected branch', async () => {
     const snapshot = await loadProjectSnapshot(fixtureStorage(), hasher);
     const report = await runExplicitPath(snapshot, { sceneId: 'prologue', choices: [1] });

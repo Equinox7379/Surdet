@@ -1,6 +1,7 @@
 import * as crypto from 'node:crypto';
 import {
   mkdtemp,
+  chmod,
   mkdir,
   readFile,
   rename,
@@ -268,6 +269,48 @@ afterEach(async () => {
 });
 
 describe('project asset relocation authority', () => {
+  it.skipIf(process.platform === 'win32')('preserves POSIX text permissions through commit and undo', async () => {
+    const value = await fixture();
+    const scene = absolute(value.projectRoot, scenePath);
+    await chmod(scene, 0o640);
+    const planned = await plan(value);
+    const committed = await value.authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+    expect((await stat(scene)).mode & 0o777).toBe(0o640);
+    await value.authority.undo(operationId, {
+      receiptId: committed.receipt!.receiptId, receiptFingerprint: committed.receipt!.receiptFingerprint,
+    });
+    expect((await stat(scene)).mode & 0o777).toBe(0o640);
+  });
+
+  it('reports a missing rollback backup as recovery-required and preserves the surviving target', async () => {
+    const value = await fixture({ faultPoint: 'after_text_replace_before_journal' });
+    const planned = await plan(value);
+    await expect(value.authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint }))
+      .rejects.toBeInstanceOf(AssetRelocationInjectedTermination);
+    const record = (await value.store.read(operationId))!;
+    await unlink(absolute(value.projectRoot, record.journal.binaryItems[0]!.backupRelativePath));
+    const recovered = makeAuthority(value.paths);
+    await expect(recovered.recover(operationId, { action: 'rollback' }))
+      .rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    expect((await value.store.read(operationId))?.journal.status).toBe('RECOVERY_REQUIRED');
+    expect(await readFile(absolute(value.projectRoot, targetPath), 'utf8')).toBe('source-bytes');
+  });
+
+  it('preserves an unknown occupied text publication temporary file', async () => {
+    const fixtureValue = await fixture();
+    const planned = await plan(fixtureValue);
+    const temporary = absolute(fixtureValue.projectRoot, `content/scenario/.surdet-relocation-${operationId}-0.tmp`);
+    const foreignText = 'unknown text created outside this operation';
+    await writeFile(temporary, foreignText, { flag: 'wx' });
+    const before = await readFile(absolute(fixtureValue.projectRoot, scenePath), 'utf8');
+    await expect(fixtureValue.authority.commit(operationId, {
+      planFingerprint: planned.plan.planFingerprint,
+    })).rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+    expect(await readFile(temporary, 'utf8')).toBe(foreignText);
+    expect(await readFile(absolute(fixtureValue.projectRoot, scenePath), 'utf8')).toBe(before);
+    expect(await readFile(fixtureValue.sourceFile, 'utf8')).toBe('source-bytes');
+  });
+
   it('commits with identity-bearing receipt and undoes the complete relocation', async () => {
     const fixtureValue = await fixture();
     const beforeText = await readFile(absolute(fixtureValue.projectRoot, scenePath), 'utf8');

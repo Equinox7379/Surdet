@@ -4,6 +4,7 @@ import type { AuthoringObject, ProjectAssetCatalog, ProjectAssetFileFact } from 
 import type { ProjectSnapshot, ProjectSnapshotScene } from './project-snapshot.js';
 import { GALLERY_PATH, readGalleryDocument, type GalleryCgEntry } from './gallery-operations.js';
 import { AuthoringOperationError } from './change-session.js';
+import { timelineIdFromPath } from './timeline-identity.js';
 import {
   analyzeCharacterCompositionReferences,
   analyzeSceneCompositionReferences,
@@ -387,7 +388,7 @@ function addTimelineObjects(
   objects: AuthoringObject[],
   candidates: Map<string, string[]>,
 ): void {
-  const name = timelinePath.slice(timelinePath.lastIndexOf('/') + 1, -'.json'.length);
+  const name = timelineIdFromPath(timelinePath);
   const timelineRef = `timeline:${name}`;
   const timelineChildRefs: string[] = [];
   let definition: Record<string, unknown> | null = null;

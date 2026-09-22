@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import * as fs from 'node:fs';
+import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { cmdNew } from '../src/new.js';
@@ -76,6 +76,26 @@ describe('surdet new', () => {
     const engine = makeFakeEngine();
     expect(await cmdNew('Bad Name!', engine)).toBe(1);
     expect(await cmdNew('', engine)).toBe(1);
+  });
+
+  it('a failed template copy leaves no partial game and can be retried', async () => {
+    const engine = makeFakeEngine();
+    const before = fs.readFileSync(path.join(engine, 'package.json'), 'utf8');
+    const original = fs.copyFileSync;
+    let calls = 0;
+    const copy = vi.spyOn(fs, 'copyFileSync').mockImplementation((...args) => {
+      if (++calls === 2) throw new Error('injected copy failure');
+      return original(...args);
+    });
+    try {
+      expect(await cmdNew('retry', engine)).toBe(1);
+      expect(fs.readdirSync(path.join(engine, 'games'))).toEqual([]);
+      expect(fs.readFileSync(path.join(engine, 'package.json'), 'utf8')).toBe(before);
+    } finally {
+      copy.mockRestore();
+    }
+    expect(await cmdNew('retry', engine)).toBe(0);
+    expect(fs.existsSync(path.join(engine, 'games/retry/game.config.json'))).toBe(true);
   });
 
   it('目录已存在拒绝', async () => {

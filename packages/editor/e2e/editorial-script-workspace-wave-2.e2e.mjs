@@ -154,6 +154,7 @@ async function inspectLayout(page) {
       outline: inspect('.authoring-outline'),
       manuscript: inspect('.authoring-manuscript-column'),
       context: inspect('.authoring-context'),
+      dock: inspect('.v4-script-dock'),
       toggle: inspect('[data-action="toggle-authoring-context"]'),
       auxiliaryView: document.querySelector('.authoring-workbench')?.getAttribute('data-auxiliary-view') ?? null,
     };
@@ -165,48 +166,42 @@ function assertDesktopLayout(layout, expectedWidth) {
   assert(layout.workbench?.visible, `${expectedWidth}: workbench not visible`);
   assert(layout.outline?.visible, `${expectedWidth}: outline not visible`);
   assert(layout.manuscript?.visible, `${expectedWidth}: manuscript not visible`);
-  assert(layout.context?.visible, `${expectedWidth}: context not visible`);
+  assert(layout.dock?.visible, `${expectedWidth}: picture/inspector dock not visible`);
   assert(layout.pageWidth.client === layout.pageWidth.scroll, `${expectedWidth}: horizontal page overflow`);
-  assert(layout.outline.width >= 219 && layout.outline.width <= 265, `${expectedWidth}: outline width ${layout.outline.width}`);
-  assert(layout.context.width >= 271 && layout.context.width <= 337, `${expectedWidth}: context width ${layout.context.width}`);
-  assert(layout.manuscript.width >= 480, `${expectedWidth}: manuscript width ${layout.manuscript.width}`);
-  assert(layout.manuscript.width > layout.outline.width && layout.manuscript.width > layout.context.width, `${expectedWidth}: manuscript is not the largest region`);
+  assert(layout.outline.width >= 170 && layout.outline.width <= 330, `${expectedWidth}: outline width ${layout.outline.width}`);
+  assert(layout.dock.width >= 320, `${expectedWidth}: dock width ${layout.dock.width}`);
+  assert(layout.manuscript.width >= 280, `${expectedWidth}: manuscript width ${layout.manuscript.width}`);
   assert(!rectanglesOverlap(layout.outline, layout.manuscript), `${expectedWidth}: outline overlaps manuscript`);
-  assert(!rectanglesOverlap(layout.manuscript, layout.context), `${expectedWidth}: manuscript overlaps context`);
+  assert(!rectanglesOverlap(layout.manuscript, layout.dock), `${expectedWidth}: manuscript overlaps dock`);
 }
 
 function assertCompactOutlineLayout(layout) {
-  assert(layout.viewport.width === 1024, `compact viewport width ${layout.viewport.width}`);
-  assert(layout.outline?.visible, '1024: outline not visible');
-  assert(layout.manuscript?.visible, '1024: manuscript not visible');
-  assert(layout.context && !layout.context.visible, '1024: context should be replaced in outline mode');
-  assert(layout.toggle?.visible, '1024: in-flow context toggle not visible');
-  assert(layout.pageWidth.client === layout.pageWidth.scroll, '1024: horizontal page overflow');
-  assert(layout.outline.width >= 237 && layout.outline.width <= 239, `1024: outline width ${layout.outline.width}`);
-  assert(!rectanglesOverlap(layout.outline, layout.manuscript), '1024: outline overlaps manuscript');
+  assertDesktopLayout(layout, 1024);
+  assert(layout.context && !layout.context.visible, '1024: reference drawer should start closed');
+  assert(layout.toggle?.visible, '1024: reference drawer toggle not visible');
 }
 
 function assertCompactContextLayout(layout) {
   assert(layout.viewport.width === 1024, `compact context viewport width ${layout.viewport.width}`);
-  assert(layout.outline && !layout.outline.visible, '1024 context mode: outline should be replaced');
+  assert(layout.outline?.visible, '1024: opening references must retain the scene directory');
   assert(layout.context?.visible, '1024 context mode: context not visible');
   assert(layout.manuscript?.visible, '1024 context mode: manuscript not visible');
   assert(layout.pageWidth.client === layout.pageWidth.scroll, '1024 context mode: horizontal page overflow');
-  assert(layout.context.width >= 237 && layout.context.width <= 239, `1024: context width ${layout.context.width}`);
+  assert(layout.context.width > 0 && layout.context.width <= layout.dock.width, '1024: references must stay inside their dock');
   assert(!rectanglesOverlap(layout.context, layout.manuscript), '1024 context mode: context overlaps manuscript');
 }
 
 function assertZoomEquivalentLayout(layout, auxiliaryView) {
   assert(layout.viewport.width === 800, `zoom-equivalent viewport width ${layout.viewport.width}`);
   assert(layout.pageWidth.client === layout.pageWidth.scroll, '800: horizontal page overflow');
-  assert(layout.manuscript?.visible, '800: manuscript not visible');
   assert(layout.toggle?.visible, '800: auxiliary toggle not visible');
   if (auxiliaryView === 'outline') {
     assert(layout.outline?.visible, '800: outline not visible');
-    assert(layout.context && !layout.context.visible, '800: context should be hidden in outline mode');
-    assert(!rectanglesOverlap(layout.outline, layout.manuscript), '800: outline overlaps manuscript');
+    assert(layout.manuscript && !layout.manuscript.visible, '800: directory should replace the manuscript');
+    assert(!rectanglesOverlap(layout.outline, layout.dock), '800: outline overlaps dock');
   } else {
     assert(layout.outline && !layout.outline.visible, '800 context mode: outline should be hidden');
+    assert(layout.manuscript?.visible, '800: manuscript not restored when leaving directory');
     assert(layout.context?.visible, '800 context mode: context not visible');
     assert(!rectanglesOverlap(layout.context, layout.manuscript), '800 context mode: context overlaps manuscript');
   }
@@ -286,8 +281,8 @@ async function run() {
       assetCount: window.surdetEditorDebug?.state?.dirAssets?.length ?? null,
     }));
     assert(opened.projectName === 'starter', `project bar did not show Starter: ${opened.projectName}`);
-    assert(opened.sceneCount === 4, `expected 4 real Starter scenes, got ${opened.sceneCount}`);
-    assert(opened.timelineCount === 3, `expected 3 real Starter timelines, got ${opened.timelineCount}`);
+    assert(opened.sceneCount === 7, `expected 7 real Starter scenes, got ${opened.sceneCount}`);
+    assert(opened.timelineCount === 1, `expected 1 real Starter timeline, got ${opened.timelineCount}`);
     assert(opened.assetCount >= 6, `expected real Starter assets, got ${opened.assetCount}`);
     pass('real-starter-opened-through-picker', opened);
 
@@ -338,12 +333,12 @@ async function run() {
     layoutEvidence = { layout1440, layout1280, layout1024Outline, layout1024Context };
 
     await page.setViewportSize({ width: 800, height: 900 });
-    await page.locator('[data-action="toggle-authoring-context"]').click();
+    await page.locator('[data-workbench-panel="outline"]').click();
     const layout800Outline = await inspectLayout(page);
     assertZoomEquivalentLayout(layout800Outline, 'outline');
     await takeScreenshot(page, artifactDirectory, 'workspace-800-outline', screenshots);
     pass('layout-800-outline-accessible', layout800Outline);
-    await page.locator('[data-action="toggle-authoring-context"]').click();
+    await page.locator('[data-workbench-panel="context"]').click();
     const layout800Context = await inspectLayout(page);
     assertZoomEquivalentLayout(layout800Context, 'context');
     await takeScreenshot(page, artifactDirectory, 'workspace-800-context', screenshots);
@@ -364,9 +359,10 @@ async function run() {
     assert(sceneSwitch.manuscriptSceneId === 'ch01_02', 'manuscript did not follow scene selection');
     pass('scene-switch-keeps-single-scene-truth', sceneSwitch);
 
-    await page.locator('#search-input').fill('CalendarRunner');
+    await page.locator('.authoring-search-drawer > summary').click();
+    await page.locator('#search-input').fill('档案室的记录');
     await page.locator('#search-input').press('Enter');
-    const searchResult = page.locator('.search-item', { hasText: 'CalendarRunner' }).first();
+    const searchResult = page.locator('.search-item', { hasText: '档案室的记录' }).first();
     await searchResult.waitFor({ state: 'visible' });
     await searchResult.click();
     await page.locator('.manuscript-sheet[data-scene-id="ch02"]').waitFor({ state: 'visible' });
@@ -386,12 +382,12 @@ async function run() {
       };
     });
     assert(searchSelection.current === 'ch02', `search did not switch to ch02: ${searchSelection.current}`);
-    assert(searchSelection.line === '6', `search selected line ${searchSelection.line}`);
+    assert(searchSelection.line === '8', `search selected line ${searchSelection.line}`);
     assert(searchSelection.objectRef === searchSelection.selectedObjectRef, 'search selection diverged from shared selected object truth');
     assert(searchSelection.currentMarker === '当前段', 'search destination did not show full-surface current marker');
     pass('search-selects-real-object-in-manuscript', searchSelection);
 
-    const lineInput = page.locator('#editor .block[data-line="6"] .fields input.wide');
+    const lineInput = page.locator('#editor .block[data-line="8"] .v4-dialogue-input');
     const originalLine = await lineInput.inputValue();
     const originalSceneText = await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('ch02').text);
     const selectedBeforeEdit = searchSelection.selectedObjectRef;
@@ -415,11 +411,11 @@ async function run() {
     }));
     await page.locator('[data-action="undo"]').click();
     await page.waitForFunction((expected) => window.surdetEditorDebug.state.scenes.get('ch02').text === expected, originalSceneText);
-    const restoredLine = await page.locator('#editor .block[data-line="6"] .fields input.wide').inputValue();
+    const restoredLine = await page.locator('#editor .block[data-line="8"] .v4-dialogue-input').inputValue();
     assert(restoredLine === originalLine, 'undo did not restore the visible dialogue input');
     pass('manuscript-edit-and-undo', {
       sceneId: 'ch02',
-      line: 6,
+      line: 8,
       originalLine,
       editedMarkerObserved: true,
       selectionReconciledAfterIndexRebuild: reconciledSelection.selectedObjectRef === reconciledSelection.visibleObjectRef,
@@ -436,18 +432,18 @@ async function run() {
       itemCount: document.querySelectorAll('#asset-catalog [data-asset-key]').length,
       kinds: [...new Set([...document.querySelectorAll('#asset-catalog [data-asset-kind]')]
         .map((element) => element.getAttribute('data-asset-kind')))].sort(),
-      castleHallCount: document.querySelectorAll('#asset-catalog [data-asset-key="castle_hall"]').length,
+      harborCount: document.querySelectorAll('#asset-catalog [data-asset-kind="bg"][data-asset-key="harbor"]').length,
     }));
     assert(assetFacts.itemCount > 0, 'real Starter asset catalog is empty');
-    assert(assetFacts.castleHallCount === 1, `castle_hall catalog count ${assetFacts.castleHallCount}`);
-    await page.locator('#asset-catalog [data-asset-key="castle_hall"] [data-action="insert-asset"]').click();
+    assert(assetFacts.harborCount === 1, `harbor catalog count ${assetFacts.harborCount}`);
+    await page.locator('#asset-catalog [data-asset-kind="bg"][data-asset-key="harbor"] [data-action="insert-asset"]').click();
     const afterAssetInsert = await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('ch02').text);
-    assert(afterAssetInsert !== beforeAssetInsert && afterAssetInsert.includes('@bg castle_hall'), 'asset insertion did not update shared scene text');
+    assert(afterAssetInsert !== beforeAssetInsert && afterAssetInsert.includes('@bg harbor'), 'asset insertion did not update shared scene text');
     await page.waitForFunction(() => {
       const blocks = [...document.querySelectorAll('#editor .block')];
       const last = blocks.at(-1);
       return last !== undefined && [...last.querySelectorAll('input, textarea, select')]
-        .some((control) => 'value' in control && control.value.includes('castle_hall'));
+        .some((control) => 'value' in control && control.value.includes('harbor'));
     });
     const visibleInsertedAssetLine = await page.locator('#editor .block').last().evaluate((block) => ({
       line: block.getAttribute('data-line'),
@@ -458,7 +454,7 @@ async function run() {
     await page.waitForFunction((expected) => window.surdetEditorDebug.state.scenes.get('ch02').text === expected, beforeAssetInsert);
     pass('real-asset-catalog-insert-and-undo', {
       ...assetFacts,
-      insertedInstruction: '@bg castle_hall',
+      insertedInstruction: '@bg harbor',
       visibleInsertedAssetLine,
       sceneTextRestored: true,
     });

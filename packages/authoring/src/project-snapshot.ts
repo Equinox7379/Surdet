@@ -1,3 +1,4 @@
+import { compareCanonicalText } from './canonical-order.js';
 import { compileScene, type CompiledScene, type GrowthConfig } from '@surdet/core';
 import { parseProjectConfigDocument } from './config-document.js';
 import { parseSceneDocument } from './scene-document.js';
@@ -36,7 +37,9 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 export async function loadProjectSnapshot(storage: ProjectStorage, hasher: TextHasher): Promise<ProjectSnapshot> {
   const listed = await storage.listFiles();
-  const paths = [...new Set(listed.map(normalizeProjectPath).filter(isSnapshotPath))].sort((a, b) => a.localeCompare(b));
+  // Asset names are diagnosed by the asset catalog, not read as source files.
+  const paths = [...new Set(listed.filter(file => !file.startsWith('content/assets/'))
+    .map(normalizeProjectPath).filter(isSnapshotPath))].sort((a, b) => compareCanonicalText(a, b));
   const files = await Promise.all(paths.map((path) => storage.readText(path)));
   const canonicalFiles = files.map((file, index) => ({ ...file, path: paths[index]! }));
   const revisionInput = canonicalFiles.map((file) => `${file.path}\0${file.sha256}`).join('\n');

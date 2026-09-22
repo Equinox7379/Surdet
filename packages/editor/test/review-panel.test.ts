@@ -16,7 +16,9 @@ import {
   labelForObjectKind,
   labelForReviewState,
 } from '../src/review-model.js';
-import { renderReviewPanel } from '../src/panels/review-panel.js';
+import { openReviewPanelWorkspace, renderReviewPanel } from '../src/panels/review-panel.js';
+import * as reviewWorkspaceModule from '../src/review-workspace.js';
+import { state } from '../src/state.js';
 import {
   markReviewFixtureChanged,
   reloadOfficialResult,
@@ -317,6 +319,43 @@ afterEach(() => {
 });
 
 describe('Editor review panel', () => {
+  it('keeps the bound project name while opening review and labels unbound review sessions', async () => {
+    const original = {
+      dirName: state.dirName,
+      dirHandle: state.dirHandle,
+      reviewWorkspace: state.reviewWorkspace,
+      mainTab: state.mainTab,
+      selectedObjectRef: state.selectedObjectRef,
+      previewChoices: state.previewChoices,
+    };
+    const workspace = comparisonWorkspace();
+    const root = {} as FileSystemDirectoryHandle;
+    const openWorkspace = vi.spyOn(reviewWorkspaceModule, 'openReviewWorkspace').mockResolvedValue(workspace);
+    vi.stubGlobal('window', { showDirectoryPicker: vi.fn(async () => root) });
+    try {
+      state.dirName = '真实项目';
+      state.dirHandle = root;
+      await openReviewPanelWorkspace();
+      expect(state.dirName).toBe('真实项目');
+      expect(state.dirHandle).toBe(root);
+      expect(state.reviewWorkspace).toBe(workspace);
+
+      state.dirName = '';
+      state.dirHandle = null;
+      await openReviewPanelWorkspace();
+      expect(state.dirName).toBe(`审阅：${workspace.projection.task.title}`);
+      expect(state.dirHandle).toBeNull();
+    } finally {
+      openWorkspace.mockRestore();
+      state.dirName = original.dirName;
+      state.dirHandle = original.dirHandle;
+      state.reviewWorkspace = original.reviewWorkspace;
+      state.mainTab = original.mainTab;
+      state.selectedObjectRef = original.selectedObjectRef;
+      state.previewChoices = original.previewChoices;
+    }
+  });
+
   it('shows separate sources and complete unique content, then previews every whole or mix selection', async () => {
     vi.stubGlobal('document', documentStub);
     const workspace = wholeWorkspace();
@@ -928,6 +967,27 @@ describe('Editor review panel', () => {
 
     finishOperation!();
     await vi.waitFor(() => expect(container.querySelector(`[data-action="${action}"]`)?.disabled).toBe(false));
+  });
+
+  it('requires confirmation before replacing an explored result copy and retains it on cancel', async () => {
+    vi.stubGlobal('document', documentStub);
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('window', { confirm });
+    const workspace = resultWorkspace();
+    workspace.projectHandle = {} as FileSystemDirectoryHandle;
+    workspace.fixtureChanged = true;
+    const restore = vi.fn(async () => undefined);
+    const container = new FakeElement('div');
+    renderReviewPanel(container as unknown as HTMLElement, workspace, { onReloadOfficialResult: restore });
+    const button = container.querySelector('[data-action="reload-official-result"]')!;
+    expect(button.disabled).toBe(false);
+    button.click();
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(restore).not.toHaveBeenCalled();
+    expect(workspace.fixtureChanged).toBe(true);
+    confirm.mockReturnValue(true);
+    button.click();
+    await vi.waitFor(() => expect(restore).toHaveBeenCalledOnce());
   });
 
   it('keeps a healthy collapsed group explicit and names an empty dependency set', () => {

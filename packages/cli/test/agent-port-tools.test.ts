@@ -458,8 +458,8 @@ describe('Surdet Agent Port MCP tool projection', () => {
         units: Array<{ unitId: string; candidateId: string; primaryObject: string }>;
         conflicts: Array<{ conflictId: string; severity: string }>;
       };
-      const sharedA = comparison.units.find((unit) => unit.primaryObject === 'timeline:mcp_timeline_shared' && unit.candidateId === `cand-${firstRef.changeId}`);
-      const sharedB = comparison.units.find((unit) => unit.primaryObject === 'timeline:mcp_timeline_shared' && unit.candidateId === `cand-${secondRef.changeId}`);
+      const sharedA = comparison.units.find((unit) => unit.primaryObject === 'timeline:mcp_timeline_shared' && unit.candidateId === `cand-${firstRef.changeId}-${firstRef.capsuleId}`);
+      const sharedB = comparison.units.find((unit) => unit.primaryObject === 'timeline:mcp_timeline_shared' && unit.candidateId === `cand-${secondRef.changeId}-${secondRef.capsuleId}`);
       const independent = comparison.units.find((unit) => unit.primaryObject === 'timeline:mcp_timeline_independent');
       expect(sharedA).toBeDefined();
       expect(sharedB).toBeDefined();

@@ -813,6 +813,8 @@ export function canSaveReviewDecision(workspace: ReviewWorkspaceState): boolean 
     && preview.selectionKey === reviewDecisionDraftKey(workspace.decisionDraft);
 }
 
+const pendingPreviewRequests = new WeakMap<ReviewWorkspaceState, Promise<void>>();
+
 export async function previewReviewDecision(workspace: ReviewWorkspaceState, client?: ReviewTerminalClient): Promise<void> {
   const intent = workspace.decisionDraft.decisionIntent;
   if (workspace.projection.reviewVersion !== '2.0.0' || intent === undefined
@@ -823,7 +825,13 @@ export async function previewReviewDecision(workspace: ReviewWorkspaceState, cli
     selectionKey: reviewDecisionDraftKey(workspace.decisionDraft), status: 'loading',
   };
   workspace.decisionPreview = pending;
+  const previous = pendingPreviewRequests.get(workspace);
+  let release!: () => void;
+  const finished = new Promise<void>(resolve => { release = resolve; });
+  pendingPreviewRequests.set(workspace, finished);
   try {
+    if (previous) await previous;
+    if (workspace.decisionPreview !== pending || pending.selectionKey !== reviewDecisionDraftKey(workspace.decisionDraft)) return;
     const preview = await previewClient.previewDecision({ ...describeInput(workspace), decisionIntent: structuredClone(intent),
       ...(intent.mode === 'custom-mix' ? { customSelection: {
         selectedUnitIds: [...workspace.decisionDraft.selectedUnitIds],
@@ -846,6 +854,9 @@ export async function previewReviewDecision(workspace: ReviewWorkspaceState, cli
     pending.status = 'error';
     const code = error instanceof ReviewAuthorityClientError || error instanceof AuthoringOperationError ? error.code : '';
     const messages: Record<string, string> = {
+      PROJECT_BUSY: '项目正在完成其他操作，请稍后重新预览；当前选择已保留。',
+      CHANGE_BUSY: '工作变更正在处理，请稍后重新预览；当前选择已保留。',
+      REVIEW_BUSY: '审阅正在处理，请稍后重新预览；当前选择已保留。',
       REVIEW_DECISION_STALE: '这份审阅已过期，请打开重新生成的审阅。',
       COMPOSITION_PLAN_STALE: '项目已变化，这份审阅已过期，请打开重新生成的审阅。',
       REVIEW_PREVIEW_UNAVAILABLE: '当前入口没有连接项目，请从绑定项目入口打开审阅。',
@@ -856,6 +867,9 @@ export async function previewReviewDecision(workspace: ReviewWorkspaceState, cli
     pending.message = messages[code] ?? (error instanceof ReviewAuthorityClientError || error instanceof AuthoringOperationError
       ? error.message : '预览未完成，请重试。');
     throw error;
+  } finally {
+    release();
+    if (pendingPreviewRequests.get(workspace) === finished) pendingPreviewRequests.delete(workspace);
   }
 }
 

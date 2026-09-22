@@ -420,7 +420,7 @@ describe('whole-proposal preview and decision', () => {
     expect(canSaveReviewDecision(reopened)).toBe(false);
   });
 
-  it('ignores late replies across A to B to A and refuses a save while a changed draft is unpreviewed', async () => {
+  it('serializes A to B to A previews, skips obsolete queued selections, and refuses unpreviewed saves', async () => {
     const root = new MemoryDirectory('late'); installWorkspace(root, wholeProjection());
     const authority = authorityFor(root);
     const requests: Array<{ command: ReviewDecisionPreviewCommand; resolve: (preview: ReviewDecisionPreview) => void }> = [];
@@ -429,11 +429,13 @@ describe('whole-proposal preview and decision', () => {
     chooseWhole(workspace, 0); const oldA = previewReviewDecision(workspace);
     chooseWhole(workspace, 1); const oldB = previewReviewDecision(workspace);
     chooseWhole(workspace, 0); const currentA = previewReviewDecision(workspace);
+    expect(requests).toHaveLength(1);
     requests[0]!.resolve(await wholePreview(requests[0]!.command)); await oldA;
     expect(workspace.decisionPreview?.status).toBe('loading');
-    requests[2]!.resolve(await wholePreview(requests[2]!.command)); await currentA;
+    await oldB;
+    expect(requests).toHaveLength(2);
+    requests[1]!.resolve(await wholePreview(requests[1]!.command)); await currentA;
     const currentPreview = workspace.decisionPreview;
-    requests[1]!.resolve(await wholePreview(requests[1]!.command)); await oldB;
     expect(workspace.decisionPreview).toBe(currentPreview);
     expect(canSaveReviewDecision(workspace)).toBe(true);
     workspace.decisionDraft.selectedUnitIds.pop();

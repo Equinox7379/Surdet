@@ -791,18 +791,18 @@ function assertFocusProjection(evidence) {
   const neighbour = evidence.frames.find((frame) => frame.sceneId === 'ch01_02');
   assert(focused && neighbour && focused.memberIds.length > 2 && neighbour.memberIds.length === 1, 'focused scene is not expanded while its neighbour stays compact');
   assert(evidence.routes.every((route) => route.kind !== 'choice'), 'default focus projection rendered a choice route');
-  const requiredChoiceTexts = ['选择“沉默”后', '选择“拔出剑”后', '选择“转身离开”后'];
+  const requiredChoiceTexts = ['选择“先问凛和沈岳的关系”后', '选择“在窗口查退回章的理由”后', '选择“先收下信，等她自己开口”后'];
   for (const choiceText of requiredChoiceTexts) {
     assert(evidence.choiceDestinationTexts.includes(choiceText), `missing attached choice destination text: ${choiceText}`);
   }
-  assert(evidence.hasHumanCondition, 'conditional choice does not expose the human 有条件 marker');
+  assert(!evidence.hasHumanCondition, 'focus projection exposed a conditional choice outside the current route');
   for (const forbidden of ['@label', '[if:', 'host-entry', 'answer_']) {
     assert(!evidence.primaryText.includes(forbidden), `primary narrative text exposes technical token ${forbidden}`);
   }
 }
 
 function assertFocusRouteBundle(evidence) {
-  const jumps = evidence.routes.filter((route) => route.kind === 'jump' && route.to === 'l:ch01_02.start');
+  const jumps = evidence.routes.filter((route) => route.kind === 'jump' && route.to === 's:ch01_02');
   assert(jumps.length === 3, `focus projection rendered ${jumps.length}/3 jumps into ch01_02`);
   const terminalSegments = new Set(jumps.map((route) => route.terminalSegment));
   assert(terminalSegments.size === 1 && !terminalSegments.has(''), `three jumps do not share one terminal trunk: ${JSON.stringify([...terminalSegments])}`);
@@ -813,13 +813,13 @@ function assertOverviewProjection(evidence) {
   assert(evidence.activeViewAction === 'view-overview', `overview projection pressed ${evidence.activeViewAction}`);
   assert(evidence.mainHeading === '全局场景概览', `unexpected overview heading: ${evidence.mainHeading}`);
   assert(evidence.secondaryHeading === '其他入口', `unexpected secondary heading: ${evidence.secondaryHeading}`);
-  assert(JSON.stringify([...evidence.frames.map((frame) => frame.sceneId)].sort()) === JSON.stringify(['ch01_01', 'ch01_02', 'ch02', 'ch03_turn_event']), `overview is not a four-scene projection: ${evidence.frames.map((frame) => frame.sceneId).join(', ')}`);
+  assert(JSON.stringify([...evidence.frames.map((frame) => frame.sceneId)].sort()) === JSON.stringify(['ch01_01', 'ch01_02', 'ch02', 'ending_delivered', 'ending_open_door', 'ending_unanswered', 'playground']), `overview is not the current seven-scene projection: ${evidence.frames.map((frame) => frame.sceneId).join(', ')}`);
   assert(evidence.frames.every((frame) => frame.memberIds.length === 1), 'overview expanded internal story beats');
-  assert(evidence.returnMarkers.some((marker) => marker.targetSceneId === 'ch01_01' && marker.text === '↩ 返回 ch01_01'), `overview return marker is not ↩ 返回 ch01_01: ${JSON.stringify(evidence.returnMarkers)}`);
+  assert(evidence.returnMarkers.length === 3 && evidence.returnMarkers.every((marker) => marker.targetSceneId === 'playground' && marker.text === '↩ 返回 playground'), `overview return markers do not match the current playground loops: ${JSON.stringify(evidence.returnMarkers)}`);
   assert(!evidence.routes.some((route) => (
     (route.from === 's:ch02' || route.from?.startsWith('l:ch02.'))
       && (route.to === 's:ch01_01' || route.to?.startsWith('l:ch01_01.'))
-  )), 'overview rendered the long ch02 → ch01_01 return route');
+  )), 'overview rendered a non-existent ch02 → ch01_01 return route');
 }
 
 async function inspectRealFlowFacts(page) {
@@ -867,7 +867,8 @@ async function inspectRealFlowFacts(page) {
       labelStartText: document.querySelector('[data-node-id="l:ch01_01.start"]')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
       hostText: document.querySelector('[data-flow-node-kind="host-entry"]')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
       humanConditionPresent: [...workbench?.querySelectorAll('.flow-node-meta, .flow-route-chip-text, [aria-label]') ?? []]
-        .some((element) => `${element.textContent ?? ''} ${element.getAttribute?.('aria-label') ?? ''}`.includes('有条件')),
+        .some((element) => `${element.textContent ?? ''} ${element.getAttribute?.('aria-label') ?? ''}`.includes('有条件'))
+        || document.querySelector('[data-flow-condition="有条件"]') !== null,
     };
   });
 }
@@ -882,18 +883,17 @@ function assertRealFlowFacts(facts) {
   assert(facts.timelineCount === 0, 'flow mode duplicated timeline content');
   assert(facts.nodeKinds.scene === 2, `expected two focused Starter scenes, got ${facts.nodeKinds.scene}`);
   assert(facts.nodeKinds.label > 0, 'focused scene did not expose its story beats');
-  assert(facts.nodeKinds['host-entry'] === 1, `expected one focused project entry badge, got ${facts.nodeKinds['host-entry']}`);
+  assert(facts.nodeKinds['host-entry'] === 0, `unexpected focused project entry badge, got ${facts.nodeKinds['host-entry']}`);
   assert(facts.choiceCount === 0, `default focus projection rendered ${facts.choiceCount} choice routes`);
   assert(facts.focusableNodeCount === facts.nodeCount, 'not every real flow node is keyboard focusable');
   assert(facts.currentNodeIds.length === 1 && facts.currentNodeIds[0] === 's:ch01_01', 'current scene node is not explicit');
   assert(facts.statusSceneCount === 2, `status scene count ${facts.statusSceneCount}`);
-  assert(facts.statusChoiceCount === 3, `status choice count ${facts.statusChoiceCount}`);
+  assert(facts.statusChoiceCount === 13, `status choice count ${facts.statusChoiceCount}`);
   assert(facts.statusNodeCount > facts.nodeCount, `bounded focus projection did not hide any raw nodes: ${facts.statusNodeCount}/${facts.nodeCount}`);
-  assert(facts.statusEdgeCount === 22, `expected 22 real Starter graph connections, got ${facts.statusEdgeCount}`);
+  assert(facts.statusEdgeCount === 74, `expected 74 real Starter graph connections, got ${facts.statusEdgeCount}`);
   assert(facts.renderedEdgeCount > 0 && facts.renderedEdgeCount < facts.statusEdgeCount, `default narrative routes ${facts.renderedEdgeCount} did not suppress technical connections`);
   assert(/开场/.test(facts.labelStartText), `label node is not writer-facing: ${facts.labelStartText}`);
-  assert(/项目入口/.test(facts.hostText), `host node is not Chinese-first: ${facts.hostText}`);
-  assert(facts.humanConditionPresent, 'real conditional choice has no visible human marker');
+  assert(facts.hostText === '', `unexpected host-entry text in the current Starter project: ${facts.hostText}`);
   for (const term of ['场景分镜', '剧情段落', '项目入口', '顺序', '选项', '条件']) {
     assert(facts.legendText.includes(term), `legend omits ${term}`);
   }
@@ -1000,8 +1000,8 @@ async function run() {
     await page.goto(`${baseUrl}/index.html`, { waitUntil: 'networkidle' });
     opened = await openRealStarter(page);
     assert(opened.projectName === 'starter', `project bar did not show Starter: ${opened.projectName}`);
-    assert(opened.sceneCount === 4, `expected four real Starter scenes, got ${opened.sceneCount}`);
-    assert(opened.timelineCount === 3, `expected three real Starter timelines, got ${opened.timelineCount}`);
+    assert(opened.sceneCount === 7, `expected seven real Starter scenes, got ${opened.sceneCount}`);
+    assert(opened.timelineCount === 1, `expected one real Starter timeline, got ${opened.timelineCount}`);
     assert(opened.assetCount >= 6, `expected real Starter assets, got ${opened.assetCount}`);
     pass('real-starter-opened-through-picker', opened);
 
@@ -1058,7 +1058,7 @@ async function run() {
       frameOverlaps: focusMap.frameOverlaps,
       routeCount: focusMap.routes.length,
       routes: focusMap.routes,
-      jumpTerminalSegments: focusMap.routes.filter((route) => route.kind === 'jump' && route.to === 'l:ch01_02.start').map((route) => route.terminalSegment),
+      jumpTerminalSegments: focusMap.routes.filter((route) => route.kind === 'jump' && route.to === 's:ch01_02').map((route) => route.terminalSegment),
       nodeLabelCount: textGeometry.nodes.reduce((count, node) => count + node.labels.length, 0),
       routeChipCount: textGeometry.routeChips.length,
       labeledVisibleRouteCount: textGeometry.labeledVisibleRouteCount,
@@ -1106,14 +1106,15 @@ async function run() {
     assert(technicalMap.technicalPressed === 'true', 'technical route toggle did not expose its pressed state');
     assert(revealedRouteCount > defaultRouteCount, 'technical route toggle did not reveal more real routes');
     assert(technicalMap.unprojectableExplanationVisible, 'technical explanation for unprojectable connections is not visible');
-    assert(technicalMap.unprojectableExplanation.includes('另有 2 条连接因端点缺失未显示'), `unexpected unprojectable explanation: ${technicalMap.unprojectableExplanation}`);
+    assert(technicalMap.unprojectableExplanation.includes('另有 13 条连接因端点缺失未显示'), `unexpected unprojectable explanation: ${technicalMap.unprojectableExplanation}`);
     const unprojectableMatch = /另有\s+(\d+)\s+条连接因端点缺失未显示/.exec(technicalMap.unprojectableExplanation);
     assert(unprojectableMatch, `visible technical explanation has no unprojectable count: ${technicalMap.unprojectableExplanation}`);
     const unprojectableRawEdgeCount = Number(unprojectableMatch[1]);
-    assert(unprojectableRawEdgeCount === 2, `expected 2 raw Starter connections with missing endpoints, got ${unprojectableRawEdgeCount}`);
+    assert(unprojectableRawEdgeCount === 13, `expected 13 raw Starter connections with missing endpoints, got ${unprojectableRawEdgeCount}`);
     const projectableNarrativeRouteCount = flowFacts.statusEdgeCount - unprojectableRawEdgeCount;
     assert(revealedRouteCount === projectableNarrativeRouteCount, `technical route toggle revealed ${revealedRouteCount}/${projectableNarrativeRouteCount} projectable narrative routes`);
-    assert(technicalMap.frames.length === 4, `technical view rendered ${technicalMap.frames.length}/4 scene frames`);
+    assert(technicalMap.frames.length === 7, `technical view rendered ${technicalMap.frames.length}/7 scene frames`);
+    assert(technicalMap.hasHumanCondition, 'technical view did not expose the current playground conditional choices');
     assert(technicalMap.realNodeCount === flowFacts.statusNodeCount, `technical view rendered ${technicalMap.realNodeCount}/${flowFacts.statusNodeCount} projectable nodes`);
     await takeScreenshot(page, artifactDirectory, 'flow-technical-connections', screenshots);
     await page.locator('[data-flow-action="toggle-technical-edges"]').click();
@@ -1316,7 +1317,7 @@ async function run() {
     await enterFlowMode(page);
     await enableTechnicalConnections(page);
     await page.locator('[data-flow-action="fit-canvas"]').click();
-    await keyboardOpenFlowNode(page, 'l:ch01_01.answer_silence', 'Enter');
+    await keyboardOpenFlowNode(page, 'l:ch01_01.keep_moving', 'Enter');
     await page.locator('.manuscript-sheet[data-scene-id="ch01_01"]').waitFor({ state: 'visible' });
     await page.waitForFunction(() => window.surdetEditorDebug?.state?.current === 'ch01_01');
     const enterNavigation = await page.evaluate(() => ({
@@ -1325,7 +1326,7 @@ async function run() {
       selectedLine: document.querySelector('#editor .block[aria-selected="true"]')?.getAttribute('data-line') ?? null,
     }));
     assert(enterNavigation.mainTab === 'editor' && enterNavigation.current === 'ch01_01', 'Enter navigation did not open ch01_01');
-    assert(enterNavigation.selectedLine === '29', `Enter navigation selected zero-based line ${enterNavigation.selectedLine}`);
+    assert(enterNavigation.selectedLine === '40', `Enter navigation selected zero-based line ${enterNavigation.selectedLine}`);
 
     await enterFlowMode(page);
     await enableTechnicalConnections(page);
@@ -1485,7 +1486,7 @@ async function run() {
     assert(returnedFocusNodeId === 's:ch01_02', `Escape returned focus to ${returnedFocusNodeId}`);
     pass('context-menu-keyboard-complete', { triggerNodeId: 's:ch01_02', menuFocusSequence, returnedFocusNodeId });
 
-    const sourceSceneId = 'ch03_turn_event';
+    const sourceSceneId = 'ch01_02';
     const targetNodeId = 'l:ch01_01.start';
     // 撤销栈按当前场景路由。先通过真实节点导航把源场景设为当前，再返回流程画布建链，
     // 验证用户可理解的“打开源场景 → 建链 → 撤销”路径，而不是跨场景隐式撤销。

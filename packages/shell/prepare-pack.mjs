@@ -57,7 +57,27 @@ if (!fs.existsSync(src)) {
   process.exit(1);
 }
 
-fs.cpSync(src, dest, { recursive: true });
+const assetsSrc = path.join(gameDir, 'content', 'assets');
+// The desktop Player reads original content through the decrypting asset IPC.
+// Vite also emits byte-identical media for the Web entry; those copies must
+// not bypass encryption in a desktop package. Web dist itself stays intact.
+const protectedContentHashes = new Set();
+const mediaFile = /\.(?:png|jpe?g|webp|gif|avif|svg|mp3|ogg|wav|m4a|aac|flac|opus|mp4|webm|ogv|woff2?|ttf|otf)$/i;
+const collectProtectedContent = (dir) => {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) collectProtectedContent(full);
+    else if (entry.isFile() && mediaFile.test(entry.name)) {
+      protectedContentHashes.add(crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex'));
+    }
+  }
+};
+if (encrypted && fs.existsSync(assetsSrc)) collectProtectedContent(assetsSrc);
+fs.cpSync(src, dest, {
+  recursive: true,
+  filter: (file) => !encrypted || !mediaFile.test(file) || !fs.statSync(file).isFile()
+    || !protectedContentHashes.has(crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')),
+});
 
 // 游戏配置（窗口标题等，shell 主进程直接读取，不走渲染层）
 const cfgSrc = path.join(gameDir, 'game.config.json');
@@ -92,7 +112,6 @@ if (fs.existsSync(manifestSrc)) {
 }
 
 // ===== 素材：复制到 game/content/assets 并 AES-256-GCM 加密（SDAT2 封装） =====
-const assetsSrc = path.join(gameDir, 'content', 'assets');
 const assetsDest = path.join(dest, 'content', 'assets');
 if (fs.existsSync(assetsSrc)) {
   fs.cpSync(assetsSrc, assetsDest, { recursive: true });

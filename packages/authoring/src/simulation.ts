@@ -236,8 +236,7 @@ export function simulateSnapshot(
     return true;
   };
 
-  const drive = (choices: number[]): void => {
-    let steps = 0;
+  const drive = (choices: number[], steps = 0): void => {
     for (;;) {
       if (++steps > maxSteps) {
         finish(choices, 'failed', `单路径步数超过 ${maxSteps}，疑似死循环`);
@@ -286,7 +285,7 @@ export function simulateSnapshot(
           interpreter.loadSnapshot(cloneSnapshot(base));
           saveRoundtrips++;
           interpreter.choose(option.index);
-          drive([...choices, option.index]);
+          drive([...choices, option.index], steps);
         }
         return;
       } catch (error) {

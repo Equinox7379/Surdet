@@ -60,4 +60,19 @@ describe('editor preview Renderer v2 lifecycle contract', () => {
     expect(failureBody.indexOf('invalidatePreviewSession();')).toBeGreaterThan(failureBody.indexOf('if (previewDisposed) return;'));
     expect(failureBody.indexOf('invalidatePreviewSession();')).toBeLessThan(failureBody.indexOf('failPreviewTrace('));
   });
+
+  it('keeps Ctrl temporary skip owned by one hold and never reopens after auto-stop', () => {
+    const source = readFileSync(previewSourcePath, 'utf8');
+    const block = source.slice(
+      source.indexOf('let ctrlTempSkip = false'),
+      source.indexOf('// ===== system 事件', source.indexOf('let ctrlTempSkip = false')),
+    );
+
+    expect(block).toContain('e.repeat');
+    expect(block).toContain('ctrlTempSkip');
+    expect(block).toContain('if (controller.skipMode)');
+    expect(block).toContain('const releaseCtrlTempSkip');
+    expect(block).toMatch(/keyup[\s\S]*releaseCtrlTempSkip/);
+    expect(block).toMatch(/blur[\s\S]*releaseCtrlTempSkip/);
+  });
 });

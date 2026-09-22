@@ -240,6 +240,7 @@ async function writeExclusiveText(
   text: string,
   expectedSha256: string,
   expectedIdentity?: AssetRelocationFileEvidence,
+  mode = 0o600,
 ): Promise<AssetRelocationFileEvidence> {
   const bytes = Buffer.from(text, 'utf8');
   const actual = crypto.createHash('sha256').update(bytes).digest('hex');
@@ -250,6 +251,7 @@ async function writeExclusiveText(
     created = true;
     try {
       await handle.writeFile(bytes);
+      if (process.platform !== 'win32') await handle.chmod(mode);
       await handle.sync();
     } finally {
       await handle.close();
@@ -656,17 +658,20 @@ export class ProjectAssetRelocationAuthority {
     const workspace = await createAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
     for (let index = 0; index < record.textFiles.length; index += 1) {
       const file = record.textFiles[index]!;
+      const mode = (await fs.stat(absoluteAssetImportProjectPath(this.paths, file.path))).mode & 0o777;
       const preparedIdentity = await writeExclusiveText(
         absoluteAssetImportProjectPath(this.paths, file.preparedRelativePath),
         file.afterText,
         file.afterSha256,
         file.preparedIdentity,
+        mode,
       );
       const backupIdentity = await writeExclusiveText(
         absoluteAssetImportProjectPath(this.paths, file.backupRelativePath),
         file.beforeText,
         file.beforeSha256,
         file.backupIdentity,
+        mode,
       );
       if (sameJson(preparedIdentity, file.preparedIdentity)
         && sameJson(backupIdentity, file.backupIdentity)) continue;
@@ -965,7 +970,13 @@ export class ProjectAssetRelocationAuthority {
       await removeExactFile(displaced);
       return relocationEvidence(published);
     } finally {
-      await fs.rm(temporary, { force: true }).catch(() => undefined);
+      // Only discard the link belonging to this publication. In particular,
+      // the occupied-path error above must not delete the unknown occupant.
+      const remaining = await stableBinaryEvidence(temporary).catch(() => null);
+      if (remaining !== null && sameNodeIdentity(remaining.identity, durableEvidence.identity)
+        && remaining.sha256 === expectedResultSha256) {
+        await fs.rm(temporary, { force: true }).catch(() => undefined);
+      }
     }
   }
 
@@ -1495,7 +1506,7 @@ export class ProjectAssetRelocationAuthority {
         }
       }
     } catch (error) {
-      if (error instanceof AssetImportAuthorityError && error.code === 'IMPORT_UNDO_BLOCKED_CHANGED') throw error;
+      if (error instanceof AssetImportAuthorityError) throw error;
       throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', '撤销所需的操作备份缺失或身份不安全');
     }
   }
@@ -1712,24 +1723,32 @@ export class ProjectAssetRelocationAuthority {
       const phase = record.journal.status === 'UNDOING' ? 'undo'
         : record.journal.status === 'ROLLING_BACK' ? 'rollback'
           : record.journal.recoveryPhase ?? 'commit';
-      if (phase === 'undo') {
-        if (request.action === 'rollback') {
-          throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '撤销已经开始，只能继续完成');
+      try {
+        if (phase === 'undo') {
+          if (request.action === 'rollback') {
+            throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '撤销已经开始，只能继续完成');
+          }
+          if (record.journal.status === 'RECOVERY_REQUIRED') {
+            record = await this.update(record, { journal: { status: 'UNDOING', recoveryPhase: 'undo' } });
+          }
+          return this.detail(await this.continueUndo(record));
         }
+        if (record.receipt !== null) return this.detail(await this.finishCommit(record));
+        if (request.action === 'rollback' || phase === 'rollback') {
+          return this.detail(await this.continueRollback(record));
+        }
+        await this.assertRecoveryReferencesFresh(record);
         if (record.journal.status === 'RECOVERY_REQUIRED') {
-          record = await this.update(record, { journal: { status: 'UNDOING', recoveryPhase: 'undo' } });
+          record = await this.update(record, { journal: { status: 'PUBLISHING', recoveryPhase: 'commit' } });
         }
-        return this.detail(await this.continueUndo(record));
+        return this.detail(await this.continueCommit(record));
+      } catch (error) {
+        if (error instanceof AssetRelocationInjectedTermination || error instanceof AssetImportAuthorityError) throw error;
+        const recoveryPhase = phase === 'undo' ? 'undo'
+          : record.receipt !== null ? 'commit'
+            : request.action === 'rollback' || phase === 'rollback' ? 'rollback' : 'commit';
+        return this.enterRecovery(operationId, recoveryPhase, error instanceof Error ? error.message : '素材整理恢复失败');
       }
-      if (record.receipt !== null) return this.detail(await this.finishCommit(record));
-      if (request.action === 'rollback' || phase === 'rollback') {
-        return this.detail(await this.continueRollback(record));
-      }
-      await this.assertRecoveryReferencesFresh(record);
-      if (record.journal.status === 'RECOVERY_REQUIRED') {
-        record = await this.update(record, { journal: { status: 'PUBLISHING', recoveryPhase: 'commit' } });
-      }
-      return this.detail(await this.continueCommit(record));
     }));
   }
 

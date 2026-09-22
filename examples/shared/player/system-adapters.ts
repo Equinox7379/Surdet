@@ -68,6 +68,15 @@ function safeJump(options: ProjectSystemAdapterOptions, context: HostSystemConte
   }
 }
 
+function resumeScheduledScene(options: ProjectSystemAdapterOptions, context: HostSystemContext, sceneId: string): boolean {
+  const snapshot = options.interpreter.saveSnapshot();
+  if (!snapshot) return false;
+  options.onTurnResumeSnapshot?.(snapshot);
+  options.interpreter.hostJump(sceneId);
+  context.resume();
+  return true;
+}
+
 function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystemAdapter | null {
   if (!options.calendar) return null;
   const calendar = options.calendar;
@@ -176,13 +185,7 @@ function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystem
                 }
                 if (event?.scene && options.registry.has(event.scene)) {
                   options.renderer.hideMap();
-                  const snapshot = options.interpreter.saveSnapshot();
-                  if (snapshot) {
-                    options.onTurnResumeSnapshot?.(snapshot);
-                    options.interpreter.hostJump(event.scene);
-                    context.resume();
-                    return;
-                  }
+                  if (resumeScheduledScene(options, context, event.scene)) return;
                 }
                 context.resume();
               } catch (error) {
@@ -197,9 +200,10 @@ function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystem
 
       const event = scheduler?.dispatch(options.store) ?? null;
       if (event) {
-        log(options, `回合头事件触发：${event.id}`);
+        log(options, `回合头事件触发：${event.id}${event.scene ? `（演出 → ${event.scene}）` : ''}`);
         options.onAchievementsChanged?.();
       }
+      if (event?.scene && options.registry.has(event.scene) && resumeScheduledScene(options, context, event.scene)) return;
       renderMap();
     },
     reset: () => {

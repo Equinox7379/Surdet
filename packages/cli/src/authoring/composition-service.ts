@@ -132,6 +132,10 @@ export class CompositionService {
   /** 当前 project revision；短 project lease 内读取，保证 snapshot/revision 一致。 */
   async currentSnapshot(): Promise<ProjectSnapshot> {
     const storage = await NodeProjectStorage.open(this.projectRoot);
+    return this.leases.withProjectLease(storage.rootIdentity, () => this.readCurrentSnapshot(storage));
+  }
+
+  private async readCurrentSnapshot(storage: NodeProjectStorage): Promise<ProjectSnapshot> {
     const actualProjectIdentity = projectIdentityFromRoot(storage.rootIdentity);
     if (actualProjectIdentity !== this.projectIdentity) {
       throw new AuthoringOperationError('PROJECT_IDENTITY_MISMATCH', '当前项目 identity 与 composition service 不一致', {
@@ -140,9 +144,7 @@ export class CompositionService {
         projectRootIdentity: storage.rootIdentity,
       });
     }
-    return this.leases.withProjectLease(storage.rootIdentity, async () => {
-      return loadProjectSnapshot(storage, this.hasher);
-    });
+    return loadProjectSnapshot(storage, this.hasher);
   }
 
   async compare(candidateRefs: CandidateCapsuleRef[]): Promise<CompositionCompareResult> {
@@ -269,66 +271,69 @@ export class CompositionService {
     if (plan.dryRun.status !== 'passed') {
       throw new AuthoringOperationError('COMPOSITION_PLAN_INVALID', 'dry-run 未通过的计划不可执行', { planId: plan.planId });
     }
-    const snapshot = await this.currentSnapshot();
-    if (snapshot.revision !== plan.expectedProjectRevision) {
-      throw new AuthoringOperationError('COMPOSITION_PLAN_STALE',
-        `project revision 已离开计划基线：${plan.expectedProjectRevision}`,
-        { expectedProjectRevision: plan.expectedProjectRevision, currentRevision: snapshot.revision });
-    }
     const storage = await NodeProjectStorage.open(this.projectRoot);
-    const store = await NodeChangeStore.forProject(snapshot.rootIdentity, this.leases.dataRoot);
+    const target = await this.leases.withProjectLease(storage.rootIdentity, async () => {
+      const snapshot = await this.readCurrentSnapshot(storage);
+      if (snapshot.revision !== plan.expectedProjectRevision) {
+        throw new AuthoringOperationError('COMPOSITION_PLAN_STALE',
+          `project revision 已离开计划基线：${plan.expectedProjectRevision}`,
+          { expectedProjectRevision: plan.expectedProjectRevision, currentRevision: snapshot.revision });
+      }
+      const store = await NodeChangeStore.forProject(snapshot.rootIdentity, this.leases.dataRoot);
 
-    // 扫描阶段不需要 change lease；真正写入的 replay 阶段在 withChangeLease 内进行。
-    let existingTarget: { changeId: string; metadata: IntegrationMetadata } | undefined;
-    if (input.changeId === undefined) {
-      for (const directoryName of await listChangeDirectories(store.projectDirectory)) {
-        const head = await store.read(directoryName);
-        if (head === null) continue;
-        // 多会话并行的普通 OPEN change 合法存在；只有该计划的 integration change 可被精确恢复。
-        // 「session 已持普通 active change 时拒绝执行」是 MCP session 层不变量（Wave 5 Task 5）。
-        if (head.integration === undefined || head.integration.planId !== plan.planId) continue;
-        if (head.status !== 'OPEN') {
-          throw new AuthoringOperationError('CHANGE_NOT_OPEN', '该计划的原组合已经关闭或失效，未新建另一个结果', { changeId: head.changeId });
+      // Scan and creation share the project lease, so the same plan has one target.
+      let existingTarget: { changeId: string; metadata: IntegrationMetadata } | undefined;
+      if (input.changeId === undefined) {
+        for (const directoryName of await listChangeDirectories(store.projectDirectory)) {
+          const head = await store.read(directoryName);
+          if (head === null) continue;
+          // 多会话并行的普通 OPEN change 合法存在；只有该计划的 integration change 可被精确恢复。
+          // 「session 已持普通 active change 时拒绝执行」是 MCP session 层不变量（Wave 5 Task 5）。
+          if (head.integration === undefined || head.integration.planId !== plan.planId) continue;
+          if (head.status !== 'OPEN') {
+            throw new AuthoringOperationError('CHANGE_NOT_OPEN', '该计划的原组合已经关闭或失效，未新建另一个结果', { changeId: head.changeId });
+          }
+          if (head.integration.executeOperationId !== input.executeOperationId) {
+            throw new AuthoringOperationError('COMPOSITION_PLAN_INVALID',
+              'executeOperationId 与既有 integration change 不一致', { changeId: head.changeId });
+          }
+          if (existingTarget !== undefined) {
+            throw new AuthoringOperationError('COMPOSITION_PLAN_INVALID', '该计划存在多个组合，无法确认恢复目标，未继续执行');
+          }
+          existingTarget = { changeId: head.changeId, metadata: head.integration };
         }
-        if (head.integration.executeOperationId !== input.executeOperationId) {
-          throw new AuthoringOperationError('COMPOSITION_PLAN_INVALID',
-            'executeOperationId 与既有 integration change 不一致', { changeId: head.changeId });
+      } else {
+        const opened = await store.read(input.changeId);
+        if (opened === null || opened.status !== 'OPEN') {
+          throw new AuthoringOperationError('CHANGE_NOT_FOUND', `integration change 不存在或未开启：${input.changeId}`);
         }
-        if (existingTarget !== undefined) {
-          throw new AuthoringOperationError('COMPOSITION_PLAN_INVALID', '该计划存在多个组合，无法确认恢复目标，未继续执行');
+        if (opened.integration?.planId !== plan.planId
+          || opened.integration.executeOperationId !== input.executeOperationId) {
+          throw new AuthoringOperationError('COMPOSITION_PLAN_INVALID', 'change 不是该计划的 integration change');
         }
-        existingTarget = { changeId: head.changeId, metadata: head.integration };
+        existingTarget = { changeId: opened.changeId, metadata: opened.integration };
       }
-    } else {
-      const opened = await store.read(input.changeId);
-      if (opened === null || opened.status !== 'OPEN') {
-        throw new AuthoringOperationError('CHANGE_NOT_FOUND', `integration change 不存在或未开启：${input.changeId}`);
-      }
-      if (opened.integration?.planId !== plan.planId
-        || opened.integration.executeOperationId !== input.executeOperationId) {
-        throw new AuthoringOperationError('COMPOSITION_PLAN_INVALID', 'change 不是该计划的 integration change');
-      }
-      existingTarget = { changeId: opened.changeId, metadata: opened.integration };
-    }
 
-    let target: { changeId: string; metadata: IntegrationMetadata } | undefined = existingTarget;
-    const initialMetadata: IntegrationMetadata = target?.metadata ?? {
-      planId: plan.planId,
-      planFingerprint: plan.planFingerprint,
-      executeOperationId: input.executeOperationId,
-      sourceCapsules: plan.sourceCapsules,
-      includedUnitIds: plan.selectedUnitIds,
-      deduplicatedUnits: plan.deduplicatedUnits,
-      conflictResolutions: plan.conflictResolutions,
-      status: 'REPLAYING',
-      nextOperationIndex: 0,
-      replayedOperations: [],
-    };
-    // create 免租（AuthoringService.begin 同款）；后续 CAS 更新必须持 change lease。
-    if (target === undefined) {
-      const seeded = await beginChange(snapshot, store, storage, undefined, { integration: initialMetadata });
-      target = { changeId: seeded.record.changeId, metadata: initialMetadata };
-    }
+      let target: { changeId: string; metadata: IntegrationMetadata } | undefined = existingTarget;
+      const initialMetadata: IntegrationMetadata = target?.metadata ?? {
+        planId: plan.planId,
+        planFingerprint: plan.planFingerprint,
+        executeOperationId: input.executeOperationId,
+        sourceCapsules: plan.sourceCapsules,
+        includedUnitIds: [...new Set(plan.replayOperations.map(operation => operation.sourceUnitId))].sort(),
+        deduplicatedUnits: plan.deduplicatedUnits,
+        conflictResolutions: plan.conflictResolutions,
+        status: 'REPLAYING',
+        nextOperationIndex: 0,
+        replayedOperations: [],
+      };
+      // Publish the one target before releasing the project lease.
+      if (target === undefined) {
+        const seeded = await beginChange(snapshot, store, storage, undefined, { integration: initialMetadata });
+        target = { changeId: seeded.record.changeId, metadata: initialMetadata };
+      }
+      return target;
+    });
     return NodeChangeStore.withChangeLease(target.changeId, async (leased) => {
       const reopened = await leased.read(target.changeId);
       if (reopened === null || reopened.integration === undefined) {
