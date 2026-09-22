@@ -5,12 +5,14 @@ import { EventBus } from '@surdet/core';
 import { Interpreter } from '@surdet/core';
 import { SceneRegistry } from '@surdet/core';
 import { VariableStore } from '@surdet/core';
+import { TimelineRegistry } from '@surdet/core';
 import type { CoreEventMap } from '@surdet/core';
 import { DialogueLayer } from '../../src/layers/dialogue/dialogue-layer.js';
 import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
 import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
 import { PresentationController } from '../../src/runtime/presentation-controller.js';
 import { createPresentationPorts } from '../../src/runtime/presentation-ports.js';
+import { NULL_AUDIO, type AudioHandle } from '../../src/types.js';
 
 interface IntegrationStage extends Record<string, unknown> {
   readonly text: { speaker: string | null; value: string }[];
@@ -31,7 +33,7 @@ interface Harness {
   dispose(): void;
 }
 
-function makeHarness(): Harness {
+function makeHarness(audio?: AudioHandle): Harness {
   const lifecycle = new RenderLifecycle();
   const assets = new RenderAssetRegistry({ lifecycle });
   const root = new Container();
@@ -94,17 +96,18 @@ function makeHarness(): Harness {
     needsUpdate: () => false,
   } as IntegrationStage;
   const ports = createPresentationPorts(stage as never, { dialogueLayer: dialogue });
-  const controller = new PresentationController(ports.commands, ports.queries, undefined, {
+  const controller = new PresentationController(ports.commands, ports.queries, audio, {
     commands: ports.commands,
     queries: ports.queries,
     validateStagePresentation: ports.validateStagePresentation,
+    onWaitEnd: () => interpreter.finishWait(),
   });
   const bus = new EventBus<CoreEventMap>();
   const off = controller.connect(bus);
   const registry = new SceneRegistry();
   const interpreter = new Interpreter(new VariableStore([]), bus, registry);
   interpreter.setPresentationHooks({
-    snapshot: () => controller.snapshotPresentation(),
+    snapshot: (context) => controller.snapshotPresentation(context),
     validate: (payload) => controller.validatePresentation(payload),
     restore: (payload) => controller.restorePresentation(payload),
   });
@@ -141,6 +144,71 @@ function nvlEntries(harness: Harness): { speaker: string | null; text: string }[
 }
 
 describe('Renderer presentation save/load integration', () => {
+  it('restores saved music and ambience through the presentation hook and rejects invalid audio before mutation', () => {
+    let playback: { bgm: string | null; ambience: string | null } = { bgm: 'rain', ambience: 'street' };
+    const audio: AudioHandle = {
+      ...NULL_AUDIO,
+      snapshotPlayback: () => ({ ...playback }),
+      restorePlayback: snapshot => { playback = { ...snapshot }; },
+      stopAll: () => { playback = { bgm: null, ambience: null }; },
+    };
+    const harness = makeHarness(audio);
+    try {
+      harness.interpreter.start('nvl_roundtrip');
+      const saved = JSON.parse(JSON.stringify(harness.interpreter.saveSnapshot())) as never;
+      playback = { bgm: 'later-room', ambience: null };
+      harness.interpreter.loadSnapshot(saved);
+      expect(playback).toEqual({ bgm: 'rain', ambience: 'street' });
+      const invalid = JSON.parse(JSON.stringify(saved));
+      invalid.presentation.payload.audio.bgm = 42;
+      const { meta: _beforeMeta, ...before } = harness.interpreter.saveSnapshot()!;
+      expect(() => harness.interpreter.loadSnapshot(invalid)).toThrow(/audio/);
+      const { meta: _afterMeta, ...after } = harness.interpreter.saveSnapshot()!;
+      expect(after).toEqual(before);
+      expect(playback).toEqual({ bgm: 'rain', ambience: 'street' });
+    } finally { harness.dispose(); }
+  });
+
+  it('keeps a restored blocking timeline suspended until its completion, without replaying its start', () => {
+    const harness = makeHarness();
+    try {
+      const timelines = new TimelineRegistry();
+      timelines.register({ version: 1, id: 'intro', durationMs: 1000, tracks: [{ kind: 'camera', cues: [] }] });
+      harness.interpreter.setTimelineCatalog(timelines);
+      harness.registry.register(compileScene('@timeline intro @blocking\n时间轴之后。\n@end', 'timeline.gal', 'timeline'));
+      let starts = 0;
+      const texts: string[] = [];
+      harness.bus.on('timeline', () => { starts++; });
+      harness.bus.on('text', p => texts.push(p.value));
+      harness.interpreter.start('timeline');
+      harness.controller.update(350);
+      const saved = JSON.parse(JSON.stringify(harness.interpreter.saveSnapshot())) as never;
+      harness.interpreter.loadSnapshot(saved);
+      expect(harness.interpreter.status).toBe('awaiting-timer');
+      expect(texts).toEqual([]);
+      expect(starts).toBe(1);
+      expect(() => harness.controller.update(651)).not.toThrow();
+      expect(harness.interpreter.status).toBe('awaiting-advance');
+      expect(texts).toEqual(['时间轴之后。']);
+      expect(starts).toBe(1);
+    } finally { harness.dispose(); }
+  });
+
+  it('retains the last NVL line when the saved instruction is a wait, not text', () => {
+    const harness = makeHarness();
+    try {
+      harness.registry.register(compileScene('@nvl on\n凛：等待前的正文。\n@wait 100000\n凛：下一行。\n@end', 'wait.gal', 'wait'));
+      harness.interpreter.start('wait');
+      harness.interpreter.advance();
+      const before = nvlEntries(harness);
+      const saved = JSON.parse(JSON.stringify(harness.interpreter.saveSnapshot())) as never;
+      harness.interpreter.loadSnapshot(saved);
+      expect(harness.interpreter.status).toBe('awaiting-timer');
+      expect(nvlEntries(harness)).toEqual(before);
+      expect(before).toEqual([{ speaker: '凛', text: '等待前的正文。' }]);
+    } finally { harness.dispose(); }
+  });
+
   it('loads an old save without outer presentation into neutral dialogue and replays the current line', () => {
     const harness = makeHarness();
     try {

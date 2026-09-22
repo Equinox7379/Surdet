@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ProjectAssetFileFact } from '../src/contracts.js';
 import { buildProjectAssetIntelligence } from '../src/asset-intelligence.js';
+import { buildAssetCatalog } from '../src/asset-catalog.js';
 import type { ProjectFile, ProjectStorage, TextHasher } from '../src/project-storage.js';
 import { loadProjectSnapshot, type ProjectSnapshot } from '../src/project-snapshot.js';
 
@@ -104,6 +105,18 @@ function asset(result: ReturnType<typeof buildProjectAssetIntelligence>, sourceP
 }
 
 describe('shared asset intelligence projection', () => {
+  it('diagnoses literal backslashes in asset names without preventing source snapshot loading', async () => {
+    const invalid = 'content/assets/bg/foo\\bar.png';
+    const nested = 'content/assets/bad\\directory/image.png';
+    const snapshot = await snapshotFor({ ...fixtureContents, [invalid]: 'binary', [nested]: 'binary' });
+    expect(snapshot.scenes).toHaveLength(1);
+    const catalog = buildAssetCatalog([invalid, nested, 'content/assets/bg/valid.png'], snapshot);
+    expect(catalog.backgrounds.map(entry => entry.sourcePath)).toEqual(['content/assets/bg/valid.png']);
+    for (const sourcePath of [invalid, nested]) {
+      expect(asset(catalog.intelligence!, sourcePath).issues).toContain('ASSET_NAME_INVALID');
+    }
+  });
+
   it('retains every physical kind, strict portrait identity, optional bytes, and stable file identities', async () => {
     const result = build(await fixtureSnapshot(), fixtureFacts);
     const physical = result.items.filter((item) => item.physical);

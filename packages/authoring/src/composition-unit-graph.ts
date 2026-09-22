@@ -1,3 +1,4 @@
+import { compareCanonicalText } from './canonical-order.js';
 import type {
   CompositionDependencyCycle,
   CompositionDependencyEdge,
@@ -20,15 +21,15 @@ export interface PrimaryObjectOperationGroup {
 }
 
 function operationOrder(left: PrimaryObjectOperationFact, right: PrimaryObjectOperationFact): number {
-  return left.sequence - right.sequence || left.operationId.localeCompare(right.operationId);
+  return left.sequence - right.sequence || compareCanonicalText(left.operationId, right.operationId);
 }
 
 function edgeOrder(left: CompositionDependencyEdge, right: CompositionDependencyEdge): number {
   return left.consumerSequence - right.consumerSequence
     || left.producerSequence - right.producerSequence
-    || left.objectRef.localeCompare(right.objectRef)
-    || left.fromPrimaryObject.localeCompare(right.fromPrimaryObject)
-    || left.toPrimaryObject.localeCompare(right.toPrimaryObject);
+    || compareCanonicalText(left.objectRef, right.objectRef)
+    || compareCanonicalText(left.fromPrimaryObject, right.fromPrimaryObject)
+    || compareCanonicalText(left.toPrimaryObject, right.toPrimaryObject);
 }
 
 export function groupCompositionOperationsByPrimaryObject(
@@ -42,7 +43,7 @@ export function groupCompositionOperationsByPrimaryObject(
   }
   return [...grouped.entries()]
     .map(([primaryObject, operationSequences]) => ({ primaryObject, operationSequences: [...operationSequences] }))
-    .sort((left, right) => left.primaryObject.localeCompare(right.primaryObject));
+    .sort((left, right) => compareCanonicalText(left.primaryObject, right.primaryObject));
 }
 
 /** Find SCCs with more than one primary object and retain their internal edges. */
@@ -50,14 +51,14 @@ export function findPrimaryObjectDependencyCycles(
   edges: readonly CompositionDependencyEdge[],
 ): CompositionDependencyCycle[] {
   const nodes = [...new Set(edges.flatMap((edge) => [edge.fromPrimaryObject, edge.toPrimaryObject]))]
-    .sort((left, right) => left.localeCompare(right));
+    .sort((left, right) => compareCanonicalText(left, right));
   const adjacency = new Map<string, string[]>();
   for (const node of nodes) adjacency.set(node, []);
   for (const edge of edges) {
     const targets = adjacency.get(edge.fromPrimaryObject)!;
     if (!targets.includes(edge.toPrimaryObject)) targets.push(edge.toPrimaryObject);
   }
-  for (const targets of adjacency.values()) targets.sort((left, right) => left.localeCompare(right));
+  for (const targets of adjacency.values()) targets.sort((left, right) => compareCanonicalText(left, right));
 
   let nextIndex = 0;
   const indices = new Map<string, number>();
@@ -88,7 +89,7 @@ export function findPrimaryObjectDependencyCycles(
       component.push(value);
       if (value === node) break;
     }
-    components.push(component.sort((left, right) => left.localeCompare(right)));
+    components.push(component.sort((left, right) => compareCanonicalText(left, right)));
   };
 
   for (const node of nodes) if (!indices.has(node)) connect(node);
@@ -101,7 +102,7 @@ export function findPrimaryObjectDependencyCycles(
         edges: edges.filter((edge) => members.has(edge.fromPrimaryObject) && members.has(edge.toPrimaryObject)).sort(edgeOrder),
       };
     })
-    .sort((left, right) => left.primaryObjects.join('\0').localeCompare(right.primaryObjects.join('\0')));
+    .sort((left, right) => compareCanonicalText(left.primaryObjects.join('\0'), right.primaryObjects.join('\0')));
 }
 
 export function buildPrimaryObjectDependencyGraph(

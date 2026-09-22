@@ -16,9 +16,9 @@ export function connectInterpreterPresentation(options: {
   };
 
   options.interpreter.setPresentationHooks({
-    snapshot: () => {
+    snapshot: (context) => {
       ensureConnected();
-      return options.renderer.queries.presentation.snapshot();
+      return options.renderer.queries.presentation.snapshot(context);
     },
     validate: (payload) => {
       ensureConnected();
@@ -26,7 +26,7 @@ export function connectInterpreterPresentation(options: {
     },
     restore: (payload) => {
       ensureConnected();
-      options.renderer.commands.presentation.restore(payload);
+      return options.renderer.commands.presentation.restore(payload);
     },
   });
 

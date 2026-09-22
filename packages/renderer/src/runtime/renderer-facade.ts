@@ -1,3 +1,4 @@
+import type { PresentationRestoreResult, PresentationSnapshotContext } from '@surdet/core';
 import type { BacklogEntry } from '../backlog.js';
 import type { BattleHandlers, BattleView } from '../battle-view.js';
 import type { GalleryItemView } from '../gallery.js';
@@ -127,8 +128,8 @@ export interface RendererStagePort extends PresentationStage {
 export interface RendererControllerPort extends Omit<PresentationController, 'snapshotPresentation' | 'restorePresentation' | 'clearPresentation' | 'backlogEntries' | 'backlogSearchQuery'> {
   /** @internal True when the controller's presentation transaction also projects the stage. */
   presentationOwnsStage?: boolean;
-  snapshotPresentation?: () => unknown;
-  restorePresentation?: (snapshot: unknown) => void;
+  snapshotPresentation?: (context?: PresentationSnapshotContext) => unknown;
+  restorePresentation?: (snapshot: unknown) => PresentationRestoreResult | void;
   /** @internal Clear only Controller-owned presentation timelines. */
   clearPresentation?: () => void;
   backlogEntries?: () => readonly BacklogEntry[];
@@ -750,10 +751,11 @@ export class RendererFacade {
         this.#validatePresentation(snapshot);
         const method = this.#controller.restorePresentation ?? this.#stage.restorePresentation;
         if (!method) this.#missing('presentation', 'restore');
-        method.call(this.#controller.restorePresentation ? this.#controller : this.#stage, cloneOpaque(snapshot));
+        const result = method.call(this.#controller.restorePresentation ? this.#controller : this.#stage, cloneOpaque(snapshot));
         if (!this.#controller.presentationOwnsStage) {
           this.#stage.restorePresentation?.(cloneOpaque(snapshot));
         }
+        return result;
       },
       clear: () => {
         this.#ensureActive('presentation', 'clear');
@@ -813,9 +815,9 @@ export class RendererFacade {
       theme: () => this.#theme,
     };
     const presentationQueries: PresentationQueries = {
-      snapshot: () => {
+      snapshot: (context) => {
         this.#ensureQueryActive('presentation', 'snapshot');
-        const snapshot = this.#controller.snapshotPresentation?.() ?? this.#stage.snapshotPresentation?.() ?? null;
+        const snapshot = this.#controller.snapshotPresentation?.(context) ?? this.#stage.snapshotPresentation?.() ?? null;
         return cloneOpaque(snapshot);
       },
       canCaptureRollbackCheckpoint: () => {

@@ -38,6 +38,10 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function candidateIdForRef(ref) {
+  return `cand-${ref.changeId}-${ref.capsuleId}`;
+}
+
 const RUN_ISSUE_CHANNELS = Object.freeze([
   'errors',
   'protocolErrors',
@@ -332,14 +336,14 @@ function collectLockResidues(locksRoot, output) {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const full = path.join(current, entry.name);
-      if (entry.name === 'changes' || entry.name === 'projects' || entry.name === 'stale') {
+      if (['changes', 'projects', 'workspaces', 'reviews', 'stale'].includes(entry.name)) {
         if (entry.name !== 'stale') stack.push(full);
       } else output.push(full);
     }
   }
 }
 
-function findActiveLeaseDirectories(dataDir) {
+export function findActiveLeaseDirectories(dataDir) {
   const active = [];
   const stack = [dataDir];
   while (stack.length > 0) {
@@ -557,7 +561,7 @@ async function freePort() {
   return port;
 }
 
-async function startVite(harness) {
+async function startVite(harness, projectRoot, dataDir) {
   assert(fs.existsSync(editorIndex), `Editor build entry missing: ${editorIndex}`);
   assert(fs.existsSync(editorPreview), `Editor preview entry missing: ${editorPreview}`);
   const viteEntry = path.join(repoRoot, 'node_modules/vite/bin/vite.js');
@@ -565,6 +569,8 @@ async function startVite(harness) {
   const port = await freePort();
   const child = spawn(process.execPath, [viteEntry, 'preview', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: editorRoot,
+    env: { ...process.env, SURDET_AGENT_DATA_DIR: dataDir, SURDET_EDITOR_PROJECT_LAUNCHER: '1',
+      SURDET_EDITOR_PROJECT_ROOT: projectRoot, SURDET_EDITOR_ASSET_IMPORT_DATA_ROOT: path.join(dataDir, 'asset-import') },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   harness.server = child;
@@ -736,7 +742,7 @@ async function startBrowser(harness, url, comparisonRoot) {
   await page.addInitScript(fakeFileSystemInit, { roots: { comparison: fileMapForDirectory(comparisonRoot) } });
   harness.activeBrowserRootKey = 'comparison';
   await page.goto(`${url}/index.html`, { waitUntil: 'networkidle' });
-  await page.getByRole('button', { name: '打开审阅任务' }).waitFor();
+  await page.getByRole('button', { name: '打开审阅任务', exact: true }).waitFor();
   return page;
 }
 
@@ -753,13 +759,16 @@ async function dumpBrowserRoot(page, key, destination) {
   const expected = new Set(files.map((file) => file.path));
   const existing = fileMapForDirectory(destination).map((file) => file.path);
   for (const relative of existing) {
-    if (!expected.has(relative)) fs.rmSync(path.join(destination, ...relative.split('/')), { force: true });
+    if (relative.startsWith('result/project/') && !expected.has(relative)) fs.rmSync(path.join(destination, ...relative.split('/')), { force: true });
   }
   for (const file of files) {
+    // Receipts and terminal records are written only by the real authority.
+    if (!file.path.startsWith('result/project/')) continue;
     const target = path.join(destination, ...file.path.split('/'));
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, Buffer.from(file.bytes, 'base64'));
   }
+  await addBrowserRoot(page, key, destination);
   return hashTree(destination);
 }
 
@@ -885,6 +894,9 @@ async function readReadonlyControls(page) {
     '[data-choice-unit]',
     '[data-choice-exclude]',
     '[data-choice-regenerate]',
+    '[data-mix-unit]',
+    '[data-mix-base]',
+    '[data-adopt-candidate]',
     '[data-action="save-decision"]',
     '[data-action="approve-result"]',
     '[data-action="return-result"]',
@@ -893,7 +905,7 @@ async function readReadonlyControls(page) {
       ?? (node.hasAttribute('data-choice-unit') ? 'choose-unit'
         : node.hasAttribute('data-choice-exclude') ? 'exclude-all' : 'regenerate-candidate'),
     unitId: node.getAttribute('data-choice-unit'),
-    disabled: node instanceof HTMLButtonElement ? node.disabled : null,
+    disabled: node instanceof HTMLButtonElement || node instanceof HTMLInputElement ? node.disabled : null,
     selected: node.getAttribute('data-choice-selected'),
     text: node.textContent,
   })));
@@ -1094,12 +1106,31 @@ async function runEditorComparison(
   timelineUnitB,
 ) {
   const page = await startBrowser(harness, editorUrl, comparisonRoot);
-  await page.getByRole('button', { name: '打开审阅任务' }).click();
-  await page.getByRole('heading', { name: '比较结果' }).waitFor();
+  await page.getByRole('button', { name: '打开审阅任务', exact: true }).click();
+  await page.locator('[data-review-main="comparison"]').waitFor();
   assert(await page.locator('[data-tech-details]').evaluate((node) => !node.open), 'technical details are not folded by default');
+  const logicalIdentical = resolveSafeGroupFixtureSources(projection, fixtureCandidates, ['A', 'D'], `scene:${alphaScene}`);
+  if (projection.reviewVersion === '2.0.0') {
+    await page.getByRole('heading', { name: '比较完整方案', exact: true }).waitFor();
+    const sourceA = logicalIdentical.sources.find((source) => source.fixtureLabel === 'A');
+    const sourceD = logicalIdentical.sources.find((source) => source.fixtureLabel === 'D');
+    await page.locator(`[data-adopt-candidate="${sourceA.candidateId}"]`).click();
+    await page.locator('[data-action="save-decision"]:enabled').waitFor();
+    await page.locator('[data-action="custom-mix"]').click();
+    await page.locator(`[data-mix-unit="${sceneUnitB.unitId}"]`).check();
+    // Keep the second identical variable's provenance without selecting its
+    // competing Alpha scene. The B timeline remains an implicit dependency.
+    const candidateD = projection.candidates.find((candidate) => candidate.candidateId === sourceD.candidateId);
+    for (const unit of candidateD.verifiedFacts.units.filter((unit) => unit.primaryObject.startsWith('variable:'))) {
+      await page.locator(`[data-mix-unit="${unit.unitId}"]`).check();
+    }
+    await page.locator('[data-action="save-decision"]:enabled').waitFor();
+    assert(await page.locator(`[data-mix-unit="${chosenUnitId}"]`).isChecked(), 'mixed decision lost A');
+    assert(!await page.locator(`[data-mix-unit="${timelineUnitB.unitId}"]`).isChecked(), 'dependency became a direct choice');
+    await page.locator('[data-review-section="decision-preview"]').getByText(`时间轴 ${timelineUnitB.primaryObject.replace(/^timeline:/, '')}`, { exact: false }).first().waitFor();
+  } else {
   await waitForVisibleMatch(page.getByText('安全结果', { exact: true }), 'safe result is not visible');
   await waitForVisibleMatch(page.getByText('需要处理的冲突', { exact: true }), 'conflict section is not visible');
-  const logicalIdentical = resolveSafeGroupFixtureSources(projection, fixtureCandidates, ['A', 'D'], `scene:${alphaScene}`);
   const safeGroup = page.locator(`[data-safe-group="${logicalIdentical.safeGroup.groupId}"]`);
   await safeGroup.waitFor({ state: 'visible' });
   assert(await safeGroup.count() === 1, `safe group ${logicalIdentical.safeGroup.groupId} is not uniquely rendered`);
@@ -1139,6 +1170,7 @@ async function runEditorComparison(
     assert(targetIndex >= 0, `chosenUnitId ${chosenUnitId} was not rendered for conflict ${conflictId}`);
     await choices.nth(targetIndex).click();
   }
+  }
   const save = page.getByRole('button', { name: '保存我的决定' });
   assert(await save.isEnabled(), 'Editor did not enable the per-item human decision action');
   await save.click();
@@ -1154,8 +1186,8 @@ async function runEditorComparison(
     error.browserFailureEvidence = await captureBrowserFailureEvidence(page, 'comparison');
     throw error;
   }
-  const decisionWriteEvidence = await captureDecisionWriteEvidence(page, saveOutcome.statusText);
   const tree = await dumpBrowserRoot(page, 'comparison', comparisonRoot);
+  const decisionWriteEvidence = await captureDecisionWriteEvidence(page, saveOutcome.statusText);
   const decisionPath = path.join(comparisonRoot, 'decision.json');
   assert(fs.existsSync(decisionPath), 'Editor did not create decision receipt');
   const decision = readJson(decisionPath);
@@ -1163,13 +1195,15 @@ async function runEditorComparison(
   assert(decision.decisionId.length > 0 && decision.decisionFingerprint.length === 64, 'decision identity is incomplete');
   assert(tree.fileCount > 2, 'comparison workspace write-back did not persist a receipt');
   const previousWorkbench = await page.locator('.review-workbench').elementHandle();
-  await page.getByRole('button', { name: '打开审阅任务' }).click();
+  await page.getByRole('button', { name: '打开审阅任务', exact: true }).click();
   const { receiptMarker, readonlyControls } = await waitForNewDecisionReceiptMarker(page, previousWorkbench);
   await page.waitForFunction(() => document.querySelector('#status')?.textContent === '已打开审阅任务');
   assert(receiptMarker.present === true, 'reopened comparison did not render the persisted decision receipt');
-  assert(receiptMarker.decisionId === decision.decisionId, 'reopened decisionId differs from the original disk receipt');
+  if (projection.reviewVersion !== '2.0.0') assert(receiptMarker.decisionId === decision.decisionId, 'reopened decisionId differs from the original disk receipt');
   assert(receiptMarker.decisionFingerprint === decision.decisionFingerprint, 'reopened decisionFingerprint differs from the original disk receipt');
-  const restoredChoice = page.locator(`[data-choice-unit="${chosenUnitId}"][data-choice-selected="true"]`);
+  const restoredChoice = projection.reviewVersion === '2.0.0'
+    ? page.locator(`[data-mix-unit="${chosenUnitId}"]:checked`)
+    : page.locator(`[data-choice-unit="${chosenUnitId}"][data-choice-selected="true"]`);
   await restoredChoice.waitFor({ state: 'visible' });
   assert(await restoredChoice.count() === 1, 'reopened comparison did not restore the exact selected choice');
   assert(readonlyControls.length > 0 && readonlyControls.every((control) => control.disabled === true),
@@ -1193,8 +1227,8 @@ async function runEditorComparison(
 async function runEditorResult(harness, page, resultRoot, resultReview, projectRoot, fixtureSources) {
   await addBrowserRoot(page, 'result', resultRoot);
   harness.activeBrowserRootKey = 'result';
-  await page.getByRole('button', { name: '打开审阅任务' }).click();
-  await page.getByRole('heading', { name: '结果检查' }).waitFor();
+  await page.getByRole('button', { name: '打开审阅任务', exact: true }).click();
+  await page.locator('[data-review-main="result"]').waitFor();
   await waitForVisibleMatch(page.getByText('结果已准备，请检查', { exact: true }), 'result review status is not visible');
   assert(await page.locator('[data-tech-details]').evaluate((node) => !node.open), 'result technical details are not folded by default');
   const resultBody = page.locator('.review-main');
@@ -1202,7 +1236,7 @@ async function runEditorResult(harness, page, resultRoot, resultReview, projectR
     assert(await hasVisibleMatch(resultBody.getByText(`方案 ${source.displayOrdinal}`, { exact: false })),
       `result review does not visibly preserve logical fixture ${source.fixtureLabel} as方案 ${source.displayOrdinal}`);
   }
-  const previewButton = page.getByRole('button', { name: '预览这个结果' });
+  const previewButton = page.locator('[data-action="preview-result"]');
   const previewMessageStartIndex = await installPreviewMessageCollector(page);
   try {
     await previewButton.click();
@@ -1261,9 +1295,13 @@ async function runEditorResult(harness, page, resultRoot, resultReview, projectR
     const tracePanel = reviewPreviewHost.locator('.preview-trace');
     await tracePanel.waitFor({ state: 'visible' });
     assert(await tracePanel.count() === 1, 'review preview causal trace panel is absent or non-unique');
-    assert(await page.locator('.review-task-list').evaluate((node) => getComputedStyle(node).overflowY === 'auto'), 'task list is not independently scrollable');
     assert(await page.locator('.review-main').evaluate((node) => getComputedStyle(node).overflowY === 'auto'), 'review body is not independently scrollable');
-    assert(await page.locator('.review-details').evaluate((node) => getComputedStyle(node).overflowY === 'auto'), 'causal panel is not independently scrollable');
+    if (resultReview.projection.reviewVersion === '2.0.0') {
+      assert(await page.locator('.review-result-technical').evaluate((node) => !node.open), 'whole-result technical details are not folded');
+    } else {
+      assert(await page.locator('.review-task-list').evaluate((node) => getComputedStyle(node).overflowY === 'auto'), 'task list is not independently scrollable');
+      assert(await page.locator('.review-details').evaluate((node) => getComputedStyle(node).overflowY === 'auto'), 'causal panel is not independently scrollable');
+    }
 
     const previewEvidence = buildReviewedPreviewEvidence({
       sceneId: traceStart.sceneId,
@@ -1419,13 +1457,13 @@ async function runWorkflow(modeName) {
         assert(typeof comparisonFingerprint === 'string' && comparisonFingerprint.length === 64, 'comparison fingerprint missing');
         selectionConflict = compared.conflicts.find((conflict) => conflict.severity === 'selection-required');
         assert(selectionConflict !== undefined, 'selection-required conflict missing');
-        sceneUnitA = compared.units.find((unit) => unit.primaryObject === `scene:${alphaScene}` && unit.candidateId === `cand-${fixtures.candidates.A.changeId}`);
-        sceneUnitC = compared.units.find((unit) => unit.primaryObject === `scene:${alphaScene}` && unit.candidateId === `cand-${fixtures.candidates.C.changeId}`);
-        sceneUnitD = compared.units.find((unit) => unit.primaryObject === `scene:${alphaScene}` && unit.candidateId === `cand-${fixtures.candidates.D.changeId}`);
-        variableUnitA = compared.units.find((unit) => unit.primaryObject === 'variable:flag.alpha' && unit.candidateId === `cand-${fixtures.candidates.A.changeId}`);
-        variableUnitD = compared.units.find((unit) => unit.primaryObject === 'variable:flag.alpha' && unit.candidateId === `cand-${fixtures.candidates.D.changeId}`);
-        sceneUnitB = compared.units.find((unit) => unit.primaryObject === `scene:${betaScene}` && unit.candidateId === `cand-${fixtures.candidates.B.changeId}`);
-        timelineUnitB = compared.units.find((unit) => unit.primaryObject === 'timeline:beta_opening' && unit.candidateId === `cand-${fixtures.candidates.B.changeId}`);
+        sceneUnitA = compared.units.find((unit) => unit.primaryObject === `scene:${alphaScene}` && unit.candidateId === candidateIdForRef(fixtures.candidates.A));
+        sceneUnitC = compared.units.find((unit) => unit.primaryObject === `scene:${alphaScene}` && unit.candidateId === candidateIdForRef(fixtures.candidates.C));
+        sceneUnitD = compared.units.find((unit) => unit.primaryObject === `scene:${alphaScene}` && unit.candidateId === candidateIdForRef(fixtures.candidates.D));
+        variableUnitA = compared.units.find((unit) => unit.primaryObject === 'variable:flag.alpha' && unit.candidateId === candidateIdForRef(fixtures.candidates.A));
+        variableUnitD = compared.units.find((unit) => unit.primaryObject === 'variable:flag.alpha' && unit.candidateId === candidateIdForRef(fixtures.candidates.D));
+        sceneUnitB = compared.units.find((unit) => unit.primaryObject === `scene:${betaScene}` && unit.candidateId === candidateIdForRef(fixtures.candidates.B));
+        timelineUnitB = compared.units.find((unit) => unit.primaryObject === 'timeline:beta_opening' && unit.candidateId === candidateIdForRef(fixtures.candidates.B));
         assert(sceneUnitA && sceneUnitC && sceneUnitD && variableUnitA && variableUnitD && sceneUnitB && timelineUnitB, 'comparison omitted required A/B/C/D units');
         const review = resultOf(await callTool(port, 'surdet_review_prepare_comparison', { candidateRefs: refs() }), 'review.prepare-comparison');
         comparisonReview = review;
@@ -1476,7 +1514,7 @@ async function runWorkflow(modeName) {
     });
 
     await milestone('editor-decision-receipt-visible', async () => {
-      editorUrl = await startVite(harness);
+      editorUrl = await startVite(harness, projectRoot(), dataDir());
       const comparisonRoot = projectReviewRoot(fixtures.prepared, projectIdentity(), comparisonReview.reviewId);
       comparisonRootPath = comparisonRoot;
       const result = await runEditorComparison(
@@ -1647,7 +1685,7 @@ async function runWorkflow(modeName) {
 
     await milestone('exploration-invalidates-approval', async () => {
       const page = harness.page;
-      const before = await page.getByRole('button', { name: '批准这个计划' }).isEnabled();
+      const before = await page.locator('[data-action="approve-result"]').isEnabled();
       assert(before, 'approval was disabled before exploration');
       const explorationPath = 'result/project/content/scenario/exploration.gal';
       const beforeFiles = await page.evaluate(() => window.__surdetDumpFakeRoot('result'));
@@ -1667,7 +1705,7 @@ async function runWorkflow(modeName) {
       assert(explorationTreeAfter.sha256 !== explorationTreeBefore.sha256, 'exploration did not change the reviewed result project tree identity');
       await page.getByRole('button', { name: '检查探索修改' }).click();
       await page.getByText('你正在查看探索性修改，批准已禁用。', { exact: true }).waitFor();
-      assert(!(await page.getByRole('button', { name: '批准这个计划' }).isEnabled()), 'approval remained enabled after exploration');
+      assert(!(await page.locator('[data-action="approve-result"]').isEnabled()), 'approval remained enabled after exploration');
       return {
         approvalBefore: before,
         approvalAfter: false,
@@ -1680,13 +1718,14 @@ async function runWorkflow(modeName) {
     await milestone('fresh-approval-inspected', async () => {
       const page = harness.page;
       const previousWorkbench = await page.locator('.review-workbench').elementHandle();
+      page.once('dialog', (dialog) => dialog.accept());
       await page.getByRole('button', { name: '重新加载正式结果' }).click();
       if (previousWorkbench !== null) {
         await page.waitForFunction((node) => !node.isConnected, previousWorkbench);
       }
       await page.waitForFunction(() => document.querySelector('#status')?.textContent === '已重新加载正式结果');
-      assert(await page.getByRole('button', { name: '批准这个计划' }).isEnabled(), 'approval did not re-enable after official reload');
-      await page.getByRole('button', { name: '批准这个计划' }).click();
+      assert(await page.locator('[data-action="approve-result"]').isEnabled(), 'approval did not re-enable after official reload');
+      await page.locator('[data-action="approve-result"]').click();
       await page.waitForFunction(() => document.querySelector('#status')?.textContent === '已批准这个计划');
       const resultRoot = projectReviewRoot(fixtures.prepared, projectIdentity(), resultReview.reviewId);
       await dumpBrowserRoot(page, 'result', resultRoot);
@@ -1696,7 +1735,7 @@ async function runWorkflow(modeName) {
       assert(approval.reviewerChannel === 'surdet-editor-local' && approval.approvalFingerprint.length === 64, 'approval identity is incomplete');
       const diskBefore = readFileIdentity(approvalPath);
       const approvedWorkbench = await page.locator('.review-workbench').elementHandle();
-      await page.getByRole('button', { name: '打开审阅任务' }).click();
+      await page.getByRole('button', { name: '打开审阅任务', exact: true }).click();
       const { receiptMarker, readonlyControls, globalStatus } = await waitForNewResultReceiptMarker(page, approvedWorkbench);
       await page.waitForFunction(() => document.querySelector('#status')?.textContent === '已打开审阅任务');
       const fakeRootSnapshot = await page.evaluate(() => window.__surdetDumpFakeRoot('result'));

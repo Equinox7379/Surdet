@@ -1,4 +1,4 @@
-import * as fs from 'node:fs';
+import fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -55,21 +55,33 @@ export async function cmdNew(name: string, engineRoot?: string): Promise<number>
     console.error(`目录已存在：${target}`);
     return 1;
   }
-  fs.mkdirSync(target, { recursive: true });
-  copyDir(TEMPLATE_DIR, target);
-
-  // 改写包名
-  const pkgPath = path.join(target, 'package.json');
-  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { name: string };
-  pkg.name = `surdet-${name}`;
-  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
-
-  // 注册 workspace（games/*）
   const rootPkgPath = path.join(root, 'package.json');
-  const rootPkg = JSON.parse(fs.readFileSync(rootPkgPath, 'utf8')) as { workspaces: string[] };
-  if (!rootPkg.workspaces.includes('games/*')) {
-    rootPkg.workspaces.push('games/*');
-    fs.writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2) + '\n');
+  let staging: string | undefined;
+  let published = false;
+  try {
+    const rootPkg = JSON.parse(fs.readFileSync(rootPkgPath, 'utf8')) as { workspaces: string[] };
+    if (!Array.isArray(rootPkg.workspaces)) throw new Error('引擎根缺少 workspaces 数组');
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    staging = fs.mkdtempSync(path.join(path.dirname(target), `.${name}-`));
+    copyDir(TEMPLATE_DIR, staging);
+    const pkgPath = path.join(staging, 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { name: string };
+    pkg.name = `surdet-${name}`;
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+    if (fs.existsSync(target)) throw new Error(`目录已存在：${target}`);
+    fs.renameSync(staging, target);
+    staging = undefined;
+    published = true;
+    if (!rootPkg.workspaces.includes('games/*')) {
+      rootPkg.workspaces.push('games/*');
+      fs.writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2) + '\n');
+    }
+  } catch (error) {
+    console.error(`${published ? '完整项目已创建，但 workspace 注册失败' : '创建项目失败'}：${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  } finally {
+    // Only this invocation's unpublished, uniquely named staging directory.
+    if (staging !== undefined) fs.rmSync(staging, { recursive: true, force: true });
   }
 
   console.log(`✔ 已创建游戏项目：${target}`);

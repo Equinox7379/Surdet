@@ -682,11 +682,17 @@ export async function commitChange(
       if (!entry.replaced) continue;
       try {
         const original = change.record.baseContents[entry.path];
-        if (original === undefined) {
-          if (storage.removePath === undefined) throw new Error(`无法恢复新文件：${entry.path}`);
-          await storage.removePath(entry.path);
-        } else {
-          await storage.restoreText(entry.path, original);
+        const current = await storage.exists(entry.path) ? await storage.readText(entry.path) : null;
+        // Earlier successful replacements can also be edited before a later
+        // write fails. Recovery owns only its published bytes, not the path.
+        if (current?.sha256 !== entry.originalSha256) {
+          if (current?.sha256 !== entry.targetSha256) throw new Error(`无法确认回滚文件身份：${entry.path}`);
+          if (original === undefined) {
+            if (storage.removePath === undefined) throw new Error(`无法恢复新文件：${entry.path}`);
+            await storage.removePath(entry.path);
+          } else {
+            await storage.restoreText(entry.path, original);
+          }
         }
         entry.restored = true;
         await writeJournal('REPLACING');

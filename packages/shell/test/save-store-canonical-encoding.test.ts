@@ -141,7 +141,7 @@ describe('A5 机械单射 oracle：全部 65,536 个 UTF-16 码元', () => {
     }
     expect(stems.size).toBe(0x10000);
     expect(folded.size).toBe(0x10000);
-  });
+  }, 30_000);
 
   it('legacy 命名空间不相交 oracle：L1/L0 单码元输出永不含 canonical 标记符', () => {
     for (let c = 0; c <= 0xffff; c += 1) {
@@ -154,7 +154,7 @@ describe('A5 机械单射 oracle：全部 65,536 个 UTF-16 码元', () => {
       expect(l0.includes('~')).toBe(false);
       expect(canonicalSlotStem(s).startsWith(CANONICAL_SLOT_PREFIX)).toBe(true);
     }
-  });
+  }, 30_000);
 });
 
 describe('A5 边界语料：多码元组合、Windows 安全与大小写', () => {

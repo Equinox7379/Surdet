@@ -16,6 +16,8 @@ import { openAssetImportAuthorityPaths } from '../src/asset-import-authority/fil
 import { ProjectSceneLifecycleAuthority, SceneLifecycleInjectedTermination } from '../src/asset-import-authority/scene-lifecycle-authority.js';
 import { ProjectMutationLeaseContext } from '../src/editor-workspace-authority/project-mutation-lease-context.js';
 
+// Real persisted MCP/import workflows may cross the default 5s on Windows disks.
+vi.setConfig({ testTimeout: 30_000 });
 const roots: string[] = [];
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/Y9sAAAAASUVORK5CYII=', 'base64');
 afterEach(async () => {
@@ -89,7 +91,7 @@ it('stages via the public port without project writes, resumes and commits exact
   const catalog = result(await apply.invoke('project.assets', {}));
   expect(catalog.backgrounds).toContainEqual(expect.objectContaining({ key: 'night' }));
   await apply.close();
-});
+}, 30_000);
 
 it('rejects source traversal and ungranted source identifiers through structured public errors', async () => {
   const f = await fixture();
@@ -403,6 +405,9 @@ async function interruptedUpload() {
 }
 
 it('recovers an interrupted unpublished upload through MCP using its manifest and permits a fresh import', async () => {
+  // This scenario keeps the human workspace connected; grace expiry is tested
+  // separately. Slow filesystem work must not silently change that premise.
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now());
   const f = await interruptedUpload();
   const failed: any = await f.resumed.invoke('asset.import.inspect', { operationId: f.request.operationId });
   expect(failed).toMatchObject({ ok: false, error: { code: 'IMPORT_RECOVERY_REQUIRED', details: {

@@ -60,6 +60,16 @@ function enqueue<T>(current: Connection, operation: () => Promise<T>): Promise<T
   return pending;
 }
 
+/** Asset/scene requests share the same project lease as preview and polling. */
+export function enqueueEditorAssetRequest<T>(operation: () => Promise<T>): Promise<T> {
+  const current = connection;
+  if (current === null) return operation();
+  return enqueue(current, () => {
+    if (connection !== current) throw new Error('工作区已经切换，未继续素材请求。');
+    return operation();
+  });
+}
+
 const PREVIEW_BUSY_DELAYS_MS = [100, 200, 400, 800] as const;
 
 export function editorWorkspaceStatus() {
@@ -77,6 +87,7 @@ export function editorWorkspaceStatus() {
 export function editorPreviewPublisher(root: FileSystemDirectoryHandle | null) {
   const current = connection;
   if (current === null || current.root !== root || current.lost || current.baseline === null) return null;
+  let invalidatedGeneration = -1;
   return {
     baseline: current.baseline,
     sources: () => enqueue(current, async () => {
@@ -87,25 +98,28 @@ export function editorPreviewPublisher(root: FileSystemDirectoryHandle | null) {
       if (connection !== current) throw new AssetImportClientError('PREVIEW_OBSERVATION_STALE', '项目已切换。', 'after-refresh');
       return current.client.previewContent({ ...stateFor(current), target });
     }),
-    publish: (preview: PreviewPublishInput) => enqueue(current, async () => {
-      if (connection !== current) throw new AssetImportClientError('PREVIEW_OBSERVATION_STALE', '项目已切换，请重新播放。', 'after-refresh');
-      const state = stateFor(current);
-      for (let attempt = 0; ; attempt += 1) {
-        if (connection !== current || (attempt > 0
-          && (current.lost || stateFor(current).workspaceGeneration !== state.workspaceGeneration))) {
-          throw new AssetImportClientError('PREVIEW_OBSERVATION_STALE', '项目或工作区状态已变化，请重新播放。', 'after-refresh');
+    publish: (preview: PreviewPublishInput) => {
+      if (preview.action === 'invalidate') invalidatedGeneration = Math.max(invalidatedGeneration, preview.previewGeneration);
+      return enqueue(current, async () => {
+        const state = stateFor(current);
+        for (let attempt = 0; ; attempt += 1) {
+          if (connection !== current
+            || (preview.action !== 'invalidate' && preview.previewGeneration <= invalidatedGeneration)
+            || (attempt > 0 && (current.lost || stateFor(current).workspaceGeneration !== state.workspaceGeneration))) {
+            throw new AssetImportClientError('PREVIEW_OBSERVATION_STALE', '项目、工作区或预览已变化，未发布迟到的观察。', 'after-refresh');
+          }
+          try { return await current.client.preview({ ...state, preview }); }
+          catch (error) {
+            const delay = PREVIEW_BUSY_DELAYS_MS[attempt];
+            if (preview.action === 'invalidate' || !(error instanceof AssetImportClientError)
+              || error.code !== 'PROJECT_BUSY' || error.retryDisposition !== 'after-refresh' || delay === undefined) throw error;
+            // A reader may briefly own the project lease. Keep this exact message at the
+            // head of the queue; unknown responses and stale observations are not retried.
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
         }
-        try { return await current.client.preview({ ...state, preview }); }
-        catch (error) {
-          const delay = PREVIEW_BUSY_DELAYS_MS[attempt];
-          if (preview.action === 'invalidate' || !(error instanceof AssetImportClientError)
-            || error.code !== 'PROJECT_BUSY' || error.retryDisposition !== 'after-refresh' || delay === undefined) throw error;
-          // A reader may briefly own the project lease. Keep this exact message at the
-          // head of the queue; unknown responses and stale observations are not retried.
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-      }
-    }),
+      });
+    },
   };
 }
 

@@ -9,7 +9,6 @@ import {
   EventBus,
   VariableStore,
   SaveManager,
-  assertValidSnapshot,
   QUICK_SLOT,
   AUTO_SLOT,
   CalendarRunner,
@@ -74,11 +73,13 @@ import {
 import { createSystemAdapters } from './system-adapters.js';
 import { ResolvedAudio } from '../../shared/resolved-audio.js';
 import { createSettingsStorage } from '../../shared/settings-storage.js';
+import { createBrowserSaveStorage, gameStoragePrefix } from '../../shared/player/browser-save-storage.js';
 import { createConfiguredFontJobs } from '../../shared/font-jobs.js';
 import { installSceneHotReload } from '../../shared/scene-hmr.js';
 import { sceneFiles } from './scene-hmr-boundary.js';
 import type { PlayerOverlay, PlayerShellController } from '@surdet/host';
 import gameConfig from '../game.config.json';
+import gamePackage from '../package.json';
 import calendarConfig from '../content/config/calendar.json';
 import combatConfig from '../content/config/combat.json';
 import eventsConfig from '../content/config/events.json';
@@ -242,7 +243,8 @@ async function main(): Promise<void> {
     readonly sourceResolved: boolean;
   } | null = null;
 
-  const settings = new SettingsStore(createSettingsStorage('zero'));
+  const browserPrefix = gameStoragePrefix(gamePackage.name);
+  const settings = new SettingsStore(createSettingsStorage('zero', browserPrefix));
   await settings.load();
 
   // Backlog + Renderer v2 Runtime（设置投影：文本速度/自动停留/音量）
@@ -373,8 +375,9 @@ async function main(): Promise<void> {
     const menuSnapshot = projection.menu;
     const menuOverlay = menuSnapshot?.overlay;
     if (menuOverlay?.type === 'title') {
-      const items = ['new', 'load', 'gallery', 'settings', 'quit'];
-      items.forEach((id, index) => add(`title:${id}`, 390, 350 + index * 52, 500, 48));
+      for (const item of menuSnapshot?.titleTargets ?? []) {
+        add(`title:${item.id}`, item.x, item.y, item.width, item.height);
+      }
       return freezeDebug(targets);
     }
     if (menuOverlay?.type === 'system-menu') {
@@ -608,45 +611,7 @@ async function main(): Promise<void> {
   const desktopSave = window.surdetSave;
   const saveStorage: SaveStorage = desktopSave
     ? createElectronSaveStorage(desktopSave)
-    : {
-        read: (slot) => {
-          const raw = localStorage.getItem(`surdet:save:${slot}`);
-          if (raw === null) return null;
-          const parsed: unknown = JSON.parse(raw);
-          assertValidSnapshot(parsed, 'legacy');
-          return parsed;
-        },
-        write: (slot, data) => {
-          const key = `surdet:save:${slot}`;
-          const current = localStorage.getItem(key);
-          if (current !== null) localStorage.setItem(`${key}.bak`, current);
-          localStorage.setItem(key, JSON.stringify(data));
-        },
-        delete: (slot) => {
-          const key = `surdet:save:${slot}`;
-          localStorage.removeItem(key);
-          localStorage.removeItem(`${key}.bak`);
-        },
-        list: () =>
-          Object.keys(localStorage)
-            .filter((k) => k.startsWith('surdet:save:') && !k.endsWith('.bak'))
-            .map((k) => k.slice('surdet:save:'.length)),
-        listBackupMeta: () => Object.keys(localStorage)
-          .filter((k) => k.startsWith('surdet:save:') && k.endsWith('.bak'))
-          .map((key) => {
-            const parsed: unknown = JSON.parse(localStorage.getItem(key)!);
-            assertValidSnapshot(parsed, 'legacy');
-            return parsed.meta;
-          }),
-        restoreBackup: (slot) => {
-          const key = `surdet:save:${slot}`;
-          const raw = localStorage.getItem(`${key}.bak`);
-          if (raw === null) throw new Error(`存档槽位 '${slot}' 没有可恢复备份`);
-          const parsed: unknown = JSON.parse(raw);
-          assertValidSnapshot(parsed, 'legacy');
-          localStorage.setItem(key, JSON.stringify(parsed));
-        },
-      };
+    : createBrowserSaveStorage(localStorage, browserPrefix);
   const saves = new SaveManager(saveStorage);
 
   // 剧本 @autosave：写入自动存档槽位（读档用 F9 只覆盖快速档；自动档需另行提供读档入口）
@@ -854,8 +819,8 @@ async function main(): Promise<void> {
     variables: Record<string, unknown>;
     clearedAt: number;
   }
-  const CLEAR_KEY = 'surdet:clearRecord';
-  const profileStorage = new LocalStorageProfileStorage(localStorage);
+  const CLEAR_KEY = window.surdetProfile ? 'surdet:clearRecord' : `${browserPrefix}clearRecord`;
+  const profileStorage = new LocalStorageProfileStorage(localStorage, `${browserPrefix}profile:`);
   async function loadLegacyClearRecord(): Promise<GlobalClearRecord | null> {
     try {
       const raw = localStorage.getItem(CLEAR_KEY);
@@ -1532,21 +1497,34 @@ async function main(): Promise<void> {
 
   // Ctrl 按住临时快进（松开恢复）
   let ctrlTempSkip = false;
+  const releaseCtrlTempSkip = (): void => {
+    if (!ctrlTempSkip) return;
+    ctrlTempSkip = false;
+    if (renderer.skipMode) renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
+    refreshCommandRail();
+  };
+  bus.on('stateReset', () => { releaseCtrlTempSkip(); });
   window.addEventListener('keydown', (e) => {
-    if (isTitleScreen()) return;
-    if (e.key === 'Control' && !renderer.skipMode) {
-      ctrlTempSkip = true;
-      renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
-      refreshCommandRail();
+    if (e.key !== 'Control') return;
+    if (isTitleScreen()) { ctrlTempSkip = false; return; }
+    if (e.repeat) return;
+    if (ctrlTempSkip) {
+      if (renderer.skipMode) return;
+      ctrlTempSkip = false;
     }
+    if (renderer.skipMode) return;
+    ctrlTempSkip = true;
+    renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
+    refreshCommandRail();
   });
   window.addEventListener('keyup', (e) => {
-    if (isTitleScreen()) return;
-    if (e.key === 'Control' && ctrlTempSkip) {
-      ctrlTempSkip = false;
-      renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
-      refreshCommandRail();
-    }
+    if (e.key !== 'Control') return;
+    if (isTitleScreen()) { ctrlTempSkip = false; return; }
+    releaseCtrlTempSkip();
+  });
+  window.addEventListener('blur', () => {
+    if (isTitleScreen()) { ctrlTempSkip = false; return; }
+    releaseCtrlTempSkip();
   });
 
   function routeGameAction(action: GameAction): void {

@@ -1,3 +1,4 @@
+import type { PresentationRestoreResult } from '@surdet/core';
 import type { BacklogEntry } from '../backlog.js';
 import type { BattleHandlers, BattleView } from '../battle-view.js';
 import type { GalleryItemView } from '../gallery.js';
@@ -229,7 +230,7 @@ export interface PreferenceCommands {
 
 export interface PresentationCommands {
   validate(snapshot: unknown): void;
-  restore(snapshot: unknown): void;
+  restore(snapshot: unknown): PresentationRestoreResult | void;
   clear(): void;
 }
 

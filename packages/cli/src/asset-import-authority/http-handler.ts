@@ -830,9 +830,7 @@ export function createAssetImportAuthorityHttpHandler(
             options.authority.verifyOperationToken(route.operationId!, requestOperationToken);
           }
         } catch (error) {
-          if (scope.terminalReplayKind !== route.kind
-            || scope.terminalReplayFingerprint === undefined
-            || !secureEqual(currentRequestFingerprint, scope.terminalReplayFingerprint)
+          if (!unexpiredTerminalReplay
             || !await isAllowedTerminalReplay(options.authority, route)) {
             return sendError(request, response, 'AUTHORITY_TOKEN_REJECTED', 403, error);
           }

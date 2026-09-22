@@ -45,6 +45,16 @@ const goodConfig = JSON.stringify({
 });
 
 describe('character validation wiring', () => {
+  it('does not attach line-one config diagnostics to an unrelated variable', async () => {
+    const snapshot = await loadProjectSnapshot(storageFor({
+      'game.config.json': JSON.stringify({ entryScene: 'missing', characters: { broken: {} }, variables: { flag: { type: 'number', initial: 0 } } }),
+      'content/scenario/agent_probe.gal': agentProbeText,
+    }), hasher);
+    const issues = validateSnapshot(snapshot, buildObjectIndex(snapshot)).issues;
+    expect(issues.find(issue => issue.code === 'CHARACTER_INVALID')?.objectRef).toBe('character:broken');
+    expect(issues.find(issue => issue.code === 'ENTRY_SCENE_MISSING')?.objectRef).toBe('config:entryScene');
+  });
+
   it('passes a fully resolved project with characters and entryScene', async () => {
     const snapshot = await loadProjectSnapshot(storageFor({
       'game.config.json': goodConfig,

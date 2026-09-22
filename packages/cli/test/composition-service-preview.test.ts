@@ -60,7 +60,7 @@ function candidate(changeId: string, objectRef: string): VerifiedCompositionCand
     manifestFingerprint: `manifest-${changeId}`,
   };
   return {
-    candidateId: `cand-${changeId}`,
+    candidateId: `cand-${changeId}-capsule-${changeId}`,
     ref: {
       changeId,
       capsuleId: `capsule-${changeId}`,
@@ -93,7 +93,7 @@ async function compareResult(): Promise<CompositionCompareResult> {
 describe('CompositionService read-only plan preparation', () => {
   it('builds and dry-runs a plan without sealing or writing a plan artifact', async () => {
     const compared = await compareResult();
-    const selectedUnitId = compared.comparison.units.find((unit) => unit.candidateId === 'cand-a')!.unitId;
+    const selectedUnitId = compared.comparison.units.find((unit) => unit.candidateId === 'cand-a-capsule-a')!.unitId;
     const identity: CompositionArtifactIdentity = {
       path: 'unused-plan.json',
       bytes: 1,
@@ -125,7 +125,7 @@ describe('CompositionService read-only plan preparation', () => {
 
   it('keeps the existing formal plan path as the only writer', async () => {
     const compared = await compareResult();
-    const selectedUnitId = compared.comparison.units.find((unit) => unit.candidateId === 'cand-a')!.unitId;
+    const selectedUnitId = compared.comparison.units.find((unit) => unit.candidateId === 'cand-a-capsule-a')!.unitId;
     const identity: CompositionArtifactIdentity = {
       path: 'sealed-plan.json',
       bytes: 123,

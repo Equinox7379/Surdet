@@ -35,6 +35,10 @@ function sha256(bytes) {
   return crypto.createHash('sha256').update(bytes).digest('hex');
 }
 
+function candidateIdForRef(ref) {
+  return `cand-${ref.changeId}-${ref.capsuleId}`;
+}
+
 function trackedCodeDiffPaths() {
   const raw = execFileSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' });
   // porcelain rows are `XY <path>`; never trim before slicing or the leading path
@@ -280,7 +284,11 @@ export async function sealCandidate(fixture, dataDir, label, ops) {
     let index = 0;
     for (const op of ops) {
       index += 1;
-      resultOf(await callTool(port, op.tool, { operationId: `${label}-op-${index}`, ...op.args }), `${label} ${op.tool}`);
+      const args = { operationId: `${label}-op-${index}`, ...op.args };
+      if (op.tool === 'surdet_project_entry_scene_set') {
+        args.expectedFingerprint = resultOf(await callTool(port, 'surdet_object_inspect', { objectRef: 'config:entryScene' }), 'entry precondition').fingerprint;
+      }
+      resultOf(await callTool(port, op.tool, args), `${label} ${op.tool}`);
     }
     capsule = resultOf(await callTool(port, 'surdet_delivery_capsule', { label: `wave5 candidate ${label}` }), `${label} capsule`);
     assert(capsule.capsuleVersion === '2.0.0', `${label} capsule is not v2`);
@@ -560,10 +568,12 @@ export async function prepareAcceptance({
   ];
   const alphaOpsC = [{ tool: 'surdet_scene_create', args: { sceneId: 'wave5_alpha', blocks: alphaBlocksC } }];
   const sealed = {
-    A: await sealCandidate(projectRoot, dataDir, 'acceptance-alpha-a', alphaOpsA),
+    A: await sealCandidate(projectRoot, dataDir, 'acceptance-alpha-a', [...alphaOpsA,
+      { tool: 'surdet_project_entry_scene_set', args: { sceneId: 'wave5_alpha' } }]),
     B: await sealCandidate(projectRoot, dataDir, 'acceptance-beta-b', betaOps),
     C: await sealCandidate(projectRoot, dataDir, 'acceptance-alpha-c', alphaOpsC),
-    D: await sealCandidate(projectRoot, dataDir, 'acceptance-alpha-d', alphaOpsA),
+    D: await sealCandidate(projectRoot, dataDir, 'acceptance-alpha-d', [...alphaOpsA,
+      { tool: 'surdet_project_entry_scene_set', args: { sceneId: 'wave5_alpha' } }]),
   };
 
   const projectIdentities = new Set(Object.values(sealed).map((candidate) => candidate.capsule.projectIdentity));
@@ -834,7 +844,7 @@ function collectLockResidues(locksRoot, out) {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const full = path.join(current, entry.name);
-      if (entry.name === 'changes' || entry.name === 'projects' || entry.name === 'stale') {
+      if (['changes', 'projects', 'workspaces', 'reviews', 'stale'].includes(entry.name)) {
         // stale/ is a quarantine archive proving safe orphan takeover; it is not
         // an active lease and must never fail the activeLeaseDirectories gate.
         if (entry.name !== 'stale') stack.push(full);
@@ -917,7 +927,7 @@ async function runEvidence(modeName) {
   let negativeEvidence = null;
   let integrationChangeId, interruptedProgressIndex, integrationResume;
   let diffAfterReady, validationAfterReady, simulationAfterReady, runtimeAlpha, runtimeBeta, traceAlpha, traceBeta;
-  let stageCapsule, applyCommitted, fixtureAfterApply;
+  let stageCapsule, applyRejected, fixtureAfterApply;
   let stageProjectMutated = true; // proven by comparison below; starts unknown-true
 
   try {
@@ -972,19 +982,19 @@ async function runEvidence(modeName) {
         // Explicit public-closure evidence via compared.units + compared.dependencyEdges.
         const units = compared.units ?? [];
         sceneUnitB = units.find((unit) => unit.primaryObject === 'scene:wave5_beta'
-          && unit.candidateId === `cand-${candidateB.ref.changeId}`);
+          && unit.candidateId === candidateIdForRef(candidateB.ref));
         timelineUnitB = units.find((unit) => unit.primaryObject === 'timeline:beta_opening'
-          && unit.candidateId === `cand-${candidateB.ref.changeId}`);
+          && unit.candidateId === candidateIdForRef(candidateB.ref));
         sceneUnitA = units.find((unit) => unit.primaryObject === 'scene:wave5_alpha'
-          && unit.candidateId === `cand-${candidateA.ref.changeId}`);
+          && unit.candidateId === candidateIdForRef(candidateA.ref));
         sceneUnitC = units.find((unit) => unit.primaryObject === 'scene:wave5_alpha'
-          && unit.candidateId === `cand-${candidateC.ref.changeId}`);
+          && unit.candidateId === candidateIdForRef(candidateC.ref));
         sceneUnitD = units.find((unit) => unit.primaryObject === 'scene:wave5_alpha'
-          && unit.candidateId === `cand-${candidateD.ref.changeId}`);
+          && unit.candidateId === candidateIdForRef(candidateD.ref));
         variableUnitA = units.find((unit) => unit.primaryObject === 'variable:flag.alpha'
-          && unit.candidateId === `cand-${candidateA.ref.changeId}`);
+          && unit.candidateId === candidateIdForRef(candidateA.ref));
         variableUnitD = units.find((unit) => unit.primaryObject === 'variable:flag.alpha'
-          && unit.candidateId === `cand-${candidateD.ref.changeId}`);
+          && unit.candidateId === candidateIdForRef(candidateD.ref));
         assert(sceneUnitB && timelineUnitB && sceneUnitA && sceneUnitC && sceneUnitD
           && variableUnitA && variableUnitD, 'expected per-candidate units in compare result');
         identicalVariableGroupAD = identical.find((group) =>
@@ -996,9 +1006,9 @@ async function runEvidence(modeName) {
         assert(identicalVariableGroupAD !== undefined, 'expected A/D variable identical group');
         assert(identicalSceneGroupAD !== undefined, 'expected A/D scene identical subgroup despite divergent C');
         selectedCandidateUnitIds = units
-          .filter((unit) => unit.candidateId === `cand-${candidateA.ref.changeId}`
-            || unit.candidateId === `cand-${candidateD.ref.changeId}`
-            || (unit.candidateId === `cand-${candidateB.ref.changeId}` && unit.unitId !== timelineUnitB.unitId))
+          .filter((unit) => unit.candidateId === candidateIdForRef(candidateA.ref)
+            || unit.candidateId === candidateIdForRef(candidateD.ref)
+            || (unit.candidateId === candidateIdForRef(candidateB.ref) && unit.unitId !== timelineUnitB.unitId))
           .map((unit) => unit.unitId)
           .sort();
         const edges = compared.dependencyEdges ?? [];
@@ -1350,10 +1360,10 @@ await node('execute-interrupt-at-persisted-boundary', async () => {
       }
     });
 
-    await node('apply-policy-resume-and-explicit-commit', async () => {
+    await node('apply-policy-resume-requires-owner-approval', async () => {
       // stageProjectMutated must come from a real comparison, never a hard-coded false:
       // the integration replay lives inside the change store, so the fixture tree must
-      // still equal the sealed snapshot before apply commits it to disk.
+      // still equal the sealed snapshot before the unapproved commit attempt.
       const treeBeforeApply = hashTree(fixture);
       stageProjectMutated = treeBeforeApply.sha256 !== fixtureSealed.sha256;
       assert(stageProjectMutated === false, `stage policy mutated the project before apply: ${treeBeforeApply.sha256}`);
@@ -1363,32 +1373,29 @@ await node('execute-interrupt-at-persisted-boundary', async () => {
         const simulation = resultOf(await callTool(port, 'surdet_project_simulate', { sceneId: 'wave5_alpha' }), 'apply simulate');
         assert(validation.ok === true, 'apply validation reported errors');
         assert(simulation.status === 'passed', 'apply simulation did not pass');
-        const committed = resultOf(await callTool(port, 'surdet_change_commit'), 'apply explicit commit');
-        assert(committed.status === 'COMMITTED', 'apply commit did not commit the integration change');
-        applyCommitted = committed;
+        // This runner creates an unreviewed plan. The human review runner covers
+        // the positive commit path; apply policy alone must never grant approval.
+        applyRejected = expectedFailure(await callTool(port, 'surdet_change_commit'),
+          ['REVIEW_APPROVAL_REQUIRED'], 'unreviewed integration commit');
+        assert(applyRejected.error.retryDisposition === 'after-human-review',
+          'unreviewed integration did not request human review');
       } finally {
         await closePort(port, errors);
       }
     });
 
-    await node('fresh-observe-and-disk-equivalence', async () => {
+    await node('fresh-observe-and-unapproved-disk-unchanged', async () => {
       const port = await awaitPort(connectPort({ projectRoot: fixture, policy: 'observe', dataDir }));
       try {
         const inspect = resultOf(await callTool(port, 'surdet_project_inspect'), 'observe final inspect');
-        assert(inspect.scenes.some((scene) => scene.id === 'wave5_alpha'), 'final project lost wave5_alpha');
-        assert(inspect.scenes.some((scene) => scene.id === 'wave5_beta'), 'final project lost wave5_beta');
+        assert(!inspect.scenes.some((scene) => scene.id === 'wave5_alpha'), 'unapproved alpha leaked into the project');
+        assert(!inspect.scenes.some((scene) => scene.id === 'wave5_beta'), 'unapproved beta leaked into the project');
       } finally {
         await closePort(port, errors);
       }
-      const alphaPath = path.join(fixture, 'content', 'scenario', 'wave5_alpha.gal');
-      const alphaText = fs.readFileSync(alphaPath, 'utf8');
-      assert(alphaText.includes('Alpha route A.'), 'chosen A text missing from disk');
-      assert(!alphaText.includes('Alpha route C.'), 'C text present on disk after commit');
       fixtureAfterApply = hashTree(fixture);
-      const changedOnDisk = new Set(differenceFiles(fixtureSealed, fixtureAfterApply).map((file) => file.path));
-      const changedInDiff = new Set(diffAfterReady.files.map((file) => file.path));
-      assert(setsEqual(changedOnDisk, changedInDiff),
-        `disk mutation != integration diff: disk=[${[...changedOnDisk]}] diff=[${[...changedInDiff]}]`);
+      assert(fixtureAfterApply.sha256 === fixtureSealed.sha256,
+        'unapproved integration changed the source project on disk');
       candidatesFinal = hashCandidateSources(dataDir, [candidateA, candidateB, candidateC, candidateD]);
       const starterAfter = hashTree(starterRoot);
       assert(starterBefore.sha256 === starterAfter.sha256, 'original Starter changed');
@@ -1421,7 +1428,8 @@ await node('execute-interrupt-at-persisted-boundary', async () => {
       childCleanupFailures: [],
       activeLeaseDirectories,
       stageProjectMutated,
-      formalFixtureCommitOccurred: applyCommitted?.status === 'COMMITTED',
+      formalFixtureCommitOccurred: fixtureAfterApply.sha256 !== fixtureSealed.sha256,
+      unreviewedCommitRejected: applyRejected?.error.code === 'REVIEW_APPROVAL_REQUIRED',
       formalFixtureMutationMatchesIntegrationDiff: true,
       sourceCapsulesUnchanged: candidatesBefore.capsulesSha256 === candidatesFinal.capsulesSha256,
       sourceChangesUnchanged: candidatesBefore.changesSha256 === candidatesFinal.changesSha256,

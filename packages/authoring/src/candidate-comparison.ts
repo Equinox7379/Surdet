@@ -1,5 +1,7 @@
+import { compareCanonicalText } from './canonical-order.js';
 import { AuthoringOperationError, stableStringify } from './change-session.js';
 import type {
+  CandidateCapsuleRef,
   CompositionComparison,
   CompositionConflict,
   CompositionManifest,
@@ -18,14 +20,19 @@ const MAX_CANDIDATES = 8;
 const MAX_OPERATIONS_PER_CANDIDATE = 256;
 const MAX_DEPENDENCY_EDGES = 1024;
 
+/** A sealed version, not its mutable source change, is the comparison candidate. */
+export function candidateCapsuleIdentity(ref: CandidateCapsuleRef): string {
+  return `cand-${ref.changeId}-${ref.capsuleId}`;
+}
+
 function invalidRequest(message: string): AuthoringOperationError {
   return new AuthoringOperationError('INVALID_REQUEST', message);
 }
 
 function compareByRef(left: VerifiedCompositionCandidate, right: VerifiedCompositionCandidate): number {
-  return left.ref.artifactSha256.localeCompare(right.ref.artifactSha256)
-    || left.ref.changeId.localeCompare(right.ref.changeId)
-    || left.ref.capsuleId.localeCompare(right.ref.capsuleId);
+  return compareCanonicalText(left.ref.artifactSha256, right.ref.artifactSha256)
+    || compareCanonicalText(left.ref.changeId, right.ref.changeId)
+    || compareCanonicalText(left.ref.capsuleId, right.ref.capsuleId);
 }
 
 interface WorkingUnit {
@@ -343,12 +350,12 @@ export async function compareCandidates(
       severity: 'selection-required',
       code: 'OBJECT_RESULTS_DIVERGE',
       candidateIds: [...new Set(bucket.map((unit) => unit.candidateId))].sort(),
-      unitIds: [...bucket].sort((left, right) => left.unitId.localeCompare(right.unitId)).map((unit) => unit.unitId),
+      unitIds: [...bucket].sort((left, right) => compareCanonicalText(left.unitId, right.unitId)).map((unit) => unit.unitId),
       objectRefs: [objectRef],
       allowedResolutions: ['choose-unit', 'exclude-all'],
       details: {
         signatures: [...bucket]
-          .sort((left, right) => left.unitId.localeCompare(right.unitId))
+          .sort((left, right) => compareCanonicalText(left.unitId, right.unitId))
           .map((unit) => ({ unitId: unit.unitId, signature: signatures.get(unit.unitId)! })),
       },
       repairActions: ['选择一个单元并排除其余', '全部排除后重新规划'],
@@ -369,16 +376,19 @@ export async function compareCandidates(
       && unit.requiredBaseObjects.some((requirement) => requirement.objectRef === objectRef));
     if (dependent.length === 0) continue;
     softReviewOnly = true;
-    conflicts.push(await makeConflict(hasher, {
-      severity: 'selection-required',
-      code: 'REQUIRED_OBJECT_REMOVED',
-      candidateIds: [...new Set([removerUnit.candidateId, ...dependent.map((unit) => unit.candidateId)])].sort(),
-      unitIds: [removerUnit.unitId, ...dependent.map((unit) => unit.unitId)].sort(),
-      objectRefs: [objectRef],
-      allowedResolutions: ['choose-unit', 'exclude-all'],
-      details: {},
-      repairActions: ['在移除与依赖之间做出裁决', '排除移除方单元'],
-    }));
+    // Dependents may coexist with each other: each conflicts only with removal.
+    for (const dependency of dependent) {
+      conflicts.push(await makeConflict(hasher, {
+        severity: 'selection-required',
+        code: 'REQUIRED_OBJECT_REMOVED',
+        candidateIds: [removerUnit.candidateId, dependency.candidateId].sort(),
+        unitIds: [removerUnit.unitId, dependency.unitId].sort(),
+        objectRefs: [objectRef],
+        allowedResolutions: ['choose-unit', 'exclude-all'],
+        details: {},
+        repairActions: ['在移除与依赖之间做出裁决', '排除移除方单元'],
+      }));
+    }
   }
 
   // ---- 第四层：证据 advisory（规则7：不伪装结构冲突）----
@@ -405,13 +415,13 @@ export async function compareCandidates(
 
   // ---- 规范排序与指纹（Step 4）----
   units.sort((left, right) =>
-    left.primaryObject.localeCompare(right.primaryObject) || left.candidateId.localeCompare(right.candidateId));
+    compareCanonicalText(left.primaryObject, right.primaryObject) || compareCanonicalText(left.candidateId, right.candidateId));
   dependencyEdges.sort((left, right) =>
-    left.fromUnitId.localeCompare(right.fromUnitId)
-    || left.toUnitId.localeCompare(right.toUnitId)
-    || left.objectRef.localeCompare(right.objectRef));
-  conflicts.sort((left, right) => left.conflictId.localeCompare(right.conflictId));
-  identicalGroups.sort((left, right) => left.groupId.localeCompare(right.groupId));
+    compareCanonicalText(left.fromUnitId, right.fromUnitId)
+    || compareCanonicalText(left.toUnitId, right.toUnitId)
+    || compareCanonicalText(left.objectRef, right.objectRef));
+  conflicts.sort((left, right) => compareCanonicalText(left.conflictId, right.conflictId));
+  identicalGroups.sort((left, right) => compareCanonicalText(left.groupId, right.groupId));
 
   const status: CompositionComparison['status'] = hardBlocked
     ? 'blocked'

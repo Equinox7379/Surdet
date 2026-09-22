@@ -35,7 +35,7 @@ function makeRuntime(source: string, options: { presentation?: boolean } = {}) {
     timelines,
     options.presentation ? {
       snapshot: () => ({ active: 'intro', cursorMs: 120, particleKind: null }),
-      restore: (payload) => snapshots.push(payload),
+      restore: (payload) => { snapshots.push(payload); },
     } : null,
   );
   return { bus, interp, snapshots };

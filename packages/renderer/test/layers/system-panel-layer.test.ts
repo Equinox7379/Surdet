@@ -213,6 +213,25 @@ describe('SystemPanelLayer direct contract', () => {
     }
   });
 
+  it('clears a selected skill when reset starts a new battle', () => {
+    const runtime = makeRuntime();
+    const onAttack = vi.fn();
+    try {
+      runtime.layer.showBattle(battleView(), { onAttack, onPass: vi.fn() });
+      emitPreviousSibling(findText(runtime.root, '火球'));
+      runtime.layer.reset();
+
+      const nextBattle = battleView();
+      nextBattle.units[0]!.skills = [];
+      runtime.layer.showBattle(nextBattle, { onAttack, onPass: vi.fn() });
+      findParentWithText(runtime.root, '史莱姆').emit('pointerdown', pointerEvent);
+
+      expect(onAttack).toHaveBeenCalledWith('slime', null);
+    } finally {
+      disposeRuntime(runtime);
+    }
+  });
+
   it('disables every battle input and native accessibility when input is disabled or finished', () => {
     const runtime = makeRuntime();
     const onAttack = vi.fn();

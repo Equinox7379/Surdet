@@ -9,6 +9,21 @@ function makeDir(): string {
 }
 
 describe('FileProfileStore', () => {
+  it('keeps legal case-sensitive keys and Windows device names independent on disk', async () => {
+    const dir = makeDir();
+    try {
+      const store = new FileProfileStore(dir);
+      for (const key of ['Route', 'route', 'ROUTE', 'con', 'con.settings']) await store.write(key, { key });
+      for (const key of ['Route', 'route', 'ROUTE', 'con', 'con.settings']) {
+        expect(await store.read(key)).toEqual({ key });
+      }
+      await store.delete('route');
+      expect(await store.read('Route')).toEqual({ key: 'Route' });
+      expect(await store.read('ROUTE')).toEqual({ key: 'ROUTE' });
+      expect(await store.read('route')).toBeNull();
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it('writes versioned envelopes atomically and roundtrips defensively', async () => {
     const dir = makeDir();
     const store = new FileProfileStore(path.join(dir, 'profile'));

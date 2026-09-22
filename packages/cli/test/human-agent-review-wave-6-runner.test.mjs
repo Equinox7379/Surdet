@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
@@ -15,6 +16,19 @@ const reviewPanelPath = path.resolve(repoRoot, 'packages/editor/src/panels/revie
 const betaSceneUnitId = '3cdfaaf8fb80c62b71f352383cb0c4be';
 const betaTimelineUnitId = '50b2068292500c43265de06ab1c775a1';
 const excludedSceneUnitId = 'ea9b7d9e3c05029fbd6c5bd4df935103';
+
+test('lease cleanup accepts empty review/workspace namespaces but reports their real lock children', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-review-locks-'));
+  try {
+    for (const kind of ['changes', 'projects', 'reviews', 'workspaces']) {
+      fs.mkdirSync(path.join(root, '.locks', kind), { recursive: true });
+    }
+    assert.deepEqual(runner.findActiveLeaseDirectories(root), []);
+    const actualLease = path.join(root, '.locks', 'reviews', 'review-1');
+    fs.mkdirSync(actualLease);
+    assert.deepEqual(runner.findActiveLeaseDirectories(root), [actualLease]);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 function rawIntegrationPlanFixture() {
   return {

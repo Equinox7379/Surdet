@@ -250,7 +250,7 @@ export class WorldLayer implements WorldProjectionPort {
   #backgroundTransition: { old: Sprite | null; neu: Sprite; remain: number; dur: number } | null = null;
   #portraitSprites = new Map<string, Sprite>();
   #portraitViews = new Map<string, PortraitView>();
-  #portraitTweens: { old: Sprite; neu: Sprite; remain: number; dur: number }[] = [];
+  #portraitTweens: { key: string; old: Sprite; neu: Sprite; remain: number; dur: number }[] = [];
   #activeSpeakerId: string | null = null;
   #flashRemain = 0;
   #flashDur = 1;
@@ -269,7 +269,7 @@ export class WorldLayer implements WorldProjectionPort {
   #particleKind: string | null = null;
   #particlePreset: ParticlePreset | null = null;
   #particles: { sprite: Graphics; vx: number; vy: number; phase: number }[] = [];
-  #moveTweens: { sprite: Sprite; fromX: number; toX: number; remain: number; dur: number }[] = [];
+  #moveTweens: { key: string; pos: string; sprite: Sprite; fromX: number; toX: number; remain: number; dur: number }[] = [];
   #timelineMoveStarts = new Map<object, Map<string, number>>();
   #timelineValueStarts = new Map<object, number>();
   #timelinePanStarts = new Map<object, { x: number; y: number }>();
@@ -465,7 +465,7 @@ export class WorldLayer implements WorldProjectionPort {
     next.alpha = 0;
     this.#portraitLayer.addChild(next);
     this.#portraitSprites.set(key, next);
-    this.#portraitTweens.push({ old: existing, neu: next, remain: 260, dur: 260 });
+    this.#portraitTweens.push({ key, old: existing, neu: next, remain: 260, dur: 260 });
     this.#ensureEffectRegistration();
   }
 
@@ -549,7 +549,7 @@ export class WorldLayer implements WorldProjectionPort {
       const sprite = this.#portraitSprites.get(candidate);
       if (!sprite) continue;
       this.#moveTweens = this.#moveTweens.filter((tween) => tween.sprite !== sprite);
-      this.#moveTweens.push({ sprite, fromX: sprite.x, toX: targetX, remain: duration, dur: duration });
+      this.#moveTweens.push({ key: candidate, pos, sprite, fromX: sprite.x, toX: targetX, remain: duration, dur: duration });
     }
     if (keys.length > 0) this.#ensureEffectRegistration();
     this.#requestFrame();
@@ -630,7 +630,11 @@ export class WorldLayer implements WorldProjectionPort {
             this.#timelineMoveStarts.set(cue, starts);
           }
           sprite.x = starts.get(target)! + (targetX - starts.get(target)!) * event.progress;
-          if (event.progress >= 1) this.#timelineMoveStarts.delete(cue);
+          if (event.progress >= 1) {
+            this.#timelineMoveStarts.delete(cue);
+            const current = this.#portraitViews.get(target);
+            if (current) this.#portraitViews.set(target, { ...current, pos: cue.position as string });
+          }
         }
       } else if (cue.action === 'show') {
         const sprite = this.#portraitSprites.get(target);
@@ -743,7 +747,7 @@ export class WorldLayer implements WorldProjectionPort {
       this.#clearBackground();
     } else {
       this.#stopBackgroundTransition();
-      this.#portraitTweens = [];
+      this.#stopPortraitTransitions();
       this.#moveTweens = [];
     }
     this.#clearEffects({ preserveWorld });
@@ -822,6 +826,21 @@ export class WorldLayer implements WorldProjectionPort {
     this.#syncEffectRegistration();
   }
 
+  #stopPortraitTransitions(): void {
+    const live = new Set(this.#portraitSprites.values());
+    const stale = new Set<Sprite>();
+    for (const tween of this.#portraitTweens) {
+      if (!live.has(tween.old)) stale.add(tween.old);
+      if (!live.has(tween.neu)) stale.add(tween.neu);
+    }
+    this.#portraitTweens = [];
+    for (const sprite of stale) {
+      if (sprite.parent) sprite.parent.removeChild(sprite);
+      sprite.destroy();
+    }
+    this.#syncEffectRegistration();
+  }
+
   #createPortraitSprite(texture: Texture, x: number, height: number, view: PortraitView): Sprite {
     const sprite = new Sprite(texture);
     sprite.width = Math.min(430, this.#w * 0.36);
@@ -868,7 +887,13 @@ export class WorldLayer implements WorldProjectionPort {
         tween.remain = Math.max(0, tween.remain - deltaMs);
         const progress = 1 - tween.remain / tween.dur;
         tween.sprite.x = tween.fromX + (tween.toX - tween.fromX) * progress;
-        if (tween.remain === 0) this.#moveTweens.splice(index, 1);
+        if (tween.remain === 0) {
+          if (this.#portraitSprites.get(tween.key) === tween.sprite) {
+            const current = this.#portraitViews.get(tween.key);
+            if (current) this.#portraitViews.set(tween.key, { ...current, pos: tween.pos });
+          }
+          this.#moveTweens.splice(index, 1);
+        }
       }
     }
     if (this.#particles.length > 0) {
@@ -889,12 +914,13 @@ export class WorldLayer implements WorldProjectionPort {
       }
     }
     if (this.#portraitTweens.length > 0) {
-      const done: { old: Sprite; neu: Sprite; remain: number; dur: number }[] = [];
+      const done: { key: string; old: Sprite; neu: Sprite; remain: number; dur: number }[] = [];
       for (const tween of this.#portraitTweens) {
         tween.remain = Math.max(0, tween.remain - deltaMs);
         const progress = 1 - tween.remain / tween.dur;
-        tween.neu.alpha = progress;
-        tween.old.alpha = 1 - progress;
+        const alpha = this.#portraitAlpha(this.#portraitViews.get(tween.key));
+        tween.neu.alpha = alpha * progress;
+        tween.old.alpha = alpha * (1 - progress);
         if (tween.remain === 0) done.push(tween);
       }
       for (const tween of done) {

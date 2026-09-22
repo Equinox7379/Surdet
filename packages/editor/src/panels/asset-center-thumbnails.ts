@@ -110,7 +110,7 @@ export function beginAssetThumbnailSession(): AssetThumbnailSession {
   const load = async ({ host, item, dirAsset, descriptor }: PendingThumbnail): Promise<void> => {
     try {
       const file = await dirAsset.handle!.getFile();
-      if (disposed || generation !== thumbnailGeneration || !host.isConnected) return;
+      if (disposed || generation !== thumbnailGeneration) return;
       const url = URL.createObjectURL(file);
       pendingUrls.add(url);
       const image = document.createElement('img');
@@ -119,18 +119,18 @@ export function beginAssetThumbnailSession(): AssetThumbnailSession {
       image.dataset.assetThumbnailImage = item.assetId;
       image.onload = () => {
         releaseUrl(url);
-        if (disposed || generation !== thumbnailGeneration || !host.isConnected) return;
+        if (disposed || generation !== thumbnailGeneration) return;
         host.dataset.assetThumbnailState = 'ready';
       };
       image.onerror = () => {
         releaseUrl(url);
-        if (disposed || generation !== thumbnailGeneration || !host.isConnected) return;
+        if (disposed || generation !== thumbnailGeneration) return;
         appendPlaceholder(host, descriptor, 'error', '无法读取缩略图');
       };
       image.src = url;
       host.replaceChildren(image);
     } catch {
-      if (disposed || generation !== thumbnailGeneration || !host.isConnected) return;
+      if (disposed || generation !== thumbnailGeneration) return;
       appendPlaceholder(host, descriptor, 'error', '无法读取缩略图');
     }
   };

@@ -113,9 +113,10 @@ export class ReviewPreparationService {
     catch (error) {
       if ((request.action === 'inspect-preparation' || request.action === 'prepare-result')
         && error instanceof AuthoringOperationError && ['PROJECT_BUSY', 'CHANGE_BUSY', 'REVIEW_BUSY'].includes(error.code)) {
-        // A known held domain lease is an in-progress observation, not a new
-        // execution or a guessed failure. The client can re-inspect it.
-        return { ...await this.status(request.decision, await this.record(request.decision)), working: true };
+        // Only the preparation's own live lease proves work is running. An
+        // unrelated busy project must not look like a job the client can poll.
+        const status = await this.status(request.decision, await this.record(request.decision));
+        if (status.working) return status;
       }
       throw error;
     }

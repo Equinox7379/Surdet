@@ -165,22 +165,26 @@ export function simulateProject(projectDir: string, opts: SimulateOptions = {}):
 
 export async function cmdSimulate(projectDir: string, argv: string[]): Promise<number> {
   const opts: SimulateOptions = { assume: Object.create(null) as Record<string, string> };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]!;
-    if (a === '--max-paths') opts.maxPaths = Number(argv[++i]);
-    else if (a === '--max-steps') opts.maxStepsPerPath = Number(argv[++i]);
-    else if (a === '--seed') opts.seed = Number(argv[++i]);
-    else if (a === '--assume') {
-      const kv = argv[++i] ?? '';
-      const eq = kv.indexOf('=');
-      if (eq > 0) Object.defineProperty(opts.assume!, kv.slice(0, eq), {
-        value: kv.slice(eq + 1), enumerable: true, writable: true, configurable: true,
-      });
-    }
-  }
 
   let report: SimulateReport;
   try {
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i]!;
+      if (a === '--max-paths') opts.maxPaths = Number(argv[++i]);
+      else if (a === '--max-steps') opts.maxStepsPerPath = Number(argv[++i]);
+      else if (a === '--seed') opts.seed = Number(argv[++i]);
+      else if (a === '--assume') {
+        const kv = argv[++i];
+        const eq = kv?.indexOf('=') ?? -1;
+        const name = eq >= 0 ? kv!.slice(0, eq) : '';
+        if (kv === undefined || kv.startsWith('--') || eq < 0 || name.trim().length === 0) {
+          throw new Error('--assume 必须使用 name=value 格式，变量名不能为空');
+        }
+        Object.defineProperty(opts.assume!, name, {
+          value: kv.slice(eq + 1), enumerable: true, writable: true, configurable: true,
+        });
+      }
+    }
     for (const [name, value] of [['--max-paths', opts.maxPaths], ['--max-steps', opts.maxStepsPerPath]] as const) {
       if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) throw new Error(`${name} 必须是正整数`);
     }

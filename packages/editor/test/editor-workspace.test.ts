@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AssetImportClientError, type EditorWorkspaceClient, type EditorWorkspaceSnapshot } from '../src/asset-import-client.js';
 import { bindEditorWorkspaceHooks, beginEditorWorkspaceWrite, connectEditorWorkspace, disconnectEditorWorkspace,
   editorWorkspaceStatus, editorWorkspaceTextChanges, finishEditorWorkspaceWrite, pollEditorWorkspace,
-  publishEditorWorkspaceFile, publishEditorWorkspaceState, readEditorWorkspaceBaseline, editorPreviewPublisher } from '../src/editor-workspace.js';
+  publishEditorWorkspaceFile, publishEditorWorkspaceState, readEditorWorkspaceBaseline, editorPreviewPublisher,
+  enqueueEditorAssetRequest } from '../src/editor-workspace.js';
 
 const oldBaseline = { projectRevision: '1'.repeat(64), coordinationRevision: '2'.repeat(64), files: [
   { path: 'game.config.json', sha256: '3'.repeat(64) },
@@ -41,8 +42,47 @@ beforeEach(() => {
 afterEach(async () => { await disconnectEditorWorkspace(); });
 
 describe('bound Editor sequential relay', () => {
+  it('serializes asset requests with preview and polling without retrying a mutation', async () => {
+    await connectEditorWorkspace(client, root);
+    facts.projectTransition = false;
+    let finishPreview!: () => void;
+    const previewGate = new Promise<void>(resolve => { finishPreview = resolve; });
+    const order: string[] = [];
+    vi.mocked(client.preview).mockImplementationOnce(async () => {
+      order.push('preview'); await previewGate;
+      return { previewId: null, previewGeneration: 1 };
+    });
+    const preview = editorPreviewPublisher(root)!.publish({ action: 'invalidate', previewGeneration: 1, reason: 'closed' });
+    const mutation = vi.fn(async () => { order.push('asset'); throw new Error('real mutation failure'); });
+    const asset = enqueueEditorAssetRequest(mutation).catch(error => error);
+    vi.mocked(client.snapshot).mockImplementationOnce(async () => { order.push('poll'); return structuredClone(disk); });
+    const poll = pollEditorWorkspace(true);
+    await vi.waitFor(() => expect(order).toEqual(['preview']));
+    finishPreview();
+    await preview;
+    expect(await asset).toMatchObject({ message: 'real mutation failure' });
+    await poll;
+    expect(order).toEqual(['preview', 'asset', 'poll']);
+    expect(mutation).toHaveBeenCalledOnce();
+  });
+
   const traceStart = { action: 'append' as const, previewId: 'preview-1', previewGeneration: 3,
     messages: [{ type: 'surdet-preview-trace-start' as const, traceId: 'preview-1', generation: 3, sceneId: 'start' }] };
+
+  it('drops a queued observation after its preview is closed before it reaches the server', async () => {
+    await connectEditorWorkspace(client, root);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const held = enqueueEditorAssetRequest(() => gate);
+    const publisher = editorPreviewPublisher(root)!;
+    const late = publisher.publish(traceStart).catch(error => error);
+    const invalidated = publisher.publish({ action: 'invalidate', previewGeneration: 3, reason: 'closed' });
+    release(); await held;
+    expect(await late).toMatchObject({ code: 'PREVIEW_OBSERVATION_STALE' });
+    await invalidated;
+    expect(client.preview).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(client.preview).mock.calls[0]![0].preview.action).toBe('invalidate');
+  });
 
   it('retries temporary preview contention in order, preserving the exact observation request', async () => {
     await connectEditorWorkspace(client, root);

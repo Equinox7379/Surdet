@@ -37,7 +37,7 @@ function makeProject(): string {
   return root;
 }
 
-function context(root: string, policy: 'observe' | 'stage', changeId?: string): InvocationContext {
+function context(root: string, policy: 'observe' | 'stage' | 'apply', changeId?: string): InvocationContext {
   return {
     sessionId: 'output-contract-scan',
     policy,
@@ -165,7 +165,9 @@ describe('Agent Port output-schema conformance', () => {
     if (typeof traceId !== 'string') mismatches.push('runtime.run-from [working]: result.traceId was not a string');
     await scan('runtime.read-trace', 'working-nested-events', working, { traceId, query: {} });
     await scan('change.diff', 'working', working, {});
-    await scan('change.commit', 'formal-apply-path', working, {});
+    await expect(dispatchAuthoringCapability(working, 'change.commit', {}, service))
+      .rejects.toThrow('当前 policy 不允许 change.commit');
+    await scan('change.commit', 'formal-apply-path', context(root, 'apply', changeId), {});
 
     expect(observed).toEqual(expect.arrayContaining([
       'project.inspect [project]',
@@ -235,8 +237,12 @@ describe('Wave 5 composition output-schema conformance', () => {
     }));
 
     const mismatches: string[] = [];
-    const scan = async (capability: AuthoringCapabilityId, input: Record<string, unknown>): Promise<unknown> => {
-      const dispatched = await dispatchAuthoringCapability(context(root, 'observe'), capability, input, service);
+    const scan = async (
+      capability: AuthoringCapabilityId,
+      input: Record<string, unknown>,
+      policy: 'observe' | 'stage' = 'observe',
+    ): Promise<unknown> => {
+      const dispatched = await dispatchAuthoringCapability(context(root, policy), capability, input, service);
       const result = dispatched.value.result;
       const checked = await standardSchemaFromJson(getCapabilityDefinition(capability).outputSchema)['~standard'].validate(result);
       if (checked.issues !== undefined) {
@@ -254,16 +260,19 @@ describe('Wave 5 composition output-schema conformance', () => {
       selectedUnitIds: comparedScan.units.map((unit) => unit.unitId),
       conflictResolutions: [],
       reason: 'contract scan',
-    }) as {
+    }, 'stage') as {
       planId: string; artifactSha256: string; dryRunStatus: string;
     };
     expect(planned.dryRunStatus).toBe('passed');
     await scan('composition.inspect', { planId: planned.planId, artifactSha256: planned.artifactSha256 });
-    const executed = await scan('composition.execute', {
+    const executeInput = {
       planId: planned.planId,
       artifactSha256: planned.artifactSha256,
       executeOperationId: 'exec-contract-1',
-    }) as { integrationChangeId: string; status: string };
+    };
+    await expect(dispatchAuthoringCapability(context(root, 'observe'), 'composition.execute', executeInput, service))
+      .rejects.toThrow('当前 policy 不允许 composition.execute');
+    const executed = await scan('composition.execute', executeInput, 'stage') as { integrationChangeId: string; status: string };
     expect(executed.status).toBe('READY');
 
     // annotations 公式断言。

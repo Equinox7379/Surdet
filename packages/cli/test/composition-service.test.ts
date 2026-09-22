@@ -2,7 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fingerprintWorkingObject, stableStringify, type AuthoringObject, type TextHasher } from '@surdet/authoring';
 import { NodeCompositionStore } from '../src/authoring/node-composition-store.js';
 import { CompositionService } from '../src/authoring/composition-service.js';
@@ -13,6 +13,8 @@ import { NodeReviewStore } from '../src/authoring/node-review-store.js';
 import { generateDeliveryCapsule } from '../src/agent-port/delivery-capsule.js';
 import { openAgentPortSession, type AgentPortSession } from '../src/agent-port/session.js';
 
+// Candidate sealing/replay uses real durable journals, not an in-memory fixture.
+vi.setConfig({ testTimeout: 30_000 });
 const temporaryRoots: string[] = [];
 
 const realHasher: TextHasher = {
@@ -104,6 +106,53 @@ async function planFromComparison(
 }
 
 describe('CompositionService compare/plan/dry-run', () => {
+  it('keeps two sealed versions of one change distinct and reserves one concurrent integration target', async () => {
+    const fixture = await setup('sealed-version-identity');
+    const session = await openAgentPortSession({ projectRoot: fixture.projectRoot, policy: 'stage' });
+    const refs: SealedRef['ref'][] = [];
+    try {
+      expect((await session.invoke('change.begin', {})).ok).toBe(true);
+      for (const name of ['a', 'b']) {
+        expect((await session.invoke('variable.ensure', { operationId: `var-${name}`, name, type: 'number', initial: 1 })).ok).toBe(true);
+        expect((await session.invoke('change.diff', {})).ok).toBe(true);
+        const capsule = await generateDeliveryCapsule(session);
+        refs.push({ changeId: capsule.changeId, capsuleId: capsule.capsuleId, artifactSha256: capsule.artifactIdentity.sha256 });
+      }
+    } finally { await session.close(); }
+    const compared = await fixture.service.compare(refs);
+    expect(new Set(compared.candidates.map(candidate => candidate.candidateId)).size).toBe(2);
+    expect((await fixture.service.compare([...refs].reverse())).comparison.comparisonFingerprint).toBe(compared.comparison.comparisonFingerprint);
+    const selected = compared.comparison.units.find(unit => unit.primaryObject === 'variable:b')!;
+    const planned = await fixture.service.plan({ candidateRefs: refs, comparisonFingerprint: compared.comparison.comparisonFingerprint,
+      selectedUnitIds: [selected.unitId] });
+    expect(planned.plan.replayOperations[0]!.sourceCapsule).toEqual(refs[1]);
+    const input = { planId: planned.plan.planId, artifactSha256: planned.identity.sha256, executeOperationId: 'one-execution' };
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const entering = new Promise<void>(resolve => { entered = resolve; });
+    const create = NodeChangeStoreStatic.prototype.create;
+    let held = false;
+    const spy = vi.spyOn(NodeChangeStoreStatic.prototype, 'create').mockImplementation(async function (this: NodeChangeStoreStatic, record) {
+      if (!held && record.integration?.planId === planned.plan.planId) {
+        held = true; entered(); await gate;
+      }
+      return create.call(this, record);
+    });
+    const first = fixture.service.executePlan(input);
+    try {
+      await entering;
+      await expect(fixture.service.executePlan(input)).rejects.toMatchObject({ code: 'PROJECT_BUSY' });
+    } finally { release(); spy.mockRestore(); }
+    const result = await first;
+    expect((await fixture.service.executePlan(input)).changeId).toBe(result.changeId);
+    const opened = await NodeChangeStoreStatic.openByChangeId(result.changeId, fixture.dataDir);
+    if (opened === null) throw new Error('executed change must remain readable');
+    expect(opened.record.integration?.replayedOperations[0]!.sourceCapsule).toEqual(refs[1]);
+    expect(opened.record.integration?.includedUnitIds).toEqual([selected.unitId]);
+    expect(JSON.parse(fs.readFileSync(path.join(fixture.projectRoot, 'game.config.json'), 'utf8')).variables).toEqual({});
+  }, 30_000);
+
   it('封装与重放保留配置字面键、BOM、大小写场景和子目录时间轴', async () => {
     const fixture = await setup('maintenance-identities');
     fs.renameSync(path.join(fixture.projectRoot, 'content/scenario/start.gal'), path.join(fixture.projectRoot, 'content/scenario/start.GAL'));
@@ -228,7 +277,7 @@ describe('CompositionService compare/plan/dry-run', () => {
     expect(conflicts.length).toBeGreaterThan(0);
     expect(conflicts.every((conflict) => conflict.objectRefs.includes('gallery:cgs:legacy'))).toBe(true);
     await expect(planFromComparison(fixture, refs)).rejects.toMatchObject({ code: 'COMPOSITION_CONFLICT_UNRESOLVED' });
-    const chosen = compared.comparison.units.find((unit) => unit.candidateId === `cand-${candidates[0]!.ref.changeId}`)!;
+    const chosen = compared.comparison.units.find((unit) => unit.candidateId === `cand-${candidates[0]!.ref.changeId}-${candidates[0]!.ref.capsuleId}`)!;
     const plan = await fixture.service.plan({ candidateRefs: refs, comparisonFingerprint: compared.comparison.comparisonFingerprint,
       selectedUnitIds: [chosen.unitId], conflictResolutions: conflicts.map((conflict) => ({ conflictId: conflict.conflictId, resolution: 'choose-unit', actor: 'human', chosenUnitId: chosen.unitId })),
     });
@@ -415,7 +464,7 @@ describe('CompositionService compare/plan/dry-run', () => {
     });
     const refs = [first.ref, other.ref];
     const compared = await fixture.service.compare(refs);
-    const selectedUnitIds = compared.comparison.units.filter((unit) => unit.candidateId === `cand-${first.ref.changeId}` && (selection === 'all' || unit.primaryObject === 'character:rin')).map((unit) => unit.unitId);
+    const selectedUnitIds = compared.comparison.units.filter((unit) => unit.candidateId === `cand-${first.ref.changeId}-${first.ref.capsuleId}` && (selection === 'all' || unit.primaryObject === 'character:rin')).map((unit) => unit.unitId);
     const planned = await planFromComparison(fixture, refs, { selectedUnitIds });
     expect(planned.plan.dryRun.status, JSON.stringify(planned.plan.dryRun)).toBe('passed');
     expect(planned.plan.replayOperations.map((item) => item.sourceOperationId)).toEqual(selection === 'all' ? ['rename', 'delete-speaker'] : ['rename']);
@@ -511,7 +560,7 @@ describe('CompositionService compare/plan/dry-run', () => {
       candidateRefs: [first.ref, second.ref], comparisonFingerprint: comparison.comparison.comparisonFingerprint,
       selectedUnitIds: [rename.unitId], conflictResolutions: selectionConflicts.map((conflict) => ({
         conflictId: conflict.conflictId, resolution: 'choose-unit', actor: 'human',
-        chosenUnitId: conflict.unitIds.find((id) => comparison.comparison.units.some((unit) => unit.unitId === id && unit.candidateId === `cand-${first.ref.changeId}`))!,
+        chosenUnitId: conflict.unitIds.find((id) => comparison.comparison.units.some((unit) => unit.unitId === id && unit.candidateId === `cand-${first.ref.changeId}-${first.ref.capsuleId}`))!,
       })),
     });
     expect(result.plan.replayOperations.map((item) => item.sourceOperationId)).toEqual(['patch-first', 'rename-second']);
@@ -603,7 +652,7 @@ describe('CompositionService compare/plan/dry-run', () => {
     const comparisonResult = await fixture.service.compare([first.ref, second.ref]);
     expect(comparisonResult.comparison.status).toBe('composable');
     expect(comparisonResult.candidates).toHaveLength(2);
-    expect(comparisonResult.comparison.candidateManifests?.['cand-' + first.ref.changeId]?.operations.length).toBeGreaterThan(0);
+    expect(comparisonResult.comparison.candidateManifests?.[`cand-${first.ref.changeId}-${first.ref.capsuleId}`]?.operations.length).toBeGreaterThan(0);
 
     const planResult = await planFromComparison(fixture, [first.ref, second.ref], { now: '2026-08-24T12:00:00.000Z' });
     expect(planResult.plan.planVersion).toBe('1.0.0');
@@ -654,7 +703,7 @@ describe('CompositionService compare/plan/dry-run', () => {
     });
     const compared = await fixture.service.compare([first.ref, second.ref]);
     expect(compared.comparison.identicalGroups).toHaveLength(1);
-    const selected = compared.comparison.units.find((unit) => unit.candidateId === `cand-${first.ref.changeId}`)!;
+    const selected = compared.comparison.units.find((unit) => unit.candidateId === `cand-${first.ref.changeId}-${first.ref.capsuleId}`)!;
     const result = await planFromComparison(fixture, [first.ref, second.ref], { selectedUnitIds: [selected.unitId] });
     expect(result.plan.dryRun.status).toBe('passed');
     expect(result.plan.replayOperations.map((operation) => operation.sourceOperationId)).toEqual(['op-fp-scene', 'op-fp-patch']);
@@ -903,7 +952,7 @@ describe('CompositionService compare/plan/dry-run', () => {
     expect(result.nextOperationIndex).toBe(planned.plan.replayOperations.length);
     expect(result.workingRevision).toBe(planned.plan.replayOperations.length);
     expect(result.changeId).toBe(crashed.record.changeId);
-  });
+  }, 30_000);
 
   it('keeps direct plans unreviewed and binds reviewed plan selections', async () => {
     const fixture = await setup('review-binding');

@@ -328,9 +328,9 @@ export class Parser {
 
   #parseChoiceOption(textTok: TextToken): AstChoiceOption {
     const raw = textTok.raw.trimStart();
-    const arrowMatch = /\s->(?:\s|$)/.exec(raw);
-    const arrowIdx = arrowMatch?.index ?? -1;
-    const arrowEnd = arrowMatch === null ? -1 : arrowMatch.index + arrowMatch[0].length;
+    const arrow = this.#findChoiceArrow(raw);
+    const arrowIdx = arrow?.index ?? -1;
+    const arrowEnd = arrow?.end ?? -1;
     const labelPart = arrowIdx >= 0 ? raw.slice(0, arrowIdx) : raw;
     const inlinePart = arrowEnd >= 0 ? raw.slice(arrowEnd).trim() : '';
     const pos0 = pos(textTok.file, textTok.line, textTok.col);
@@ -419,5 +419,41 @@ export class Parser {
         end: pos(textTok.file, textTok.line, textTok.raw.length + 1),
       },
     };
+  }
+
+  #findChoiceArrow(raw: string): { index: number; end: number } | null {
+    let quote: '"' | "'" | null = null;
+    let escaped = false;
+    let inCondition = false;
+
+    for (let i = 0; i < raw.length; i++) {
+      const char = raw[i]!;
+      if (inCondition) {
+        if (quote !== null) {
+          if (escaped) {
+            escaped = false;
+          } else if (char === '\\') {
+            escaped = true;
+          } else if (char === quote) {
+            quote = null;
+          }
+        } else if (char === '"' || char === "'") {
+          quote = char;
+        } else if (char === ']') {
+          inCondition = false;
+        }
+        continue;
+      }
+      if (raw.startsWith('[if:', i)) {
+        inCondition = true;
+        continue;
+      }
+      if (char !== '-' || raw[i + 1] !== '>') continue;
+      const before = i > 0 ? raw[i - 1]! : '';
+      const after = raw[i + 2] ?? '';
+      if (!/\s/.test(before) || (after !== '' && !/\s/.test(after))) continue;
+      return { index: i - 1, end: i + 2 + (after === '' ? 0 : 1) };
+    }
+    return null;
   }
 }

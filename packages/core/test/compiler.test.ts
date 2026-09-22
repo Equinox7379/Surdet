@@ -63,6 +63,35 @@ describe('Parser', () => {
     });
   });
 
+  it('choice 条件字符串内的箭头不作为外层分隔符', () => {
+    const ast = new Parser().parse(
+      new Lexer().tokenize('@choice\n  选项 [if: route == "a -> b"] -> @goto done\n@label done\n@end', 't.gal'),
+      's',
+    );
+    const choice = ast.blocks[0];
+    if (choice?.kind !== 'choice') throw new Error('expect choice');
+    expect(choice.options[0]).toMatchObject({
+      label: '选项',
+      when: 'route == "a -> b"',
+      jump: { kind: 'goto', target: 'done' },
+    });
+  });
+
+  it('choice 外层标签撇号不吞箭头，条件字符串转义仍保留边界', () => {
+    const source = String.raw`@choice
+  Don't stop -> @goto done
+  转义条件 [if: route == "a \" -> b"] -> @goto done
+@label done
+@end`;
+    const ast = new Parser().parse(new Lexer().tokenize(source, 't.gal'), 's');
+    const choice = ast.blocks[0];
+    if (choice?.kind !== 'choice') throw new Error('expect choice');
+    expect(choice.options).toMatchObject([
+      { label: "Don't stop", when: null, jump: { kind: 'goto', target: 'done' } },
+      { label: '转义条件', when: 'route == "a \\" -> b"', jump: { kind: 'goto', target: 'done' } },
+    ]);
+  });
+
   it('nested conditions keep independent branch boundaries', () => {
     const src = [
       '@if outer',

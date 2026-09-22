@@ -6,9 +6,12 @@ import {
   type ChoiceEventPayload,
   type InstrEventPayload,
   type TimelineDefinition,
+  type PresentationSnapshotContext,
+  type PresentationRestoreResult,
   validateTimeline,
 } from '@surdet/core';
 import type { Backlog } from '../backlog.js';
+import type { AudioPlaybackSnapshot } from '../rollback-buffer.js';
 import { dequote } from '../dequote.js';
 import { stripRuby } from '../ruby.js';
 import { Typewriter } from '../text-buffer.js';
@@ -107,6 +110,7 @@ export interface PreparedTimelineRestore {
 
 export interface PreparedPresentationRestore {
   readonly stage: unknown;
+  readonly audio?: AudioPlaybackSnapshot;
   readonly timelines: readonly PreparedTimelineRestore[];
   readonly timelineSequence: number;
   readonly dialogue: {
@@ -144,6 +148,15 @@ export function preparePresentationRestore(
     throw invalidPresentation('Presentation stage validator is not configured');
   }
   const dialogue = prepareDialogueRestore(payload.dialogue);
+  let audio: AudioPlaybackSnapshot | undefined;
+  if (payload.audio !== undefined) {
+    if (!isRecord(payload.audio)
+      || (payload.audio.bgm !== null && typeof payload.audio.bgm !== 'string')
+      || (payload.audio.ambience !== null && typeof payload.audio.ambience !== 'string')) {
+      throw invalidPresentation('Presentation audio must contain BGM and ambience keys or null');
+    }
+    audio = { bgm: payload.audio.bgm, ambience: payload.audio.ambience };
+  }
   const timelines: PreparedTimelineRestore[] = [];
   let timelineSequence = currentTimelineSequence + 1;
   const ids = new Set<number>();
@@ -182,6 +195,7 @@ export function preparePresentationRestore(
     timelines,
     timelineSequence,
     dialogue,
+    ...(audio === undefined ? {} : { audio }),
   };
 }
 
@@ -905,11 +919,13 @@ export class PresentationController {
   }
 
   /** 供 Interpreter 的 presentation snapshot hook 使用。 */
-  snapshotPresentation(): unknown {
+  snapshotPresentation(context?: PresentationSnapshotContext): unknown {
     const dialogueEntries = this.#queries.dialogue.nvlPresentationEntries();
+    const audio = this.#audio.snapshotPlayback?.();
     return {
       version: 1,
       stage: this.#queries.presentation.snapshot(),
+      ...(audio === undefined ? {} : { audio }),
       timelines: [...this.#timelineRuns.entries()].map(([id, run]) => ({
         id,
         blocking: run.blocking,
@@ -918,7 +934,8 @@ export class PresentationController {
       })),
       dialogue: {
         nvlActive: this.#nvl,
-        nvlEntries: withoutReplayedCurrentNvlLine(dialogueEntries, this.#current, this.#nvl),
+        nvlEntries: context?.replayCurrentText === false ? dialogueEntries
+          : withoutReplayedCurrentNvlLine(dialogueEntries, this.#current, this.#nvl),
       },
     };
   }
@@ -939,7 +956,7 @@ export class PresentationController {
   }
 
   /** 重建对话后恢复舞台静态状态，再恢复仍在运行的时间轴游标。 */
-  restorePresentation(payload: unknown): void {
+  restorePresentation(payload: unknown): PresentationRestoreResult {
     const prepared = this.#preparePresentationRestore(payload);
     this.#clearTimelines();
     this.#timelineSeq = prepared.timelineSequence;
@@ -953,12 +970,21 @@ export class PresentationController {
     // focus belongs to the current line, which the Interpreter replays next.
     if (prepared.stage === null) this.#commands.presentation.clear();
     else this.#commands.presentation.restore(prepared.stage);
+    if (prepared.audio !== undefined) {
+      this.#audio.stopAll();
+      if (this.#audio.restorePlayback) this.#audio.restorePlayback(prepared.audio);
+      else {
+        this.#audio.playBgm(prepared.audio.bgm);
+        this.#audio.playAmbience?.(prepared.audio.ambience, 0);
+      }
+    }
     for (const timeline of prepared.timelines) {
       this.#timelineRuns.set(timeline.id, { player: timeline.player, blocking: timeline.blocking });
       if (timeline.blocking) this.#blockingTimelineId = timeline.id;
       this.#applyTimelineEvents(timeline.events);
     }
     this.#requestFrame();
+    return { awaitingTimer: this.#blockingTimelineId !== null };
   }
 
   #preparePresentationRestore(payload: unknown): PreparedPresentationRestore {

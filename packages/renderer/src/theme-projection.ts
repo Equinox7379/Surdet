@@ -150,7 +150,7 @@ function repaintGraphics(graphics: Graphics, previous: RendererTheme, next: Rend
     if (typeof data.style !== 'object' || data.style === null || !('color' in data.style)) continue;
     const style = data.style as { color?: unknown };
     if (typeof style.color !== 'number') continue;
-    const token = bindings?.[colorIndex] ?? undefined;
+    const token = bindings?.[colorIndex];
     const color = token === null
       ? style.color
       : token

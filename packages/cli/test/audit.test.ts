@@ -99,6 +99,15 @@ describe('surdet audit：无头试跑', () => {
     expect(run.choicesTaken).toBe(1);
   });
 
+  it('连续 choice 自动推进时保留 choose 内同步产生的新选项', () => {
+    const registry = new SceneRegistry();
+    registry.register(compile('s1', '@choice\n  First -> @goto second\n@label second\n@choice\n  Second -> @goto done\n@label done\n@end'));
+    const run = dryRunProject(registry, new VariableStore([]), 's1');
+    expect(run.error).toBeNull();
+    expect(run.stopped).toBe('ended');
+    expect(run.choicesTaken).toBe(2);
+  });
+
   it('遇到 @battle 系统指令停在 system', () => {
     const registry = new SceneRegistry();
     registry.register(compile('s1', '凛：开战。\n@battle demo'));

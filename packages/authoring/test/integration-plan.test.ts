@@ -89,7 +89,7 @@ function readyCandidate(
     manifestFingerprint: `mfp-${changeId}`,
   };
   return {
-    candidateId: `cand-${changeId}`,
+    candidateId: `cand-${changeId}-cap_${changeId}`,
     ref: { changeId, capsuleId: `cap_${changeId}`, artifactSha256: `sha-artifact-${changeId}` },
     capsuleVersion: '2.0.0',
     projectIdentity: PROJECT,
@@ -119,6 +119,22 @@ async function compareWithManifests(candidates: VerifiedCompositionCandidate[]):
 }
 
 describe('Wave 5 integration plans', () => {
+  it('retains multiple compatible dependents when their shared remover is excluded', async () => {
+    const remover = readyCandidate('remover', [operation(0, 'remove', 'character.remove', 'character:keeper', [production('character:keeper', 'remove')])]);
+    const keeper = readyCandidate('keeper', ['one', 'two'].map((name, index) =>
+      operation(index, name, 'scene.create', `scene:${name}`, [production(`scene:${name}`, 'create', name)], [requirement('character:keeper', 'base')])));
+    const { comparison } = await compareWithManifests([remover, keeper]);
+    const selected = comparison.units.filter(unit => unit.candidateId === keeper.candidateId);
+    const conflicts = comparison.conflicts.filter(conflict => conflict.code === 'REQUIRED_OBJECT_REMOVED');
+    expect(conflicts).toHaveLength(2);
+    const draft = await buildIntegrationPlan({ comparison, selectedUnitIds: selected.map(unit => unit.unitId),
+      conflictResolutions: conflicts.map(conflict => ({ conflictId: conflict.conflictId, resolution: 'choose-unit',
+        chosenUnitId: selected.find(unit => conflict.unitIds.includes(unit.unitId))!.unitId, actor: 'human' })),
+      review: { reviewState: 'unreviewed' }, now: NOW_A }, hasher);
+    expect(draft.replayOperations.map(operation => operation.primaryObject).sort()).toEqual(['scene:one', 'scene:two']);
+    expect(draft.excludedUnitIds).not.toEqual(expect.arrayContaining(selected.map(unit => unit.unitId)));
+  });
+
   it('pulls the same-candidate required timeline into the closure automatically', async () => {
     const ops = [
       operation(0, 'op_tl', 'timeline.create', 'timeline:dep', [production('timeline:dep', 'create', 'fp-dep')]),

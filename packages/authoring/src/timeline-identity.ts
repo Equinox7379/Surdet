@@ -13,7 +13,7 @@ import { AuthoringOperationError } from './change-session.js';
 /** Resolve existing files without inventing a flat path or picking a duplicate. */
 export function resolveUniqueTimelinePath(files: Readonly<Record<string, string>>, id: string): string | undefined {
   const paths = Object.keys(files).filter(path => path.startsWith('content/timelines/')
-    && path.endsWith('.json') && timelineIdFromPath(path) === id);
+    && path.toLowerCase().endsWith('.json') && timelineIdFromPath(path) === id);
   if (paths.length > 1) throw new AuthoringOperationError('OBJECT_AMBIGUOUS', `时间轴身份 timeline:${id} 对应多个文件：${paths.sort().join('、')}`);
   return paths[0];
 }

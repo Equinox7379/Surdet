@@ -74,6 +74,7 @@ import type { HostStateAdapter, PlayerOverlay, PlayerShellController } from '@su
 import { createSystemAdapters } from './system-adapters.js';
 import { ResolvedAudio } from '../resolved-audio.js';
 import { createSettingsStorage } from '../settings-storage.js';
+import { createBrowserSaveStorage, gameStoragePrefix } from './browser-save-storage.js';
 import { createConfiguredFontJobs } from '../font-jobs.js';
 import { installSceneHotReload, type SceneHotModule } from '../scene-hmr.js';
 import { createStarterOwnerTeardown } from './owner-teardown.js';
@@ -81,6 +82,8 @@ import { showPlayerRecovery } from './recovery-screen.js';
 import type {} from './window.js';
 
 export interface PlayerProject {
+  /** Stable package name; changing the display title must not change save ownership. */
+  id: string;
   config: {
     title: string;
     entryScene: string;
@@ -117,6 +120,7 @@ export interface PlayerProject {
 
 export async function startPlayer(project: PlayerProject): Promise<void> {
   const gameConfig = project.config;
+  const browserPrefix = gameStoragePrefix(project.id);
   const sceneFiles = project.sceneFiles;
   const timelineFiles = project.timelineFiles ?? {};
   const galleryConfig = project.gallery ?? { cgs: [], music: [], texts: [] };
@@ -198,7 +202,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   const audioUrls = new Map<string, string>();
   const audio: AudioHandle = new ResolvedAudio(audioManager, audioUrls);
 
-  const settings = new SettingsStore(createSettingsStorage('starter'));
+  const settings = new SettingsStore(createSettingsStorage(project.id, browserPrefix));
   await settings.load();
 
   // Backlog + Renderer v2 Runtime（设置投影：文本速度/自动停留/音量）
@@ -431,25 +435,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   const desktopSave = window.surdetSave;
   const saveStorage: SaveStorage = desktopSave
     ? createElectronSaveStorage(desktopSave)
-    : {
-        read: (slot) => {
-          const raw = localStorage.getItem(`surdet:save:${slot}`);
-          return raw === null ? null : (JSON.parse(raw) as SaveSnapshot);
-        },
-        write: (slot, data) => {
-          try {
-            localStorage.setItem(`surdet:save:${slot}`, JSON.stringify(data));
-          } catch (err) {
-            console.error('[starter] 存档写入失败：', err);
-            throw err;
-          }
-        },
-        delete: (slot) => localStorage.removeItem(`surdet:save:${slot}`),
-        list: () =>
-          Object.keys(localStorage)
-            .filter((k) => k.startsWith('surdet:save:'))
-            .map((k) => k.slice('surdet:save:'.length)),
-      };
+    : createBrowserSaveStorage(localStorage, browserPrefix);
   const saves = new SaveManager(saveStorage);
 
   // 剧本 @autosave：写入自动存档槽位（读档用 F9 只覆盖快速档；自动档需另行提供读档入口）
@@ -639,8 +625,8 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
     variables: Record<string, unknown>;
     clearedAt: number;
   }
-  const CLEAR_KEY = 'surdet:clearRecord';
-  const profileStorage = new LocalStorageProfileStorage(localStorage);
+  const CLEAR_KEY = window.surdetProfile ? 'surdet:clearRecord' : `${browserPrefix}clearRecord`;
+  const profileStorage = new LocalStorageProfileStorage(localStorage, `${browserPrefix}profile:`);
   async function loadLegacyClearRecord(): Promise<GlobalClearRecord | null> {
     try {
       const raw = localStorage.getItem(CLEAR_KEY);
@@ -781,7 +767,11 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
       view: { mode, slots: activeSaveLoad.slots },
       onSelect: (slotId: string) => selectSaveLoad(mode, slotId),
       onClose: closeSaveLoad,
-      options: { completion: 'host-transaction' as const, onTransactionComplete: restoreCommandRailForPlayerContext },
+      options: {
+        completion: 'host-transaction' as const,
+        onTransactionComplete: restoreCommandRailForPlayerContext,
+        ...(mode === 'load' ? { onRestore: (slotId: string) => restoreSaveLoad(slotId) } : {}),
+      },
     };
   }
 
@@ -903,8 +893,10 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   async function openSaveLoad(mode: 'save' | 'load', source: 'title' | 'game' | 'system-menu' = uiSnapshot().base): Promise<void> {
     if (source === 'title') menu.hideTitle(false);
     let metas: Awaited<ReturnType<typeof saves.list>>;
+    let backupMetas: Awaited<ReturnType<typeof saves.listBackupMeta>> = [];
     try {
       metas = await saves.list();
+      if (mode === 'load') backupMetas = await saves.listBackupMeta();
     } catch (err) {
       if (source === 'title') showTitleScreen();
       console.error('[starter] 存档列表读取失败:', err);
@@ -913,6 +905,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
       return;
     }
     const byId = new Map(metas.map((m) => [m.id, m]));
+    const backupIds = new Set(backupMetas.map((m) => m.id));
     const slots: SaveSlotView[] = SLOT_IDS.map((id) => {
       const m = byId.get(id);
       return {
@@ -922,6 +915,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         updatedAt: m?.updatedAt,
         thumbnail: m?.thumbnail,
         playTimeSec: m?.playTimeSec,
+        backupAvailable: mode === 'load' && backupIds.has(id),
         kind: id === QUICK_SLOT ? 'quick' : id === AUTO_SLOT ? 'auto' : 'manual',
       };
     });
@@ -1042,6 +1036,17 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
     }
   }
 
+  function completeLoadedSnapshot(snap: SaveSnapshot): void {
+    clearRollback();
+    interp.loadSnapshot(snap);
+    sessionStart = Date.now() - Math.max(0, snap.meta.playTimeSec ?? 0) * 1000;
+    playerShell!.commands.completeOperation({ base: 'game', overlay: 'none' });
+    menu.hideTitle();
+    activeSaveLoad = null;
+    clearCountedThisSession = false;
+    refreshCommandRail();
+  }
+
   async function selectSaveLoad(mode: 'save' | 'load', slotId: string): Promise<boolean> {
     playerShell!.commands.consumePointer();
     if (mode === 'save') {
@@ -1074,19 +1079,29 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
     playerShell!.commands.beginOperation('loading');
     try {
       const snap = await saves.load(slotId);
-      clearRollback();
-      interp.loadSnapshot(snap);
-      sessionStart = Date.now() - Math.max(0, snap.meta.playTimeSec ?? 0) * 1000;
-      playerShell!.commands.completeOperation({ base: 'game', overlay: 'none' });
-      menu.hideTitle();
-      activeSaveLoad = null;
-      clearCountedThisSession = false;
+      completeLoadedSnapshot(snap);
       console.info('[starter] 已读档', slotId);
-      refreshCommandRail();
       return true;
     } catch (err) {
       playerShell!.commands.failOperation(err);
       console.error('[starter] 读档失败:', err);
+      return false;
+    }
+  }
+
+  async function restoreSaveLoad(slotId: string): Promise<boolean> {
+    playerShell!.commands.consumePointer();
+    const slot = activeSaveLoad?.slots.find((candidate) => candidate.id === slotId);
+    if (!slot || !slot.backupAvailable) return false;
+    playerShell!.commands.beginOperation('loading');
+    try {
+      await saves.restoreBackup(slotId);
+      completeLoadedSnapshot(await saves.load(slotId));
+      console.info('[starter] 已恢复备份并读档', slotId);
+      return true;
+    } catch (error) {
+      playerShell!.commands.failOperation(error);
+      console.error('[starter] 备份恢复失败:', error);
       return false;
     }
   }
@@ -1267,26 +1282,41 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
 
   // Ctrl 按住临时快进（松开恢复）
   let ctrlTempSkip = false;
+  const releaseCtrlTempSkip = (): void => {
+    if (!ctrlTempSkip) return;
+    ctrlTempSkip = false;
+    if (renderer.skipMode) renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
+    refreshCommandRail();
+  };
+  bus.on('stateReset', () => { releaseCtrlTempSkip(); });
   const ctrlKeyDown = (e: KeyboardEvent): void => {
-    if (isTitleScreen()) return;
-    if (e.key === 'Control' && !renderer.skipMode) {
-      ctrlTempSkip = true;
-      renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
-      refreshCommandRail();
+    if (e.key !== 'Control') return;
+    if (isTitleScreen()) { ctrlTempSkip = false; return; }
+    if (e.repeat) return;
+    if (ctrlTempSkip) {
+      if (renderer.skipMode) return;
+      ctrlTempSkip = false;
     }
+    if (renderer.skipMode) return;
+    ctrlTempSkip = true;
+    renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
+    refreshCommandRail();
   };
   window.addEventListener('keydown', ctrlKeyDown);
   ownerTeardown.trackListener(() => window.removeEventListener('keydown', ctrlKeyDown));
   const ctrlKeyUp = (e: KeyboardEvent): void => {
-    if (isTitleScreen()) return;
-    if (e.key === 'Control' && ctrlTempSkip) {
-      ctrlTempSkip = false;
-      renderer.dispatchInput({ type: 'skip.toggle', scope: 'read' });
-      refreshCommandRail();
-    }
+    if (e.key !== 'Control') return;
+    if (isTitleScreen()) { ctrlTempSkip = false; return; }
+    releaseCtrlTempSkip();
   };
   window.addEventListener('keyup', ctrlKeyUp);
   ownerTeardown.trackListener(() => window.removeEventListener('keyup', ctrlKeyUp));
+  const ctrlBlur = (): void => {
+    if (isTitleScreen()) { ctrlTempSkip = false; return; }
+    releaseCtrlTempSkip();
+  };
+  window.addEventListener('blur', ctrlBlur);
+  ownerTeardown.trackListener(() => window.removeEventListener('blur', ctrlBlur));
 
   function routeGameAction(action: GameAction): void {
     if (action === 'backlog') { openBacklog(); refreshCommandRail(); return; }

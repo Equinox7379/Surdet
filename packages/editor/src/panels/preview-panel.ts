@@ -51,6 +51,9 @@ export function disposePreviewPanel(): void {
 
 export function refreshPreviewSourceState(): void { notifyPreviewSourceEdited?.(); }
 
+/** 未绑定项目的内存预览使用本会话稳定键，避免用同名目录串用预览存档。 */
+const transientPreviewProjectKey = `memory-session:${crypto.randomUUID()}`;
+
 function previewSourceKey(): string {
   return JSON.stringify({
     scene: state.current,
@@ -796,7 +799,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
         replay: replay ?? undefined,
         strictSource: isolated !== undefined,
         sceneId: cur.id,
-        projectKey: isolated ? `${isolated.projectIdentity}:${JSON.stringify(isolated.target)}` : state.dirName || 'untitled',
+        projectKey: isolated ? `${isolated.projectIdentity}:${JSON.stringify(isolated.target)}` : state.autosaveProjectId ?? transientPreviewProjectKey,
         // 全量场景下发：预览内跨场景 @jump 可正常跳转（多场景预览）
         scenes: projected?.scenes ?? collectPreviewScenes(state.scenes),
         speakerProfiles: parsePreviewSpeakerProfiles(projected?.configText ?? state.gameConfigText),
@@ -858,7 +861,9 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     void send();
   };
   const updateLabels = () => {
-    const text = projected?.scenes.find(scene => scene.id === sceneSel.value)?.text;
+    const scenes = projected?.scenes ?? collectPreviewScenes(state.scenes);
+    const text = scenes.find(scene => scene.id === sceneSel.value)?.text
+      ?? (projected === undefined && state.current ? state.scenes.get(state.current)?.text : undefined);
     labelSel.replaceChildren(fromStart);
     if (text !== undefined) for (const label of listLabels(text)) {
       const option = h('option', undefined, `从段落标记 ${label}`); option.value = label; labelSel.appendChild(option);

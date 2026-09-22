@@ -18,10 +18,11 @@ const editorRoot = path.resolve(path.dirname(runnerPath), '..');
 const repoRoot = path.resolve(editorRoot, '..', '..');
 const runnerRelativePath = path.relative(repoRoot, runnerPath).split(path.sep).join('/');
 const starterRoot = path.join(repoRoot, 'examples', 'starter');
-const crlfTimelinePath = 'content/timelines/intro_arrival.json';
-const editedTimelineId = 'intro_arrival';
-const deletedTimelineId = 'lynn_steps_forward';
+const crlfTimelinePath = 'content/timelines/harbor_arrival.json';
+const editedTimelineId = 'harbor_arrival';
+const deletedTimelineId = 'harbor_steps_forward';
 const editedDurationMs = 1375;
+const originalEditedDurationMs = 900;
 
 export const FORBIDDEN_PORTS = Object.freeze([4173, 4175]);
 export const SEARCH_RANGE = Object.freeze({ from: 4251, to: 4290 });
@@ -160,15 +161,59 @@ function augmentStarterFixture() {
   const afterBytes = Buffer.from(crlfText, 'utf8');
   assert(!/(^|[^\r])\n/.test(crlfText), 'fixture CRLF conversion left a bare LF');
   target.bytes = afterBytes.toString('base64');
+  const fixtureAugmentations = [{
+    path: crlfTimelinePath,
+    kind: 'lf-to-crlf-with-custom-portrait-coordinate-in-memory',
+    customPortraitPosition: '3000',
+    before: { bytes: beforeBytes.byteLength, sha256: sha256(beforeBytes), eol: 'LF' },
+    after: { bytes: afterBytes.byteLength, sha256: sha256(afterBytes), eol: 'CRLF' },
+  }];
+  const syntheticTimelines = [
+    {
+      path: 'content/timelines/harbor_cinematic.json',
+      definition: {
+        version: 1,
+        id: 'harbor_cinematic',
+        durationMs: 1050,
+        tracks: [
+          { kind: 'background', cues: [{ atMs: 0, durationMs: 720, easing: 'outCubic', action: 'set', key: 'harbor' }] },
+          { kind: 'portrait', target: 'lynn:coat', cues: [{ atMs: 160, durationMs: 620, easing: 'outCubic', action: 'show', expression: 'normal', position: 'right' }] },
+          { kind: 'screen', cues: [
+            { atMs: 0, durationMs: 0, easing: 'linear', action: 'fade', alpha: 1 },
+            { atMs: 20, durationMs: 740, easing: 'inOutSine', action: 'fade', alpha: 0 },
+          ] },
+        ],
+      },
+    },
+    {
+      path: 'content/timelines/harbor_steps_forward.json',
+      definition: {
+        version: 1,
+        id: 'harbor_steps_forward',
+        durationMs: 880,
+        tracks: [
+          { kind: 'portrait', target: 'lynn:coat', cues: [
+            { atMs: 0, durationMs: 574, easing: 'inOutSine', action: 'expression', expression: 'hesitant' },
+            { atMs: 131, durationMs: 620, easing: 'inOutCubic', action: 'move', position: 'center' },
+          ] },
+          { kind: 'screen', cues: [{ atMs: 0, durationMs: 700, easing: 'inOutSine', action: 'tint', color: 226050, alpha: 0.12 }] },
+        ],
+      },
+    },
+  ];
+  for (const fixture of syntheticTimelines) {
+    const bytes = Buffer.from(`${JSON.stringify(fixture.definition, null, 2)}\n`, 'utf8');
+    files.push({ path: fixture.path, bytes: bytes.toString('base64') });
+    fixtureAugmentations.push({
+      path: fixture.path,
+      kind: 'in-memory-harbor-timeline-selection-fixture',
+      timelineId: fixture.definition.id,
+    });
+  }
+  files.sort((left, right) => left.path.localeCompare(right.path));
   return {
     files,
-    fixtureAugmentations: [{
-      path: crlfTimelinePath,
-      kind: 'lf-to-crlf-with-custom-portrait-coordinate-in-memory',
-      customPortraitPosition: '3000',
-      before: { bytes: beforeBytes.byteLength, sha256: sha256(beforeBytes), eol: 'LF' },
-      after: { bytes: afterBytes.byteLength, sha256: sha256(afterBytes), eol: 'CRLF' },
-    }],
+    fixtureAugmentations,
   };
 }
 
@@ -392,7 +437,7 @@ async function localizedProjection(page) {
     return {
       selectedOption: resource?.selectedOptions[0]?.textContent ?? null,
       sameKeyOptions: resource
-        ? [...resource.options].map((option) => option.textContent ?? '').filter((label) => label.startsWith('lynn:uniform'))
+        ? [...resource.options].map((option) => option.textContent ?? '').filter((label) => label.startsWith('lynn:coat'))
         : [],
       actionValue: document.querySelector('[data-timeline-focus="inspector-action"]')?.value ?? null,
     };
@@ -420,7 +465,7 @@ async function localizedProjection(page) {
     };
   }, editedTimelineId);
   assert(localizedPositionEvidence.serializedPosition === '3000', 'custom portrait coordinate was clamped or rewritten');
-  await selectTimeline(page, 'intro_cinematic');
+  await selectTimeline(page, 'harbor_cinematic');
   const instantMarkerEvidence = await page.evaluate(() => {
     const instant = document.querySelector('.timeline-cue.instant[data-duration-ms="0"]');
     const box = instant?.getBoundingClientRect();
@@ -830,8 +875,8 @@ async function run() {
     } else {
       opened = await openFixture(firstPage);
       assert(opened.projectName === 'starter', `project bar did not show starter: ${opened.projectName}`);
-      assert(opened.sceneCount === 4, `expected four Starter scenes, got ${opened.sceneCount}`);
-      assert(opened.timelineCount === 3, `expected three Starter timelines, got ${opened.timelineCount}`);
+      assert(opened.sceneCount === 7, `expected seven Starter scenes, got ${opened.sceneCount}`);
+      assert(opened.timelineCount === 3, `expected three current harbor timeline fixtures, got ${opened.timelineCount}`);
       assert(opened.assetCount >= 6, `expected real Starter assets, got ${opened.assetCount}`);
       pass('fixture-opened-through-picker', opened);
 
@@ -874,8 +919,8 @@ async function run() {
         id: item.getAttribute('data-timeline-id'),
         hidden: item.hidden,
       })));
-      assert(searchFilteringEvidence.find((item) => item.id === 'intro_cinematic')?.hidden === false, 'timeline search hid its exact match');
-      assert(searchFilteringEvidence.filter((item) => item.id !== 'intro_cinematic').every((item) => item.hidden), 'timeline search did not filter non-matching entries');
+      assert(searchFilteringEvidence.find((item) => item.id === 'harbor_cinematic')?.hidden === false, 'timeline search hid its exact match');
+      assert(searchFilteringEvidence.filter((item) => item.id !== 'harbor_cinematic').every((item) => item.hidden), 'timeline search did not filter non-matching entries');
       await timelineSearch.fill('');
       assert(await firstPage.locator('.timeline-item:not([hidden])').count() === opened.timelineCount, 'clearing timeline search did not restore the library');
       pass('timeline-identity-consistent', { ...identityEvidence, searchFilteringEvidence });
@@ -885,7 +930,7 @@ async function run() {
       assert(localized.portrait?.value === 'portrait' && localized.portrait.label === '角色立绘', 'portrait enum/display projection failed');
       assert(localized.addAction?.value === 'set' && localized.addAction.label === '设置背景', 'action enum/display projection failed');
       assert(localized.inspectorAction?.value === 'set' && localized.inspectorAction.label === '设置背景', 'Inspector action projection failed');
-      assert(localized.inspectorEasing?.value === 'outCubic' && localized.inspectorEasing.label === '快出慢收', 'easing enum/display projection failed');
+      assert(localized.inspectorEasing?.value === 'linear' && localized.inspectorEasing.label === '匀速', 'easing enum/display projection failed');
       assert(localized.sameKeyExpressionEvidence.selectedOption?.endsWith('normal'), `same-key portrait expression drifted: ${localized.sameKeyExpressionEvidence.selectedOption}`);
       assert(localized.sameKeyExpressionEvidence.sameKeyOptions.length >= 3, 'same-key portrait expression choices are incomplete');
       assert(localized.localizedPositionBefore.modeValue === 'custom' && localized.localizedPositionBefore.modeLabel === '自定义横坐标', 'custom portrait coordinate mode is not localized');
@@ -903,8 +948,8 @@ async function run() {
       await firstPage.locator('.timeline-cue').first().click();
       const selectedBeforeSwitch = await stateSnapshot(firstPage);
       assert(selectedBeforeSwitch.currentTimelineCue?.trackIndex === 0 && selectedBeforeSwitch.currentTimelineCue?.cueIndex === 0, 'cue selection did not bind to the current Timeline');
-      await selectTimeline(firstPage, 'intro_cinematic');
-      const afterTimelineSwitch = await stateSnapshot(firstPage, 'intro_cinematic');
+      await selectTimeline(firstPage, 'harbor_cinematic');
+      const afterTimelineSwitch = await stateSnapshot(firstPage, 'harbor_cinematic');
       assert(afterTimelineSwitch.currentTimelineCue === null, 'cue selection leaked across Timeline selection');
       await selectTimeline(firstPage, editedTimelineId);
       await firstPage.locator('.timeline-cue').first().click();
@@ -979,7 +1024,9 @@ async function run() {
       });
 
       await firstPage.locator('[data-action="undo"]').click();
-      await firstPage.waitForFunction((id) => JSON.parse(window.surdetEditorDebug.state.timelines.find((entry) => entry.id === id).text).durationMs === 1050, editedTimelineId);
+      await firstPage.waitForFunction(({ id, expected }) => (
+        JSON.parse(window.surdetEditorDebug.state.timelines.find((entry) => entry.id === id).text).durationMs === expected
+      ), { id: editedTimelineId, expected: originalEditedDurationMs });
       const afterUndo = await stateSnapshot(firstPage);
       const sceneBytesAfterUndo = sceneTextIdentity(afterUndo.scenes);
       assert(sceneBytesAfterUndo.sha256 === sceneBytesBefore.sha256, 'Timeline undo changed screenplay scene bytes');

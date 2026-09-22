@@ -1,4 +1,4 @@
-import { type CoreEventMap, type EventBus, type Unsubscribe } from '@surdet/core';
+import { type CoreEventMap, type EventBus, type Unsubscribe, type PresentationSnapshotContext, type PresentationRestoreResult } from '@surdet/core';
 import type { BacklogEntry } from '../backlog.js';
 import { NULL_AUDIO, type AdvStage, type AudioHandle, type FrameRequestHandler } from '../types.js';
 import {
@@ -94,8 +94,8 @@ export class AdvRenderer {
   selectChoiceAt(position: number): boolean { return this.#controller.selectChoiceAt(position); }
   dispatchInput(action: RendererInputAction): boolean { return this.#controller.dispatchInput(action); }
   backlogEntries(): readonly BacklogEntry[] { return this.#controller.backlogEntries(); }
-  snapshotPresentation(): unknown { return this.#controller.snapshotPresentation(); }
+  snapshotPresentation(context?: PresentationSnapshotContext): unknown { return this.#controller.snapshotPresentation(context); }
   validatePresentation(snapshot: unknown): void { this.#controller.validatePresentation(snapshot); }
   clearPresentation(): void { this.#controller.clearPresentation(); }
-  restorePresentation(snapshot: unknown): void { this.#controller.restorePresentation(snapshot); }
+  restorePresentation(snapshot: unknown): PresentationRestoreResult { return this.#controller.restorePresentation(snapshot); }
 }

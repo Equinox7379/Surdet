@@ -1,6 +1,7 @@
 /** 项目内容入口。与 Starter 共用同一套玩家菜单、存档、输入和退出实现。 */
 import { startPlayer, showPlayerRecovery, type PlayerProject } from '../../../examples/shared/player/player.js';
 import gameConfig from '../game.config.json';
+import gamePackage from '../package.json';
 import { sceneFiles } from './scene-hmr-boundary.js';
 
 const assetFiles = Object.fromEntries(Object.entries(import.meta.glob<string>(
@@ -9,6 +10,7 @@ const assetFiles = Object.fromEntries(Object.entries(import.meta.glob<string>(
 )).map(([path, url]) => [path.replace('../content/assets/', ''), url]));
 
 void startPlayer({
+  id: gamePackage.name,
   config: gameConfig,
   sceneFiles,
   assetFiles,

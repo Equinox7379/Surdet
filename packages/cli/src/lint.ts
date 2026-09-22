@@ -601,14 +601,8 @@ function lintGrowthConfig(
   issues: LintIssue[],
   hasConfig: boolean,
 ): void {
-  const full = path.join(root, 'content/config/growth.json');
-  if (!fs.existsSync(full)) return;
-  let cfg: unknown;
-  try {
-    cfg = JSON.parse(fs.readFileSync(full, 'utf8').replace(/^\uFEFF/, ''));
-  } catch {
-    return; // 解析失败由 CONFIG 校验报告
-  }
+  const cfg = readConfigJson(path.join(root, 'content/config'), 'growth.json', issues);
+  if (!cfg) return;
   const rel = path.join('content/config', 'growth.json');
   const profiles = cfg && typeof cfg === 'object' && !Array.isArray(cfg) ? (cfg as Record<string, unknown>).profiles : undefined;
   if (!Array.isArray(profiles)) return;

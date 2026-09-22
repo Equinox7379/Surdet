@@ -1,4 +1,6 @@
+import { compareCanonicalText } from './canonical-order.js';
 import { AuthoringOperationError, stableStringify } from './change-session.js';
+import { candidateCapsuleIdentity } from './candidate-comparison.js';
 import type {
   CandidateCapsuleRef,
   CompositionComparison,
@@ -244,15 +246,7 @@ export async function buildIntegrationPlan(
   const manifestByCandidate = new Map<string, CompositionManifest>();
   const withManifests = comparison as ComparisonWithManifests;
   for (const refEntry of comparison.candidates) {
-    const candidateId = `cand-${refEntry.changeId}`;
-    void candidateId; // candidateId 由 units 携带；refs 按 changeId 索引即可。
-  }
-  for (const unit of comparison.units) {
-    if (!candidateRefById.has(unit.candidateId)) {
-      const changeId = unit.candidateId.startsWith('cand-') ? unit.candidateId.slice(5) : unit.candidateId;
-      const refEntry = comparison.candidates.find((item) => item.changeId === changeId);
-      if (refEntry !== undefined) candidateRefById.set(unit.candidateId, refEntry);
-    }
+    candidateRefById.set(candidateCapsuleIdentity(refEntry), refEntry);
   }
   if (withManifests.candidateManifests !== undefined) {
     for (const [candidateId, manifest] of Object.entries(withManifests.candidateManifests)) {
@@ -333,10 +327,10 @@ export async function buildIntegrationPlan(
         .filter((unitId) => (inDegree.get(unitId) ?? 0) === 0)
         .map((unitId) => unitsById.get(unitId)!)
         .sort((left, right) =>
-          left.primaryObject.localeCompare(right.primaryObject)
-          || (candidateRefById.get(left.candidateId)?.artifactSha256 ?? '').localeCompare(candidateRefById.get(right.candidateId)?.artifactSha256 ?? '')
+          compareCanonicalText(left.primaryObject, right.primaryObject)
+          || compareCanonicalText((candidateRefById.get(left.candidateId)?.artifactSha256 ?? ''), candidateRefById.get(right.candidateId)?.artifactSha256 ?? '')
           || Math.min(...left.operationSequences) - Math.min(...right.operationSequences)
-          || left.unitId.localeCompare(right.unitId));
+          || compareCanonicalText(left.unitId, right.unitId));
       if (layer.length === 0) throw invalid('选择闭包存在依赖环');
       for (const unit of layer) {
         orderedUnits.push(unit);
