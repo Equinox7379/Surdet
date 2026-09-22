@@ -54,7 +54,7 @@ node packages/cli/dist/agent-port/main.js --project <项目目录> --policy stag
 
 Agent 通过 `asset.sources` 发现授权来源、列目录并读取文件摘要，随后用 `asset.import.stage` 暂存和封存导入。首版支持 PNG、JPEG、WebP 的背景、立绘、头像，单张最多 32 MiB、每次最多 32 张且合计不超过 128 MiB。立绘命名继续使用 `角色_服装_表情`，实际编排标识以 `project.assets` 返回的 `key`、`timelineTarget`、`expression` 为准。
 
-`stage` 不写项目，`asset.import.commit` 和 `asset.import.recover` 需要启动时明确选择 `--policy apply`，并遵守现有项目锁与草稿保护。收到不确定响应后，用 `asset.import.inspect` 查询原 `operationId`：未完成上传可重试原暂存请求；已封存的来源和目标不可替换；发布中断用原计划指纹恢复，返回 `ROLLED_BACK` 不等于导入成功。修正未封存计划的文件名可以使用同一操作编号。导入完成后先重新读取项目和素材事实，再 `change.begin` 创建剧情变更；不把导入塞入现有候选，也不开放素材删除、移动或撤销。
+`stage` 不写项目，`asset.import.commit` 和 `asset.import.recover` 需要启动时明确选择 `--policy apply`，并遵守现有项目锁与草稿保护。收到不确定响应后，用 `asset.import.inspect` 查询原 `operationId`：可继续的上传重试原暂存请求；若进程中断留下上传恢复屏障，检查错误中的 `recoveryAction=discard-unpublished`，用原 `operationId` 与返回的 `manifestFingerprint` 调用 `asset.import.recover`，安全放弃该次未封存上传，收到 `ROLLED_BACK` 后再用新编号导入。该恢复不会写项目素材，无法确认归属的暂存文件仍保留并报错。已封存的来源和目标不可替换；发布中断继续用原 `planFingerprint` 恢复，返回 `ROLLED_BACK` 不等于导入成功。修正未封存计划的文件名可以使用同一操作编号。导入完成后先重新读取项目和素材事实，再 `change.begin` 创建剧情变更；不把导入塞入现有候选，也不开放项目素材删除、移动或撤销。
 
 图像导入后，可以用 `project.gallery` 读取 CG 条目及当前指纹，在隔离 change 中调用 `gallery.cg.create` 新增条目，或用 `gallery.cg.patch` 逐条修改 `name` / `src`。`src` 使用 `project.assets.backgrounds[].key`；省略时使用 CG 的 `id`，修改时传 `src: null` 恢复这一规则。其他 CG、音乐、文本回想及未修改字段会保留，不提供删除或 ID 改名。
 

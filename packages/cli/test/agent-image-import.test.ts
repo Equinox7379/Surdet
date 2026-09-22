@@ -386,6 +386,108 @@ it('rechecks live runtime keys when resuming an import interrupted before public
   } finally { await session.close(); }
 });
 
+async function interruptedUpload() {
+  const f = await fixture();
+  const session = await f.open('apply');
+  const request = await requestFor(session);
+  const createIntent = AssetImportRecordStore.prototype.createUploadIntent;
+  const crash = vi.spyOn(AssetImportRecordStore.prototype, 'createUploadIntent').mockImplementationOnce(async function (this: AssetImportRecordStore, intent) {
+    await createIntent.call(this, intent);
+    await fs.writeFile(this.stagedItemTemporaryFile(intent.operationId, intent.itemId, intent.nonce), 'partial upload');
+    throw new Error('process stopped after durable upload intent');
+  });
+  try { expect(await session.invoke('asset.import.stage', request)).toMatchObject({ ok: false }); }
+  finally { crash.mockRestore(); await session.close(); }
+  const store = new AssetImportRecordStore(await openAssetImportAuthorityPaths({ projectRoot: f.projectRoot, dataRoot: path.join(f.root, 'asset-data') }));
+  return { ...f, request, store, resumed: await f.open('apply') };
+}
+
+it('recovers an interrupted unpublished upload through MCP using its manifest and permits a fresh import', async () => {
+  const f = await interruptedUpload();
+  const failed: any = await f.resumed.invoke('asset.import.inspect', { operationId: f.request.operationId });
+  expect(failed).toMatchObject({ ok: false, error: { code: 'IMPORT_RECOVERY_REQUIRED', details: {
+    manifestFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/), recoveryAction: 'discard-unpublished',
+  } } });
+  expect((await f.resumed.describe()).recoveryDisposition).toBe('MANUAL_RECOVERY_REQUIRED');
+  const recovery = { operationId: f.request.operationId, manifestFingerprint: failed.error.details.manifestFingerprint };
+  expect(await f.resumed.invoke('asset.import.recover', { ...recovery, manifestFingerprint: '0'.repeat(64) }))
+    .toMatchObject({ ok: false, error: { code: 'IMPORT_OPERATION_CONFLICT' } });
+  expect(await f.store.listUploadIntents(recovery.operationId)).toHaveLength(1);
+  const stage = await f.open('stage');
+  expect(await stage.invoke('asset.import.recover', recovery)).toMatchObject({ ok: false, error: { code: 'POLICY_BLOCKED' } });
+  await stage.close();
+  const workspace = new HumanWorkspaceStore({ dataRoot: path.join(f.root, 'data') });
+  const identity = { workspaceSessionId: crypto.randomUUID(), browserSessionId: 'upload-recovery', workspaceGeneration: 1 };
+  await workspace.heartbeat(f.projectRoot, { ...identity, availability: 'dirty', dirtyScopes: ['scene'] });
+  expect(await f.resumed.invoke('asset.import.recover', recovery)).toMatchObject({ ok: false, error: { code: 'HUMAN_WORKSPACE_DIRTY' } });
+  await workspace.heartbeat(f.projectRoot, { ...identity, workspaceGeneration: 2, availability: 'clean' });
+  const server = createAgentPortServer(f.resumed);
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'upload-recovery', version: '1' });
+  await server.connect(serverTransport); await client.connect(clientTransport);
+  try {
+    const call = () => client.callTool({ name: 'surdet_asset_import_recover', arguments: recovery });
+    for (const invalid of [{ operationId: recovery.operationId }, { ...recovery, planFingerprint: 'a'.repeat(64) }]) {
+      expect((await client.callTool({ name: 'surdet_asset_import_recover', arguments: invalid })).isError).toBe(true);
+    }
+    const writeJournal = AssetImportRecordStore.prototype.writeJournal;
+    const stopped = vi.spyOn(AssetImportRecordStore.prototype, 'writeJournal').mockImplementationOnce(async function (this: AssetImportRecordStore, previous, next) {
+      if (next.status === 'ROLLING_BACK') throw new Error('stopped after upload cleanup');
+      return writeJournal.call(this, previous, next);
+    });
+    try { expect((await call()).structuredContent).toMatchObject({ ok: false, error: { code: 'IMPORT_IO_FAILED' } }); }
+    finally { stopped.mockRestore(); }
+    const recovered = result((await call()).structuredContent);
+    expect(recovered.operation.status).toBe('ROLLED_BACK');
+    expect(recovered.receipt).toBeNull();
+    expect(result((await call()).structuredContent).operation).toEqual(recovered.operation);
+    expect(await f.store.listUploadIntents(recovery.operationId)).toEqual([]);
+    expect(await fs.readdir(path.dirname(f.store.stagedItemBinaryFile(recovery.operationId, f.request.items[0]!.itemId)))).toEqual([]);
+    expect((await f.resumed.describe()).manualRecoveryRequired).toBe(false);
+    expect(await fs.readFile(path.join(f.projectRoot, 'content/scenario/start.gal'), 'utf8')).toBe('@scene start\n凛：开始。\n@end\n');
+    const next = await requestFor(f.resumed);
+    const ready = result(await f.resumed.invoke('asset.import.stage', next));
+    expect(ready.operation.status).toBe('READY');
+    expect(await f.resumed.invoke('asset.import.recover', { operationId: next.operationId, manifestFingerprint: ready.manifest.manifestFingerprint }))
+      .toMatchObject({ ok: false, error: { code: 'IMPORT_OPERATION_CONFLICT' } });
+    const published = result(await f.resumed.invoke('asset.import.commit', { operationId: next.operationId, planFingerprint: ready.plan.planFingerprint }));
+    expect(published.operation.status).toBe('COMMITTED');
+    expect(await f.resumed.invoke('asset.import.recover', { operationId: next.operationId, manifestFingerprint: ready.manifest.manifestFingerprint }))
+      .toMatchObject({ ok: false, error: { code: 'IMPORT_OPERATION_CONFLICT' } });
+    expect(await fs.readFile(path.join(f.projectRoot, 'content/assets/bg/night.png'))).toEqual(png);
+  } finally { await client.close(); await server.close(); await f.resumed.close(); }
+}, 30_000);
+
+it('preserves unknown staging files and the recovery barrier when discarding an interrupted upload', async () => {
+  const f = await interruptedUpload();
+  expect(await f.resumed.invoke('asset.import.inspect', { operationId: f.request.operationId }))
+    .toMatchObject({ ok: false, error: { code: 'IMPORT_RECOVERY_REQUIRED' } });
+  const manifest = await f.store.readOperationManifest(f.request.operationId);
+  const unknown = path.join(path.dirname(f.store.stagedItemBinaryFile(f.request.operationId, f.request.items[0]!.itemId)), 'unowned.bin');
+  await fs.writeFile(unknown, 'do not delete');
+  try {
+    expect(await f.resumed.invoke('asset.import.recover', { operationId: f.request.operationId, manifestFingerprint: manifest.manifestFingerprint }))
+      .toMatchObject({ ok: false, error: { code: 'IMPORT_RECOVERY_REQUIRED' } });
+    expect(await fs.readFile(unknown, 'utf8')).toBe('do not delete');
+    expect((await f.resumed.describe()).manualRecoveryRequired).toBe(true);
+  } finally { await f.resumed.close(); }
+}, 30_000);
+
+it('never treats a previously sealed import with a missing plan as an unpublished upload', async () => {
+  const f = await fixture();
+  const session = await f.open('apply');
+  try {
+    const request = await requestFor(session);
+    const ready = result(await session.invoke('asset.import.stage', request));
+    const store = new AssetImportRecordStore(await openAssetImportAuthorityPaths({ projectRoot: f.projectRoot, dataRoot: path.join(f.root, 'asset-data') }));
+    await fs.unlink(path.join(path.dirname(path.dirname(store.stagedItemBinaryFile(request.operationId, request.items[0]!.itemId))), 'plan.json'));
+    expect(await session.invoke('asset.import.recover', { operationId: request.operationId, manifestFingerprint: ready.manifest.manifestFingerprint }))
+      .toMatchObject({ ok: false, error: { code: 'IMPORT_OPERATION_CONFLICT' } });
+    expect(await fs.readFile(store.stagedItemBinaryFile(request.operationId, request.items[0]!.itemId))).toEqual(png);
+    expect((await store.readOperation(request.operationId)).journal.status).toBe('READY');
+  } finally { await session.close(); }
+}, 30_000);
+
 it('rechecks runtime keys after files are verified but before a receipt exists, without rejecting its own target', async () => {
   const f = await fixture();
   const session = await f.open('apply');

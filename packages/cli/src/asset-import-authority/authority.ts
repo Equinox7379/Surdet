@@ -2114,7 +2114,27 @@ export class ProjectAssetImportAuthority {
     const operationId = requireUuid(operationIdInput, 'operationId');
     return this.serialize(operationId, () => this.serializeProjectMutation(async () => {
       await this.assertLeaseHeld();
-      let journal = (await this.store.readOperation(operationId)).journal;
+      const current = await this.store.readOperation(operationId);
+      let journal = current.journal;
+      if (request.manifestFingerprint !== undefined) {
+        const manifest = await this.readVerifiedManifest(operationId);
+        if (request.action !== 'rollback' || manifest.manifestFingerprint !== request.manifestFingerprint
+          || current.hasSealedPlan || await this.store.readPlan(operationId) !== null
+          || await this.store.readPublication(operationId) !== null
+          || await this.store.readReceipt(operationId) !== null || await this.store.readUndoReceipt(operationId) !== null
+          || !['RECOVERY_REQUIRED', 'ROLLING_BACK', 'ROLLED_BACK'].includes(journal.status)) {
+          throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '清单指纹只能用于放弃同一未封存上传，不能恢复或撤销已封存计划');
+        }
+        if (journal.status !== 'ROLLED_BACK') {
+          // Only remove artifacts owned by this manifest. Unknown entries and unsafe
+          // paths remain blocked; an interruption can retry the same manifest.
+          await this.store.removePrePublicationArtifacts(manifest);
+          await this.rollbackPublication(operationId, null);
+        }
+        await this.store.resolveOperationBarriers(operationId);
+        this.projectRecoveryBlocked = await this.store.hasUnresolvedBarrier('asset-import');
+        return { detail: await this.query(operationId) };
+      }
       if (journal.status === 'UNDONE') {
         await this.verifyTerminalInvariants(operationId, journal.status);
         await this.store.resolveOperationBarriers(operationId);
@@ -2274,12 +2294,26 @@ export class ProjectAssetImportAuthority {
       return this.enterRecovery(operationId, 'UNDONE 操作缺少撤销回执');
     }
     if (undoReceipt !== null) await this.verifyUndoReceipt(undoReceipt);
+    let stagedItems: ProjectAssetImportStagedItem[] = [];
+    if (!['COMMITTED', 'UNDONE', 'CANCELLED', 'ROLLED_BACK'].includes(operation.journal.status)) {
+      try {
+        stagedItems = await this.verifiedStagedItems(manifest, requireComplete);
+      } catch (error) {
+        if (error instanceof AssetImportAuthorityError && error.code === 'IMPORT_RECOVERY_REQUIRED'
+          && !operation.hasSealedPlan && plan === null && receipt === null && undoReceipt === null
+          && await this.store.readPublication(operationId) === null) {
+          throw new AssetImportAuthorityError(error.code, error.message, {
+            ...error.details, operationId, manifestFingerprint: manifest.manifestFingerprint,
+            recoveryAction: 'discard-unpublished',
+          });
+        }
+        throw error;
+      }
+    }
     return {
       operation: operation.journal,
       manifest,
-      stagedItems: ['COMMITTED', 'UNDONE', 'CANCELLED', 'ROLLED_BACK'].includes(operation.journal.status)
-        ? []
-        : await this.verifiedStagedItems(manifest, requireComplete),
+      stagedItems,
       plan: plan?.plan ?? null,
       receipt,
       undoReceipt,

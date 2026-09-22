@@ -151,6 +151,18 @@ export class AgentImageImportService {
         if (capability === 'asset.import.stage') {
           return this.stage(authority, store, input as unknown as AgentImageStageRequest, sources);
         }
+        if (capability === 'asset.import.recover' && typeof input['manifestFingerprint'] === 'string') {
+          const manifest = await store.readOperationManifest(operationId);
+          if (manifest.agentRequestFingerprint === undefined) {
+            throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '该操作不属于 Agent 图像导入入口');
+          }
+          await assertHumanWorkspaceAllowsAgentCommit(new HumanWorkspaceStore({ dataRoot: this.manager.dataRoot }), projectRoot);
+          await coordinator.assertOtherReady('asset-import');
+          const recovered = await authority.recover(operationId, {
+            action: 'rollback', manifestFingerprint: input['manifestFingerprint'],
+          });
+          return { ...recovered.detail, coordination: { status: 'unchanged' } };
+        }
         const detail = await authority.query(operationId);
         if (detail.manifest.agentRequestFingerprint === undefined) {
           throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '该操作不属于 Agent 图像导入入口');
