@@ -119,3 +119,24 @@ Owner 转交云端独立复审与 `Surdet_9750765_post_rename_recovery.patch`。
 ### 当前停止点
 
 本机已复现并修正该阻断，定向验证通过；详细普通提交、推送后等待云端针对该边界复审，**不代签最终 PASS**。原未修项和范围冻结继续有效。CI 本轮实时查询仍为 `disabled_manually`，未启用托管运行、发行或部署；首次 Git 远端查询发生 TLS 握手失败，未改安全配置。最终提交/推送身份以 Git 实际回执为准，不为填写自身哈希另增文档提交。
+
+## I-1：中断上传的显式恢复（2026-09-22 续接完成）
+
+Owner 要求逐项修复补审问题；9 月 16 日因额度要求暂停，9 月 22 日明确继续。本轮只完成 I-1，从 `5b13bf869d269898db62eee613545be5aab4ecf0` 和原有 8 个修改文件续接，保留其他未跟踪材料。E-1 的 speaker 捕获接线与 M-1 的失败调用 operationId 台账尚未施工。
+
+### 原因与实现
+
+Agent 上传在持久 upload intent 写入后被终止，重启会留下恢复屏障。原 `inspect` 因暂存不完整报错；原 `recover` 又先查询并要求尚未产生的计划指纹，导致公开入口无法解除阻断。
+
+共享能力契约现要求 `asset.import.recover` 的 `planFingerprint` 与 `manifestFingerprint` 二选一。对于可信且从未封存的中断上传，`inspect` 的结构化错误返回清单指纹与 `recoveryAction=discard-unpublished`。Agent 适配器在原 apply 权限、项目租约、工作区草稿和其他恢复参与者约束下，将显式放弃请求交给公共导入 authority；清理本清单拥有的暂存材料，复用原回滚状态转换并解除屏障，返回 `ROLLED_BACK`，随后可用新编号重新导入。
+
+authority 从已验证 journal generation 链推导 `hasSealedPlan`，拒绝通过删除计划文件把旧封存操作伪装成未封存上传；计划、发布、成功回执或撤销回执存在时同样拒绝该恢复方式。错误指纹与无法确认归属的文件继续阻断，恢复再次中断可重试。未改变持久格式、生产租约时限或已封存发布的恢复行为；新路径不写项目素材，`ROLLED_BACK` 也不表示导入成功。`session.describe` 有素材恢复屏障时明确返回 `MANUAL_RECOVERY_REQUIRED`。
+
+### 验证与范围
+
+- 9 月 16 日保留的 `<local-path>` 记录新增回归修复前失败。`cli-regression.log` 的导入 authority、存储、HTTP 和 Agent 4 文件 / 138 项通过；最终 Authoring/CLI 类型检查与构建均通过，日志为 `authoring-types-final.log`、`authoring-build-2.log`、`cli-types-2.log`、`cli-build-2.log`。本次核对后复用仍有效的结果，不重复整组执行。
+- 9 月 22 日补齐暂停前未完成的最终接口检查：`capability-registry.test.ts` 15 项、`agent-image-import.test.ts` 17 项全部通过。覆盖二选一 schema、权限/草稿保护、错误指纹、未知文件保全、旧封存计划缺失拒绝、恢复中断后的重试及恢复后正常提交。日志在 `<local-path>}.log`。
+- 同目录 `verify-mcp.mjs` 通过真实 stdio MCP 启动本轮构建，在 upload intent 文件出现后只强杀该子进程。按现有 15 秒租约等待后重启，`inspect` 给出恢复指纹，`recover` 返回 `ROLLED_BACK`；相同请求重试结果稳定，屏障解除，新 operationId 可 stage 到 `READY` 并 commit 到 `COMMITTED`。磁盘确认仅新素材落入目标目录，字节与授权来源相同，原剧情和配置未改变。结果为 `mcp-gtbvtY/result.json` 的 `passed: true`；两个数据根和临时项目均在该隔离目录，未用平台默认数据区。
+- `npm run verify:docs`、`git diff --check` 通过。检查了公共恢复方法的 Agent 与 Editor 调用方；本轮未扩展 Editor HTTP 契约、未更改旧 action 恢复请求。没有运行无关游戏、视觉或 Electron 矩阵。
+
+提交前远端 main 仍为 `5b13bf8`，实时 CI 状态为 `disabled_manually`。按持续授权普通提交、推送后停止等待 I-1 独立复审，不把本机验证记成云端通过。I-2 的查询排队、I-3 的现有租约窗口及其他旧限制维持原结论，不在本轮改造。

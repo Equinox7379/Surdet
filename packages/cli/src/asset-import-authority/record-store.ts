@@ -991,7 +991,7 @@ export class AssetImportRecordStore {
     }
   }
 
-  async readOperation(operationId: string): Promise<{ journal: AssetImportJournal; sha256: string }> {
+  async readOperation(operationId: string): Promise<{ journal: AssetImportJournal; sha256: string; hasSealedPlan: boolean }> {
     const registration = await this.readOperationRegistration(operationId);
     if (registration === null) throw new AssetImportAuthorityError('IMPORT_OPERATION_NOT_FOUND', '导入操作不存在');
     await this.assertOperationWorkspaceOrBarrier(operationId);
@@ -1018,6 +1018,7 @@ export class AssetImportRecordStore {
     let previousSha256: string | null = null;
     let latestJournal: AssetImportJournal | null = null;
     let latestSha256: string | null = null;
+    let hasSealedPlan = false;
     for (const [index, entry] of generationEntries.entries()) {
       const expectedVersion = index + 1;
       if (entry.name !== `${String(expectedVersion).padStart(12, '0')}.json`) {
@@ -1041,6 +1042,7 @@ export class AssetImportRecordStore {
         throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '导入 journal generation 链损坏');
       }
       previousJournal = generation.value;
+      hasSealedPlan ||= ['READY', 'PUBLISHING', 'COMMITTED', 'UNDOING', 'UNDONE'].includes(generation.value.status);
       previousSha256 = generation.identity.sha256;
       latestJournal = generation.value;
       latestSha256 = generation.identity.sha256;
@@ -1059,7 +1061,7 @@ export class AssetImportRecordStore {
       await this.ensureOperationRecoveryBarrier(operationId, registration.createdAt, 'journal-invalid');
       throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '导入 journal 语义损坏');
     }
-    return { journal: value, sha256: latestSha256! };
+    return { journal: value, sha256: latestSha256!, hasSealedPlan };
   }
 
   async writeJournal(previous: AssetImportJournal, next: AssetImportJournal): Promise<AssetImportJournal> {

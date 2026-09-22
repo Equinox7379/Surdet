@@ -218,6 +218,8 @@ export interface CommitOperationResponse {
 
 export interface RecoverOperationRequest {
   action: 'resume' | 'rollback';
+  /** Explicitly discard a never-sealed upload; never substitutes for a published plan. */
+  manifestFingerprint?: string;
 }
 
 export interface RecoverOperationResponse {

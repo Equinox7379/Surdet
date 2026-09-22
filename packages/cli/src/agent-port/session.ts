@@ -668,7 +668,7 @@ export class AgentPortSession {
       evidence: evidenceFor(record),
       lease: { change: changeLease, project: projectLease },
       journal,
-      recoveryDisposition,
+      recoveryDisposition: assetRecoveryRequired ? 'MANUAL_RECOVERY_REQUIRED' : recoveryDisposition,
       manualRecoveryRequired: record?.status === 'STALE'
         || assetRecoveryRequired
         || journal.manualRecoveryRequired
