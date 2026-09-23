@@ -333,6 +333,48 @@ describe('Menu v2 characterization contract', () => {
 });
 
 describe('Menu backup restore projection contract', () => {
+  it('disables corrupt main loading but leaves its confirmed backup restore reachable', () => {
+    const runtime = makeRealMenuRuntime();
+    const onSelect = vi.fn(() => false);
+    const onRestore = vi.fn(() => false);
+    try {
+      runtime.facade.commands.menu.showSaveLoad({ mode: 'load', slots: [
+        { id: '1', empty: false, readError: '存档损坏', backupAvailable: true },
+        { id: '2', empty: false, label: '健康主档', backupError: '备份损坏' },
+      ] }, onSelect, vi.fn(), { onRestore });
+      findParentWithText(runtime.root, '存档损坏').emit('pointerdown', pointerEvent);
+      expect(onSelect).not.toHaveBeenCalled();
+      findTextDeep(runtime.root, '恢复备份并读取').emit('pointerdown', pointerEvent);
+      expect(onRestore).not.toHaveBeenCalled();
+      findParentWithText(runtime.root, '取消').emit('pointerdown', pointerEvent);
+      expect(onRestore).not.toHaveBeenCalled();
+      findTextDeep(runtime.root, '恢复备份并读取').emit('pointerdown', pointerEvent);
+      findParentWithText(runtime.root, '恢复并读取').emit('pointerdown', pointerEvent);
+      expect(onRestore.mock.calls).toEqual([['1']]);
+      expect(findTextDeep(runtime.root, '备份损坏')).toBeDefined();
+      findParentWithText(runtime.root, '健康主档').emit('pointerdown', pointerEvent);
+      expect(onSelect.mock.calls).toEqual([['2']]);
+    } finally { disposeRealMenuRuntime(runtime); }
+  });
+
+  it('requires overwrite confirmation for a corrupt occupied slot', () => {
+    const runtime = makeRealMenuRuntime();
+    const onSelect = vi.fn(() => false);
+    try {
+      runtime.facade.commands.menu.showSaveLoad({ mode: 'save', slots: [
+        { id: '1', empty: false, readError: '存档损坏' },
+      ] }, onSelect, vi.fn());
+      const card = findParentWithText(runtime.root, '存档损坏');
+      card.emit('pointerdown', pointerEvent);
+      expect(onSelect).not.toHaveBeenCalled();
+      findParentWithText(runtime.root, '取消').emit('pointerdown', pointerEvent);
+      expect(onSelect).not.toHaveBeenCalled();
+      card.emit('pointerdown', pointerEvent);
+      findParentWithText(runtime.root, '覆盖存档').emit('pointerdown', pointerEvent);
+      expect(onSelect.mock.calls).toEqual([['1']]);
+    } finally { disposeRealMenuRuntime(runtime); }
+  });
+
   it('cancels an overwrite without invoking storage, then confirms exactly one original action', () => {
     const runtime = makeRealMenuRuntime();
     const onSelect = vi.fn(() => false);

@@ -75,6 +75,7 @@ import { createSystemAdapters } from './system-adapters.js';
 import { ResolvedAudio } from '../resolved-audio.js';
 import { createSettingsStorage } from '../settings-storage.js';
 import { createBrowserSaveStorage, gameStoragePrefix } from './browser-save-storage.js';
+import { listPlayerSaveSlots } from './save-slot-list.js';
 import { createConfiguredFontJobs } from '../font-jobs.js';
 import { installSceneHotReload, type SceneHotModule } from '../scene-hmr.js';
 import { createStarterOwnerTeardown } from './owner-teardown.js';
@@ -433,9 +434,10 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
 
   // 存档存储：Electron 壳（打包 exe）落 userData/saves 文件系统（异步 invoke IPC）；浏览器回退 localStorage
   const desktopSave = window.surdetSave;
+  const browserSave = desktopSave ? null : createBrowserSaveStorage(localStorage, browserPrefix);
   const saveStorage: SaveStorage = desktopSave
     ? createElectronSaveStorage(desktopSave)
-    : createBrowserSaveStorage(localStorage, browserPrefix);
+    : browserSave!;
   const saves = new SaveManager(saveStorage);
 
   // 剧本 @autosave：写入自动存档槽位（读档用 F9 只覆盖快速档；自动档需另行提供读档入口）
@@ -892,11 +894,9 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   const SLOT_IDS = ['1', '2', '3', '4', '5', '6', QUICK_SLOT, AUTO_SLOT];
   async function openSaveLoad(mode: 'save' | 'load', source: 'title' | 'game' | 'system-menu' = uiSnapshot().base): Promise<void> {
     if (source === 'title') menu.hideTitle(false);
-    let metas: Awaited<ReturnType<typeof saves.list>>;
-    let backupMetas: Awaited<ReturnType<typeof saves.listBackupMeta>> = [];
+    let slots: SaveSlotView[];
     try {
-      metas = await saves.list();
-      if (mode === 'load') backupMetas = await saves.listBackupMeta();
+      slots = await listPlayerSaveSlots(saves, browserSave, SLOT_IDS, mode);
     } catch (err) {
       if (source === 'title') showTitleScreen();
       console.error('[starter] 存档列表读取失败:', err);
@@ -904,21 +904,6 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
       refreshCommandRail();
       return;
     }
-    const byId = new Map(metas.map((m) => [m.id, m]));
-    const backupIds = new Set(backupMetas.map((m) => m.id));
-    const slots: SaveSlotView[] = SLOT_IDS.map((id) => {
-      const m = byId.get(id);
-      return {
-        id,
-        empty: !m,
-        label: m?.chapter,
-        updatedAt: m?.updatedAt,
-        thumbnail: m?.thumbnail,
-        playTimeSec: m?.playTimeSec,
-        backupAvailable: mode === 'load' && backupIds.has(id),
-        kind: id === QUICK_SLOT ? 'quick' : id === AUTO_SLOT ? 'auto' : 'manual',
-      };
-    });
     activeSaveLoad = { mode, slots };
     playerShell!.commands.open({ slot: 'save-load', source, mode });
   }
