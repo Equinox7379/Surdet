@@ -262,13 +262,20 @@ export class MenuLayer implements MenuProjectionPort {
         const mist = new Graphics();
         const paint = (): void => {
           mist.clear();
-          for (let step = 0; step < 40; step++) {
-            const falloff = step / 40;
-            mist.ellipse(this.#w * 0.15, this.#h * 0.44,
-              this.#w * (0.5 - falloff * 0.37), this.#h * (0.63 - falloff * 0.4))
-              .fill({ color: this.#theme.colors.panel, alpha: 0.028 });
+          // The reference has a broad halo behind the wordmark and a denser,
+          // narrow bank behind the whole menu, not one low-opacity screen wash.
+          for (const bank of [
+            { x: 0.22, y: 0.25, rx: 0.30, ry: 0.29, alpha: 0.023 },
+            { x: 0.16, y: 0.625, rx: 0.115, ry: 0.36, alpha: 0.046 },
+          ]) {
+            for (let step = 0; step < 128; step++) {
+              const radius = 1 - step * 0.9 / 128;
+              mist.ellipse(this.#w * bank.x, this.#h * bank.y,
+                this.#w * bank.rx * radius, this.#h * bank.ry * radius)
+                .fill({ color: this.#theme.colors.panel, alpha: bank.alpha * Math.min(1, step / 16) });
+            }
           }
-          bindThemeGraphicsProjection(mist, Array<keyof RendererTheme['colors']>(40).fill('panel'));
+          bindThemeGraphicsProjection(mist, Array<keyof RendererTheme['colors']>(256).fill('panel'));
         };
         this.#surfacePaints.set(mist, paint);
         paint();

@@ -242,6 +242,7 @@ describe('Menu v2 characterization contract', () => {
     const select = vi.fn();
     try {
       await runtime.assets.registerBackground('wordmark', logo);
+      await runtime.assets.registerBackground('title_bg', Texture.WHITE);
       runtime.facade.commands.menu.showTitle({ title: '字标标题', logoKey: 'wordmark', items: [{ id: 'new', label: '开始游戏' }] }, select);
       const sprites = (node: Container): Sprite[] => [...(node instanceof Sprite ? [node] : []), ...node.children.flatMap(sprites)];
       expect(sprites(runtime.root).some((sprite) => sprite.texture === logo)).toBe(true);
