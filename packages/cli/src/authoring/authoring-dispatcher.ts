@@ -38,6 +38,12 @@ function requireChange(context: InvocationContext): string {
   return context.activeChangeId;
 }
 
+function readChange(context: InvocationContext, input: Record<string, unknown>, defaultWorking: boolean): string | undefined {
+  if (input['view'] === 'working') return requireChange(context);
+  if (input['view'] === 'project') return undefined;
+  return defaultWorking ? context.activeChangeId : undefined;
+}
+
 function operationIdFrom(input: Record<string, unknown>): string | undefined {
   return typeof input['operationId'] === 'string' ? input['operationId'] : undefined;
 }
@@ -67,13 +73,13 @@ export async function dispatchAuthoringCapability(
   if (!isCapabilityAllowed(context.policy, definition)) throw new AuthoringOperationError('POLICY_BLOCKED', `当前 policy 不允许 ${capability}`);
   switch (capability) {
     case 'capabilities.describe':
-      return { value: await service.describeCapabilities() };
+      return { value: await service.describeCapabilities(payload as { ids?: string[]; detail?: 'summary' | 'full' }) };
     case 'project.inspect':
-      return { value: await service.inspectProject(requireProject(context)) };
+      return { value: await service.inspectProject(requireProject(context), readChange(context, payload, false)) };
     case 'project.assets':
-      return { value: await service.projectAssets(requireProject(context)) };
+      return { value: await service.projectAssets(requireProject(context), readChange(context, payload, false)) };
     case 'project.gallery':
-      return { value: await service.projectGallery(requireProject(context), context.activeChangeId) };
+      return { value: await service.projectGallery(requireProject(context), readChange(context, payload, true)) };
     case 'asset.sources':
     case 'asset.import.stage':
     case 'asset.import.inspect':
@@ -89,7 +95,8 @@ export async function dispatchAuthoringCapability(
         value: await service.inspectObject(
           requireProject(context),
           payload['objectRef'] as string,
-          context.activeChangeId,
+          readChange(context, payload, true),
+          payload['fragment'] as Parameters<AuthoringService['inspectObject']>[3],
         ),
       };
     case 'change.begin':
@@ -125,7 +132,10 @@ export async function dispatchAuthoringCapability(
     case 'project.simulate': {
       const sceneId = typeof payload['sceneId'] === 'string' ? payload['sceneId'] : undefined;
       const seed = typeof payload['seed'] === 'number' ? payload['seed'] : undefined;
-      const input = { ...(sceneId === undefined ? {} : { sceneId }), ...(seed === undefined ? {} : { seed }) };
+      const input = { ...(sceneId === undefined ? {} : { sceneId }), ...(seed === undefined ? {} : { seed }),
+        ...(payload['maxPaths'] === undefined ? {} : { maxPaths: payload['maxPaths'] as number }),
+        ...(payload['maxStepsPerPath'] === undefined ? {} : { maxStepsPerPath: payload['maxStepsPerPath'] as number }),
+      };
       return context.activeChangeId === undefined
         ? { value: await service.simulateProject(requireProject(context), Object.keys(input).length === 0 ? undefined : input) }
         : { value: await service.simulate(context.activeChangeId, Object.keys(input).length === 0 ? undefined : input) };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ProjectFile, ProjectStorage, TextHasher } from '../src/project-storage.js';
-import { buildObjectIndex } from '../src/object-index.js';
+import { buildObjectIndex, inspectSceneFragment } from '../src/object-index.js';
 import { loadProjectSnapshot } from '../src/project-snapshot.js';
 import { parseSceneDocument } from '../src/scene-document.js';
 
@@ -15,11 +15,10 @@ function digest(text: string): string {
 
 const hasher: TextHasher = { sha256: async (text) => digest(text) };
 
-function fixtureSnapshotStorage(): ProjectStorage {
-  const contents: Record<string, string> = {
+function fixtureSnapshotStorage(contents: Record<string, string> = {
     'game.config.json': '{"entryScene":"prologue","variables":{}}',
     'content/scenario/prologue.gal': '@scene prologue\n凛：一样\n凛：一样\n@end',
-  };
+  }): ProjectStorage {
   return {
     rootIdentity: 'fixture-root',
     listFiles: async () => Object.keys(contents),
@@ -33,6 +32,28 @@ function fixtureSnapshotStorage(): ProjectStorage {
 }
 
 describe('revision-scoped object index', () => {
+  it('pages nested scene source losslessly with finite bounds and a pinned snapshot', async () => {
+    const source = ['@scene prologue', '// 注释保留', '@if true', '  凛：一样', '  凛：一样', '@endif', '', ...Array.from({ length: 202 }, (_, i) => `第${i}行。`), '@end'].join('\r\n');
+    const contents = { 'game.config.json': '{"entryScene":"prologue","variables":{}}', 'content/scenario/chapter/prologue.gal': source };
+    const storage = fixtureSnapshotStorage(contents);
+    const snapshot = await loadProjectSnapshot(storage, hasher);
+    const index = buildObjectIndex(snapshot);
+    const object = index.byRef.get('scene:prologue')!;
+    const first = inspectSceneFragment(snapshot, index, object, { limit: 200 });
+    expect(first.lines).toHaveLength(200);
+    const last = inspectSceneFragment(snapshot, index, object, { fromLine: first.nextLine, expectedRevision: first.revision });
+    expect([...first.lines, ...last.lines].map((line) => line.text + line.eol).join('')).toBe(source);
+    expect(first.lines[3]!.objectRefs[0]).not.toBe(first.lines[4]!.objectRefs[0]);
+    expect(first.lines[3]!.objectRefs.every((ref) => index.byRef.get(ref)?.source?.path === 'content/scenario/chapter/prologue.gal')).toBe(true);
+    for (const input of [{ fromLine: 0 }, { fromLine: 999 }, { limit: 0 }, { limit: 201 }, { limit: 1.5 }, { fromLine: 2 }]) {
+      expect(() => inspectSceneFragment(snapshot, index, object, input)).toThrow();
+    }
+    contents['game.config.json'] = '{"entryScene":"prologue","title":"另一处修改","variables":{}}';
+    const changed = await loadProjectSnapshot(storage, hasher);
+    const changedIndex = buildObjectIndex(changed);
+    expect(() => inspectSceneFragment(changed, changedIndex, changedIndex.byRef.get('scene:prologue')!, { fromLine: 201, expectedRevision: first.revision })).toThrow('版本已变化');
+  });
+
   it('gives duplicate dialogue lines distinct revision-scoped refs', async () => {
     const snapshot = await loadProjectSnapshot(fixtureSnapshotStorage(), hasher);
     const index = buildObjectIndex(snapshot);

@@ -212,9 +212,10 @@ describe('simulateSnapshot', () => {
   it('carries the step budget into each choice branch instead of resetting it', async () => {
     const snapshot = await loadProjectSnapshot(fixtureStorage(), hasher);
     const report = await simulateSnapshot(snapshot, { maxStepsPerPath: 2 });
-    expect(report.status).toBe('failed');
+    expect(report.status).toBe('incomplete');
     expect(report.paths).toHaveLength(2);
-    expect(report.paths.every((path) => path.error?.includes('单路径步数超过 2'))).toBe(true);
+    expect(report.runtimeErrors).toEqual([]);
+    expect(report.paths.every((path) => path.status === 'incomplete' && path.termination === 'budget-exhausted' && path.prunedReason === 'step-budget')).toBe(true);
     const sufficient = await simulateSnapshot(snapshot, { maxStepsPerPath: 3 });
     expect(sufficient.status).toBe('passed');
     expect(sufficient.paths).toHaveLength(2);

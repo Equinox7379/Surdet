@@ -461,7 +461,7 @@ export class AgentPortSession {
         workingRevisionAfter: afterRecord.workingRevision,
         input,
         evidenceIds: [
-          ...evidenceIdsFromValue(currentEnvelope.ok ? currentEnvelope.result : undefined),
+          ...evidenceIdsFromValue(currentEnvelope.ok ? currentEnvelope.result : currentEnvelope.error.details),
           ...evidenceIdsFromRecord(afterRecord),
         ],
       });

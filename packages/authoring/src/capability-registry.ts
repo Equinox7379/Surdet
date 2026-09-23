@@ -34,6 +34,18 @@ const booleanSchema: JsonSchema = { type: 'boolean' };
 const nullSchema: JsonSchema = { type: 'null' };
 const stringArraySchema: JsonSchema = arrayOf(stringSchema);
 const emptyInputSchema = strictObject({});
+const readViewSchema: JsonSchema = { enum: ['project', 'working'], description: 'Explicit content source. Working requires an active change; it never falls back to project.' };
+const readViewInputSchema = strictObject({ view: readViewSchema });
+const sceneFragmentInputSchema = strictObject({
+  fromLine: { type: 'integer', minimum: 1 }, limit: { type: 'integer', minimum: 1, maximum: 200 },
+  expectedRevision: stringSchema, expectedWorkingRevision: { type: 'integer', minimum: 0 },
+});
+const sceneFragmentSchema = strictObject({
+  revision: stringSchema, workingRevision: integerSchema,
+  fromLine: integerSchema, totalLines: integerSchema, nextLine: integerSchema, truncated: booleanSchema,
+  lines: arrayOf(strictObject({ line: integerSchema, text: stringSchema, eol: stringSchema, objectRefs: stringArraySchema }, ['line', 'text', 'eol', 'objectRefs'])),
+}, ['revision', 'fromLine', 'totalLines', 'truncated', 'lines']);
+const sceneContinuationSchema = strictObject({ sceneRef: stringSchema, revision: stringSchema, workingRevision: integerSchema }, ['sceneRef', 'revision', 'workingRevision']);
 const importUuidSchema: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' };
 const importShaSchema: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' };
 const importOperationSchema = strictObject({ operationId: importUuidSchema }, ['operationId']);
@@ -429,6 +441,7 @@ const projectAssetIntelligenceSchema = strictObject({
 }, ['items', 'summary', 'issues']);
 
 const assetCatalogSchema = strictObject({
+  view: readViewSchema,
   backgrounds: arrayOf(assetEntrySchema),
   portraits: arrayOf(assetEntrySchema),
   avatars: arrayOf(assetEntrySchema),
@@ -455,6 +468,7 @@ const emptyAssetIntelligenceExample = {
 };
 
 const projectInspectionSchema = strictObject({
+  view: readViewSchema,
   rootIdentity: stringSchema,
   revision: stringSchema,
   entryScene: stringSchema,
@@ -475,6 +489,8 @@ const projectInspectionSchema = strictObject({
 ]);
 
 const objectInspectionSchema = strictObject({
+  view: readViewSchema,
+  fragment: sceneFragmentSchema,
   kind: stringSchema,
   objectRef: stringSchema,
   semanticId: stringSchema,
@@ -526,9 +542,9 @@ const validationOutputSchema: JsonSchema = {
 const simulationPathSchema = strictObject({
   choices: arrayOf(integerSchema),
   finalVariables: jsonValueSchema,
-  status: { enum: ['passed', 'failed'] },
+  status: { enum: ['passed', 'failed', 'incomplete'] },
   termination: { enum: ['ended', 'error', 'pruned', 'budget-exhausted'] },
-  prunedReason: { enum: ['state-signature', 'path-budget'] },
+  prunedReason: { enum: ['state-signature', 'path-budget', 'step-budget'] },
   error: stringSchema,
 }, ['choices', 'finalVariables', 'status', 'termination']);
 
@@ -749,6 +765,12 @@ const capabilitySummarySchema = strictObject({
   'idempotency', 'composable', 'preconditions', 'possibleErrors', 'repairRecipes', 'minimalExample',
 ]);
 
+const capabilityBriefSchema = strictObject({
+  id: stringSchema, mcpTool: stringSchema, title: stringSchema, purpose: stringSchema,
+  minimumPolicy: { enum: ['observe', 'stage', 'apply'] }, composable: booleanSchema,
+  sideEffects: stringArraySchema, idempotency: stringSchema,
+}, ['id', 'mcpTool', 'title', 'purpose', 'minimumPolicy', 'composable', 'sideEffects', 'idempotency']);
+
 const candidateRefSchema = strictObject({
   changeId: stringSchema,
   capsuleId: stringSchema,
@@ -837,7 +859,7 @@ const importDetailExample = { operation: { status: 'READY' }, manifest: {}, stag
 
 const definitions = {
   gallery: {
-    inputSchema: emptyInputSchema,
+    inputSchema: readViewInputSchema,
     outputSchema: strictObject({
       view: { enum: ['project', 'working'] },
       cgs: arrayOf(strictObject({ id: stringSchema, name: stringSchema, src: stringSchema, objectRef: stringSchema, fingerprint: stringSchema }, ['id', 'name', 'objectRef', 'fingerprint'])),
@@ -933,17 +955,20 @@ const definitions = {
     example: { input: {}, expectedResultShape: { integrationChangeId: 'chg_...', status: 'READY', nextOperationIndex: 3, operationCount: 3 } },
   },
   describe: {
-    inputSchema: emptyInputSchema,
-    outputSchema: strictObject({ contractVersion: stringSchema, capabilities: arrayOf(capabilitySummarySchema) }, ['contractVersion', 'capabilities']),
+    inputSchema: strictObject({
+      ids: { type: 'array', items: stringSchema, minItems: 1, uniqueItems: true, description: 'Select exact native capability IDs. Omit to include all; unknown IDs are rejected.' },
+      detail: { enum: ['summary', 'full'], description: 'Defaults to full. Summary omits schemas, examples and repair details. Definitions do not grant permission; session.describe reports actual availability.' },
+    }),
+    outputSchema: strictObject({ contractVersion: stringSchema, capabilities: arrayOf({ oneOf: [capabilitySummarySchema, capabilityBriefSchema] }) }, ['contractVersion', 'capabilities']),
     example: { input: {}, expectedResultShape: { contractVersion: '1.0.0', capabilities: [] } },
   },
   inspect: {
-    inputSchema: emptyInputSchema,
+    inputSchema: readViewInputSchema,
     outputSchema: projectInspectionSchema,
     example: { input: {}, expectedResultShape: { rootIdentity: '...', revision: '...', scenes: [], variables: [], characters: [], assets: { backgrounds: [], portraits: [], avatars: [], intelligence: emptyAssetIntelligenceExample }, objectCount: 0, referenceCount: 0 } },
   },
   assets: {
-    inputSchema: emptyInputSchema,
+    inputSchema: readViewInputSchema,
     outputSchema: assetCatalogSchema,
     example: { input: {}, expectedResultShape: { backgrounds: [], portraits: [], avatars: [], intelligence: emptyAssetIntelligenceExample } },
   },
@@ -961,7 +986,10 @@ const definitions = {
   assetImportCommit: { inputSchema: importCommitSchema, outputSchema: importDetailSchema, example: { input: { operationId: '22222222-2222-4222-8222-222222222222', planFingerprint: 'a'.repeat(64) }, expectedResultShape: importDetailExample } },
   assetImportRecover: { inputSchema: importRecoverSchema, outputSchema: importDetailSchema, example: { input: { operationId: '22222222-2222-4222-8222-222222222222', planFingerprint: 'a'.repeat(64) }, expectedResultShape: importDetailExample } },
   objectInspect: {
-    inputSchema: strictObject({ objectRef: stringSchema }, ['objectRef']),
+    inputSchema: strictObject({ objectRef: stringSchema, view: readViewSchema, fragment: {
+      ...sceneFragmentInputSchema,
+      description: 'Scene-only raw line page, default first line and 100 lines, max 200. Subsequent pages require expectedRevision from the first fragment, plus expectedWorkingRevision for working view. Changed versions reject the page; re-read from line 1.',
+    } }, ['objectRef']),
     outputSchema: objectInspectionSchema,
     example: { input: { objectRef: 'scene:prologue' }, expectedResultShape: { kind: 'scene', objectRef: 'scene:prologue', references: [], referencedBy: [] } },
   },
@@ -979,9 +1007,10 @@ const definitions = {
       ...strictObject({ operationId: stringSchema, sceneId: stringSchema, blocks: arrayOf(sceneBlockSchema) }, ['operationId', 'sceneId']),
       $defs: sceneSchemaDefinitions,
     },
-    outputSchema: strictObject({ sceneId: stringSchema, path: stringSchema }, ['sceneId', 'path']),
+    outputSchema: strictObject({ sceneId: stringSchema, path: stringSchema, continuation: sceneContinuationSchema }, ['sceneId', 'path']),
     example: { input: { operationId: 'op_scene', sceneId: 'agent_port_entry', blocks: [
-      { kind: 'choice', options: [{ label: '继续', when: 'trust > 0', effects: [{ name: 'set', args: ['trust', '1'] }], target: { kind: 'goto', value: 'next' } }] },
+      { kind: 'choice', options: [{ label: '继续', when: 'trust > 0', effects: [{ name: 'set', args: ['trust', '=', '1'] }], target: { kind: 'goto', value: 'next' } }] },
+      { kind: 'label', name: 'next' },
       { kind: 'condition', branches: [{ kind: 'if', expr: 'trust > 0', blocks: [{ kind: 'text', value: '进入下一段。' }] }, { kind: 'else', blocks: [{ kind: 'text', value: '暂时停留。' }] }] },
     ] }, expectedResultShape: { sceneId: 'agent_port_entry', path: 'content/scenario/agent_port_entry.gal' } },
   },
@@ -990,9 +1019,9 @@ const definitions = {
       $defs: sceneSchemaDefinitions,
       description: `Patch one source object with its original fingerprint. replaceInstruction replaces one existing whitelisted single-line scene instruction in place using a complete instruction (omitted modifiers are removed); the whitelist is ${REPLACEABLE_SCENE_INSTRUCTIONS.join('、')}. Audio, video, flow-boundary, and structure directives stay outside this entry. replaceChoiceGroup atomically replaces the complete choice options; use choice.details.structure.fingerprint, which is distinct from the line fingerprint used by replaceChoiceOption/insertAfter. replaceConditionBlock atomically replaces one paired nested condition; branches determine order and add/delete branches, sourceBranch must be a current direct branch of the target, and omitting blocks preserves that branch body comments, indentation, and line endings byte-for-byte. New branches must provide blocks. Re-read object facts after edits; surrounding source outside the selected structure is preserved.`,
     },
-    outputSchema: strictObject({ path: stringSchema, line: integerSchema, kind: stringSchema }, ['path', 'line', 'kind']),
+    outputSchema: strictObject({ path: stringSchema, line: integerSchema, kind: stringSchema, continuation: sceneContinuationSchema }, ['path', 'line', 'kind']),
     example: { input: { operationId: 'op_patch', patch: { kind: 'replaceChoiceGroup', target: 'scene:x/choice:2@12345678-abcdef12', expectedFingerprint: 'fedcba98', choice: { kind: 'choice', options: [
-      { label: '左侧', when: 'trust > 0', effects: [{ name: 'set', args: ['route', 'left'] }], target: { kind: 'goto', value: 'left' } },
+      { label: '左侧', when: 'trust > 0', effects: [{ name: 'set', args: ['route', '=', '"left"'] }], target: { kind: 'goto', value: 'left' } },
       { label: '右侧', target: { kind: 'jump', value: 'right' } },
     ] } } }, expectedResultShape: { path: 'content/scenario/x.gal', line: 2, kind: 'replaceChoiceGroup' } },
   },
@@ -1037,7 +1066,10 @@ const definitions = {
     example: { input: {}, expectedResultShape: { view: 'project', ok: true, issues: [] } },
   },
   simulate: {
-    inputSchema: strictObject({ sceneId: stringSchema, seed: seedSchema }),
+    inputSchema: strictObject({ sceneId: stringSchema, seed: seedSchema,
+      maxPaths: { type: 'integer', minimum: 1, maximum: 2000, description: 'Default 500 paths. Exhaustion is incomplete, not passed.' },
+      maxStepsPerPath: { type: 'integer', minimum: 1, maximum: 100000, description: 'Default 20000 steps per path. Use an explicit scene/path when the bounded budget is insufficient.' },
+    }),
     outputSchema: simulationOutputSchema,
     example: { input: {}, expectedResultShape: { view: 'project', status: 'passed', report: { status: 'passed' } } },
   },
@@ -1055,7 +1087,7 @@ const definitions = {
   },
   readTrace: {
     inputSchema: strictObject({ traceId: stringSchema, query: traceQuerySchema }, ['traceId']),
-    outputSchema: strictObject({ view: { const: 'working' }, traceId: stringSchema, events: traceEventsSchema, count: integerSchema, seed: seedSchema, freshness: EVIDENCE_FRESHNESS_SCHEMA }, ['view', 'traceId', 'events', 'count', 'seed', 'freshness']),
+    outputSchema: strictObject({ view: { const: 'working' }, traceId: stringSchema, status: { enum: ['passed', 'failed', 'unknown'] }, traceWorkingRevision: integerSchema, events: traceEventsSchema, count: integerSchema, seed: seedSchema, freshness: EVIDENCE_FRESHNESS_SCHEMA }, ['view', 'traceId', 'events', 'count', 'seed', 'freshness']),
     example: { input: { traceId: 'trace_...' }, expectedResultShape: { view: 'working', traceId: 'trace_...', events: [], count: 0, seed: 1592639710, freshness: { status: 'fresh', currentWorkingRevision: 1 } } },
   },
   readPreview: {
@@ -1223,8 +1255,8 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
   'project.assets': { title: 'Inspect project assets', purpose: 'Read shared physical asset metadata, references, health facts, and the compatible background/portrait/avatar catalog.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false, preconditions: ['project root must exist'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID'], repairRecipes: readRepair },
   'object.inspect': { title: 'Inspect object', purpose: 'Read one stable object reference, its fingerprint, and one-level childRefs for exact traversal.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['objectRef must identify one object'], possibleErrors: ['OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS', 'OBJECT_REF_STALE'], repairRecipes: readRepair },
   'change.begin': { title: 'Begin change', purpose: 'Create an isolated authoring change from a fresh project snapshot.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-write'], idempotency: 'non-idempotent', composable: false, preconditions: ['project root must be stable', 'no conflicting active change'], possibleErrors: [...commonErrors, 'CHANGE_ID_AMBIGUOUS'], repairRecipes: ['inspect the project and session state before starting a new change'] },
-  'scene.create': { title: 'Create scene', purpose: 'Create one typed scene document inside the active change. Blocks include choices with display conditions/effects/targets and recursively nested if/elif/else condition blocks; the Core parser and compiler validate every pairing.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'operationId is fresh or identical'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ["use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", 'for nested condition creation provide blocks for every branch; use scene.patch only after object.inspect exposes a current structure fingerprint', ...mutateRepair] },
-  'scene.patch': { title: 'Patch scene', purpose: 'Patch one scene object using a current fingerprint. replaceChoiceGroup edits the complete choice group atomically; replaceConditionBlock edits one paired nested condition atomically and preserves omitted sourceBranch bodies byte-for-byte. The structural fingerprint in choice.details.structure or condition.details.structure is separate from the original line fingerprint used by existing row operations.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'target and every supplied sourceBranch reference the current working object index', 'expectedFingerprint is the complete structure fingerprint for choice/condition edits'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ["use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", 'inspect the scene root, then inspect the complete choice or condition object and copy its structure fingerprint and direct childRefs', 'for replaceConditionBlock omit blocks only with a current direct sourceBranch to preserve its body; provide blocks for each new branch', ...mutateRepair] },
+  'scene.create': { title: 'Create scene', purpose: 'Create one typed scene document inside the active change. Blocks include choices with display conditions/effects/targets and recursively nested if/elif/else condition blocks; the Core parser and compiler validate every pairing.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'operationId is fresh or identical'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['the minimal example requires a declared number variable trust with a positive initial value and a fresh scene id', "use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", 'for nested condition creation provide blocks for every branch; use scene.patch only after object.inspect exposes a current structure fingerprint', ...mutateRepair] },
+  'scene.patch': { title: 'Patch scene', purpose: 'Patch one scene object using a current fingerprint. replaceChoiceGroup edits the complete choice group atomically; replaceConditionBlock edits one paired nested condition atomically and preserves omitted sourceBranch bodies byte-for-byte. The structural fingerprint in choice.details.structure or condition.details.structure is separate from the original line fingerprint used by existing row operations.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'target and every supplied sourceBranch reference the current working object index', 'expectedFingerprint is the complete structure fingerprint for choice/condition edits'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['the minimal example requires number trust, string route, scene x with a current choice and left label, and scene right; copy the current choice reference and structure fingerprint', "use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", 'inspect the scene root, then inspect the complete choice or condition object and copy its structure fingerprint and direct childRefs', 'for replaceConditionBlock omit blocks only with a current direct sourceBranch to preserve its body; provide blocks for each new branch', ...mutateRepair] },
   'variable.ensure': { title: 'Ensure variable', purpose: 'Ensure one variable declaration without changing an equivalent declaration.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'variable.patch-initial': { title: 'Patch variable initial', purpose: 'Update only the initial value of one existing variable declaration using its complete declaration fingerprint. Name, type, readonly, range constraints, and unknown declaration fields are preserved; numeric range violations are rejected without clamping.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'variable declaration fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'character.ensure': { title: 'Ensure character', purpose: 'Create or update one character declaration with a table fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'character table fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_REF_STALE', 'OBJECT_AMBIGUOUS', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },

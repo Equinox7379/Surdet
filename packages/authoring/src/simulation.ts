@@ -32,9 +32,9 @@ export type SimulationPathTermination = 'ended' | 'error' | 'pruned' | 'budget-e
 export interface SimulationPath {
   choices: number[];
   finalVariables: Record<string, VarValue>;
-  status: 'passed' | 'failed';
+  status: 'passed' | 'failed' | 'incomplete';
   termination: SimulationPathTermination;
-  prunedReason?: 'state-signature' | 'path-budget';
+  prunedReason?: 'state-signature' | 'path-budget' | 'step-budget';
   error?: string;
 }
 
@@ -224,7 +224,7 @@ export function simulateSnapshot(
     paths.push({
       choices: [...choices],
       finalVariables: store.snapshot(),
-      status: 'passed',
+      status: termination === 'budget-exhausted' ? 'incomplete' : 'passed',
       termination,
       prunedReason: reason,
     });
@@ -239,7 +239,8 @@ export function simulateSnapshot(
   const drive = (choices: number[], steps = 0): void => {
     for (;;) {
       if (++steps > maxSteps) {
-        finish(choices, 'failed', `单路径步数超过 ${maxSteps}，疑似死循环`);
+        budgetExhausted = true;
+        recordPruned(choices, 'step-budget', 'budget-exhausted');
         return;
       }
       try {

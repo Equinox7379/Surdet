@@ -19,7 +19,7 @@
 ## 项目状态与记录
 
 - [长期路线与决策台账](superpowers/plans/2026-08-13-project-roadmap-and-decision-ledger.md)：当前状态、长期决策、授权边界和下一阶段方向。
-- [默认完整创作路径实施计划](superpowers/plans/2026-09-23-default-authoring-path.md)：下一阶段任务、依赖和验收；当前为规划，尚未实施。
+- [默认完整创作路径实施计划](superpowers/plans/2026-09-23-default-authoring-path.md)：本阶段任务、依赖、合同、验收及施工进度。
 - [最近维护记录](superpowers/plans/2026-09-16-maintenance-reports.md)：9 月 16–23 日修复的编号、实现、首红、复验与保留边界。
 - [历史资料索引](archive/README.md)：旧阶段任务书、设计稿、交付报告和精简前完整台账。
 

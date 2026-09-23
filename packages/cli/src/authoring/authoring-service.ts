@@ -46,6 +46,8 @@ import {
   ensureVariable,
   applyVariablePatchInitial,
   inspectObject,
+  inspectSceneFragment,
+  type SceneFragmentInput,
   parseTimelineDefinition,
   resolveUniqueTimelinePath,
   timelineSelectionFingerprint,
@@ -113,6 +115,20 @@ export interface ServiceMetadata {
 
 export interface ServiceResult<T> extends ServiceMetadata {
   result: T;
+}
+
+type SimulationInput = { sceneId?: string; seed?: number; maxPaths?: number; maxStepsPerPath?: number };
+
+function incompleteSimulation(input: SimulationInput | undefined, report: ReturnType<typeof simulateSnapshot>): AuthoringOperationError {
+  const maxPaths = input?.maxPaths ?? 500;
+  const maxStepsPerPath = input?.maxStepsPerPath ?? 20_000;
+  return new AuthoringOperationError('SIMULATION_INCOMPLETE', '项目模拟达到预算上限；调整有界预算或缩小场景/路径后重试', {
+    pathsExplored: report.pathsExplored, maxPaths, maxStepsPerPath,
+    ...(maxPaths < 2000 || maxStepsPerPath < 100000 ? { retryInput: {
+      sceneId: report.entryScene, seed: report.seed,
+      maxPaths: Math.min(2000, maxPaths * 2), maxStepsPerPath: Math.min(100000, maxStepsPerPath * 2),
+    } } : {}),
+  });
 }
 
 export type AgentCommitCoordination =
@@ -536,47 +552,68 @@ export class AuthoringService {
       : openChangeFromStore(changeId, this.leasedStore, callback);
   }
 
-  async describeCapabilities(): Promise<ServiceResult<{
+  async describeCapabilities(options: { ids?: readonly string[]; detail?: 'summary' | 'full' } = {}): Promise<ServiceResult<{
     contractVersion: typeof AUTHORING_CONTRACT_VERSION;
-    capabilities: Array<(typeof AUTHORING_CAPABILITY_REGISTRY)[number] & { mcpTool: string }>;
+    capabilities: Array<Pick<(typeof AUTHORING_CAPABILITY_REGISTRY)[number], 'id' | 'title' | 'purpose' | 'minimumPolicy' | 'composable' | 'sideEffects' | 'idempotency'> & { mcpTool: string }>;
   }>> {
+    const unknownIds = options.ids?.filter((id) => !AUTHORING_CAPABILITY_REGISTRY.some((definition) => definition.id === id)) ?? [];
+    if (unknownIds.length > 0) throw new AuthoringOperationError('INVALID_REQUEST', `未知能力 ID：${unknownIds.join(', ')}；省略 ids 获取能力列表。`);
+    const definitions = AUTHORING_CAPABILITY_REGISTRY.filter((definition) => options.ids === undefined || options.ids.includes(definition.id));
     return {
       projectIdentity: 'unbound',
       projectRevision: 'unbound',
       result: {
         contractVersion: AUTHORING_CONTRACT_VERSION,
-        capabilities: AUTHORING_CAPABILITY_REGISTRY.map((definition) => ({
-          ...definition,
-          mcpTool: nativeCapabilityToMcpTool(definition.id),
-        })),
+        capabilities: definitions.map((definition) => {
+          const { id, title, purpose, minimumPolicy, composable, sideEffects, idempotency } = definition;
+          return {
+            ...(options.detail === 'summary' ? { id, title, purpose, minimumPolicy, composable, sideEffects, idempotency } : definition),
+            mcpTool: nativeCapabilityToMcpTool(id),
+          };
+        }),
       },
     };
   }
 
-  async inspectProject(projectRoot: string): Promise<ServiceResult<ReturnType<typeof inspectProject>>> {
+  private async readProjectView(projectRoot: string, changeId?: string, includeAssets = false) {
     const storage = await NodeProjectStorage.open(projectRoot);
-    const { snapshot, assetFiles, gallery } = await this.loadProjectContext(storage);
-    const index = buildObjectIndex(snapshot);
-    return { projectIdentity: projectIdentityFromRoot(snapshot.rootIdentity), projectRevision: snapshot.revision, result: inspectProject(snapshot, index, assetFiles, gallery) };
+    if (changeId === undefined) {
+      const content = await this.loadProjectContext(storage);
+      return { ...content, metadata: { projectIdentity: projectIdentityFromRoot(content.snapshot.rootIdentity), projectRevision: content.snapshot.revision } as ServiceMetadata, view: 'project' as const };
+    }
+    const context = await openChangeContext(changeId, this.leaseManager.dataRoot);
+    if (context.snapshot.rootIdentity !== storage.rootIdentity) throw new AuthoringOperationError('PROJECT_IDENTITY_MISMATCH', '指定 change 不属于当前项目');
+    const assetFiles = includeAssets ? await withProjectLeaseRetry(this.leaseManager, storage.rootIdentity, async () =>
+      storage.inspectFileFacts(assetPathsFromFiles(await storage.listFiles()))) : [];
+    const galleryText = context.snapshot.files.find((file) => file.path === GALLERY_PATH)?.text;
+    let gallery: unknown;
+    if (galleryText !== undefined) {
+      try { gallery = JSON.parse(galleryText.replace(/^\uFEFF/, '')); }
+      catch { throw new AuthoringOperationError('PROJECT_INVALID', `${GALLERY_PATH} 不是有效 JSON`); }
+    }
+    return { snapshot: context.snapshot, assetFiles, gallery, metadata: metadataForChange(context.session), view: 'working' as const };
   }
 
-  async projectAssets(projectRoot: string): Promise<ServiceResult<ReturnType<typeof buildAssetCatalog>>> {
-    const storage = await NodeProjectStorage.open(projectRoot);
-    const { snapshot, assetFiles, gallery } = await this.loadProjectContext(storage);
+  async inspectProject(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof inspectProject> & { view: 'project' | 'working' }>> {
+    const { snapshot, assetFiles, gallery, metadata, view } = await this.readProjectView(projectRoot, changeId, true);
+    const index = buildObjectIndex(snapshot);
+    return { ...metadata, result: { ...inspectProject(snapshot, index, assetFiles, gallery), view } };
+  }
+
+  async projectAssets(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof buildAssetCatalog> & { view: 'project' | 'working' }>> {
+    const { snapshot, assetFiles, gallery, metadata, view } = await this.readProjectView(projectRoot, changeId, true);
     return {
-      projectIdentity: projectIdentityFromRoot(snapshot.rootIdentity),
-      projectRevision: snapshot.revision,
-      result: buildAssetCatalog(assetFiles, snapshot, { gallery }),
+      ...metadata,
+      result: { ...buildAssetCatalog(assetFiles, snapshot, { gallery }), view },
     };
   }
 
   async projectGallery(projectRoot: string, changeId?: string): Promise<ServiceResult<Awaited<ReturnType<typeof inspectGallery>> & { view: 'project' | 'working' }>> {
-    const context = changeId === undefined ? undefined : await openChangeContext(changeId, this.leaseManager.dataRoot);
-    const snapshot = context?.snapshot ?? (await this.loadProjectContext(await NodeProjectStorage.open(projectRoot))).snapshot;
+    const { snapshot, metadata, view } = await this.readProjectView(projectRoot, changeId);
     const gallery = await inspectGallery(snapshot.files.find((file) => file.path === GALLERY_PATH)?.text, { sha256: async (text) => hashText(text) });
     return {
-      ...(context === undefined ? { projectIdentity: projectIdentityFromRoot(snapshot.rootIdentity), projectRevision: snapshot.revision } : metadataForChange(context.session)),
-      result: { view: context === undefined ? 'project' : 'working', ...gallery },
+      ...metadata,
+      result: { view, ...gallery },
     };
   }
 
@@ -605,7 +642,7 @@ export class AuthoringService {
     };
   }
 
-  async simulateProject(projectRoot: string, input?: { sceneId?: string; seed?: number }): Promise<ServiceResult<{
+  async simulateProject(projectRoot: string, input?: SimulationInput): Promise<ServiceResult<{
     view: 'project';
     status: 'passed';
     report: ReturnType<typeof simulateSnapshot>;
@@ -621,12 +658,12 @@ export class AuthoringService {
     }
     let report: ReturnType<typeof simulateSnapshot>;
     try {
-      report = simulateSnapshot(snapshot, { seed: input?.seed });
+      report = simulateSnapshot(snapshot, { seed: input?.seed, maxPaths: input?.maxPaths, maxStepsPerPath: input?.maxStepsPerPath });
     } catch (error) {
       if (error instanceof AuthoringOperationError) throw error;
       throw new AuthoringOperationError('RUNTIME_FAILED', error instanceof Error ? error.message : String(error));
     }
-    if (report.status === 'incomplete') throw new AuthoringOperationError('SIMULATION_INCOMPLETE', '项目模拟达到预算上限');
+    if (report.status === 'incomplete') throw incompleteSimulation(input, report);
     if (report.status === 'failed') {
       const firstError = report.runtimeErrors[0]?.message;
       throw new AuthoringOperationError('RUNTIME_FAILED', firstError === undefined ? '项目模拟包含运行时失败' : `项目模拟包含运行时失败：${firstError}`);
@@ -638,11 +675,12 @@ export class AuthoringService {
     };
   }
 
-  async inspectObject(projectRoot: string, objectRef: string, changeId?: string): Promise<ServiceResult<AuthoringObject>> {
+  async inspectObject(projectRoot: string, objectRef: string, changeId?: string, fragment?: SceneFragmentInput): Promise<ServiceResult<AuthoringObject & { view: 'project' | 'working'; fragment?: ReturnType<typeof inspectSceneFragment> }>> {
     // 带 --change 时读取事务 workingFiles 的对象（patch 指纹以事务内当前状态为准）。
-    const context = changeId === undefined ? undefined : await openChangeContext(changeId, this.leaseManager.dataRoot);
-    const snapshot = context?.snapshot ?? (await this.loadProjectContext(await NodeProjectStorage.open(projectRoot))).snapshot;
-    const object = inspectObject(buildObjectIndex(snapshot), objectRef);
+    const { snapshot, metadata, view } = await this.readProjectView(projectRoot, changeId);
+    const index = buildObjectIndex(snapshot);
+    const object = inspectObject(index, objectRef);
+    const page = fragment === undefined ? undefined : inspectSceneFragment(snapshot, index, object, fragment, metadata.workingRevision);
     // timeline/track/cue 附当前 SHA-256 指纹，供后续类型化 patch 的 expectedFingerprint 使用。
     if ((object.kind === 'timeline' || object.kind === 'track' || object.kind === 'cue') && object.details !== undefined) {
       if (object.kind === 'timeline') object.fingerprint = await timelineFingerprint(object.details, { sha256: async (text) => hashText(text) });
@@ -667,8 +705,7 @@ export class AuthoringService {
       }
     }
     if (object.kind === 'gallery-cg') object.fingerprint = hashText(stableStringify(object.details));
-    if (context !== undefined) return { ...metadataForChange(context.session), result: object };
-    return { projectIdentity: projectIdentityFromRoot(snapshot.rootIdentity), projectRevision: snapshot.revision, result: object };
+    return { ...metadata, result: { ...object, view, ...(page === undefined ? {} : { fragment: page }) } };
   }
 
   async timelineCreate(changeId: string, input: TimelineCreateInput): Promise<ServiceResult<unknown>> {
@@ -951,7 +988,10 @@ export class AuthoringService {
   async sceneCreate(changeId: string, input: SceneCreateInput): Promise<ServiceResult<unknown>> {
     return this.withOpenChange(changeId, async (context) => {
       const result = await applySceneCreate(context.session, input);
-      return { ...metadataForChange(context.session), result };
+      const current = await loadSnapshot(new ChangeRecordProjectStorage(context.session.record));
+      return { ...metadataForChange(context.session), result: { ...result, continuation: {
+        sceneRef: `scene:${input.sceneId}`, revision: current.revision, workingRevision: context.session.record.workingRevision,
+      } } };
     });
   }
 
@@ -963,7 +1003,11 @@ export class AuthoringService {
         validateCurrentScenePatchReferences(context.snapshot, input);
       }
       const result = await applyScenePatch(context.session, input);
-      return { ...metadataForChange(context.session), result };
+      const current = await loadSnapshot(new ChangeRecordProjectStorage(context.session.record));
+      const scene = current.scenes.find((item) => item.path === result.path)!;
+      return { ...metadataForChange(context.session), result: { ...result, continuation: {
+        sceneRef: `scene:${scene.id}`, revision: current.revision, workingRevision: context.session.record.workingRevision,
+      } } };
     });
   }
 
@@ -1018,7 +1062,7 @@ export class AuthoringService {
     });
   }
 
-  async simulate(changeId: string, input?: { sceneId?: string; seed?: number }): Promise<ServiceResult<ReturnType<typeof simulateSnapshot> & {
+  async simulate(changeId: string, input?: SimulationInput): Promise<ServiceResult<ReturnType<typeof simulateSnapshot> & {
     view: 'working';
     report: ReturnType<typeof simulateSnapshot>;
     evidenceId: string;
@@ -1039,7 +1083,7 @@ export class AuthoringService {
       // 不依赖 CLI 层对 message 的启发式归类（runTrace 同一模式）。
       let simulation: ReturnType<typeof simulateSnapshot>;
       try {
-        simulation = simulateSnapshot(snapshot, { seed: input?.seed });
+        simulation = simulateSnapshot(snapshot, { seed: input?.seed, maxPaths: input?.maxPaths, maxStepsPerPath: input?.maxStepsPerPath });
       } catch (error) {
         if (error instanceof AuthoringOperationError) throw error;
         throw new AuthoringOperationError('RUNTIME_FAILED', error instanceof Error ? error.message : String(error));
@@ -1047,7 +1091,7 @@ export class AuthoringService {
       const evidence = simulationEvidence(context.session.record.baseRevision, changeId, context.session.record.workingRevision, simulation);
       await context.store.writeEvidence(changeId, evidence.evidenceId, evidence);
       await recordSimulationEvidence(context.session, { evidenceId: evidence.evidenceId, status: simulation.status });
-      if (simulation.status === 'incomplete') throw new AuthoringOperationError('SIMULATION_INCOMPLETE', '项目模拟达到预算上限');
+      if (simulation.status === 'incomplete') throw incompleteSimulation(input, simulation);
       if (simulation.status === 'failed') {
         // 附首个运行时错误根因，Agent 无需二次取证据即可定位（如缺失时间轴的未注册 ID）。
         const firstError = simulation.runtimeErrors[0]?.message;
@@ -1097,7 +1141,7 @@ export class AuthoringService {
       } catch (error) {
         throw new AuthoringOperationError('RUNTIME_FAILED', error instanceof Error ? error.message : String(error));
       }
-      if (result.status === 'failed') {
+      if (result.status === 'failed' && result.events.length === 0) {
         throw new AuthoringOperationError('RUNTIME_FAILED', result.error ?? 'runtime.run-from 包含运行时失败');
       }
       const traceId = newEvidenceId('trace');
@@ -1106,10 +1150,21 @@ export class AuthoringService {
         traceId,
         changeId,
         projectRevision: context.session.record.baseRevision,
+        workingRevision: context.session.record.workingRevision,
+        status: result.status,
         createdAt: new Date().toISOString(),
         seed: result.seed,
         events: result.events,
       });
+      if (result.status === 'failed') {
+        throw new AuthoringOperationError('RUNTIME_FAILED', result.error ?? 'runtime.run-from 包含运行时失败', {
+          traceId, sceneId: result.sceneId, workingRevision: context.session.record.workingRevision,
+          eventCount: result.events.length, lastEvent: result.events.at(-1),
+        });
+      }
+      // The existing review evidence list contains qualifying runs, not every
+      // attempt. Failed attempts remain in the trace store and invocation audit;
+      // do not relax approval gates or permanently poison them with a failed try.
       await recordRuntimeTrace(context.session, { traceId, status: result.status });
       return {
         ...metadataForChange(context.session),
@@ -1141,9 +1196,9 @@ export class AuthoringService {
     } finally { await lease.release(); }
   }
 
-  async readTrace(changeId: string, traceId: string, query: TraceQuery = {}): Promise<ServiceResult<{ view: 'working'; traceId: string; events: unknown[]; count: number; seed: number; freshness: ReturnType<typeof evidenceFreshness> }>> {
+  async readTrace(changeId: string, traceId: string, query: TraceQuery = {}): Promise<ServiceResult<{ view: 'working'; traceId: string; status: 'passed' | 'failed' | 'unknown'; traceWorkingRevision?: number; events: unknown[]; count: number; seed: number; freshness: ReturnType<typeof evidenceFreshness> }>> {
     const context = await openChangeContext(changeId, this.leaseManager.dataRoot);
-    const value = await context.store.readTrace(changeId, traceId) as { events?: Parameters<typeof normalizeTrace>[0]; seed?: unknown } | null;
+    const value = await context.store.readTrace(changeId, traceId) as { events?: Parameters<typeof normalizeTrace>[0]; seed?: unknown; status?: 'passed' | 'failed'; workingRevision?: number } | null;
     if (value === null || !Array.isArray(value.events)) throw new AuthoringOperationError('PROJECT_NOT_FOUND', `运行轨迹不存在：${traceId}`);
     if (typeof value.seed !== 'number') throw new AuthoringOperationError('PROJECT_NOT_FOUND', `运行轨迹缺少实际 seed：${traceId}`);
     try {
@@ -1152,16 +1207,21 @@ export class AuthoringService {
       throw new AuthoringOperationError('PROJECT_INVALID', error instanceof Error ? error.message : String(error));
     }
     const events = queryTrace(normalizeTrace(value.events), query);
+    const recorded = context.session.record.runtimeTraces?.find((trace) => trace.traceId === traceId);
+    const status = value.status ?? recorded?.status ?? 'unknown';
+    const traceWorkingRevision = value.workingRevision ?? recorded?.workingRevision;
     return {
       ...metadataForChange(context.session),
       result: {
         view: 'working',
         traceId,
+        status,
+        ...(traceWorkingRevision === undefined ? {} : { traceWorkingRevision }),
         events,
         count: events.length,
         seed: value.seed,
         freshness: evidenceFreshness(
-          context.session.record.runtimeTraces?.find((trace) => trace.traceId === traceId),
+          traceWorkingRevision === undefined || status === 'unknown' ? undefined : { workingRevision: traceWorkingRevision, status, evidenceId: traceId },
           context.session.record.workingRevision,
         ),
       },
