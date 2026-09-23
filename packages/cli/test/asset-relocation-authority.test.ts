@@ -313,6 +313,9 @@ describe('project asset relocation authority', () => {
 
   it('commits with identity-bearing receipt and undoes the complete relocation', async () => {
     const fixtureValue = await fixture();
+    const configPath = absolute(fixtureValue.projectRoot, 'game.config.json');
+    const config = '\uFEFF{"entryScene":"start","characters":{},"variables":{},"player":{"titleBackground":"old","subtitle":"old","custom":42}}\r\n';
+    await writeFile(configPath, config);
     const beforeText = await readFile(absolute(fixtureValue.projectRoot, scenePath), 'utf8');
     const sourceIdentity = await assetImportFileIdentity(fixtureValue.sourceFile);
     const planned = await plan(fixtureValue);
@@ -320,6 +323,7 @@ describe('project asset relocation authority', () => {
     const committed = await fixtureValue.authority.commit(operationId, {
       planFingerprint: planned.plan.planFingerprint,
     });
+    expect(await readFile(configPath, 'utf8')).toBe(config.replace('"titleBackground":"old"', '"titleBackground":"new"'));
     expect(committed.operation.status).toBe('COMMITTED');
     expect(committed.receipt).not.toBeNull();
     expect(committed.receipt).toMatchObject({
@@ -345,6 +349,7 @@ describe('project asset relocation authority', () => {
       receiptFingerprint: committed.receipt!.receiptFingerprint,
     });
     expect(undone.operation.status).toBe('UNDONE');
+    expect(await readFile(configPath, 'utf8')).toBe(config);
     expect(undone.undoReceipt).toMatchObject({ operationId, sourcePath, targetPath });
     await expect(readFile(fixtureValue.sourceFile, 'utf8')).resolves.toBe('source-bytes');
     await expect(stat(targetFile)).rejects.toMatchObject({ code: 'ENOENT' });

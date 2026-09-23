@@ -100,9 +100,11 @@ export async function dispatchAuthoringCapability(
         ),
       };
     case 'change.begin':
-      return { value: await service.begin(requireProject(context), payload as ChangeIntentMetadata, {
-        compositionMode: context.policy === 'stage' ? 'candidate' : 'direct',
-      }) };
+      return { value: await service.begin(requireProject(context), {
+        ...(payload['intent'] === undefined ? {} : { intent: payload['intent'] as string }),
+        ...(payload['acceptanceCriteria'] === undefined ? {} : { acceptanceCriteria: payload['acceptanceCriteria'] as string[] }),
+        ...(payload['initiator'] === undefined ? {} : { initiator: payload['initiator'] as ChangeIntentMetadata['initiator'] }),
+      }, { compositionMode: (payload['compositionMode'] as 'direct' | 'candidate' | undefined) ?? (context.policy === 'stage' ? 'candidate' : 'direct') }) };
     case 'scene.create':
       return { value: await service.sceneCreate(requireChange(context), payload as unknown as Parameters<AuthoringService['sceneCreate']>[1]), operationId: operationIdFrom(payload) };
     case 'scene.patch':
@@ -125,6 +127,8 @@ export async function dispatchAuthoringCapability(
       return { value: await service.timelinePatch(requireChange(context), payload as unknown as Parameters<AuthoringService['timelinePatch']>[1]), operationId: operationIdFrom(payload) };
     case 'project.entry-scene.set':
       return { value: await service.entrySceneSet(requireChange(context), payload as unknown as Parameters<AuthoringService['entrySceneSet']>[1]), operationId: operationIdFrom(payload) };
+    case 'project.player-config.patch':
+      return { value: await service.playerConfigPatch(requireChange(context), payload as unknown as Parameters<AuthoringService['playerConfigPatch']>[1]), operationId: operationIdFrom(payload) };
     case 'project.validate':
       return context.activeChangeId === undefined
         ? { value: await service.validateProject(requireProject(context)) }

@@ -476,6 +476,9 @@ export async function buildCompositionManifest(
   | { eligibility: 'unavailable'; reasons: CompositionIneligibility[] }
 > {
   if (input.record.integration === undefined && input.record.composition?.mode === 'candidate') return buildCompositionManifestFromRecordedFacts(input, hasher);
+  if (input.record.integration === undefined && input.record.composition?.mode === 'direct') return {
+    eligibility: 'unavailable', reasons: [{ code: 'DIRECT_CHANGE', message: '普通隔离草稿不参与候选组合或正式结果审批；使用 change.diff、working-change 试玩和原 change 续接。' }],
+  };
   if (input.record.integration === undefined && input.record.composition === undefined) return {
     eligibility: 'unavailable', reasons: [
       { code: 'OPERATION_FACTS_MISSING', message: '旧变更没有操作时点事实；请创建新候选。已封存 capsule 仍可读取' },

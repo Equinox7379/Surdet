@@ -123,7 +123,7 @@ describe('Wave 8 candidate readiness through Agent Port', () => {
   it('keeps candidate mode through apply resume and leaves new apply/service changes direct', async () => {
     const { root } = fixture();
     const stage = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
-    const invalid = await stage.invoke('change.begin', { compositionMode: 'direct' });
+    const invalid = await stage.invoke('change.begin', { compositionMode: 'automatic' });
     expect(invalid).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } });
     result(await stage.invoke('change.begin', {}));
     const changeId = stage.activeChangeId!;
@@ -179,7 +179,7 @@ describe('Wave 8 candidate readiness through Agent Port', () => {
     await session.close();
   });
 
-  it('validates strict mode/status and nested readiness fields under contract 2.4', async () => {
+  it('validates strict mode/status and nested readiness fields under contract 2.5', async () => {
     expect(AUTHORING_CONTRACT_VERSION).toBe('2.5.0');
     const schema = standardSchemaFromJson(CANDIDATE_COMPOSITION_READINESS_SCHEMA);
     const readiness = { mode: 'candidate', status: 'ready', operationFactsVersion: '1.0.0', operationCount: 0, issueCount: 0, issues: [], truncated: false };

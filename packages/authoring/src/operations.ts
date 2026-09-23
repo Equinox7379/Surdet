@@ -1,4 +1,4 @@
-import { compileScene, isValidSceneId } from '@surdet/core';
+import { compileScene, isValidSceneId, Lexer, Parser, findChoiceArrow, splitOutsideQuotes, parseInlineInstructions, type AstBlock } from '@surdet/core';
 import {
   insertLinesAfter,
   parseSceneDocument,
@@ -7,6 +7,7 @@ import {
   rebuildTextRaw,
   serializeSceneDocument,
   splitInstruction,
+  instructionArgumentSpans,
   type SceneConditionBranchStructure,
   type SceneConditionStructure,
   type SceneStructureSpan,
@@ -29,7 +30,8 @@ import { parseProjectConfigDocument, serializeProjectConfigDocument } from './co
 import { normalizeProjectPath } from './project-storage.js';
 import { buildSceneOperationCompositionDraft, buildVariableOperationCompositionDraft, compositionTextHasher } from './operation-composition-facts.js';
 import { REPLACEABLE_SCENE_INSTRUCTIONS } from './contracts.js';
-import { resolveUniqueScenarioPath } from './scenario-identity.js';
+import { resolveUniqueScenarioPath, sceneIdFromScenarioPath } from './scenario-identity.js';
+import { GALLERY_PATH } from './gallery-operations.js';
 
 function sceneCharacters(files: Record<string, string>): Record<string, unknown> {
   const characters = parseProjectConfigDocument(files['game.config.json'] ?? '{}')['characters'];
@@ -161,6 +163,7 @@ function renderConditionBlock(
 }
 
 function sceneIdFromTarget(target: string): string | undefined {
+  if (target.startsWith('label:')) return /^label:([^.]+)\./.exec(target)?.[1];
   const match = /^scene:([^/]+)\//.exec(target);
   return match?.[1];
 }
@@ -468,6 +471,72 @@ function validateSceneCandidate(path: string, sceneId: string, text: string): vo
   }
 }
 
+function rewriteLabelReferences(source: string, path: string, currentScene: string, targetScene: string, oldName: string, newName: string | undefined,
+  references: Array<{ path: string; line?: number; kind: string; target: string }>): string {
+  validateSceneCandidate(path, currentScene, source);
+  const document = parseSceneDocument(source);
+  const ast = new Parser().parse(new Lexer().tokenize(source, path), currentScene);
+  const rewrite = (raw: string, name: string, args: string[], line: number): string => {
+    const replacements = new Map<number, string>();
+    const reference = (argument: number, target: string, replacement: string) => {
+      references.push({ path, line, kind: name, target });
+      replacements.set(argument, replacement);
+    };
+    if ((name === 'goto' || name === 'loop') && currentScene === targetScene && args.join(' ') === oldName) {
+      if (args.length !== 1) throw new AuthoringOperationError('UNSUPPORTED_OPERATION', '无法精确定位标签参数', { path, line });
+      reference(0, oldName, newName ?? oldName);
+    } else if ((name === 'jump' || name === 'call') && args.join(' ') === `${targetScene}.${oldName}`) {
+      if (args.length !== 1) throw new AuthoringOperationError('UNSUPPORTED_OPERATION', '无法精确定位跨场景标签参数', { path, line });
+      reference(0, args[0]!, `${targetScene}.${newName ?? oldName}`);
+    } else if (name === 'switch' && currentScene === targetScene) {
+      args.slice(1).forEach((arg, index) => {
+        const colon = arg.indexOf(':');
+        if (colon >= 0 && arg.slice(colon + 1) === oldName) reference(index + 1, oldName, arg.slice(0, colon + 1) + (newName ?? oldName));
+      });
+    }
+    if (newName === undefined || replacements.size === 0) return raw;
+    const spans = instructionArgumentSpans(raw);
+    for (const [index, replacement] of [...replacements].sort(([left], [right]) => right - left)) {
+      const span = spans[index];
+      if (span === undefined || span.raw !== args[index]) throw new AuthoringOperationError('UNSUPPORTED_OPERATION', '参数位置与 Core 语义不一致，不能安全改名', { path, line });
+      // Flow targets retain quotes literally in Core; do not use the asset
+      // argument encoder, which would silently change label identity.
+      raw = raw.slice(0, span.start) + replacement + raw.slice(span.end);
+    }
+    return raw;
+  };
+  const visit = (blocks: readonly AstBlock[]): void => {
+    for (const block of blocks) {
+      if (block.kind === 'if') { for (const branch of block.branches) visit(branch.blocks); }
+      else if (block.kind === 'instr') {
+        const row = document[block.pos.line - 1]!;
+        row.raw = rewrite(row.raw, block.name, block.args, block.pos.line);
+      } else if (block.kind === 'choice') {
+        for (const option of block.options) {
+          const row = document[option.pos.line - 1]!;
+          const arrow = findChoiceArrow(row.raw);
+          if (arrow === null) continue;
+          let jumpSeen = false;
+          const segments = splitOutsideQuotes(row.raw.slice(arrow.end), '@');
+          for (let index = 1; index < segments.length; index++) {
+            const raw = `@${segments[index]!}`;
+            const instruction = parseInlineInstructions(raw, path, option.pos.line, option.pos.col)[0];
+            if (instruction === undefined) continue;
+            if (instruction.name === 'goto' || instruction.name === 'jump') {
+              if (jumpSeen) continue; // Core deliberately ignores subsequent jumps in one choice.
+              jumpSeen = true;
+            }
+            segments[index] = rewrite(raw, instruction.name, instruction.args, option.pos.line).slice(1);
+          }
+          row.raw = row.raw.slice(0, arrow.end) + segments.join('@');
+        }
+      }
+    }
+  };
+  visit(ast.blocks);
+  return serializeSceneDocument(document, defaultEol(document));
+}
+
 export async function applySceneCreate(change: ChangeSession, input: SceneCreateInput, hasher: TextHasher = compositionTextHasher): Promise<{ sceneId: string; path: string }> {
   const path = scenePath(input.sceneId);
   return runOperation(change, input, async (record) => {
@@ -496,12 +565,16 @@ export async function applySceneCreate(change: ChangeSession, input: SceneCreate
   });
 }
 
-export async function applyScenePatch(change: ChangeSession, input: ScenePatchInput, hasher: TextHasher = compositionTextHasher): Promise<{ path: string; line: number; kind: string }> {
+export async function applyScenePatch(change: ChangeSession, input: ScenePatchInput, hasher: TextHasher = compositionTextHasher): Promise<{ path: string; line: number; kind: string; affectedScenes?: string[] }> {
   const patch = input.patch;
+  if ((patch.kind === 'renameLabel' || patch.kind === 'removeLabel')
+    && (change.record.composition?.mode !== 'direct' || change.record.integration !== undefined)) {
+    throw new AuthoringOperationError('UNSUPPORTED_OPERATION', '标签改名/删除只支持普通 direct 草稿，不进入候选或组合结果', { operationApplied: false, operationId: input.operationId });
+  }
   const sceneId = input.sceneId ?? sceneIdFromTarget(operationTarget(patch));
   if (sceneId === undefined) throw new AuthoringOperationError('INVALID_REQUEST', 'scene.patch 缺少 sceneId');
   const defaultPath = scenePath(sceneId); // Existing scenes may live in subdirectories.
-  return runOperation<{ path: string; line: number; kind: string }>(change, input, async (record) => {
+  return runOperation<{ path: string; line: number; kind: string; affectedScenes?: string[] }>(change, input, async (record) => {
     if (sceneIdFromTarget(operationTarget(patch)) !== sceneId) {
       throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', 'scene.patch 的目标或 anchor 必须属于所选场景');
     }
@@ -515,6 +588,52 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
     const source = record.workingFiles[path];
     if (source === undefined) throw new AuthoringOperationError('PROJECT_NOT_FOUND', `场景不存在：${sceneId}`);
     const lines = parseSceneDocument(source);
+
+    if (patch.kind === 'renameLabel' || patch.kind === 'removeLabel') {
+      const oldName = patch.target.slice(`label:${sceneId}.`.length);
+      const labelIndex = lines.findIndex((line) => line.kind === 'label' && line.name === oldName);
+      if (!patch.target.startsWith(`label:${sceneId}.`) || labelIndex < 0) throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '标签已不存在，请重新读取场景');
+      checkPatchPrecondition(lines, patch, labelIndex);
+      const newName = patch.kind === 'renameLabel' ? patch.name : undefined;
+      if (newName !== undefined && (!/^[^\s@"'\\]+$/.test(newName) || newName === oldName
+        || lines.some((line) => line.kind === 'label' && line.name === newName))) {
+        throw new AuthoringOperationError('INVALID_REQUEST', '新标签名不能重复、为空或包含空白、引号、反斜杠或 @');
+      }
+      const workingFiles = { ...record.workingFiles };
+      const references: Array<{ path: string; line?: number; kind: string; target: string }> = [];
+      const affectedScenes = new Set<string>([sceneId]);
+      for (const [filePath, text] of Object.entries(record.workingFiles)) {
+        if (!/^content\/scenario\/.+\.gal$/i.test(filePath)) continue;
+        const id = sceneIdFromScenarioPath(filePath);
+        const rewritten = rewriteLabelReferences(text, filePath, id, sceneId, oldName, newName, references);
+        if (rewritten !== text) { workingFiles[filePath] = rewritten; affectedScenes.add(id); }
+      }
+      // Text replay is another real hostJump(scene, label) entry, not DSL prose.
+      const gallerySource = workingFiles[GALLERY_PATH];
+      if (gallerySource !== undefined) {
+        const gallery = parseProjectConfigDocument(gallerySource, GALLERY_PATH);
+        if (gallery['texts'] !== undefined && !Array.isArray(gallery['texts'])) throw new AuthoringOperationError('PROJECT_INVALID', 'gallery.json.texts 必须是数组');
+        let changed = false;
+        for (const entry of (gallery['texts'] ?? []) as unknown[]) {
+          if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) throw new AuthoringOperationError('PROJECT_INVALID', '文本回想条目必须是对象');
+          const item = entry as Record<string, unknown>;
+          if (item['scene'] !== sceneId || item['label'] !== oldName) continue;
+          references.push({ path: GALLERY_PATH, kind: 'gallery-text', target: `${sceneId}.${oldName}` });
+          if (newName !== undefined) { item['label'] = newName; changed = true; }
+        }
+        if (changed) workingFiles[GALLERY_PATH] = serializeProjectConfigDocument(gallery, gallerySource);
+      }
+      if (newName === undefined && references.length > 0) throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '标签仍有引用，不能删除', { references });
+      const updated = parseSceneDocument(workingFiles[path]!);
+      if (newName === undefined) updated.splice(labelIndex, 1);
+      else updated[labelIndex] = { ...updated[labelIndex]!, raw: updated[labelIndex]!.raw.replace(/^(\s*@label\s+)[^\s@]+/, (_match, prefix: string) => prefix + newName) };
+      workingFiles[path] = serializeSceneDocument(updated, defaultEol(updated));
+      for (const id of affectedScenes) {
+        const changedPath = resolveUniqueScenarioPath(workingFiles, id)!;
+        validateSceneCandidate(changedPath, id, workingFiles[changedPath]!);
+      }
+      return { result: { path, line: labelIndex + 1, kind: patch.kind, affectedScenes: [...affectedScenes].sort() }, workingFiles };
+    }
 
     if (patch.kind === 'replaceChoiceGroup' || patch.kind === 'replaceConditionBlock') {
       let structures: ReturnType<typeof parseSceneStructure>;

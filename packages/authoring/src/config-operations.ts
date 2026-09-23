@@ -10,6 +10,7 @@ import type {
   CharacterRemoveInput,
   EntrySceneSetInput,
   LedgerDiffEntry,
+  ProjectAssetCatalog,
 } from './contracts.js';
 import type { TextHasher } from './project-storage.js';
 import { isValidSpeakerToken, parseSceneDocument, serializeSceneDocument } from './scene-document.js';
@@ -19,6 +20,70 @@ import type { CompositionOperation } from './composition-contracts.js';
 import { resolveUniqueScenarioPath } from './scenario-identity.js';
 
 const CONFIG_PATH = 'game.config.json';
+
+export interface PlayerConfigValues {
+  title: string | null;
+  subtitle: string | null;
+  titleBackground: string | null;
+  endScenes: string[] | null;
+  firstRunHint: string | null;
+}
+
+export interface PlayerConfigPatchInput {
+  operationId: string;
+  expectedFingerprint: string;
+  patch: Partial<PlayerConfigValues>;
+}
+
+/** Null explicitly describes an absent field; empty strings/arrays remain values. */
+export async function inspectPlayerConfig(config: Record<string, unknown>, hasher: TextHasher): Promise<{ values: PlayerConfigValues; fingerprint: string }> {
+  if (config['player'] !== undefined && !isRecord(config['player'])) throw new AuthoringOperationError('PROJECT_INVALID', 'game.config.json.player 必须是对象');
+  const player = (config['player'] ?? {}) as Record<string, unknown>;
+  const values: PlayerConfigValues = { title: null, subtitle: null, titleBackground: null, endScenes: null, firstRunHint: null };
+  for (const field of ['title', 'subtitle', 'titleBackground', 'firstRunHint'] as const) {
+    const value = field === 'title' ? config[field] : player[field];
+    if (value !== undefined && typeof value !== 'string') throw new AuthoringOperationError('PROJECT_INVALID', `展示配置 ${field} 必须是字符串`);
+    values[field] = value ?? null;
+  }
+  const endings = player['endScenes'];
+  if (endings !== undefined && (!Array.isArray(endings) || !endings.every((id) => typeof id === 'string'))) throw new AuthoringOperationError('PROJECT_INVALID', 'player.endScenes 必须是场景 ID 数组');
+  values.endScenes = endings === undefined ? null : [...endings as string[]];
+  return { values, fingerprint: await hasher.sha256(stableStringify(values)) };
+}
+
+export async function applyPlayerConfigPatch(change: ChangeSession, input: PlayerConfigPatchInput, hasher: TextHasher, assets: ProjectAssetCatalog) {
+  if (change.record.composition?.mode !== 'direct' || change.record.integration !== undefined) {
+    throw new AuthoringOperationError('UNSUPPORTED_OPERATION', '展示配置修改只支持普通 direct 草稿', { operationApplied: false, operationId: input.operationId });
+  }
+  return runOperation(change, input, async (record) => {
+    const source = record.workingFiles[CONFIG_PATH] ?? '{}';
+    const config = parseProjectConfigDocument(source);
+    const before = await inspectPlayerConfig(config, hasher);
+    if (input.expectedFingerprint !== before.fingerprint) throw new AuthoringOperationError('OBJECT_REF_STALE', '展示配置指纹已变化，请重新读取 project.inspect');
+    const player = { ...config['player'] as Record<string, unknown> | undefined };
+    for (const field of Object.keys(input.patch) as Array<keyof PlayerConfigValues>) {
+      if (!Object.hasOwn(before.values, field)) throw new AuthoringOperationError('INVALID_REQUEST', `不支持的展示字段：${field}`);
+      const value = input.patch[field];
+      if (value === undefined) throw new AuthoringOperationError('INVALID_REQUEST', '重置字段请显式传 null');
+      const target = field === 'title' ? config : player;
+      if (value === null) delete target[field];
+      else target[field] = value;
+    }
+    config['player'] = player;
+    const after = await inspectPlayerConfig(config, hasher);
+    const background = after.values.titleBackground;
+    if (background !== null && background !== '' && !assets.backgrounds.some((asset) => asset.key === background && asset.resolved)) throw new AuthoringOperationError('VALIDATION_FAILED', `标题背景不存在或不支持：${background}`);
+    for (const sceneId of after.values.endScenes ?? []) {
+      if (resolveUniqueScenarioPath(record.workingFiles, sceneId) === undefined) throw new AuthoringOperationError('VALIDATION_FAILED', `结束场景不存在：${sceneId}`);
+    }
+    const diffEntry: LedgerDiffEntry = {
+      kind: 'config.player.patch', operationId: input.operationId,
+      fingerprintBefore: before.fingerprint, fingerprintAfter: after.fingerprint,
+      directChange: { path: CONFIG_PATH, fields: Object.keys(input.patch) }, potentialImpact: [], observedImpact: [],
+    };
+    return { result: { playerConfig: after, diffEntry }, workingFiles: { ...record.workingFiles, [CONFIG_PATH]: serializeProjectConfigDocument(config, source) } };
+  });
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

@@ -2,6 +2,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { fileURLToPath } from 'node:url';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -139,11 +141,11 @@ describe('Surdet Agent Port MCP tool projection', () => {
     if (policy === 'stage') {
       expect(names).not.toContain('surdet_change_commit');
       expect(names).not.toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
-      expect(names).toHaveLength(38);
+      expect(names).toHaveLength(39);
    }
    if (policy === 'apply') {
      expect(names).toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
-      expect(names).toHaveLength(42);
+     expect(names).toHaveLength(43);
    }
    const described = await client.callTool({ name: 'surdet_session_describe', arguments: {} });
     expect(described.isError).not.toBe(true);
@@ -151,7 +153,7 @@ describe('Surdet Agent Port MCP tool projection', () => {
     const capabilities = await client.callTool({ name: 'surdet_capabilities_describe', arguments: {} });
     expect(capabilities.isError).not.toBe(true);
     expect((capabilities.structuredContent as any).ok).toBe(true);
-    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(40);
+    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(41);
     expect(names).not.toContain('surdet_review_write_decision');
     expect(names).not.toContain('surdet_review_approve');
     if (policy === 'stage') {
@@ -362,6 +364,98 @@ describe('Surdet Agent Port MCP tool projection', () => {
       await client.close();
       await server.close();
       await session.close();
+    }
+  });
+
+  it('resumes a direct draft across real MCP processes and keeps cross-scene label edits atomic', async () => {
+    const root = makeProject('stdio-label');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-stdio-label-'));
+    temporaryRoots.push(data);
+    const connect = async (changeId?: string) => {
+      const transport = new StdioClientTransport({ command: process.execPath,
+        args: [fileURLToPath(new URL('../dist/agent-port/main.js', import.meta.url)), '--project', root, '--policy', 'stage', ...(changeId === undefined ? [] : ['--resume-change', changeId])],
+        env: { ...process.env as Record<string, string>, SURDET_AGENT_DATA_DIR: data }, stderr: 'pipe',
+      });
+      const client = new Client({ name: 'direct-label-restart', version: '1.0.0' });
+      await client.connect(transport);
+      return client;
+    };
+    let client = await connect();
+    const call = async (name: string, args: Record<string, unknown> = {}) => {
+      const response = await client.callTool({ name, arguments: args });
+      expect(response.isError, textContent(response)).not.toBe(true);
+      return response.structuredContent as any;
+    };
+    try {
+      const begun = await call('surdet_change_begin', { compositionMode: 'direct' });
+      const changeId = begun.result.changeId;
+      await call('surdet_scene_create', { operationId: 'a', sceneId: 'a', blocks: [{ kind: 'label', name: 'entry' }, { kind: 'text', value: '从这里返回。' }, { kind: 'instruction', name: 'return' }] });
+      await call('surdet_scene_create', { operationId: 'b', sceneId: 'b', blocks: [{ kind: 'instruction', name: 'call', args: ['a.entry'] }, { kind: 'text', value: '已经返回。' }] });
+      const label = (await call('surdet_object_inspect', { view: 'working', objectRef: 'label:a.entry' })).result;
+      const rejected = await client.callTool({ name: 'surdet_scene_patch', arguments: { operationId: 'delete', patch: { kind: 'removeLabel', target: label.objectRef, expectedFingerprint: label.fingerprint } } });
+      expect(rejected.structuredContent).toMatchObject({ error: { code: 'OBJECT_PRECONDITION_FAILED', details: { references: expect.arrayContaining([expect.objectContaining({ kind: 'call', target: 'a.entry' })]) } } });
+      const rename = { operationId: 'rename', patch: { kind: 'renameLabel', target: label.objectRef, expectedFingerprint: label.fingerprint, name: 'arrival' } };
+      const renamed = await call('surdet_scene_patch', rename);
+      expect(renamed.result.affectedScenes).toEqual(['a', 'b']);
+      await client.close();
+      client = await connect(changeId);
+      expect((await call('surdet_session_describe')).result.activeChange).toMatchObject({ changeId, compositionMode: 'direct' });
+      expect((await call('surdet_scene_patch', rename)).workingRevision).toBe(renamed.workingRevision);
+      expect((await call('surdet_runtime_run_from', { sceneId: 'b', choices: [] })).result.status).toBe('passed');
+      const trace = await call('surdet_object_inspect', { view: 'working', objectRef: 'scene:b', fragment: {} });
+      expect(trace.result.fragment.lines.map((line: any) => line.text)).toContain('@call a.arrival');
+      expect(fs.existsSync(path.join(root, 'content/scenario/a.gal'))).toBe(false);
+      const capsule = await call('surdet_delivery_capsule');
+      expect(capsule.result).toMatchObject({ compositionMode: 'direct', composition: { eligibility: 'unavailable' } });
+    } finally { await client.close(); }
+  }, 30000);
+
+  it('reads and patches finite player configuration with current fingerprints and preserves unknown fields', async () => {
+    const { session, client, server } = await connected('stage');
+    try {
+      const source = '\uFEFF{\r\n  "title":"Before", "entryScene":"start", "variables":{}, "custom":{"keep":true}, "player":{"custom":"keep"}\r\n}\r\n';
+      fs.writeFileSync(path.join(session.projectRoot, 'game.config.json'), source);
+      fs.mkdirSync(path.join(session.projectRoot, 'content/assets/bg'), { recursive: true });
+      fs.writeFileSync(path.join(session.projectRoot, 'content/assets/bg/night.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+      const call = async (name: string, args: Record<string, unknown> = {}) => {
+        const response = await client.callTool({ name, arguments: args });
+        expect(response.isError, textContent(response)).not.toBe(true);
+        return response.structuredContent as any;
+      };
+      await call('surdet_change_begin', { compositionMode: 'direct' });
+      const before = (await call('surdet_project_inspect', { view: 'working' })).result.playerConfig;
+      expect(before).toMatchObject({ values: { title: 'Before', subtitle: null, titleBackground: null, endScenes: null, firstRunHint: null }, fingerprint: expect.any(String) });
+      const input = { operationId: 'player-settings', expectedFingerprint: before.fingerprint, patch: { title: 'After', subtitle: '序章', titleBackground: 'night', endScenes: ['start'], firstRunHint: '' } };
+      const patched = await call('surdet_project_player_config_patch', input);
+      const after = (await call('surdet_project_inspect', { view: 'working' })).result.playerConfig;
+      expect(after).toEqual(patched.result.playerConfig);
+      expect(after.values).toEqual(input.patch);
+      expect((await call('surdet_project_inspect', { view: 'project' })).result.playerConfig).toEqual(before);
+      const repeated = await call('surdet_project_player_config_patch', input);
+      expect(repeated.workingRevision).toBe(patched.workingRevision);
+      const rejected = await client.callTool({ name: 'surdet_project_player_config_patch', arguments: { ...input, operationId: 'stale-settings', patch: { subtitle: '' } } });
+      expect(rejected.structuredContent).toMatchObject({ error: { code: 'OBJECT_REF_STALE' } });
+      for (const patch of [{ titleBackground: 'missing' }, { endScenes: ['missing'] }]) {
+        const failed = await client.callTool({ name: 'surdet_project_player_config_patch', arguments: { operationId: 'bad-reference', expectedFingerprint: after.fingerprint, patch } });
+        expect(failed.structuredContent).toMatchObject({ error: { code: 'VALIDATION_FAILED' } });
+      }
+      const cleared = await call('surdet_project_player_config_patch', { operationId: 'clear-default', expectedFingerprint: after.fingerprint, patch: { subtitle: null, titleBackground: '', endScenes: [] } });
+      expect(cleared.result.playerConfig.values).toMatchObject({ subtitle: null, titleBackground: '', endScenes: [], firstRunHint: '' });
+      const opened = await NodeChangeStore.openByChangeId(session.activeChangeId!);
+      const text = opened!.record.workingFiles['game.config.json']!;
+      expect(text.startsWith('\uFEFF')).toBe(true);
+      expect(text).toContain('\r\n');
+      expect(JSON.parse(text.slice(1))).toMatchObject({ custom: { keep: true }, player: { custom: 'keep', firstRunHint: '' } });
+      expect(fs.readFileSync(path.join(session.projectRoot, 'game.config.json'), 'utf8')).toBe(source);
+      expect(opened!.record.operations).not.toHaveProperty('bad-reference');
+      const candidate = await openAgentPortSession({ projectRoot: session.projectRoot, policy: 'stage' });
+      try {
+        await candidate.invoke('change.begin', {});
+        expect(await candidate.invoke('project.player-config.patch', input)).toMatchObject({ ok: false, error: { code: 'UNSUPPORTED_OPERATION' } });
+        expect((await NodeChangeStore.openByChangeId(candidate.activeChangeId!))!.record.workingRevision).toBe(0);
+      } finally { await candidate.close(); }
+    } finally {
+      await client.close(); await server.close(); await session.close();
     }
   });
 

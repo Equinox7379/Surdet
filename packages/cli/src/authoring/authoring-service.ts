@@ -12,6 +12,9 @@ import {
   applyGalleryCgCreate,
   applyGalleryCgPatch,
   inspectGallery,
+  inspectPlayerConfig,
+  applyPlayerConfigPatch,
+  type PlayerConfigPatchInput,
   GALLERY_PATH,
   stableStringify,
   type GalleryCgCreateInput,
@@ -144,9 +147,9 @@ function validateCurrentScenePatchReferences(snapshot: ProjectSnapshot, input: S
   const index = buildObjectIndex(snapshot);
   const ref = patch.kind === 'insertAfter' ? patch.anchor : patch.target;
   const target = index.byRef.get(ref);
-  const sceneId = input.sceneId ?? /^scene:([^/]+)\//.exec(ref)?.[1];
+  const sceneId = input.sceneId ?? (ref.startsWith('label:') ? /^label:([^.]+)\./.exec(ref)?.[1] : /^scene:([^/]+)\//.exec(ref)?.[1]);
   const scenes = snapshot.scenes.filter(scene => scene.id === sceneId);
-  const expectedKind = patch.kind === 'replaceInstruction'
+  const expectedKind = patch.kind === 'renameLabel' || patch.kind === 'removeLabel' ? 'label' : patch.kind === 'replaceInstruction'
     ? 'instruction'
     : patch.kind === 'replaceChoiceGroup' ? 'choice'
     : patch.kind === 'replaceConditionBlock' ? 'condition'
@@ -594,10 +597,10 @@ export class AuthoringService {
     return { snapshot: context.snapshot, assetFiles, gallery, metadata: metadataForChange(context.session), view: 'working' as const };
   }
 
-  async inspectProject(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof inspectProject> & { view: 'project' | 'working' }>> {
+  async inspectProject(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof inspectProject> & { view: 'project' | 'working'; playerConfig: Awaited<ReturnType<typeof inspectPlayerConfig>> }>> {
     const { snapshot, assetFiles, gallery, metadata, view } = await this.readProjectView(projectRoot, changeId, true);
     const index = buildObjectIndex(snapshot);
-    return { ...metadata, result: { ...inspectProject(snapshot, index, assetFiles, gallery), view } };
+    return { ...metadata, result: { ...inspectProject(snapshot, index, assetFiles, gallery), view, playerConfig: await inspectPlayerConfig(snapshot.config, { sha256: async text => hashText(text) }) } };
   }
 
   async projectAssets(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof buildAssetCatalog> & { view: 'project' | 'working' }>> {
@@ -769,6 +772,14 @@ export class AuthoringService {
   async entrySceneSet(changeId: string, input: EntrySceneSetInput): Promise<ServiceResult<unknown>> {
     return this.withOpenChange(changeId, async (context) => {
       const result = await applyEntrySceneSet(context.session, input, { sha256: async (text) => hashText(text) });
+      return { ...metadataForChange(context.session), result };
+    });
+  }
+
+  async playerConfigPatch(changeId: string, input: PlayerConfigPatchInput): Promise<ServiceResult<unknown>> {
+    return this.withOpenChange(changeId, async (context) => {
+      const assets = await withProjectLeaseRetry(this.leaseManager, context.storage.rootIdentity, async () => buildAssetCatalog(assetPathsFromFiles(await context.storage.listFiles())));
+      const result = await applyPlayerConfigPatch(context.session, input, { sha256: async text => hashText(text) }, assets);
       return { ...metadataForChange(context.session), result };
     });
   }
@@ -962,7 +973,7 @@ export class AuthoringService {
     };
   }
 
-  async begin(projectRoot: string, intent?: ChangeIntentMetadata, options?: { compositionMode: 'candidate' | 'direct' }): Promise<ServiceResult<{ changeId: string; baseRevision: string; workingRevision: number }>> {
+  async begin(projectRoot: string, intent?: ChangeIntentMetadata, options?: { compositionMode: 'candidate' | 'direct' }): Promise<ServiceResult<{ changeId: string; baseRevision: string; workingRevision: number; compositionMode: 'candidate' | 'direct' }>> {
     const storage = await NodeProjectStorage.open(projectRoot);
     const { snapshot, assetFiles } = await this.loadProjectContext(storage);
     const store = await NodeChangeStore.forProject(snapshot.rootIdentity, this.leaseManager.dataRoot);
@@ -981,6 +992,7 @@ export class AuthoringService {
         changeId: session.record.changeId,
         baseRevision: session.record.baseRevision,
         workingRevision: session.record.workingRevision,
+        compositionMode: composition.mode,
       },
     };
   }

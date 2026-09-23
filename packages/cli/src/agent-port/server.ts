@@ -206,6 +206,7 @@ const capsuleOutputSchema: JsonSchema = {
     changeId: { type: 'string' },
     changeStatus: { enum: ['OPEN', 'COMMITTED', 'ROLLED_BACK', 'STALE'] },
     workingRevision: { type: 'integer' },
+    compositionMode: { enum: ['direct', 'candidate'] },
     intent: { type: 'string' },
     acceptanceCriteria: { type: 'array', items: { type: 'string' } },
     operations: { type: 'array', items: {} },
@@ -281,6 +282,7 @@ const sessionDescriptionSchema: JsonSchema = {
         baseRevision: { type: 'string' },
         workingRevision: { type: 'integer' },
         recordVersion: { type: 'integer' },
+        compositionMode: { enum: ['direct', 'candidate'] },
         integration: {
           type: 'object',
           properties: {

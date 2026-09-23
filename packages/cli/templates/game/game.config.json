@@ -2,6 +2,12 @@
   "title": "第一封信",
   "version": "0.1.0",
   "entryScene": "ch01_01",
+  "player": {
+    "subtitle": "潮水退去以前，故事已经开始",
+    "titleBackground": "harbor",
+    "endScenes": ["ch01_01"],
+    "firstRunHint": "点击或空格继续 · Esc 打开菜单 · ↑ 回看上一句"
+  },
   "characters": {
     "narrator": {
       "name": "旁白"

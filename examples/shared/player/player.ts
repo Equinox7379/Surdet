@@ -86,11 +86,12 @@ export interface PlayerProject {
   /** Stable package name; changing the display title must not change save ownership. */
   id: string;
   config: {
-    title: string;
+    title?: string;
     entryScene: string;
     variables: Record<string, unknown>;
     characters?: Record<string, { name?: string; avatar?: string }>;
     fonts?: Partial<Record<'body' | 'title' | 'ui', string>>;
+    player?: { subtitle?: string; titleBackground?: string; endScenes?: readonly string[]; firstRunHint?: string };
   };
   sceneFiles: Record<string, () => Promise<unknown>>;
   timelineFiles?: Record<string, unknown>;
@@ -121,6 +122,14 @@ export interface PlayerProject {
 
 export async function startPlayer(project: PlayerProject): Promise<void> {
   const gameConfig = project.config;
+  // Explicit host options remain authoritative; empty values intentionally clear
+  // configuration. Missing fields fall back to content-independent defaults.
+  const playerConfig = {
+    subtitle: project.subtitle ?? gameConfig.player?.subtitle ?? '',
+    titleBackground: project.titleBackground ?? gameConfig.player?.titleBackground ?? '',
+    endScenes: project.endScenes ?? gameConfig.player?.endScenes ?? [],
+    firstRunHint: project.firstRunHint ?? gameConfig.player?.firstRunHint ?? '',
+  };
   const browserPrefix = gameStoragePrefix(project.id);
   const sceneFiles = project.sceneFiles;
   const timelineFiles = project.timelineFiles ?? {};
@@ -476,7 +485,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   // loadSnapshot 不可在事件回调内调用（撞解释器 #stepping 重入守卫），延迟到 UI 线程执行。
   bus.on('sceneEnd', ({ sceneId }) => {
     if (!turnResumeSnap) {
-      if (project.endScenes?.includes(sceneId)) setTimeout(() => {
+      if (playerConfig.endScenes.includes(sceneId)) setTimeout(() => {
         if (!ownerTeardown.disposed) showTitleScreen();
       }, 0);
       return;
@@ -732,8 +741,8 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
     return {
       view: {
         title: (gameConfig as { title?: string }).title ?? 'Surdet Game',
-        subtitle: project.subtitle,
-        backgroundKey: project.titleBackground,
+        subtitle: playerConfig.subtitle,
+        backgroundKey: playerConfig.titleBackground,
         items: [
           { id: 'new', label: '开始游戏' },
           { id: 'load', label: '读取存档' },
@@ -855,8 +864,8 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         }
         sessionStart = Date.now(); // 新周目重新计游戏时长
         interp.start(entry?.scene ?? gameConfig.entryScene);
-        if (project.firstRunHint && !sessionStorage.getItem('surdet:controls-seen')) {
-          dialogue.showBanner(project.firstRunHint, 'tip');
+        if (playerConfig.firstRunHint && !sessionStorage.getItem('surdet:controls-seen')) {
+          dialogue.showBanner(playerConfig.firstRunHint, 'tip');
           sessionStorage.setItem('surdet:controls-seen', '1');
         }
         break;

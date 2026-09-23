@@ -39,10 +39,12 @@ describe('变量表 ⇄ JSON', () => {
   it('applyVariablesToConfig 保留其余顶层键、2 空格缩进、键序稳定', () => {
     const rows = parseVariablesToRows(cfg);
     const { variables } = rowsToVariables(rows);
-    const text = applyVariablesToConfig(JSON.stringify(cfg), variables);
+    const player = { subtitle: '可继续编辑', titleBackground: '', endScenes: ['end_a', 'end_b'], firstRunHint: '', extension: { keep: true } };
+    const text = applyVariablesToConfig(JSON.stringify({ ...cfg, player }), variables);
     const reparsed = JSON.parse(text) as Record<string, unknown>;
     expect(reparsed.title).toBe('Demo');
     expect(reparsed.entryScene).toBe('ch1');
+    expect(reparsed.player).toEqual(player);
     expect(Object.keys(reparsed.variables ?? {})).toEqual(['lynn.trust', 'hasSword', 'readonlyVar']);
     expect(text).toContain('\n  "title"'); // 2 空格缩进
   });

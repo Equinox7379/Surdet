@@ -190,11 +190,11 @@ describe('Surdet Agent Port invocation ledger and delivery capsule', () => {
     await session.close();
   });
 
-  it('seals direct manifests in persisted sequence order for numeric and alphabetic operation ids', async () => {
+  it('seals explicitly selected candidate manifests in apply with persisted operation order', async () => {
     const seal = async (name: string, sceneOperationId: string, entryOperationId: string) => {
       const session = await openSession(name, 'apply');
       try {
-        expect((await session.invoke('change.begin', {})).ok).toBe(true);
+        expect((await session.invoke('change.begin', { compositionMode: 'candidate' })).ok).toBe(true);
         expect((await session.invoke('scene.create', {
           operationId: sceneOperationId,
           sceneId: 'direct_entry',
