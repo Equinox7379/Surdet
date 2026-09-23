@@ -200,7 +200,7 @@ describe('DialogueLayer visual layout contracts', () => {
       const indicatorBounds = indicator!.getBounds();
       const railBounds = rail!.getBounds();
       expect(boundsOverlap(indicatorBounds, railBounds)).toBe(false);
-      expect(railBounds.x - ((indicator as Container).x + 9)).toBeGreaterThanOrEqual(9);
+      expect(railBounds.y - (indicatorBounds.y + indicatorBounds.height)).toBeGreaterThanOrEqual(9);
 
       const anchoredX = (indicator as Container).x;
       const anchoredY = (indicator as Container).y;
@@ -222,7 +222,8 @@ describe('DialogueLayer visual layout contracts', () => {
       expect((indicator as Container).y).toBe(720 - 46);
       runtime.layer.restoreCommandRail();
       expect((indicator as Container).visible).toBe(true);
-      expect((indicator as Container).x).toBe(Math.round(rail!.getBounds().x) - 19);
+      expect((indicator as Container).x).toBe(1280 - 68);
+      expect(boundsOverlap(indicator!.getBounds(), rail!.getBounds())).toBe(false);
       expect(rail!.children.length).toBe(visibleChildCount);
       const afterLifecycle = runtime.lifecycle.snapshot();
       expect(afterLifecycle.tickerCallbacks).toBe(beforeLifecycle.tickerCallbacks);
@@ -234,7 +235,8 @@ describe('DialogueLayer visual layout contracts', () => {
         id: `item-${index}`,
         label: `项${index}`,
       })));
-      expect((indicator as Container).visible).toBe(false);
+      expect((indicator as Container).visible).toBe(true);
+      expect(boundsOverlap(indicator!.getBounds(), rail!.getBounds())).toBe(false);
     } finally {
       disposeRuntime(runtime);
     }

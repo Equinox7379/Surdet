@@ -1,7 +1,7 @@
 @scene ending_delivered
 @label start
 @bg lighthouse_dawn
-@show lynn:coat normal @ right
+@show lynn:coat normal @ pos=780
 @unlock_text t_ending_delivered
 
 @flag cleared

@@ -416,7 +416,10 @@ export class WorldLayer implements WorldProjectionPort {
     if (this.#disposed) return;
     this.#activeSpeakerId = characterId;
     for (const [key, sprite] of this.#portraitSprites) {
-      sprite.alpha = !characterId || this.#portraitViews.get(key)?.charId === characterId ? 1 : 0.46;
+      sprite.tint = this.#portraitTint(this.#portraitViews.get(key));
+    }
+    for (const tween of this.#portraitTweens) {
+      tween.old.tint = tween.neu.tint = this.#portraitTint(this.#portraitViews.get(tween.key));
     }
     this.#requestFrame();
   }
@@ -446,7 +449,7 @@ export class WorldLayer implements WorldProjectionPort {
     this.#portraitViews.set(key, { ...view });
     const texture = this.#assets.resolvePortrait(view.charId, view.costume, view.expression)
       ?? this.#assets.getOrCreatePortrait(`${view.charId}:${view.costume}:${view.expression}`, () => makeFallbackPortraitTexture(view.charId, view.costume, view.expression));
-    const width = Math.min(430, this.#w * 0.36);
+    const width = Math.min(this.#w * 0.48, this.#h * 1.28 * texture.width / Math.max(1, texture.height));
     const height = (texture.height / Math.max(1, texture.width)) * width;
     const x = this.#resolvePortraitX(view.pos) ?? this.#w * 0.5;
     const existing = this.#portraitSprites.get(key);
@@ -457,8 +460,8 @@ export class WorldLayer implements WorldProjectionPort {
       return;
     }
     if (existing.texture === texture) {
-      existing.position.set(x, this.#h + 10);
-      existing.alpha = this.#portraitAlpha(view);
+      existing.position.set(x, Math.max(this.#h + 10, existing.height + this.#h * 0.025));
+      existing.tint = this.#portraitTint(view);
       return;
     }
     const next = this.#createPortraitSprite(texture, x, height, view);
@@ -610,13 +613,20 @@ export class WorldLayer implements WorldProjectionPort {
     }
     if (event.track === 'portrait' && event.target) {
       const target = event.target;
-      if (cue.action === 'show' && (event.started || event.final)) {
-        this.setPortrait(target, {
-          charId: target.split(':')[0] ?? target,
-          costume: target.split(':')[1] ?? 'normal',
-          expression: typeof cue.expression === 'string' ? cue.expression : 'normal',
-          pos: typeof cue.position === 'string' ? cue.position : 'center',
-        });
+      if (cue.action === 'show') {
+        if (event.started || event.final) {
+          this.setPortrait(target, {
+            charId: target.split(':')[0] ?? target,
+            costume: target.split(':')[1] ?? 'normal',
+            expression: typeof cue.expression === 'string' ? cue.expression : 'normal',
+            pos: typeof cue.position === 'string' ? cue.position : 'center',
+          });
+        }
+        const sprite = this.#portraitSprites.get(target);
+        if (sprite) {
+          sprite.alpha = event.progress;
+          sprite.y = Math.max(this.#h + 10, sprite.height + this.#h * 0.025) + (1 - event.progress) * 28;
+        }
       } else if (cue.action === 'expression' && (event.started || event.final)) {
         const current = this.#portraitViews.get(target);
         if (current && typeof cue.expression === 'string') this.setPortrait(target, { ...current, expression: cue.expression });
@@ -635,12 +645,6 @@ export class WorldLayer implements WorldProjectionPort {
             const current = this.#portraitViews.get(target);
             if (current) this.#portraitViews.set(target, { ...current, pos: cue.position as string });
           }
-        }
-      } else if (cue.action === 'show') {
-        const sprite = this.#portraitSprites.get(target);
-        if (sprite) {
-          sprite.alpha = this.#portraitAlpha(this.#portraitViews.get(target)) * event.progress;
-          sprite.y = this.#h + 10 + (1 - event.progress) * 28;
         }
       } else if (cue.action === 'hide') {
         const sprite = this.#portraitSprites.get(target);
@@ -843,16 +847,17 @@ export class WorldLayer implements WorldProjectionPort {
 
   #createPortraitSprite(texture: Texture, x: number, height: number, view: PortraitView): Sprite {
     const sprite = new Sprite(texture);
-    sprite.width = Math.min(430, this.#w * 0.36);
+    sprite.width = height * texture.width / Math.max(1, texture.height);
     sprite.height = height;
     sprite.anchor.set(0.5, 1);
-    sprite.position.set(x, this.#h + 10);
-    sprite.alpha = this.#portraitAlpha(view);
+    sprite.position.set(x, Math.max(this.#h + 10, height + this.#h * 0.025));
+    sprite.tint = this.#portraitTint(view);
     return sprite;
   }
 
-  #portraitAlpha(view: PortraitView | undefined): number {
-    return !this.#activeSpeakerId || view?.charId === this.#activeSpeakerId ? 1 : 0.46;
+  #portraitTint(view: PortraitView | undefined): number {
+    // Focus dims the drawing, not its opacity: the scenery must not show through a person.
+    return !this.#activeSpeakerId || view?.charId === this.#activeSpeakerId ? 0xffffff : 0xc4cddd;
   }
 
   #detachPortraitSprites(removed: ReadonlySet<Sprite>): void {
@@ -918,9 +923,8 @@ export class WorldLayer implements WorldProjectionPort {
       for (const tween of this.#portraitTweens) {
         tween.remain = Math.max(0, tween.remain - deltaMs);
         const progress = 1 - tween.remain / tween.dur;
-        const alpha = this.#portraitAlpha(this.#portraitViews.get(tween.key));
-        tween.neu.alpha = alpha * progress;
-        tween.old.alpha = alpha * (1 - progress);
+        tween.neu.alpha = progress;
+        tween.old.alpha = 1 - progress;
         if (tween.remain === 0) done.push(tween);
       }
       for (const tween of done) {

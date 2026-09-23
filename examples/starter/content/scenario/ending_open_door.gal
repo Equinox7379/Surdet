@@ -1,7 +1,7 @@
 @scene ending_open_door
 @label start
 @bg lighthouse_dawn
-@show lynn:coat normal @ right
+@show lynn:coat normal @ pos=780
 @unlock_text t_ending_open
 
 @flag cleared
@@ -18,7 +18,7 @@
 @endif
 沈岳看完退回章，摇头。
 沈岳：我没有退过你的信。地址撤掉以后，信都回了邮局。
-@show lynn:coat smile @ right
+@show lynn:coat smile @ pos=780
 凛：那我这些年等的，原来不是你的回信。
 沈岳在新的值守室地址旁签名，凛把旧罗盘放在登记册上，补写了自己的名字。
 旁白：回程时，旧地址被你们从送件单上划掉，新的地址留在了下一张单子上。

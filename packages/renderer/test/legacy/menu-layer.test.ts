@@ -1,4 +1,4 @@
-import { Container, Text as PText, Texture, type FederatedPointerEvent } from 'pixi.js';
+import { Container, Text as PText, Rectangle, Sprite, Texture, type FederatedPointerEvent } from 'pixi.js';
 import { describe, expect, it, vi } from 'vitest';
 import type {
   DialogueProjectionPort,
@@ -236,14 +236,40 @@ function projectionSignature(root: Container): unknown {
 }
 
 describe('Menu v2 characterization contract', () => {
+  it('uses a registered title wordmark without losing controls, falls back to text, and does not own its texture', async () => {
+    const runtime = makeRealMenuRuntime();
+    const logo = new Texture();
+    const select = vi.fn();
+    try {
+      await runtime.assets.registerBackground('wordmark', logo);
+      runtime.facade.commands.menu.showTitle({ title: '字标标题', logoKey: 'wordmark', items: [{ id: 'new', label: '开始游戏' }] }, select);
+      const sprites = (node: Container): Sprite[] => [...(node instanceof Sprite ? [node] : []), ...node.children.flatMap(sprites)];
+      expect(sprites(runtime.root).some((sprite) => sprite.texture === logo)).toBe(true);
+      findTextDeep(runtime.root, '开始游戏').emit('pointerdown', pointerEvent);
+      expect(select).toHaveBeenCalledWith('new');
+      runtime.layer.hideTitle();
+      expect(logo.destroyed).toBe(false);
+      runtime.facade.commands.menu.showTitle({ title: '无字标时保留标题', logoKey: 'missing', items: [] }, select);
+      expect(findTextDeep(runtime.root, '无字标时保留标题').visible).toBe(true);
+    } finally { disposeRealMenuRuntime(runtime); logo.destroy(); }
+  });
+
   it('reports the actual title control bounds instead of a second hard-coded layout', () => {
     const runtime = makeRealMenuRuntime();
     try {
-      runtime.layer.showTitle({ title: 'Surdet', items: [{ id: 'new', label: '开始游戏' }] }, vi.fn());
-      const label = findTextDeep(runtime.root, '开始游戏');
-      expect(runtime.layer.debugSnapshot().titleTargets).toEqual([
-        { id: 'new', x: label.x - 166, y: label.y - 23, width: 332, height: 46 },
-      ]);
+      const select = vi.fn();
+      const items = [{ id: 'new', label: '开始游戏' }, { id: 'explore', label: '自由探索', secondary: true }];
+      runtime.layer.showTitle({ title: 'Surdet', items }, select);
+      const targets = items.map((item) => {
+        const label = findTextDeep(runtime.root, item.label);
+        const hit = label.hitArea as Rectangle;
+        label.emit('pointerdown', pointerEvent);
+        expect(select).toHaveBeenLastCalledWith(item.id);
+        return { id: item.id, x: label.x + hit.x, y: label.y + hit.y, width: hit.width, height: hit.height };
+      });
+      expect(runtime.layer.debugSnapshot().titleTargets).toEqual(targets);
+      expect(targets[1]!.x).toBeGreaterThan(targets[0]!.x + targets[0]!.width);
+      expect(targets[1]!.y + targets[1]!.height).toBeLessThanOrEqual(720);
       runtime.layer.hideTitle();
       expect(runtime.layer.debugSnapshot().titleTargets).toEqual([]);
     } finally { disposeRealMenuRuntime(runtime); }

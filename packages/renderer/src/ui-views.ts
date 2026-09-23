@@ -10,13 +10,17 @@ export interface TitleItemView {
   label: string;
   /** 灰显不可点（如"无存档时的 继续"） */
   enabled?: boolean;
+  /** 次要入口放入页脚，不占用主菜单列。 */
+  secondary?: boolean;
 }
 
 export interface TitleView {
   title: string;
   subtitle?: string;
-  /** 标题页底图资源 key；缺失时回退到程序化暗底，保持旧宿主兼容。 */
+  /** 标题页底图资源 key；缺失时使用主题底色。 */
   backgroundKey?: string;
+  /** 可选透明字标，复用背景图像注册表；没有素材时仍显示 title 文本。 */
+  logoKey?: string;
   items: TitleItemView[];
 }
 

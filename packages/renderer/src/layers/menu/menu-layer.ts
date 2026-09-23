@@ -26,7 +26,7 @@ import {
 } from '../../ui-views.js';
 import type { SettingsRowView } from '../../settings-store.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
-import { drawPlayerDivider, drawPlayerFrame } from '../../ui-decoration.js';
+import { drawPlayerFrame } from '../../ui-decoration.js';
 import { bindPlayerControl, markPlayerModal } from '../../player-controls.js';
 import {
   bindThemeGraphicsProjection,
@@ -249,6 +249,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#titleTargets = [];
     const layer = this.#titleLayer;
     markPlayerModal(layer, {});
+    const logoTexture = view.logoKey ? this.#assets.resolveBackground(view.logoKey) : null;
     const titleTexture = this.#assets.resolveBackground(view.backgroundKey ?? 'title_bg');
     if (titleTexture) {
       const titleBg = new Sprite(titleTexture);
@@ -257,7 +258,23 @@ export class MenuLayer implements MenuProjectionPort {
       titleBg.height = titleTexture.height * scale;
       titleBg.position.set((this.#w - titleBg.width) / 2, (this.#h - titleBg.height) / 2);
       layer.addChild(titleBg);
-      for (let index = 0; index < 64; index++) {
+      if (logoTexture) {
+        const mist = new Graphics();
+        const paint = (): void => {
+          mist.clear();
+          for (let step = 0; step < 40; step++) {
+            const falloff = step / 40;
+            mist.ellipse(this.#w * 0.15, this.#h * 0.44,
+              this.#w * (0.5 - falloff * 0.37), this.#h * (0.63 - falloff * 0.4))
+              .fill({ color: this.#theme.colors.panel, alpha: 0.028 });
+          }
+          bindThemeGraphicsProjection(mist, Array<keyof RendererTheme['colors']>(40).fill('panel'));
+        };
+        this.#surfacePaints.set(mist, paint);
+        paint();
+        layer.addChild(mist);
+      }
+      for (let index = 0; !logoTexture && index < 64; index++) {
         const shade = new Graphics();
         const paint = (): void => {
           shade.clear().rect(index * this.#w / 64, 0, this.#w / 64, this.#h)
@@ -271,21 +288,23 @@ export class MenuLayer implements MenuProjectionPort {
     } else {
       layer.addChild(this.#surface(0, 0, this.#w, this.#h, 'panel', 'panel'));
     }
-    const title = bindThemeTextProjection(new PText({
+    const title = logoTexture ? new Sprite(logoTexture) : bindThemeTextProjection(new PText({
       text: view.title,
       style: {
         fontSize: this.#theme.typography.titleSize,
         fill: this.#theme.colors.text,
-        fontWeight: 'normal',
+        fontWeight: '600',
         letterSpacing: this.#theme.typography.titleLetterSpacing,
-        wordWrap: true, wordWrapWidth: this.#w * 0.60, breakWords: true,
+        wordWrap: true, wordWrapWidth: this.#w * 0.48, breakWords: true,
         fontFamily: this.#fontFamily('title'),
       } satisfies TextStyleOptions,
     }), { fill: 'text', fontSize: 'titleSize', letterSpacing: 'titleLetterSpacing' });
-    title.position.set(this.#w * 0.09, this.#h * 0.22);
+    title.position.set(this.#w * 0.055, this.#h * 0.16);
+    if (logoTexture) {
+      title.scale.set(Math.min(this.#w * 0.37 / logoTexture.width, this.#h * 0.25 / logoTexture.height));
+    }
     layer.addChild(title);
     const ruleY = title.y + (typeof document === 'undefined' ? this.#theme.typography.titleSize * 1.25 : title.height) + 24;
-    layer.addChild(drawPlayerDivider(new Graphics(), this.#theme, title.x, ruleY, 332));
     if (view.subtitle) {
       const subtitle = bindThemeTextProjection(new PText({
         text: view.subtitle,
@@ -294,37 +313,52 @@ export class MenuLayer implements MenuProjectionPort {
       subtitle.position.set(title.x + 2, ruleY + 22);
       layer.addChild(subtitle);
     }
-    const startY = Math.min(ruleY + 94, this.#h - view.items.length * 58 - 48);
-    view.items.forEach((item, i) => {
+    const primaryCount = view.items.filter((item) => !item.secondary).length;
+    const secondaryCount = view.items.length - primaryCount;
+    const startY = Math.min(Math.max(this.#h * 0.44, view.subtitle ? ruleY + 62 : ruleY + 6), this.#h - primaryCount * 58 - 24);
+    let primaryIndex = 0;
+    let secondaryIndex = 0;
+    view.items.forEach((item) => {
       const enabled = item.enabled !== false;
-      const rowY = startY + i * 58;
-      if (enabled) this.#titleTargets.push({ id: item.id, x: title.x, y: rowY, width: 332, height: 46 });
-      const frame = drawPlayerFrame(new Graphics(), this.#theme, title.x, rowY, 332, 46,
-        { alpha: 0.56, ornament: i === 0 });
+      const rowY = item.secondary ? this.#h - 58 : startY + primaryIndex++ * 58;
+      const rowX = item.secondary ? this.#w - 32 - (secondaryCount - secondaryIndex++) * 150 : title.x;
+      const width = item.secondary ? 140 : 332;
+      const center = item.secondary ? 70 : 142;
+      const fontSizeRole = item.secondary ? 'captionSize' : 'bodySize';
+      if (item.secondary) layer.addChild(this.#surface(rowX, rowY, width, 46, 'panel', 'panel'));
+      if (enabled) this.#titleTargets.push({ id: item.id, x: rowX, y: rowY, width, height: 46 });
+      const frame = bindThemeGraphicsProjection(new Graphics(), ['accent']);
+      const paintFocus = (active: boolean): void => {
+        frame.clear().moveTo(rowX + center - (item.secondary ? 48 : 84), rowY + 43).lineTo(rowX + center + (item.secondary ? 48 : 84), rowY + 43)
+          .stroke({ width: 1.5, color: this.#theme.colors.accent, alpha: active ? 1 : 0 });
+        this.#requestFrame();
+      };
+      paintFocus(false);
       const label = bindThemeTextProjection(new PText({
         text: item.label,
         style: {
-          fontSize: this.#theme.typography.uiSize,
+          fontSize: this.#theme.typography[fontSizeRole],
+          fontWeight: '600',
           fill: enabled ? this.#theme.colors.text : this.#theme.colors.textDisabled,
           letterSpacing: this.#theme.typography.uiLetterSpacing,
-          fontFamily: this.#fontFamily('ui'),
+          fontFamily: this.#fontFamily('title'),
         } satisfies TextStyleOptions,
-      }), { fill: enabled ? 'text' : 'textDisabled', fontSize: 'uiSize', letterSpacing: 'uiLetterSpacing' });
+      }), { fill: enabled ? 'text' : 'textDisabled', fontSize: fontSizeRole, letterSpacing: 'uiLetterSpacing' });
       label.anchor.set(0.5);
-      label.position.set(title.x + 166, rowY + 23);
+      label.position.set(rowX + center, rowY + 23);
       frame.alpha = label.alpha = enabled ? 1 : this.#theme.opacity.disabled;
-      bindPlayerControl(label, { label: item.label, width: 332, height: 46, x: -166, y: -23, enabled });
+      bindPlayerControl(label, { label: item.label, width, height: 46, x: -center, y: -23, enabled });
       if (enabled) {
         label.cursor = 'pointer';
         label.on('pointerdown', () => {
           this.#titleHandler?.(item.id);
         });
         label.on('pointerover', () => {
-          drawPlayerFrame(frame, this.#theme, title.x, rowY, 332, 46, { color: 'surfaceStrong', alpha: 0.86, active: true, ornament: i === 0 });
+          paintFocus(true);
           label.style.fill = this.#theme.colors.accent;
         });
         label.on('pointerout', () => {
-          drawPlayerFrame(frame, this.#theme, title.x, rowY, 332, 46, { alpha: 0.56, ornament: i === 0 });
+          paintFocus(false);
           label.style.fill = this.#theme.colors.text;
         });
       }
@@ -402,7 +436,7 @@ export class MenuLayer implements MenuProjectionPort {
     const py = 34;
     const pw = 348;
     const headerH = 94;
-    const rowH = 54;
+    const rowH = Math.min(54, (this.#h - py * 2 - headerH - 28) / Math.max(1, items.length));
     const panelH = headerH + items.length * rowH + 28;
     panel.position.set(this.#menuMotionOffset, 0);
     this.#menuPanel = panel;

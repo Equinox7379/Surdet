@@ -132,6 +132,8 @@ export class PlayerFocusScope {
       // The library pools DOM nodes. Refresh names rather than retaining another control's label.
       button.setAttribute('aria-label', button.container!.accessibleHint ?? control.label);
       button.style.outlineOffset = '-3px';
+      button.style.outlineColor = '#79bce4';
+      button.style.outlineWidth = '1px';
     }
     const active = this.#canvas.ownerDocument.activeElement as (HTMLElement & { container?: Container }) | null;
     const control = active?.container && controls.get(active.container);
