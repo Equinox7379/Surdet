@@ -179,6 +179,192 @@ describe('Surdet Agent Port MCP tool projection', () => {
     await session.close();
   });
 
+  it('selects capability summaries and full definitions over MCP without granting tools', async () => {
+    const { session, client, server } = await connected('observe');
+    try {
+      const summary = await client.callTool({ name: 'surdet_capabilities_describe', arguments: { ids: ['scene.patch', 'project.inspect'], detail: 'summary' } });
+      expect(summary.isError, textContent(summary)).not.toBe(true);
+      const summaries = (summary.structuredContent as any).result.capabilities;
+      expect(summaries.map((item: any) => item.id)).toEqual(['project.inspect', 'scene.patch']);
+      expect(summaries[1]).toMatchObject({ minimumPolicy: 'stage', mcpTool: 'surdet_scene_patch', composable: true });
+      expect(summaries[1]).not.toHaveProperty('inputSchema');
+      expect(summaries[1]).not.toHaveProperty('minimalExample');
+      const full = await client.callTool({ name: 'surdet_capabilities_describe', arguments: { ids: ['scene.patch'] } });
+      expect(full.isError, textContent(full)).not.toBe(true);
+      expect((full.structuredContent as any).result.capabilities).toEqual([
+        { ...AUTHORING_CAPABILITY_REGISTRY.find((item) => item.id === 'scene.patch'), mcpTool: 'surdet_scene_patch' },
+      ]);
+      const unknown = await client.callTool({ name: 'surdet_capabilities_describe', arguments: { ids: ['scene.missing'] } });
+      expect(unknown.isError).toBe(true);
+      expect((unknown.structuredContent as any).error.code).toBe('INVALID_REQUEST');
+      expect((await client.listTools()).tools.map((item) => item.name)).not.toContain('surdet_scene_patch');
+    } finally {
+      await client.close();
+      await server.close();
+      await session.close();
+    }
+  });
+
+  it('executes the published create and patch examples with discovered prerequisites and references', async () => {
+    const { session, client, server } = await connected('apply');
+    try {
+      const invoke = async (name: string, args: Record<string, unknown> = {}): Promise<any> => {
+        const response = await client.callTool({ name, arguments: args });
+        expect(response.isError, textContent(response)).not.toBe(true);
+        return (response.structuredContent as any).result;
+      };
+      const definitions = (await invoke('surdet_capabilities_describe')).capabilities;
+      await invoke('surdet_change_begin');
+      await invoke('surdet_variable_ensure', { operationId: 'trust', name: 'trust', type: 'number', initial: 2 });
+      await invoke('surdet_variable_ensure', { operationId: 'route', name: 'route', type: 'string', initial: '' });
+      const createExample = definitions.find((item: any) => item.id === 'scene.create').minimalExample.input;
+      await invoke('surdet_scene_create', createExample);
+      await invoke('surdet_project_validate');
+      const createdRun = await invoke('surdet_runtime_run_from', { sceneId: createExample.sceneId, choices: [0] });
+      expect(createdRun).toMatchObject({ status: 'passed', finalVariables: { trust: 1 } });
+
+      await invoke('surdet_scene_create', { operationId: 'prepare-x', sceneId: 'x', blocks: [
+        { kind: 'choice', options: [{ label: '原选项', target: { kind: 'goto', value: 'left' } }] },
+        { kind: 'label', name: 'left' }, { kind: 'text', value: '左侧结局。' },
+      ] });
+      await invoke('surdet_scene_create', { operationId: 'prepare-right', sceneId: 'right', blocks: [{ kind: 'text', value: '右侧结局。' }] });
+      const scene = await invoke('surdet_object_inspect', { objectRef: 'scene:x' });
+      const children = await Promise.all(scene.childRefs.map((objectRef: string) => invoke('surdet_object_inspect', { objectRef })));
+      const choice = children.find((item: any) => item.kind === 'choice');
+      const patchExample = structuredClone(definitions.find((item: any) => item.id === 'scene.patch').minimalExample.input);
+      // Only replace opaque placeholders with current public facts; execute the example content unchanged.
+      patchExample.patch.target = choice.objectRef;
+      patchExample.patch.expectedFingerprint = choice.details.structure.fingerprint;
+      await invoke('surdet_scene_patch', patchExample);
+      await invoke('surdet_project_validate');
+      const left = await invoke('surdet_runtime_run_from', { sceneId: 'x', choices: [0] });
+      expect(left).toMatchObject({ status: 'passed', finalVariables: { route: 'left' } });
+      expect(await invoke('surdet_runtime_run_from', { sceneId: 'x', choices: [1] })).toMatchObject({ status: 'passed' });
+    } finally {
+      await client.close();
+      await server.close();
+      await session.close();
+    }
+  });
+
+  it('reads explicit project/working views and rejects mixed-version scene pages', async () => {
+    const { session, client, server } = await connected('apply');
+    try {
+      const invoke = async (name: string, args: Record<string, unknown> = {}): Promise<any> => {
+        const response = await client.callTool({ name, arguments: args });
+        expect(response.isError, textContent(response)).not.toBe(true);
+        return response.structuredContent;
+      };
+      for (const name of ['surdet_project_inspect', 'surdet_project_assets', 'surdet_project_gallery', 'surdet_object_inspect']) {
+        const missing = await client.callTool({ name, arguments: { view: 'working', ...(name === 'surdet_object_inspect' ? { objectRef: 'scene:start' } : {}) } });
+        expect(missing.isError).toBe(true);
+        expect(missing.structuredContent, textContent(missing)).toMatchObject({ error: { code: 'CHANGE_NOT_FOUND' } });
+      }
+      await invoke('surdet_change_begin');
+      const input = { operationId: 'paged-scene', sceneId: 'paged', blocks: [
+        { kind: 'text', value: '重复台词。' },
+        { kind: 'text', value: '重复台词。' },
+        { kind: 'label', name: 'last' },
+        { kind: 'text', value: '结尾。' },
+      ] };
+      const created = await invoke('surdet_scene_create', input);
+      expect(created.result.continuation).toMatchObject({ sceneRef: 'scene:paged', workingRevision: created.workingRevision });
+      const disk = await invoke('surdet_project_inspect', { view: 'project' });
+      const working = await invoke('surdet_project_inspect', { view: 'working' });
+      expect(disk.result.scenes.map((scene: any) => scene.id)).not.toContain('paged');
+      expect(disk).not.toHaveProperty('changeId');
+      expect(working.result.scenes.map((scene: any) => scene.id)).toContain('paged');
+      expect(working.changeId).toBe(created.changeId);
+      expect((await invoke('surdet_project_inspect')).result.view).toBe('project');
+      for (const name of ['surdet_project_assets', 'surdet_project_gallery']) {
+        expect(await invoke(name, { view: 'project' })).not.toHaveProperty('changeId');
+        expect(await invoke(name, { view: 'working' })).toMatchObject({ changeId: created.changeId, workingRevision: created.workingRevision, result: { view: 'working' } });
+      }
+      const first = await invoke('surdet_object_inspect', { view: 'working', objectRef: 'scene:paged', fragment: { limit: 2 } });
+      const page = first.result.fragment;
+      expect(page).toMatchObject({ fromLine: 1, totalLines: 6, nextLine: 3, truncated: true, revision: working.result.revision, workingRevision: first.workingRevision });
+      expect(page.lines.map((line: any) => line.text)).toEqual(['@scene paged', '重复台词。']);
+      const continuation = { fromLine: page.nextLine, limit: 4, expectedRevision: page.revision, expectedWorkingRevision: page.workingRevision };
+      const second = await invoke('surdet_object_inspect', { view: 'working', objectRef: 'scene:paged', fragment: continuation });
+      expect(second.result.fragment).toMatchObject({ fromLine: 3, truncated: false });
+      expect(second.result.fragment.lines.map((line: any) => line.text)).toEqual(['重复台词。', '@label last', '结尾。', '@end']);
+      expect(page.lines[1].objectRefs).not.toEqual(second.result.fragment.lines[0].objectRefs);
+      const target = page.lines[1].objectRefs[0];
+      const text = await invoke('surdet_object_inspect', { view: 'working', objectRef: target });
+      await invoke('surdet_scene_patch', { operationId: 'shift-lines', patch: { kind: 'insertAfter', anchor: target, expectedFingerprint: text.result.fingerprint, blocks: [{ kind: 'text', value: '插入。' }] } });
+      const stale = await client.callTool({ name: 'surdet_object_inspect', arguments: { view: 'working', objectRef: 'scene:paged', fragment: continuation } });
+      expect(stale.isError).toBe(true);
+      expect((stale.structuredContent as any).error.code).toBe('OBJECT_REF_STALE');
+      const unpinned = await client.callTool({ name: 'surdet_object_inspect', arguments: { view: 'working', objectRef: 'scene:paged', fragment: { fromLine: 3 } } });
+      expect(unpinned.isError).toBe(true);
+      const repeated = await invoke('surdet_scene_create', input);
+      expect(repeated.result.continuation.workingRevision).toBeGreaterThan(created.result.continuation.workingRevision);
+      expect(repeated.result.continuation.revision).not.toBe(created.result.continuation.revision);
+      const sourceObject = await invoke('surdet_object_inspect', { view: 'project', objectRef: 'scene:start', fragment: {} });
+      expect(sourceObject).not.toHaveProperty('changeId');
+      expect(sourceObject.result.fragment.revision).toBe(disk.result.revision);
+    } finally {
+      await client.close();
+      await server.close();
+      await session.close();
+    }
+  });
+
+  it('reports usable budgets and stores failed traces without granting passed runtime evidence', async () => {
+    const { session, client, server } = await connected('apply');
+    try {
+      fs.writeFileSync(path.join(session.projectRoot, 'content/scenario/start.gal'), '@scene start\n第一句。\n第二句。\n@end\n');
+      const call = (name: string, args: Record<string, unknown> = {}) => client.callTool({ name, arguments: args });
+      const incomplete = await call('surdet_project_simulate', { sceneId: 'start', maxStepsPerPath: 1 });
+      expect(incomplete.structuredContent, textContent(incomplete)).toMatchObject({ ok: false, error: { code: 'SIMULATION_INCOMPLETE', retryDisposition: 'after-repair' } });
+      const repair = (incomplete.structuredContent as any).error.repairActions.find((item: any) => item.capability === 'project.simulate');
+      expect(repair.inputTemplate.maxStepsPerPath).toBeGreaterThan(1);
+      expect((await call('surdet_project_simulate', { ...repair.inputTemplate, maxStepsPerPath: 10 })).isError).not.toBe(true);
+      await call('surdet_change_begin');
+      const failed = await call('surdet_runtime_run_from', { sceneId: 'start', choices: [], maxSteps: 1 });
+      expect(failed.structuredContent, textContent(failed)).toMatchObject({ ok: false, error: { code: 'RUNTIME_FAILED' } });
+      const failure = (failed.structuredContent as any).error;
+      expect(failure.details.traceId).toEqual(expect.any(String));
+      const readRepair = failure.repairActions.find((item: any) => item.capability === 'runtime.read-trace');
+      const trace = await call('surdet_runtime_read_trace', readRepair.inputTemplate);
+      expect(trace.isError, textContent(trace)).not.toBe(true);
+      expect(trace.structuredContent).toMatchObject({ result: { status: 'failed', traceWorkingRevision: 0, freshness: { status: 'failed' } } });
+      expect((trace.structuredContent as any).result.events.length).toBeGreaterThan(0);
+      const described = await call('surdet_session_describe');
+      const changeId = (described.structuredContent as any).result.activeChange.changeId;
+      const opened = await NodeChangeStore.openByChangeId(changeId);
+      expect(opened!.record.runtimeTraces ?? []).toHaveLength(0);
+      expect(await opened!.store.readTrace(changeId, failure.details.traceId)).toMatchObject({ status: 'failed', workingRevision: 0 });
+      expect(await opened!.store.readInvocations(changeId)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ capability: 'runtime.run-from', ok: false, errorCode: 'RUNTIME_FAILED', evidenceIds: expect.arrayContaining([failure.details.traceId]) }),
+      ]));
+      expect((await call('surdet_project_validate')).isError).not.toBe(true);
+      expect((await call('surdet_project_simulate')).isError).not.toBe(true);
+      expect((await call('surdet_change_commit')).structuredContent).toMatchObject({ error: { code: 'RUNTIME_EVIDENCE_REQUIRED' } });
+      const beforeStart = await call('surdet_runtime_run_from', { sceneId: 'missing', choices: [] });
+      expect(beforeStart.structuredContent).toMatchObject({ error: { code: 'RUNTIME_FAILED' } });
+      expect((beforeStart.structuredContent as any).error.details?.traceId).toBeUndefined();
+      expect((await call('surdet_runtime_run_from', { sceneId: 'start', choices: [] })).isError).not.toBe(true);
+      const boundedWorking = await call('surdet_project_simulate', { sceneId: 'start', maxPaths: 1, maxStepsPerPath: 1 });
+      expect(boundedWorking.structuredContent).toMatchObject({ error: { code: 'SIMULATION_INCOMPLETE' } });
+      for (const input of [{ maxPaths: 0 }, { maxStepsPerPath: 1.5 }, { maxPaths: 2001 }, { maxStepsPerPath: 100001 }]) {
+        const invalid = await call('surdet_project_simulate', input);
+        expect(invalid.isError).toBe(true);
+        expect(textContent(invalid)).toContain(Object.keys(input)[0]);
+      }
+      const invalidScene = await call('surdet_scene_create', { operationId: 'invalid-scene', sceneId: 'bad', blocks: [{ kind: 'instruction', name: 'set', args: ['missing', '1'] }] });
+      expect(invalidScene.structuredContent).toMatchObject({ error: { code: 'INVALID_REQUEST', retryDisposition: 'after-repair' } });
+      expect((invalidScene.structuredContent as any).error.repairActions.length).toBeGreaterThan(0);
+      const after = await NodeChangeStore.openByChangeId(changeId);
+      expect(after!.record.workingRevision).toBe(0);
+      expect(after!.record.operations).not.toHaveProperty('invalid-scene');
+    } finally {
+      await client.close();
+      await server.close();
+      await session.close();
+    }
+  });
+
   it('keeps an active integration summary visible through the MCP session schema', async () => {
     const { session, client, server } = await connected('stage');
     try {

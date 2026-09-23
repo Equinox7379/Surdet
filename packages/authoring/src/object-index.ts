@@ -554,6 +554,42 @@ export function inspectObject(index: ObjectIndex, objectRef: string): AuthoringO
   return exact[0]!;
 }
 
+export interface SceneFragmentInput {
+  fromLine?: number;
+  limit?: number;
+  expectedRevision?: string;
+  expectedWorkingRevision?: number;
+}
+
+/** Raw source and exact references are projected from the same immutable snapshot. */
+export function inspectSceneFragment(snapshot: ProjectSnapshot, index: ObjectIndex, object: AuthoringObject, input: SceneFragmentInput, workingRevision?: number) {
+  if (object.kind !== 'scene') throw new AuthoringOperationError('UNSUPPORTED_OBJECT_KIND', '正文片段只支持 scene 对象');
+  const fromLine = input.fromLine ?? 1;
+  const limit = input.limit ?? 100;
+  const scene = snapshot.scenes.find((item) => item.path === object.source?.path)!;
+  if (!Number.isInteger(fromLine) || fromLine < 1 || fromLine > Math.max(1, scene.document.length)
+    || !Number.isInteger(limit) || limit < 1 || limit > 200) {
+    throw new AuthoringOperationError('INVALID_REQUEST', '片段起始行必须在场景内，limit 必须是 1..200 的整数');
+  }
+  if (fromLine > 1 && (input.expectedRevision === undefined || (workingRevision !== undefined && input.expectedWorkingRevision === undefined))) {
+    throw new AuthoringOperationError('INVALID_REQUEST', '续页必须携带首页的 revision；working 还需 workingRevision');
+  }
+  if ((input.expectedRevision !== undefined && input.expectedRevision !== snapshot.revision)
+    || (input.expectedWorkingRevision !== undefined && input.expectedWorkingRevision !== workingRevision)) {
+    throw new AuthoringOperationError('OBJECT_REF_STALE', '场景版本已变化，请从第一页重新读取');
+  }
+  const lines = scene.document.slice(fromLine - 1, fromLine - 1 + limit).map((line, offset) => ({
+    line: fromLine + offset, text: line.raw, eol: line.eol,
+    objectRefs: index.objects.filter((item) => item.source?.path === scene.path && item.source.line === fromLine + offset).map((item) => item.objectRef),
+  }));
+  const nextLine = fromLine + lines.length;
+  return {
+    revision: snapshot.revision, ...(workingRevision === undefined ? {} : { workingRevision }),
+    fromLine, totalLines: scene.document.length, truncated: nextLine <= scene.document.length,
+    ...(nextLine <= scene.document.length ? { nextLine } : {}), lines,
+  };
+}
+
 export interface ProjectInspection {
   rootIdentity: string;
   revision: string;

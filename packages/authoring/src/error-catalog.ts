@@ -123,7 +123,7 @@ const defaultDefinitions: Record<AuthoringErrorCode, Omit<AuthoringErrorDefiniti
   ASSET_SOURCE_CHANGED: { category: 'request', retryDisposition: 'after-inspect', repairActions: [action('asset.sources', '重新读取已授权的图片来源和摘要。')] },
   ASSET_IMAGE_INVALID: { category: 'request', retryDisposition: 'after-repair', repairActions: [action('asset.sources', '重新读取已授权的图片来源和摘要。')] },
   CAPABILITY_UNAVAILABLE: { category: 'request', retryDisposition: 'never', repairActions: [] },
-  INVALID_REQUEST: { category: 'request', retryDisposition: 'same-request', repairActions: [] },
+  INVALID_REQUEST: { category: 'request', retryDisposition: 'after-repair', repairActions: [{ capability: 'capabilities.describe', reason: '依据错误定位和当前能力合同修改输入，不要原样重试。', inputTemplate: { detail: 'summary' } }] },
   UNSUPPORTED_OBJECT_KIND: { category: 'request', retryDisposition: 'never', repairActions: [] },
   UNSUPPORTED_OPERATION: { category: 'request', retryDisposition: 'never', repairActions: [] },
   PROJECT_NOT_FOUND: { category: 'not-found', retryDisposition: 'after-inspect', repairActions: [action('project.inspect', '重新读取项目事实并确认项目根与对象路径。')] },
@@ -241,16 +241,23 @@ export function normalizeAuthoringError(error: unknown): NormalizedAuthoringErro
     : typeof error === 'object' && error !== null && 'details' in error && typeof error.details === 'object' && error.details !== null && !Array.isArray(error.details)
       ? error.details as Record<string, unknown>
       : undefined;
+  const repairActions = definition.repairActions.map((item) => ({
+    ...item,
+    ...(item.requiredFreshFacts === undefined ? {} : { requiredFreshFacts: [...item.requiredFreshFacts] }),
+  }));
+  if (code === 'RUNTIME_FAILED' && typeof details?.['traceId'] === 'string') {
+    repairActions.unshift({ capability: 'runtime.read-trace', reason: '读取本次失败前的真实轨迹，再修正原 change；失败轨迹不作为通过证据。', inputTemplate: { traceId: details['traceId'] } });
+  }
+  if (code === 'SIMULATION_INCOMPLETE' && typeof details?.['retryInput'] === 'object' && details['retryInput'] !== null) {
+    repairActions[0] = { capability: 'project.simulate', reason: '使用明确的有界预算重试；仍不足时缩小场景/路径，不把 incomplete 当作通过。', inputTemplate: details['retryInput'] as Record<string, unknown> };
+  }
   return {
     code,
     category: definition.category,
     message,
     ...(details === undefined ? {} : { details }),
     retryDisposition: definition.retryDisposition,
-    repairActions: definition.repairActions.map((item) => ({
-      ...item,
-      ...(item.requiredFreshFacts === undefined ? {} : { requiredFreshFacts: [...item.requiredFreshFacts] }),
-    })),
+    repairActions,
   };
 }
 
