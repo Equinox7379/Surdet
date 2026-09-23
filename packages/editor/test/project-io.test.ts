@@ -15,6 +15,7 @@ import {
 } from '../src/project-io.js';
 import { state } from '../src/state.js';
 import * as workspace from '../src/editor-workspace.js';
+import { renameSceneAtKey, deleteSceneAtKey } from '../src/panels/flow.js';
 import type { SceneEntry, TimelineEntry } from '../src/state.js';
 import { createTimeline, stringifyTimeline } from '../src/timeline-model.js';
 import { deleteTimeline, nextTimelineId, restorePendingTimelineDeletion } from '../src/panels/timeline-panel.js';
@@ -1398,6 +1399,21 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(state.dirName).toBe('next-project');
   });
 
+  it.each(['{', '[]', ''])('打开项目保留无法解析的 game.config.json 原文，场景生命周期不能将其当作无引用：%s', async (config) => {
+    const root = directoryHandle('invalid-player-config', {
+      content: directoryHandle('content', { scenario: directoryHandle('scenario', {}, {
+        'end_a.gal': fileHandle(null, log, 'end_a.gal', '@scene end_a\n结束。\n@end\n'),
+      }) }),
+    }, { 'game.config.json': fileHandle(null, log, 'game.config.json', config) });
+    await openProjectFromHandle(root);
+    expect(state.gameConfigText).toBe(config);
+    await expect(renameSceneAtKey('end_a')).rejects.toThrow(/game.config.json/);
+    await expect(deleteSceneAtKey('end_a')).rejects.toThrow(/game.config.json/);
+    expect(state.scenes.has('end_a')).toBe(true);
+    expect(state.pendingSceneDeletes).toEqual([]);
+    expect(log).toEqual([]);
+  });
+
   it('只读结果不尝试绑定写服务，回到来源项目后恢复正常读取和保存入口', async () => {
     const root = directoryHandle('result');
     Object.assign(root, { queryPermission: async () => 'denied' });
@@ -1431,7 +1447,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(settled).toHaveBeenCalledWith(true);
   });
 
-  it.each(['config', 'scene', 'timeline', 'assets'])('%s 的真实读取故障不能冒充项目加载成功', async (area) => {
+  it.each(['config', 'game-config', 'scene', 'timeline', 'assets'])('%s 的真实读取故障不能冒充项目加载成功', async (area) => {
     const broken = fileHandle(null, log, area === 'scene' ? 'start.gal' : area === 'timeline' ? 'intro.json' : 'events.json');
     broken.getFile = async () => { throw new DOMException('read denied', 'NotAllowedError'); };
     const content = directoryHandle('content', {
@@ -1446,7 +1462,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
         return getDirectory(name, options);
       };
     }
-    const root = directoryHandle('unreadable-project', { content });
+    const root = directoryHandle('unreadable-project', { content }, area === 'game-config' ? { 'game.config.json': broken } : {});
     const loaded = vi.fn(), settled = vi.fn();
     bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(),
       onProjectLoaded: loaded, onProjectLoadSettled: settled });

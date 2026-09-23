@@ -41,6 +41,8 @@ describe('场景路径安全生命周期', () => {
     state.current = null;
     state.dirHandle = {} as FileSystemDirectoryHandle;
     state.entryScene = '';
+    state.gameConfigText = '';
+    state.handles.gameConfig = null;
     state.configFiles = {
       events: null,
       growth: null,
@@ -332,13 +334,72 @@ describe('场景路径安全生命周期', () => {
     expect(confirm).not.toHaveBeenCalled();
     expect(state.scenes.has('chapter/entry')).toBe(true);
     expect(state.pendingSceneDeletes).toEqual([]);
-    expect(status.textContent).toContain('请先在“配置”中改掉引用');
+    expect(status.textContent).toContain('请先调整对应配置中的引用');
 
     state.entryScene = '';
     state.configFiles.events = { events: [{ id: 'host', scene: 'entry' }] };
     await renameSceneAtKey('chapter/entry');
     expect(prompt).not.toHaveBeenCalled();
     expect(state.scenes.has('chapter/entry')).toBe(true);
+  });
+
+  it.each(['end_a', 'chapter/end_a'])('结束配置保护语义 ID，拒绝 %s 改名或删除且不触碰正文、配置、历史与保存计划', async (key) => {
+    state.scenes.set(key, scene('end_a', `${key}.gal`, diskHandle));
+    state.scenes.set('start', { ...scene('start', 'start.gal', null), text: '@scene start\n@jump end_a\n' });
+    state.entryScene = 'start';
+    state.current = key;
+    setCurrentText('@scene end_a\n还未保存的结局。\n@end\n');
+    const readDisk = vi.fn(async () => ({ text: async () => '{"player":{"endScenes":[]}}' }));
+    state.handles.gameConfig = { getFile: readDisk } as unknown as FileSystemFileHandle;
+    state.gameConfigText = '\uFEFF{\r\n "entryScene":"start", "player":{"endScenes":["end_a","end_b"],"custom":42}, "custom":"保留"\r\n}';
+    const config = state.gameConfigText;
+    const before = structuredClone([...state.scenes]);
+    const history = structuredClone([...histories]);
+    const plan = vi.fn(async () => ({ operationId: '11111111-1111-4111-8111-111111111111', planFingerprint: 'a'.repeat(64) }));
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onSceneMutationPlan: plan });
+    vi.mocked(window.prompt).mockReturnValue('final_a');
+    vi.mocked(window.confirm).mockReturnValue(true);
+    await renameSceneAtKey(key);
+    expect(status.textContent).toContain('game.config.json 的 player.endScenes');
+    expect([...state.scenes]).toEqual(before);
+    // 删除病例没有任何剧情引用，只剩结束配置。
+    state.scenes.delete('start');
+    const beforeDelete = structuredClone([...state.scenes]);
+    await deleteSceneAtKey(key);
+    expect([...state.scenes]).toEqual(beforeDelete);
+    expect(state.gameConfigText).toBe(config);
+    expect([...histories]).toEqual(history);
+    expect(state.pendingSceneDeletes).toEqual([]);
+    expect(state.current).toBe(key);
+    expect(plan).not.toHaveBeenCalled();
+    expect(readDisk).not.toHaveBeenCalled();
+    expect(window.prompt).not.toHaveBeenCalled();
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  it.each(['{', '[]', '{"player":null}', '{"player":{"endScenes":"end_a"}}', '{"player":{"endScenes":[42]}}'])('配置不可安全读取时不把它当作无引用：%s', async (config) => {
+    state.scenes.set('end_a', scene('end_a', 'end_a.gal', null));
+    state.gameConfigText = config;
+    await expect(renameSceneAtKey('end_a')).rejects.toThrow(/game.config.json/);
+    await expect(deleteSceneAtKey('end_a')).rejects.toThrow(/game.config.json/);
+    expect(state.scenes.has('end_a')).toBe(true);
+    expect(state.pendingSceneDeletes).toEqual([]);
+    expect(window.prompt).not.toHaveBeenCalled();
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  it.each(['{}', '{"player":{}}', '{"player":{"endScenes":[]}}', '{"player":{"endScenes":["other"]}}'])('无关结束配置不妨碍正常改名与删除：%s', async (config) => {
+    state.gameConfigText = config;
+    state.scenes.set('old', scene('old', 'old.gal', null));
+    state.scenes.set('reader', { ...scene('reader', 'reader.gal', null), text: '@scene reader\n@jump old\n' });
+    vi.mocked(window.prompt).mockReturnValue('new');
+    await renameSceneAtKey('old');
+    expect(state.scenes.has('new')).toBe(true);
+    expect(state.scenes.get('reader')?.text).toContain('@jump new');
+    vi.mocked(window.confirm).mockReturnValue(true);
+    await deleteSceneAtKey('new');
+    expect(state.scenes.has('new')).toBe(false);
+    expect(state.gameConfigText).toBe(config);
   });
 
   it('拒绝重复 ID 重命名与仅大小写改名', async () => {

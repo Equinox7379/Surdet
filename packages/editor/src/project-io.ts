@@ -331,7 +331,8 @@ async function readProjectFromHandle(
     entryScene = typeof cfg.entryScene === 'string' ? cfg.entryScene : '';
   } catch (error) {
     if (!isMissingDirectoryError(error) && !(error instanceof SyntaxError)) throw error;
-    gameConfigText = '';
+    // Keep malformed source visible to validation and scene-reference guards;
+    // a parse failure must not erase the difference from a missing config.
     entryScene = '';
   }
   // 素材目录扫描（E2）：content/assets 与 public/，目录约定类型，无目录静默跳过

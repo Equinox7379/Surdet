@@ -137,6 +137,30 @@ async function continueInEditor(game, errors) {
   };
   const configBefore = JSON.parse(await fs.readFile(path.join(game, 'game.config.json'), 'utf8'));
   await open();
+  await page.locator('[data-editor-mode="editor"]').click();
+  const workingBefore = await page.evaluate(() => {
+    const s = window.surdetEditorDebug.state;
+    return { config: s.gameConfigText, scenes: [...s.scenes].map(([key, scene]) => ({ key, id: scene.id, file: scene.file, text: scene.text, dirty: scene.dirty })), pending: s.pendingSceneDeletes };
+  });
+  const configTextBefore = await fs.readFile(path.join(game, 'game.config.json'), 'utf8');
+  page.on('dialog', dialog => { errors.push(`Unexpected scene-operation dialog: ${dialog.message()}`); void dialog.dismiss(); });
+  for (const action of ['重命名', '删除']) {
+    await page.locator('.scene-row').filter({ has: page.locator('[data-scene-id="end_a"]') }).hover();
+    const settled = page.waitForResponse(response => response.ok() && new URL(response.url()).pathname.endsWith('/workspace/finish'));
+    await page.getByRole('button', { name: `${action}场景 end_a.gal`, exact: true }).click();
+    await settled;
+    await page.waitForFunction(() => document.getElementById('status')?.textContent?.includes('player.endScenes')
+      && document.querySelector('[data-action="save-project"]')?.disabled === false);
+    const workingAfter = await page.evaluate(() => {
+      const s = window.surdetEditorDebug.state;
+      return { config: s.gameConfigText, scenes: [...s.scenes].map(([key, scene]) => ({ key, id: scene.id, file: scene.file, text: scene.text, dirty: scene.dirty })), pending: s.pendingSceneDeletes };
+    });
+    assert.deepEqual(workingAfter, workingBefore, `${action} changed the protected ending draft`);
+  }
+  assert.equal(await fs.readFile(path.join(game, 'game.config.json'), 'utf8'), configTextBefore);
+  await page.screenshot({ path: path.join(output, '04-ending-scene-protected.png') });
+  await page.locator('[data-editor-mode="config"]').click();
+  await page.getByRole('button', { name: '角色', exact: true }).click();
   await page.getByRole('textbox', { name: 'narrator 的显示名称', exact: true }).fill('引路人');
   await page.keyboard.press('Control+S');
   await page.waitForFunction(() => document.querySelector('[data-save-state]')?.getAttribute('data-save-state') === 'saved'
@@ -228,8 +252,17 @@ try {
   assert.notEqual((await state(page)).ui.base, 'title', 'explicit empty endings fell back to config');
   await page.close();
   await continueInEditor(game, errors);
+  await page.close();
+  page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/`); await waitTitle(page);
+  await activate(page, '开始游戏'); await advanceToChoice(page); await activate(page, '现在打开');
+  await page.waitForFunction(() => window.__surdetDebug.position?.sceneId === 'end_a');
+  await finishToTitle(page);
+  await page.screenshot({ path: path.join(output, '05-ending-after-editor-save.png') });
   assert.deepEqual(errors, []);
-  await fs.writeFile(path.join(output, 'evidence.json'), JSON.stringify({ generatedBy: 'cmdNew + public MCP', typecheck: true, build: true, unchangedMain: true, explicitOptions: true, editorContinued: true, branches: 2, savedPosition: saved, reloadedPosition: saved, returnedToTitle: true, errors }, null, 2));
+  await fs.writeFile(path.join(output, 'evidence.json'), JSON.stringify({ generatedBy: 'cmdNew + public MCP', typecheck: true, build: true, unchangedMain: true, explicitOptions: true, editorContinued: true, endingSceneProtected: true, endingAfterEditorSave: true, branches: 2, savedPosition: saved, reloadedPosition: saved, returnedToTitle: true, errors }, null, 2));
   console.log(`PASS actual surdet new project: typecheck/build, two branches, menu save, reload/title load and both endings / ${output}`);
 } catch (error) {
   if (page) {

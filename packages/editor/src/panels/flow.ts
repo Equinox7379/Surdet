@@ -20,7 +20,7 @@ import {
   sceneProjectPath,
 } from '../project-io.js';
 import { collectConfigSceneRoots, splitOutsideQuotes } from '@surdet/core';
-import { parseSceneDocument, serializeSceneDocument } from '@surdet/authoring';
+import { parseProjectConfigDocument, parseSceneDocument, serializeSceneDocument } from '@surdet/authoring';
 import { buildFlowGraph } from '../graph/build.js';
 import type { FlowGraph, FlowNode, FlowEdge } from '../graph/build.js';
 import { histories, setSceneText } from '../history.js';
@@ -204,6 +204,20 @@ function validSceneId(value: string): boolean {
 
 function sceneConfigReferences(sceneId: string): string[] {
   const references: string[] = [];
+  // Use the current working text, including unsaved config, not a second disk view.
+  const config = state.gameConfigText === '' && state.handles.gameConfig === null
+    ? {} : parseProjectConfigDocument(state.gameConfigText);
+  const player = config['player'];
+  if (player !== undefined) {
+    if (player === null || typeof player !== 'object' || Array.isArray(player)) {
+      throw new Error('game.config.json 的 player 必须是对象；修正配置后再改名或删除场景');
+    }
+    const endings = (player as Record<string, unknown>)['endScenes'];
+    if (endings !== undefined && (!Array.isArray(endings) || !endings.every(id => typeof id === 'string'))) {
+      throw new Error('game.config.json 的 player.endScenes 必须是场景 ID 数组；修正配置后再改名或删除场景');
+    }
+    if (Array.isArray(endings) && endings.includes(sceneId)) references.push('game.config.json 的 player.endScenes（结束场景）');
+  }
   if (state.entryScene === sceneId) references.push('项目入口');
   if (collectConfigSceneRoots(state.configFiles).includes(sceneId)) references.push('事件、成长或日历配置');
   return references;
@@ -213,7 +227,7 @@ function blockConfiguredSceneOperation(sceneId: string): boolean {
   const references = sceneConfigReferences(sceneId);
   if (references.length === 0) return false;
   setStatus(
-    `场景“${sceneId}”仍被${references.join('和')}引用，请先在“配置”中改掉引用`,
+    `场景“${sceneId}”仍被${references.join('和')}引用，请先调整对应配置中的引用`,
     false,
     6000,
   );
