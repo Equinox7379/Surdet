@@ -262,20 +262,28 @@ export class MenuLayer implements MenuProjectionPort {
         const mist = new Graphics();
         const paint = (): void => {
           mist.clear();
-          // The reference has a broad halo behind the wordmark and a denser,
-          // narrow bank behind the whole menu, not one low-opacity screen wash.
+          // Keep the sea visible through offset, shallow mist banks. A single
+          // dense vertical bank reads as an opaque light column behind the menu.
           for (const bank of [
-            { x: 0.22, y: 0.25, rx: 0.30, ry: 0.29, alpha: 0.023 },
-            { x: 0.16, y: 0.625, rx: 0.115, ry: 0.36, alpha: 0.046 },
+            { x: 0.22, y: 0.27, rx: 0.31, ry: 0.30, opacity: 0.62 },
+            { x: 0.145, y: 0.55, rx: 0.20, ry: 0.23, opacity: 0.58 },
+            { x: 0.175, y: 0.69, rx: 0.145, ry: 0.15, opacity: 0.64 },
+            { x: 0.125, y: 0.82, rx: 0.20, ry: 0.105, opacity: 0.52 },
           ]) {
-            for (let step = 0; step < 128; step++) {
-              const radius = 1 - step * 0.9 / 128;
+            for (let step = 0; step < 96; step++) {
+              const radius = 1 - step / 96;
+              const inner = 1 - (step + 1) / 96;
+              const falloff = 1 - ((radius + inner) / 2) ** 2;
               mist.ellipse(this.#w * bank.x, this.#h * bank.y,
                 this.#w * bank.rx * radius, this.#h * bank.ry * radius)
-                .fill({ color: this.#theme.colors.panel, alpha: bank.alpha * Math.min(1, step / 16) });
+                .fill({ color: this.#theme.colors.panel, alpha: bank.opacity * falloff ** 2 });
+              // Non-overlapping rings set opacity directly instead of building
+              // an almost opaque core by repeatedly blending faint white fills.
+              if (inner > 0) mist.ellipse(this.#w * bank.x, this.#h * bank.y,
+                this.#w * bank.rx * inner, this.#h * bank.ry * inner).cut();
             }
           }
-          bindThemeGraphicsProjection(mist, Array<keyof RendererTheme['colors']>(256).fill('panel'));
+          bindThemeGraphicsProjection(mist, Array<keyof RendererTheme['colors']>(384).fill('panel'));
         };
         this.#surfacePaints.set(mist, paint);
         paint();
