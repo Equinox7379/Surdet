@@ -137,8 +137,9 @@ npm run verify:editor-save-load
 - [当前限制](docs/known-limitations.md)
 - [Agent 创作指南](docs/AI-GUIDE.md)
 - [Renderer v2 迁移指南](docs/renderer-v2-migration.md)
+- [当前路线与决策台账](docs/superpowers/plans/2026-08-13-project-roadmap-and-decision-ledger.md)
 
-历史交付报告和已经闭合的旧任务书不再堆放在当前文档树中；需要审计时从 Git 历史读取。
+历史交付报告和已经闭合的旧任务书不再堆放在当前文档树中；需要审计时从[历史资料索引](docs/archive/README.md)进入固定版本原文。
 
 ## 当前边界
 
