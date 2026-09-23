@@ -1,25 +1,34 @@
-# 文档归档与降噪规则
+# 历史资料索引
 
-Surdet 的当前文档树服务于创作、维护和复审，不承担把每次 AI 施工报告永久堆在工作区里的职责。
+已完成或被后续实现取代的阶段文档不再复制保存在当前目录。Git 历史保留原文、失败经过与当时结论；本页只提供查找入口，不维护另一套当前状态。
 
-## 保留在当前树中的内容
+## 2026-09-23 文档整理基线
 
-1. 描述当前实现和公共合同的技术文档；
-2. 当前阶段与最近 Authoring 阶段的设计、任务书和交付报告；
-3. 仍被测试、runner 或资格化协议直接读取的 baseline；
-4. 项目所有者明确要求保留的治理资料。
+固定提交：`389c5edfe988c1146f648079633c8987b2200dda`。这是精简前已经推送的版本，以下链接不会随 main 更新而漂移。
 
-## 从当前树移除的内容
+| 要查的材料 | 整理前原文 |
+| --- | --- |
+| 完整旧台账与逐次决策 | [原长期台账](https://github.com/Equinox7379/Surdet/blob/389c5edfe988c1146f648079633c8987b2200dda/docs/superpowers/plans/2026-08-13-project-roadmap-and-decision-ledger.md) |
+| 各阶段任务书、实施与验收经过 | [历史 plans 目录](https://github.com/Equinox7379/Surdet/tree/389c5edfe988c1146f648079633c8987b2200dda/docs/superpowers/plans) |
+| 各阶段设计规格 | [历史 specs 目录](https://github.com/Equinox7379/Surdet/tree/389c5edfe988c1146f648079633c8987b2200dda/docs/superpowers/specs) |
+| Wave / Frontend / 可靠性修复交付报告 | [历史 docs 目录](https://github.com/Equinox7379/Surdet/tree/389c5edfe988c1146f648079633c8987b2200dda/docs) |
+| 早期 ACCEPTANCE / REVIEW / REPAIR 交接书 | [历史仓库根目录](https://github.com/Equinox7379/Surdet/tree/389c5edfe988c1146f648079633c8987b2200dda) |
 
-已经闭合、被后续阶段取代且不再指导当前施工的旧任务书、旧交付报告和工作笔记可以删除。Git 历史就是这些不可变历史材料的归档，不需要再在 `docs/archive/` 复制一份。
+本次从当前树移除了 117 份阶段资料；完整文件清单由整理提交的删除差异提供，不另抄一份清单。较早已移除的文档仍可沿其原路径历史查找，未重写 Git 历史。
 
-清理前必须解析精确路径；不得使用宽泛目录删除，不得修改 Git 历史。清理后必须运行文档门禁、链接检查和仓库 hygiene，并在提交中保留完整删除清单。
+在本地只读查看某一份原文：
 
-## 永不自动整理的内容
+```powershell
+git show 389c5edfe988c1146f648079633c8987b2200dda:docs/superpowers/plans/2026-08-13-project-roadmap-and-decision-ledger.md
+```
 
-- `USER.md`
-- `SESSION-HANDOFF.md`
-- 项目所有者指定的美术方向资料
-- 未跟踪的 handoff、个人记忆、临时 artifact 和长期治理台账
+旧文档中的“当前”“未授权”“等待复审”“尚未开工”仅代表当时状态。现在的结论以[精简后的长期台账](../superpowers/plans/2026-08-13-project-roadmap-and-decision-ledger.md)、适用的 AGENTS 和 Owner 当前要求为准。归档不将原失败改写为成功，也不表示本次重新验收了每项历史功能。
 
-这些文件既不能因为“未跟踪”被当作垃圾，也不能为了文档整洁被自动暂存、移动或删除。
+## 今后保留什么
+
+- 当前使用指南、公共合同和真实技术限制；
+- 简短的当前台账与最近仍需复核或续接的执行记录；
+- 自动化实际读取的规范、baseline、样例及许可证；
+- Owner 明确保留的作品设定、美术资料和治理文件。
+
+已闭合任务优先沿 Git 历史查阅，不继续在工作区积累多套计划、执行报告和交接副本。不自动整理未跟踪材料，不清除原始日志、截图、数据库或恢复屏障；它们不是本次文档精简的目标。
