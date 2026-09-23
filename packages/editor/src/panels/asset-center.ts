@@ -547,9 +547,9 @@ function renderRelocation(
       const impact = h('div', 'asset-relocation-impact');
       impact.appendChild(h('strong', undefined, `将更新 ${detail.plan.affectedReferenceCount} 处引用，涉及 ${detail.plan.affectedFileCount} 个项目文件`));
       const sourceLabels: Record<string, string> = {
-        scene: '场景', timeline: '时间轴', character: '角色配置', gallery: '鉴赏配置',
+        scene: '场景', timeline: '时间轴', character: '角色配置', gallery: '鉴赏配置', config: '展示配置',
       };
-      for (const sourceKind of ['scene', 'timeline', 'character', 'gallery'] as const) {
+      for (const sourceKind of ['scene', 'timeline', 'character', 'gallery', 'config'] as const) {
         const changes = detail.plan.referenceChanges.filter((change) => change.sourceKind === sourceKind);
         if (changes.length === 0) continue;
         const disclosure = document.createElement('details');
@@ -711,9 +711,9 @@ function renderBatchRelocationWorkbench(
       impact.appendChild(h('strong', undefined,
         `将整理 ${detail.plan.affectedAssetCount} 个素材，更新 ${detail.plan.affectedReferenceCount} 处引用，涉及 ${detail.plan.affectedFileCount} 个项目文件。`));
       const sourceLabels: Record<string, string> = {
-        scene: '场景', timeline: '时间轴', character: '角色配置', gallery: '鉴赏配置',
+        scene: '场景', timeline: '时间轴', character: '角色配置', gallery: '鉴赏配置', config: '展示配置',
       };
-      for (const sourceKind of ['scene', 'timeline', 'character', 'gallery'] as const) {
+      for (const sourceKind of ['scene', 'timeline', 'character', 'gallery', 'config'] as const) {
         const changes = detail.plan.referenceChanges.filter((change) => change.sourceKind === sourceKind);
         if (changes.length === 0) continue;
         const disclosure = document.createElement('details');

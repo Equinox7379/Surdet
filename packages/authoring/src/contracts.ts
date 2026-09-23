@@ -246,6 +246,8 @@ export const REPLACEABLE_SCENE_INSTRUCTIONS = [
 ] as const;
 
 export type ScenePatchOperation =
+  | { kind: 'renameLabel'; target: string; expectedFingerprint: string; name: string }
+  | { kind: 'removeLabel'; target: string; expectedFingerprint: string }
   | { kind: 'replaceText'; target: string; expectedFingerprint: string; speaker?: string; value: string }
   | { kind: 'replaceInstruction'; target: string; expectedFingerprint: string; instruction: Extract<SceneBlockInput, { kind: 'instruction' }> & { name: typeof REPLACEABLE_SCENE_INSTRUCTIONS[number] } }
   | { kind: 'insertAfter'; anchor: string; expectedFingerprint: string; blocks: SceneBlockInput[] }
@@ -388,7 +390,7 @@ export interface ProjectAssetPathDescriptor {
   invalidName: boolean;
 }
 
-export type ProjectAssetReferenceSource = 'scene' | 'timeline' | 'character' | 'gallery';
+export type ProjectAssetReferenceSource = 'scene' | 'timeline' | 'character' | 'gallery' | 'config';
 
 export interface ProjectAssetReference {
   referenceId: string;

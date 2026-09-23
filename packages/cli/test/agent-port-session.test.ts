@@ -6,6 +6,8 @@ import { AuthoringOperationError } from '@surdet/authoring';
 import { parseAgentPortArgs } from '../src/agent-port/args.js';
 import { allowedCapabilitiesForPolicy } from '../src/agent-port/policy.js';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
+import { generateDeliveryCapsule } from '../src/agent-port/delivery-capsule.js';
+import { PreviewContentService } from '../src/authoring/preview-content-service.js';
 import {
   openAgentPortSession,
   type AgentPortSession,
@@ -94,6 +96,53 @@ describe('Surdet Agent Port session and policy contract', () => {
     expectCode(() => parseAgentPortArgs(['--project', 'x', '--policy', 'observe', '--contract-version', '2.1.0']), 'CONTRACT_VERSION_UNSUPPORTED');
     expect(allowedCapabilitiesForPolicy('observe')).toContain('project.inspect');
     expect(allowedCapabilitiesForPolicy('observe')).not.toContain('change.begin');
+  });
+
+  it('resumes an ordinary direct stage draft without granting source writes or candidate eligibility', async () => {
+    const root = makeProject('direct-stage');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-direct-stage-'));
+    temporaryRoots.push(data);
+    const original = projectBytes(root);
+    let session = await open(root, data, 'stage');
+    try {
+      const begun = await session.invoke('change.begin', { compositionMode: 'direct', intent: 'ordinary chapter' });
+      expect(begun, JSON.stringify(begun)).toMatchObject({ ok: true, result: { compositionMode: 'direct' } });
+      const changeId = session.activeChangeId!;
+      expect((await session.invoke('variable.ensure', { operationId: 'visited', name: 'visited', type: 'flag', initial: false })).ok).toBe(true);
+      expect((await session.invoke('scene.create', { operationId: 'hub', sceneId: 'hub', blocks: [{ kind: 'condition', branches: [{ kind: 'if', expr: '!visited', blocks: [{ kind: 'instruction', name: 'jump', args: ['shop'] }] }] }, { kind: 'text', value: '回到据点。' }] })).ok).toBe(true);
+      expect((await session.invoke('scene.create', { operationId: 'shop', sceneId: 'shop', blocks: [{ kind: 'text', value: '商店。' }, { kind: 'instruction', name: 'flag', args: ['visited'] }, { kind: 'instruction', name: 'jump', args: ['hub'] }] })).ok).toBe(true);
+      expectFailure(await session.invoke('change.commit', {}), 'POLICY_BLOCKED');
+      const description = await session.describe();
+      expect(description.activeChange).toMatchObject({ compositionMode: 'direct' });
+      expect(description.candidateReadiness).toMatchObject({ mode: 'direct', status: 'not-applicable' });
+      expect(description.nextActions).toContain('runtime.run-from');
+      const capsule = await generateDeliveryCapsule(session);
+      expect(capsule).toMatchObject({ compositionMode: 'direct', composition: { eligibility: 'unavailable' } });
+      expect(capsule.composition).not.toHaveProperty('manifest');
+      const previews = new PreviewContentService(data);
+      expect(await previews.list(root)).toEqual(expect.arrayContaining([expect.objectContaining({ target: { kind: 'working-change', changeId } })]));
+      expect((await previews.list(root)).some((item) => item.target.kind === 'candidate')).toBe(false);
+      const preview = await previews.resolve(root, { kind: 'working-change', changeId });
+      expect((await preview.storage.readText('content/scenario/hub.gal')).text).toContain('@jump shop');
+      await expect(previews.resolve(root, { kind: 'candidate', changeId, capsuleId: capsule.capsuleId, artifactSha256: capsule.artifactIdentity.sha256 })).rejects.toMatchObject({ code: 'CANDIDATE_NOT_COMPOSABLE' });
+      const sealed = fs.readFileSync(capsule.artifactIdentity.path);
+      await session.close();
+      session = await open(root, data, 'stage', changeId);
+      expect((await session.describe()).activeChange).toMatchObject({ changeId, compositionMode: 'direct' });
+      expect((await session.invoke('scene.create', { operationId: 'after-resume', sceneId: 'ending' })).ok).toBe(true);
+      expect(fs.readFileSync(capsule.artifactIdentity.path)).toEqual(sealed);
+      expect(projectBytes(root)).toEqual(original);
+      await session.close();
+      session = await open(root, data, 'apply', changeId);
+      expect((await session.describe()).activeChange?.compositionMode).toBe('direct');
+      expect((await session.invoke('project.validate', {})).ok).toBe(true);
+      expect((await session.invoke('project.simulate', { sceneId: 'hub' })).ok).toBe(true);
+      expect((await session.invoke('runtime.run-from', { sceneId: 'hub', choices: [] })).ok).toBe(true);
+      expect((await session.invoke('change.diff', {})).ok).toBe(true);
+      const committed = await session.invoke('change.commit', {});
+      expect(committed, JSON.stringify(committed)).toMatchObject({ ok: true });
+      expect(fs.readFileSync(path.join(root, 'content/scenario/hub.gal'), 'utf8')).toContain('@jump shop');
+    } finally { await session.close(); }
   });
 
   it('binds one canonical project and rejects project/change injection in payload', async () => {

@@ -327,7 +327,7 @@ export function instructionModifierTokens(raw: string): string[] {
   return tokens.filter((token) => token.length > 0);
 }
 
-function instructionArgumentSpans(raw: string): InstructionArgumentSpan[] {
+export function instructionArgumentSpans(raw: string): InstructionArgumentSpan[] {
   const first = raw.search(/\S/);
   if (first < 0 || raw[first] !== '@') return [];
   let cursor = first + 1;

@@ -259,6 +259,12 @@ const scenePatchSchema: JsonSchema = {
       target: stringSchema,
       expectedFingerprint: stringSchema,
     }, ['kind', 'target', 'expectedFingerprint']),
+    strictObject({
+      kind: { const: 'renameLabel' }, target: stringSchema, expectedFingerprint: stringSchema, name: stringSchema,
+    }, ['kind', 'target', 'expectedFingerprint', 'name']),
+    strictObject({
+      kind: { const: 'removeLabel' }, target: stringSchema, expectedFingerprint: stringSchema,
+    }, ['kind', 'target', 'expectedFingerprint']),
   ],
 };
 
@@ -375,7 +381,7 @@ const projectAssetIssueCodeSchema = {
 };
 const projectAssetReferenceSchema = strictObject({
   referenceId: stringSchema,
-  sourceKind: { enum: ['scene', 'timeline', 'character', 'gallery'] },
+  sourceKind: { enum: ['scene', 'timeline', 'character', 'gallery', 'config'] },
   sourceLabel: stringSchema,
   sourcePath: stringSchema,
   line: integerSchema,
@@ -467,7 +473,15 @@ const emptyAssetIntelligenceExample = {
   issues: [],
 };
 
+const playerConfigFields: SchemaProperties = {
+  title: { type: ['string', 'null'] }, subtitle: { type: ['string', 'null'] },
+  titleBackground: { type: ['string', 'null'] }, firstRunHint: { type: ['string', 'null'] },
+  endScenes: { oneOf: [stringArraySchema, nullSchema] },
+};
+const playerConfigSchema = strictObject({ values: strictObject(playerConfigFields, Object.keys(playerConfigFields)), fingerprint: stringSchema }, ['values', 'fingerprint']);
+
 const projectInspectionSchema = strictObject({
+  playerConfig: playerConfigSchema,
   view: readViewSchema,
   rootIdentity: stringSchema,
   revision: stringSchema,
@@ -998,8 +1012,9 @@ const definitions = {
       intent: stringSchema,
       acceptanceCriteria: stringArraySchema,
       initiator: { enum: ['external-agent', 'human', 'automation'], description: 'who initiated this change' },
+      compositionMode: { enum: ['direct', 'candidate'], description: 'Direct is an ordinary isolated draft, not source-write permission. Omission preserves stage=candidate / apply=direct. Mode persists on resume.' },
     }),
-    outputSchema: strictObject({ changeId: stringSchema, baseRevision: stringSchema, workingRevision: integerSchema }, ['changeId', 'baseRevision', 'workingRevision']),
+    outputSchema: strictObject({ changeId: stringSchema, baseRevision: stringSchema, workingRevision: integerSchema, compositionMode: { enum: ['direct', 'candidate'] } }, ['changeId', 'baseRevision', 'workingRevision']),
     example: { input: {}, expectedResultShape: { changeId: 'chg_...', baseRevision: '...', workingRevision: 0 } },
   },
   sceneCreate: {
@@ -1019,7 +1034,7 @@ const definitions = {
       $defs: sceneSchemaDefinitions,
       description: `Patch one source object with its original fingerprint. replaceInstruction replaces one existing whitelisted single-line scene instruction in place using a complete instruction (omitted modifiers are removed); the whitelist is ${REPLACEABLE_SCENE_INSTRUCTIONS.join('、')}. Audio, video, flow-boundary, and structure directives stay outside this entry. replaceChoiceGroup atomically replaces the complete choice options; use choice.details.structure.fingerprint, which is distinct from the line fingerprint used by replaceChoiceOption/insertAfter. replaceConditionBlock atomically replaces one paired nested condition; branches determine order and add/delete branches, sourceBranch must be a current direct branch of the target, and omitting blocks preserves that branch body comments, indentation, and line endings byte-for-byte. New branches must provide blocks. Re-read object facts after edits; surrounding source outside the selected structure is preserved.`,
     },
-    outputSchema: strictObject({ path: stringSchema, line: integerSchema, kind: stringSchema, continuation: sceneContinuationSchema }, ['path', 'line', 'kind']),
+    outputSchema: strictObject({ path: stringSchema, line: integerSchema, kind: stringSchema, continuation: sceneContinuationSchema, affectedScenes: stringArraySchema }, ['path', 'line', 'kind']),
     example: { input: { operationId: 'op_patch', patch: { kind: 'replaceChoiceGroup', target: 'scene:x/choice:2@12345678-abcdef12', expectedFingerprint: 'fedcba98', choice: { kind: 'choice', options: [
       { label: '左侧', when: 'trust > 0', effects: [{ name: 'set', args: ['route', '=', '"left"'] }], target: { kind: 'goto', value: 'left' } },
       { label: '右侧', target: { kind: 'jump', value: 'right' } },
@@ -1059,6 +1074,13 @@ const definitions = {
     inputSchema: strictObject({ operationId: stringSchema, sceneId: stringSchema, expectedFingerprint: stringSchema }, ['operationId', 'sceneId', 'expectedFingerprint']),
     outputSchema: strictObject({ sceneId: stringSchema, entryScene: stringSchema, fingerprint: stringSchema, diffEntry: diffEntrySchema }, ['sceneId', 'entryScene', 'fingerprint', 'diffEntry']),
     example: { input: { operationId: 'op_entry', sceneId: 'agent_port_entry', expectedFingerprint: '...' }, expectedResultShape: { sceneId: 'agent_port_entry', entryScene: 'agent_port_entry', fingerprint: '...', diffEntry: {} } },
+  },
+  playerConfigPatch: {
+    inputSchema: strictObject({ operationId: stringSchema, expectedFingerprint: stringSchema,
+      patch: { ...strictObject(playerConfigFields), minProperties: 1, description: 'Only supplied fields change. Null removes a field; empty strings/arrays explicitly clear it. Read project.inspect.playerConfig in working view for values and fingerprint. Direct only; no candidate or integration writes.' },
+    }, ['operationId', 'expectedFingerprint', 'patch']),
+    outputSchema: strictObject({ playerConfig: playerConfigSchema, diffEntry: diffEntrySchema }, ['playerConfig', 'diffEntry']),
+    example: { input: { operationId: 'op_player', expectedFingerprint: '...', patch: { subtitle: '新章节', firstRunHint: '' } }, expectedResultShape: { playerConfig: { fingerprint: '...', values: { title: null, subtitle: '新章节', titleBackground: null, endScenes: null, firstRunHint: '' } }, diffEntry: {} } },
   },
   validate: {
     inputSchema: emptyInputSchema,
@@ -1186,6 +1208,7 @@ export const AUTHORING_CAPABILITY_IDS = [
   'gallery.cg.create',
   'gallery.cg.patch',
   'project.entry-scene.set',
+  'project.player-config.patch',
   'project.validate',
   'project.simulate',
   'runtime.run-from',
@@ -1242,6 +1265,7 @@ const mutateRepair = [
 const imageImportErrors = ["IMPORT_OPERATION_NOT_FOUND","IMPORT_OPERATION_CONFLICT","IMPORT_PLAN_BLOCKED","IMPORT_PLAN_STALE","IMPORT_PROJECT_STALE","IMPORT_TARGET_UNSAFE","IMPORT_TARGET_EXISTS","IMPORT_RECOVERY_REQUIRED","IMPORT_LIMIT_EXCEEDED","IMPORT_UPLOAD_BUSY","IMPORT_UPLOAD_TIMEOUT","IMPORT_UPLOAD_MISMATCH","IMPORT_AUTHORITY_NOT_READY","IMPORT_FILESYSTEM_UNSUPPORTED","IMPORT_PUBLICATION_FAILED","IMPORT_IO_FAILED","ASSET_SOURCE_FORBIDDEN","ASSET_SOURCE_CHANGED","ASSET_IMAGE_INVALID","PROJECT_BUSY","HUMAN_WORKSPACE_DIRTY","HUMAN_WORKSPACE_BUSY","HUMAN_WORKSPACE_STATE_CORRUPT","SESSION_STATE_INVALID","POLICY_BLOCKED"] as const;
 
 const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
+  'project.player-config.patch': { title: 'Patch player configuration', purpose: 'Patch finite display settings in game.config.json using project.inspect.playerConfig fingerprint. Explicit PlayerProject options override config, which overrides content-independent defaults. Ordinary direct drafts only; no arbitrary JSON or source editing.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['active change is OPEN and direct', 'working playerConfig fingerprint is current', 'background and ending scene references exist'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['read project.inspect with view=working and copy playerConfig.fingerprint; null restores absence, empty values explicitly clear', ...mutateRepair] },
   'project.gallery': { title: 'Inspect CG gallery', purpose: 'Read CG id/name/src and per-entry fingerprints from the active working change, or the bound project when no change is active. src is a project.assets background key; omitted src uses id.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['bound project or active change is readable'], possibleErrors: [...commonErrors, 'CHANGE_NOT_FOUND', 'OBJECT_AMBIGUOUS'], repairRecipes: readRepair },
   'gallery.cg.create': { title: 'Create CG entry', purpose: 'Add one CG without replacing gallery.json or changing other CG/music/text/unknown fields. Import images first, refresh project.assets, create CGs before scenes that unlock them with the existing unlock_cg instruction. Unlocks follow existing per-save rules.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'id is new', 'src or id names a resolved project.assets.backgrounds key'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OBJECT_AMBIGUOUS', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Read project.gallery before creating; configure CGs before adding @unlock_cg references with scene.create/scene.patch.', ...mutateRepair] },
   'gallery.cg.patch': { title: 'Patch CG entry', purpose: 'Update only one CG name/src using its current entry fingerprint. id remains stable. Omitted fields and unknown fields are preserved; src:null restores the existing id fallback. Distinct CGs compose independently; competing changes to the same CG require an explicit selection.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'copy expectedFingerprint from project.gallery or object.inspect of gallery:cgs:<id>'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Read the active change with project.gallery; retry with the current CG fingerprint after inspecting its fields.', ...mutateRepair] },
@@ -1256,7 +1280,7 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
   'object.inspect': { title: 'Inspect object', purpose: 'Read one stable object reference, its fingerprint, and one-level childRefs for exact traversal.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['objectRef must identify one object'], possibleErrors: ['OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS', 'OBJECT_REF_STALE'], repairRecipes: readRepair },
   'change.begin': { title: 'Begin change', purpose: 'Create an isolated authoring change from a fresh project snapshot.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-write'], idempotency: 'non-idempotent', composable: false, preconditions: ['project root must be stable', 'no conflicting active change'], possibleErrors: [...commonErrors, 'CHANGE_ID_AMBIGUOUS'], repairRecipes: ['inspect the project and session state before starting a new change'] },
   'scene.create': { title: 'Create scene', purpose: 'Create one typed scene document inside the active change. Blocks include choices with display conditions/effects/targets and recursively nested if/elif/else condition blocks; the Core parser and compiler validate every pairing.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'operationId is fresh or identical'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['the minimal example requires a declared number variable trust with a positive initial value and a fresh scene id', "use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", 'for nested condition creation provide blocks for every branch; use scene.patch only after object.inspect exposes a current structure fingerprint', ...mutateRepair] },
-  'scene.patch': { title: 'Patch scene', purpose: 'Patch one scene object using a current fingerprint. replaceChoiceGroup edits the complete choice group atomically; replaceConditionBlock edits one paired nested condition atomically and preserves omitted sourceBranch bodies byte-for-byte. The structural fingerprint in choice.details.structure or condition.details.structure is separate from the original line fingerprint used by existing row operations.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'target and every supplied sourceBranch reference the current working object index', 'expectedFingerprint is the complete structure fingerprint for choice/condition edits'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['the minimal example requires number trust, string route, scene x with a current choice and left label, and scene right; copy the current choice reference and structure fingerprint', "use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", 'inspect the scene root, then inspect the complete choice or condition object and copy its structure fingerprint and direct childRefs', 'for replaceConditionBlock omit blocks only with a current direct sourceBranch to preserve its body; provide blocks for each new branch', ...mutateRepair] },
+  'scene.patch': { title: 'Patch scene', purpose: 'Patch scene objects using current fingerprints. renameLabel/removeLabel require a direct draft, never candidate/integration; rename updates precise local/cross-scene targets and remove rejects used labels. affectedScenes lists all changed scenes. replaceChoiceGroup edits the complete choice group atomically; replaceConditionBlock edits one paired nested condition atomically and preserves omitted sourceBranch bodies byte-for-byte. The structural fingerprint in choice.details.structure or condition.details.structure is separate from the original line fingerprint used by existing row operations.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'target and every supplied sourceBranch reference the current working object index', 'expectedFingerprint is the complete structure fingerprint for choice/condition edits'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_NOT_FOUND', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['the minimal example requires number trust, string route, scene x with a current choice and left label, and scene right; copy the current choice reference and structure fingerprint', "use instruction name 'timeline' with the timeline id in args[0]; never use 'timeline.play'", 'inspect the scene root, then inspect the complete choice or condition object and copy its structure fingerprint and direct childRefs', 'for replaceConditionBlock omit blocks only with a current direct sourceBranch to preserve its body; provide blocks for each new branch', ...mutateRepair] },
   'variable.ensure': { title: 'Ensure variable', purpose: 'Ensure one variable declaration without changing an equivalent declaration.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'variable.patch-initial': { title: 'Patch variable initial', purpose: 'Update only the initial value of one existing variable declaration using its complete declaration fingerprint. Name, type, readonly, range constraints, and unknown declaration fields are preserved; numeric range violations are rejected without clamping.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'variable declaration fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'character.ensure': { title: 'Ensure character', purpose: 'Create or update one character declaration with a table fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'character table fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_REF_STALE', 'OBJECT_AMBIGUOUS', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
@@ -1289,7 +1313,7 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
 
 function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition {
   const item = metadata[id];
-  const schema = definitions[id === 'asset.sources' ? 'assetSources'
+  const schema = definitions[id === 'project.player-config.patch' ? 'playerConfigPatch' : id === 'asset.sources' ? 'assetSources'
     : id === 'project.gallery' ? 'gallery'
     : id === 'gallery.cg.create' ? 'galleryCgCreate'
     : id === 'gallery.cg.patch' ? 'galleryCgPatch'

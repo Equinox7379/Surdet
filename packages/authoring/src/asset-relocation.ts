@@ -449,6 +449,7 @@ function addJsonOpaqueBlockers(
     const knownConfigValue = sourcePath === 'game.config.json'
       && typeof topLevel === 'string'
       && (['title', 'version', 'entryScene', 'variables', 'customInstructions', 'fonts'].includes(topLevel)
+        || (topLevel === 'player' && ['subtitle', 'endScenes', 'firstRunHint'].includes(String(location.path[1])))
         || (topLevel === 'characters'
           && !(location.kind === 'value' && location.path.at(-1) === 'avatar')));
     if (knownConfigValue) continue;
@@ -666,6 +667,15 @@ function configRewrite(
   const replacements: JsonReplacement[] = [];
   const knownPaths = new Set<string>();
   const characters = isRecord(root.characters) ? root.characters : {};
+  const player = isRecord(root.player) ? root.player : {};
+  if (typeof player.titleBackground === 'string') {
+    const path: JsonPath = ['player', 'titleBackground'];
+    knownPaths.add(pathKey(path));
+    if (source.kind === 'background' && player.titleBackground === source.key && target.key !== source.key) {
+      replacements.push({ path, before: source.key, after: target.key,
+        reference: reference('config', file.path, '标题背景', 'titleBackground', 'config:player:titleBackground') });
+    }
+  }
   for (const [id, value] of Object.entries(characters)) {
     if (!isRecord(value) || typeof value.avatar !== 'string') continue;
     const path: JsonPath = ['characters', id, 'avatar'];

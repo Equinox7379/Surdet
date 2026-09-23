@@ -15,7 +15,7 @@ npm run dev:project -w surdet-editor -- --project <项目目录绝对路径>
 最后一项在需要编辑器/真实试玩时使用，不替代 Agent Port。完整启动与绑定说明见 [README](../README.md#外部-agent-创作)。缺失构建时沿 README 的依赖顺序准备，不让内容作者自行改造工具链。
 
 - `observe` 只读；`stage` 可编辑隔离 change、验证和试玩，但不写回来源；`apply` 必须由获授权者明确启动，仍受草稿、租约与提交保护约束。
-- 当前省略模式的 stage change 使用候选组合限制，不支持依赖环；普通隔离模式解耦尚未交付。不要删检查、改源文件或自行提权绕过限制。
+- 普通章节在 change.begin 显式传 `compositionMode: "direct"`，可在隔离草稿中编写剧情回访；direct 不是来源写权限。要参与候选组合时显式选 `candidate`，继续受依赖与环检查保护。省略字段仍保留 stage→candidate、apply→direct 的旧默认值；恢复会话沿用记录模式，不随新 policy 改变。
 - 普通内容创作复用共享 Player，不复制菜单、存档或渲染器。需要开发自定义宿主时才阅读 [架构](architecture.md)、[Renderer 接线](renderer-v2-migration.md)与 [Player Shell 接线](player-shell-migration.md)；内容任务不需要这些前置知识。
 - 安装包、部署与音频/美术生产各按实际授权处理，不因章节完成自动执行。
 
@@ -36,7 +36,7 @@ npm run dev:project -w surdet-editor -- --project <项目目录绝对路径>
 ID 是原生名称，不是 MCP 工具名。省略参数仍返回完整列表。描述含 schemas、前置条件、错误修复办法和最小示例；摘要只是目录，不代表能力在当前权限/状态下可用。以 `session.describe` 与工具实际返回为准。
 
 1. **读取事实。** 用 `project.inspect`、`project.assets`、`project.gallery` 获取入口、变量、角色与素材。四个读取入口（含 object.inspect）始终显式传 `view: "project"` 或 `view: "working"`；working 必须有 active change。旧省略参数调用保留原范围：inspect/assets 读来源、object/gallery 优先工作版本，不应混用。用场景的 `childRefs` 或正文片段返回的 objectRefs 取得子对象，再 object.inspect 获取当前指纹。
-2. **建立隔离变更。** 无 active change 时调用 `change.begin`，写明 intent、acceptanceCriteria 和 `initiator: "external-agent"`。续接已有草稿时保留其身份，不为每个修正新建 change。
+2. **建立隔离变更。** 无 active change 时调用 `change.begin`，普通章节传 `compositionMode: "direct"`，写明 intent、acceptanceCriteria 和 `initiator: "external-agent"`。续接已有草稿时用启动参数 `--resume-change <changeId>` 保留其身份，不为每个修正新建 change。
 3. **先满足依赖，再修改内容。** 变量用 `variable.ensure` 声明，角色/时间轴等沿各自能力处理；素材 key 来自公开目录。调用 scene.create/scene.patch，操作编号标识一次确定操作，收到未知结果时先核对原编号，不换编号盲重试。
 4. **验证工作版本。** 调用 `project.validate`、`project.simulate`；用 `runtime.run-from` 指定起点、选择与变量走关键路径。label 仅指真实场景标签，从场景开头运行就省略。已有 trace 可用 `runtime.read-trace` 查询，画面观测用 `runtime.read-preview`。
 5. **修正后继续。** 读取错误 code/details/repairActions，修正输入或重新取得事实。修改后重读对象；旧匿名引用和指纹不是稳定地址。不能将运行失败、预算不足或未覆盖路线称为成功。
@@ -81,6 +81,30 @@ ID 是原生名称，不是 MCP 工具名。省略参数仍返回完整列表。
 调用 `object.inspect`：`{ "objectRef": "scene:first_chapter", "view": "working", "fragment": { "limit": 100 } }`。片段包含原始文本、行尾、行号、实际对象引用及版本；每页最多 200 行。若有 nextLine，续页必须传 `fromLine: nextLine`、`expectedRevision: fragment.revision`，working 还要传 `expectedWorkingRevision: fragment.workingRevision`。版本变化会拒绝续页，应从首页重读，不能拼接两次版本。
 
 scene.create/scene.patch 的 `continuation` 是当前工作版本的父场景入口。操作原结果中的 path/line 属于原回执，尤其旧 operationId 重试时不保证仍是当前行号；用 continuation.sceneRef 重读再修改。删除对象不会得到伪造的替代引用。
+
+标签先读取 `label:场景.标签` 的指纹，再用 scene.patch 的 `renameLabel`（含 name）或 `removeLabel`。这两个变体仅限 direct：改名同时更新实际本地/跨场景引用，返回 affectedScenes；删除仍被引用的标签会拒绝并列出调用位置。普通胶囊不可组合或进入正式候选/结果审批；审读使用 change.diff、working-change 试玩及原草稿续接，不把新工作版本当作旧胶囊画面。
+
+### 项目展示配置
+
+`project.inspect` 的 `playerConfig` 返回有限字段的 `values` 与修改所需 `fingerprint`。`title` 存在 game.config.json 根部，`subtitle`、`titleBackground`、`endScenes`、`firstRunHint` 存在其 `player` 对象中；无需打开或修改 src/main.ts。
+
+普通 direct 草稿先以 `view: "working"` 读取，再调用 `project.player-config.patch`（MCP：`surdet_project_player_config_patch`），提供 operationId、刚读到的 expectedFingerprint 及 patch。只写要改的字段；旧指纹会被拒绝，成功后重新读取。该操作不支持 candidate/integration。
+
+```json
+{
+  "operationId": "chapter-display",
+  "expectedFingerprint": "替换为公开读取返回的指纹",
+  "patch": {
+    "title": "风停之后",
+    "subtitle": "一封信，两段航程",
+    "titleBackground": "post_office",
+    "endScenes": ["end_a", "end_b"],
+    "firstRunHint": ""
+  }
+}
+```
+
+示例背景必须已出现在 project.assets，两个结局场景也必须已建立。读取中的 null 表示字段未提供；patch 的 null 移除该字段，空字符串/空数组则明确清空。消费优先级为显式 PlayerProject 参数 > game.config.json > 不依赖具体作品的默认行为；显式参数消费者不受新配置覆盖。标题改变不会改变 package name 所确定的存档身份。标签改名也同步文本回想 texts[].label；素材改名同步配置标题背景，其他字段保持原值。
 
 ## 2. DSL 速查
 

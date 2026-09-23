@@ -230,9 +230,10 @@ describe('reference-aware project asset relocation planner', () => {
     const scene = '@scene rain\r\n  @bg "castle_hall"\r\n@unlock_cg memory\r\n@end\r\n';
     const timeline = '{\r\n  "version": 1,\r\n  "id": "rain",\r\n  "durationMs": 200,\r\n  "tracks": [{ "kind": "background", "cues": [{ "atMs": 0, "durationMs": 0, "easing": "linear", "action": "set", "key": "castle_hall" }] }]\r\n}\r\n';
     const gallery = '{\r\n  "cgs": [{ "id": "memory", "name": "雨夜", "src": "castle_hall" }],\r\n  "music": []\r\n}\r\n';
+    const config = '\uFEFF{"entryScene":"rain","characters":{},"variables":{},"player":{"titleBackground":"castle_hall","subtitle":"castle_hall","endScenes":["castle_hall"],"firstRunHint":"castle_hall","custom":42}}\r\n';
     const input = await makeInput({
       files: {
-        'game.config.json': '{"entryScene":"rain","characters":{},"variables":{}}\r\n',
+        'game.config.json': config,
         'content/scenario/rain.gal': scene,
         'content/timelines/rain.json': timeline,
       },
@@ -246,8 +247,8 @@ describe('reference-aware project asset relocation planner', () => {
 
     expect(result.plan).toMatchObject({
       status: 'ready',
-      affectedReferenceCount: 3,
-      affectedFileCount: 3,
+      affectedReferenceCount: 4,
+      affectedFileCount: 4,
       source: { kind: 'background', key: 'castle_hall' },
       target: { kind: 'background', key: 'rain_platform' },
       blockers: [],
@@ -255,6 +256,7 @@ describe('reference-aware project asset relocation planner', () => {
     expect(changedText(result, 'content/scenario/rain.gal')).toBe(scene.replace('"castle_hall"', '"rain_platform"'));
     expect(changedText(result, 'content/timelines/rain.json')).toBe(timeline.replace('"castle_hall"', '"rain_platform"'));
     expect(changedText(result, 'content/config/gallery.json')).toBe(gallery.replace('"castle_hall"', '"rain_platform"'));
+    expect(changedText(result, 'game.config.json')).toBe(config.replace('"titleBackground":"castle_hall"', '"titleBackground":"rain_platform"'));
     expect(result.scannedFiles.map((file) => file.path)).toEqual([
       'content/config/gallery.json',
       'content/scenario/rain.gal',

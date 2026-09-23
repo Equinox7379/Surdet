@@ -257,6 +257,13 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
     }
   }
 
+  const player = asRecord(snapshot.config.player);
+  add('background', typeof player?.titleBackground === 'string' ? player.titleBackground : undefined, {
+    referenceId: 'config:player:titleBackground',
+    sourceKind: 'config',
+    sourceLabel: '标题背景',
+    sourcePath: 'game.config.json',
+  });
   const characters = asRecord(snapshot.config.characters) ?? {};
   for (const [id, declaration] of Object.entries(characters)) {
     const record = asRecord(declaration);

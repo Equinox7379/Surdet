@@ -18,10 +18,6 @@ void startPlayer({
   timelineFiles: import.meta.glob('../content/timelines/**/*.json', { eager: true, import: 'default' }),
   gallery: (Object.values(import.meta.glob('../content/config/gallery.json', { eager: true, import: 'default' }))[0]
     ?? { cgs: [], music: [] }) as NonNullable<PlayerProject['gallery']>,
-  subtitle: '潮水退去以前，故事已经开始',
-  titleBackground: 'harbor',
-  endScenes: ['ch01_01'],
-  firstRunHint: '点击或空格继续 · Esc 打开菜单 · ↑ 回看上一句',
   hot: import.meta.hot,
   resolveSceneUrl: (path) => new URL(path, import.meta.url).href,
 }).catch(showPlayerRecovery);

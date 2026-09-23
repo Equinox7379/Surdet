@@ -25,6 +25,7 @@ const galleryText = JSON.stringify({
 const fixtureContents: Record<string, string> = {
   'game.config.json': JSON.stringify({
     entryScene: 'asset_probe',
+    player: { titleBackground: 'castle_hall' },
     characters: { lynn: { name: '凛', avatar: 'lynn' } },
     variables: {},
   }),
@@ -157,13 +158,14 @@ describe('shared asset intelligence projection', () => {
     const result = build(await fixtureSnapshot(), fixtureFacts);
     const references = result.items.flatMap((item) => item.references);
     const sourceKinds = new Set(references.map((reference) => reference.sourceKind));
-    expect(sourceKinds).toEqual(new Set(['scene', 'timeline', 'character', 'gallery']));
+    expect(sourceKinds).toEqual(new Set(['scene', 'timeline', 'character', 'gallery', 'config']));
 
     expect(asset(result, 'content/assets/bg/castle_hall.webp').references).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ sourceKind: 'scene', sourcePath: 'content/scenario/asset_probe.gal', line: 3 }),
         expect.objectContaining({ sourceKind: 'timeline', sourcePath: 'content/timelines/asset_intro.json' }),
         expect.objectContaining({ sourceKind: 'gallery', sourcePath: 'content/config/gallery.json' }),
+        expect.objectContaining({ sourceKind: 'config', sourcePath: 'game.config.json', referenceId: 'config:player:titleBackground' }),
       ]),
     );
     expect(asset(result, 'content/assets/portrait/lynn_uniform_normal.png').references).toEqual(

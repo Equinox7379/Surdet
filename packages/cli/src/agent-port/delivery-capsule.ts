@@ -37,6 +37,7 @@ export interface DeliveryCapsulePayload {
   changeId: string;
   changeStatus: 'OPEN' | 'COMMITTED' | 'ROLLED_BACK' | 'STALE';
   workingRevision?: number;
+  compositionMode?: 'direct' | 'candidate';
   intent?: string;
   acceptanceCriteria: string[];
   operations: unknown[];
@@ -363,6 +364,7 @@ export async function generateDeliveryCapsule(
         changeId,
         changeStatus: record.status,
         workingRevision: record.workingRevision,
+        ...(record.composition === undefined ? {} : { compositionMode: record.composition.mode }),
         ...(record.intent?.intent === undefined ? {} : { intent: record.intent.intent }),
         acceptanceCriteria: record.intent?.acceptanceCriteria ?? [],
         operations: Object.entries(record.operations)

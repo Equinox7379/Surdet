@@ -87,6 +87,7 @@ export interface SessionDescription {
     baseRevision: string;
     workingRevision: number;
     recordVersion: number;
+    compositionMode?: 'direct' | 'candidate';
     integration?: {
       planId: string;
       status: 'REPLAYING' | 'READY' | 'FAILED';
@@ -124,6 +125,7 @@ const ACTIVE_CHANGE_CAPABILITIES = new Set<AuthoringCapabilityId>([
   'gallery.cg.create',
   'gallery.cg.patch',
   'project.entry-scene.set',
+  'project.player-config.patch',
   'runtime.run-from',
   'runtime.read-trace',
   'change.diff',
@@ -619,6 +621,7 @@ export class AgentPortSession {
           baseRevision: record.baseRevision,
           workingRevision: record.workingRevision,
           recordVersion: record.recordVersion,
+          ...(record.composition === undefined ? {} : { compositionMode: record.composition.mode }),
           ...(activeIntegration === undefined ? {} : {
             integration: {
               planId: activeIntegration.planId,

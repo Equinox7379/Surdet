@@ -149,6 +149,7 @@ function addSceneObjects(
         kind: 'label',
         semanticId: `label:${scene.id}.${line.name}`,
         objectRef: `label:${scene.id}.${line.name}`,
+        fingerprint: fingerprint(line.raw),
         parentRef: sceneRef,
         source: sourceOf(scene.path, lineNumber, line.raw),
         references: [],

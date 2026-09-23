@@ -17,10 +17,11 @@ function digest(text: string): string {
 
 const hasher: TextHasher = { sha256: async (text) => digest(text) };
 
-function fixtureStorage(configText = '{"entryScene":"prologue","variables":{}}', sceneText = '@scene prologue\n凛：开场。\n@end\n', scenePath = 'content/scenario/prologue.gal'): ProjectStorage {
+function fixtureStorage(configText = '{"entryScene":"prologue","variables":{}}', sceneText = '@scene prologue\n凛：开场。\n@end\n', scenePath = 'content/scenario/prologue.gal', extraFiles: Record<string, string> = {}): ProjectStorage {
   const contents: Record<string, string> = {
     'game.config.json': configText,
     [scenePath]: sceneText,
+    ...extraFiles,
   };
   return {
     rootIdentity: 'fixture-root',
@@ -35,6 +36,55 @@ function fixtureStorage(configText = '{"entryScene":"prologue","variables":{}}',
 }
 
 describe('typed authoring operations', () => {
+  it('protects gallery text replay entries when deleting or renaming their label', async () => {
+    const gallery = '\uFEFF{\r\n  "texts": [{"id":"memory","scene":"prologue","label":"memory","name":"memory","custom":42}], "custom":{"label":"memory"}\r\n}\r\n';
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, '@scene prologue\r\n@label memory\r\n回想。\r\n@end\r\n', undefined, { 'content/config/gallery.json': gallery }), hasher);
+    const label = buildObjectIndex(snapshot).byRef.get('label:prologue.memory')!;
+    const change = await beginChange(snapshot, new InMemoryChangeRepository(), undefined, undefined, { composition: { mode: 'direct', operationFactsVersion: '1.0.0', baseAssetRefs: [] } });
+    const before = structuredClone(change.record);
+    await expect(applyScenePatch(change, { operationId: 'delete-gallery-label', patch: { kind: 'removeLabel', target: label.objectRef, expectedFingerprint: label.fingerprint! } }, hasher)).rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED', details: { references: expect.arrayContaining([expect.objectContaining({ path: 'content/config/gallery.json', kind: 'gallery-text', target: 'prologue.memory' })]) } });
+    expect(change.record).toEqual(before);
+    await applyScenePatch(change, { operationId: 'rename-gallery-label', patch: { kind: 'renameLabel', target: label.objectRef, expectedFingerprint: label.fingerprint!, name: 'recollection' } }, hasher);
+    const rewritten = change.record.workingFiles['content/config/gallery.json']!;
+    expect(rewritten.startsWith('\uFEFF')).toBe(true);
+    expect(rewritten.replace(/\r\n/g, '')).not.toContain('\n');
+    expect(JSON.parse(rewritten.replace(/^\uFEFF/, ''))).toEqual({ texts: [{ id: 'memory', scene: 'prologue', label: 'recollection', name: 'memory', custom: 42 }], custom: { label: 'memory' } });
+  });
+
+  it('renames direct labels across real local/cross-scene targets without rewriting prose or quoted choice text', async () => {
+    const a = '@scene a\r\n  @label entry  \r\n@if false\r\n@goto entry\r\n@loop entry\r\n@switch route 1:entry 2:unused\r\n@endif\r\n已到达。\r\n@return\r\n@label unused\r\n@end\r\n';
+    const b = '@scene b\n旁白：@call a.entry 是正文。\n@call a.entry\n@choice\n  甲 [if:" -> @call a.entry " == " -> @call a.entry "] -> @call a.entry @goto done\n  乙 -> @jump a.entry\n@label done\n@end\n';
+    const c = '@scene c\n@label entry\n保留同名标签。\n@end\n';
+    const storage = fixtureStorage('{"entryScene":"b","variables":{"route":{"type":"number","initial":1}}}', a, 'content/scenario/nested/a.gal', { 'content/scenario/b.gal': b, 'content/scenario/c.gal': c });
+    const snapshot = await loadProjectSnapshot(storage, hasher);
+    const label = buildObjectIndex(snapshot).byRef.get('label:a.entry')!;
+    expect(label.fingerprint).toEqual(expect.any(String));
+    const change = await beginChange(snapshot, new InMemoryChangeRepository(), undefined, undefined, { composition: { mode: 'direct', operationFactsVersion: '1.0.0', baseAssetRefs: [] } });
+    const before = structuredClone(change.record);
+    await expect(applyScenePatch(change, { operationId: 'delete-used', patch: { kind: 'removeLabel', target: label.objectRef, expectedFingerprint: label.fingerprint! } } as ScenePatchInput, hasher)).rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED', details: { references: expect.arrayContaining([expect.objectContaining({ path: 'content/scenario/b.gal', kind: 'call', target: 'a.entry' })]) } });
+    expect(change.record).toEqual(before);
+    const input = { operationId: 'rename', patch: { kind: 'renameLabel', target: label.objectRef, expectedFingerprint: label.fingerprint!, name: 'arrival' } } as ScenePatchInput;
+    const result = await applyScenePatch(change, input, hasher);
+    expect(change.record.workingFiles['content/scenario/nested/a.gal']).toBe(a.replace('@label entry', '@label arrival').replace('@goto entry', '@goto arrival').replace('@loop entry', '@loop arrival').replace('1:entry', '1:arrival'));
+    expect(change.record.workingFiles['content/scenario/b.gal']).toBe(b.replace('\n@call a.entry', '\n@call a.arrival').replace('] -> @call a.entry', '] -> @call a.arrival').replace('-> @jump a.entry', '-> @jump a.arrival'));
+    expect(change.record.workingFiles['content/scenario/c.gal']).toBe(c);
+    const after = structuredClone(change.record);
+    expect(await applyScenePatch(change, input, hasher)).toEqual(result);
+    expect(change.record).toEqual(after);
+    await expect(applyScenePatch(change, { ...input, operationId: 'stale' }, hasher)).rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED' });
+    const unused = buildObjectIndex(snapshot).byRef.get('label:a.unused')!;
+    await expect(applyScenePatch(change, { operationId: 'delete-switch-used', patch: { kind: 'removeLabel', target: unused.objectRef, expectedFingerprint: unused.fingerprint! } } as ScenePatchInput, hasher)).rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED' });
+    const isolated = buildObjectIndex(snapshot).byRef.get('label:c.entry')!;
+    await applyScenePatch(change, { operationId: 'delete-unused', patch: { kind: 'removeLabel', target: isolated.objectRef, expectedFingerprint: isolated.fingerprint! } } as ScenePatchInput, hasher);
+    expect(change.record.workingFiles['content/scenario/c.gal']).toBe(c.replace('@label entry\n', ''));
+    const candidate = await beginChange(snapshot, new InMemoryChangeRepository(), undefined, undefined, { composition: { mode: 'candidate', operationFactsVersion: '1.0.0', baseAssetRefs: [] } });
+    const candidateBefore = structuredClone(candidate.record);
+    for (const patch of [input.patch, { kind: 'removeLabel', target: label.objectRef, expectedFingerprint: label.fingerprint! }]) {
+      await expect(applyScenePatch(candidate, { operationId: 'candidate-blocked', patch } as ScenePatchInput, hasher)).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
+      expect(candidate.record).toEqual(candidateBefore);
+    }
+  });
+
   it('rejects scene creation when that semantic ID exists in a nested directory', async () => {
     const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, undefined, 'content/scenario/chapter/prologue.GAL'), hasher);
     const change = await beginChange(snapshot, new InMemoryChangeRepository());

@@ -492,7 +492,7 @@ const RELOCATION_ALLOWED_ACTIONS = new Set(['commit', 'cancel', 'resume', 'recov
 const RETRY_DISPOSITIONS = new Set<AssetImportRetryDisposition>([
   'same-request', 'after-refresh', 'after-human-action', 'manual-recovery', 'never',
 ]);
-const RELOCATION_REFERENCE_SOURCES = new Set(['scene', 'timeline', 'character', 'gallery']);
+const RELOCATION_REFERENCE_SOURCES = new Set(['scene', 'timeline', 'character', 'gallery', 'config']);
 const RELOCATION_BLOCKERS = new Set([
   'ASSET_RELOCATION_BATCH_EMPTY',
   'ASSET_RELOCATION_BATCH_LIMIT',

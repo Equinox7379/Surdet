@@ -175,6 +175,7 @@ export interface CompositionManifest {
 
 export interface CompositionIneligibility {
   code:
+    | 'DIRECT_CHANGE'
     | 'LEGACY_CAPSULE'
     | 'MISSING_NORMALIZED_INPUT'
     | 'INVOCATION_FACT_MISSING'
