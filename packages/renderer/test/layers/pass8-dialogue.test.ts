@@ -35,7 +35,7 @@ describe('Pass 8 active dialogue presentation', () => {
     try {
       for (const name of ['林汀', '这是一位名字比较长的人物']) {
         r.layer.showText(name, '姓名牌中的名字应居中。');
-        const nameText = r.texts().find((text) => text.text === `「${name}」`)!;
+        const nameText = r.texts().find((text) => text.text === name)!;
         const plate = r.root.children[0]!.children[2]!.getBounds();
         const text = nameText.getBounds();
         expect(text.x + text.width / 2).toBeCloseTo(plate.x + plate.width / 2, 1);

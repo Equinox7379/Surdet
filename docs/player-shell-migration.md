@@ -114,6 +114,10 @@ const theme = queries.preferences.theme(); // 只读快照
 
 不要直接修改返回对象、Layer 私有字段或 Pixi Text/Graphics。主题更新应保持已有资源 owner、监听器、补间和显示对象数量；相同主题更新必须幂等。主题 token 只描述 Renderer 的视觉参数，不改变 DSL、存档格式、剧情、游戏规则或玩家输入语义。
 
+默认视觉采用蓝白阅读界面、细线框和纯文字主菜单；项目已有的显式主题覆盖仍有效。`TitleView.logoKey` 可引用背景图像注册表中的透明字标，缺失时回退到 `title` 文本；`TitleItemView.secondary` 将附加入口放入页脚。共享 `startPlayer` 的显式项目参数 `titleLogo` 转发字标，`showSpeakerAvatars: false` 可隐藏阅读页头像而不删除角色资料。未传入这些参数的项目继续显示文字标题和原有头像。
+
+共享入口的“继续游戏”读取最新可读存档，沿用正常读档事务；没有可读存档时进入现有存档选择/恢复界面，不伪造进度。阅读栏显示回看、自动、快进、存档、设置；快速存读、回退和隐藏界面仍可通过原快捷键及暂停菜单使用。
+
 ## 6. 错误码和错误边界
 
 Host Player Shell 的稳定错误码包括：

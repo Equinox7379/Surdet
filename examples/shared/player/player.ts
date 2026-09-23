@@ -99,8 +99,11 @@ export interface PlayerProject {
   assetFiles: Record<string, string>;
   fontFiles: Record<string, string>;
   theme?: Parameters<typeof createRendererTheme>[0];
+  showSpeakerAvatars?: boolean;
   subtitle?: string;
   titleBackground?: string;
+  /** Optional approved wordmark, loaded through the existing background asset registry. */
+  titleLogo?: string;
   additionalEntrypoints?: readonly { id: string; label: string; scene: string }[];
   endScenes?: readonly string[];
   firstRunHint?: string;
@@ -153,7 +156,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   ).flatMap(([id, profile]) => {
     const name = typeof profile.name === 'string' ? profile.name.trim() : '';
     if (!name) return [];
-    return [{ id, name, avatarKey: profile.avatar ?? id }];
+    return [{ id, name, avatarKey: project.showSpeakerAvatars === false ? undefined : (profile.avatar ?? id) }];
   });
   // 变量表（game.config.json）
   const decls: VarDeclaration[] = Object.entries(gameConfig.variables).map(([name, d]) => ({
@@ -743,13 +746,15 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         title: (gameConfig as { title?: string }).title ?? 'Surdet Game',
         subtitle: playerConfig.subtitle,
         backgroundKey: playerConfig.titleBackground,
+        logoKey: project.titleLogo,
         items: [
           { id: 'new', label: '开始游戏' },
+          { id: 'continue', label: '继续游戏' },
           { id: 'load', label: '读取存档' },
-          ...(project.additionalEntrypoints ?? []).map(({ id, label }) => ({ id, label })),
-          { id: 'gallery', label: '鉴赏' },
           { id: 'settings', label: '设置' },
-          ...(window.surdetApp ? [{ id: 'quit', label: '退出游戏' }] : []),
+          { id: 'gallery', label: '鉴赏' },
+          ...(project.additionalEntrypoints ?? []).map(({ id, label }) => ({ id, label, secondary: true })),
+          ...(window.surdetApp ? [{ id: 'quit', label: '退出游戏', secondary: true }] : []),
         ],
       },
       onSelect: titleSelect,
@@ -765,6 +770,10 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         { id: 'settings', label: '设置' },
         { id: 'backlog', label: '文字记录' },
         { id: 'gallery', label: '鉴赏' },
+        { id: 'qsave', label: '快速存档' },
+        { id: 'qload', label: '快速读档' },
+        { id: 'rollback', label: '回退一句' },
+        { id: 'hide', label: '隐藏界面' },
         { id: 'title', label: '回到标题' },
       ],
       onSelect: onSystemMenuSelect,
@@ -870,6 +879,15 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         }
         break;
       }
+      case 'continue': {
+        // Reuse the normal load transaction and recovery UI; never manufacture a save.
+        await openSaveLoad('load', 'title');
+        if (!isOverlay('save-load') || activeSaveLoad?.mode !== 'load') break;
+        const latest = activeSaveLoad.slots.filter((slot) => !slot.empty && !slot.readError)
+          .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0];
+        if (latest) await selectSaveLoad('load', latest.id);
+        break;
+      }
       case 'load':
         menu.hideTitle(false);
         void openSaveLoad('load', 'title');
@@ -947,6 +965,23 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         break;
       case 'title':
         showTitleScreen();
+        break;
+      case 'qsave':
+        playerShell!.commands.close();
+        void quickSave();
+        break;
+      case 'qload':
+        playerShell!.commands.close();
+        void quickLoad();
+        break;
+      case 'rollback':
+        playerShell!.commands.close();
+        performRollback();
+        break;
+      case 'hide':
+        playerShell!.commands.close();
+        uiSession.toggleInterface();
+        renderer.dispatchInput({ type: 'interface.toggle' });
         break;
       default:
         playerShell!.commands.close();
@@ -1168,15 +1203,11 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   /** 画面内操作带：动作仍复用既有键盘/系统菜单语义。 */
   function refreshCommandRail(): void {
     dialogue.setCommandRailItems([
+      { id: 'backlog', icon: '▤', label: '回看', active: renderer.backlogOpen, tooltip: '打开文字记录' },
       { id: 'auto', icon: 'A', label: '自动', active: renderer.autoPlay, tooltip: '自动播放' },
       { id: 'skip', icon: '»', label: '快进', active: renderer.skipMode, tooltip: '快进已读文本' },
-      { id: 'backlog', icon: '▤', label: '记录', active: renderer.backlogOpen, tooltip: '打开文字记录' },
-      { id: 'qsave', icon: 'S', label: '快存', tooltip: '快速存档' },
-      { id: 'qload', icon: 'L', label: '快读', tooltip: '快速读档' },
-      { id: 'rollback', icon: '↶', label: '回退', enabled: canRollback(), tooltip: '回到上一条文本' },
+      { id: 'save', icon: 'S', label: '存档', tooltip: '存档' },
       { id: 'settings', icon: '⚙', label: '设置', active: isOverlay('settings'), tooltip: '打开设置' },
-      { id: 'hide', icon: '□', label: '界面', active: renderer.interfaceHidden, tooltip: '隐藏界面' },
-      { id: 'menu', icon: '≡', label: '菜单', tooltip: '打开系统菜单' },
     ]);
   }
 
@@ -1191,6 +1222,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         break;
       }
       case 'backlog': openBacklog(); break;
+      case 'save': void openSaveLoad('save'); break;
       case 'qsave': quickSave(); break;
       case 'qload': void quickLoad(); break;
       case 'rollback': performRollback(); break;

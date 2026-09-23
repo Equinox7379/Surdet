@@ -1,7 +1,7 @@
 @scene ch02
 @label start
 @bg lighthouse_dawn
-@show lynn:coat hesitant @ right
+@show lynn:coat hesitant @ pos=780
 @unlock_cg lighthouse_dawn
 @unlock_text t_lighthouse
 

@@ -1,6 +1,6 @@
 # 生成提示词
 
-工具：Codex 内置 `image_gen`。以下记录进入项目的三幅背景与三种立绘的生成提示词。Owner 随后明确允许本地抠图：人物图仅创建透明通道并清除背景，人物 RGB 像素保持；头像从同一常态图截取。最终共有七张运行图片。
+工具：Codex 内置 `image_gen`。本文件保留原素材来源，并在末尾记录 2026-09-23 批准样图后的更新。下面的原港口和原三张立绘已被替换；室内、灯塔与旧头像仍沿用。原版曾按当时授权做本地透明底处理，**该历史处理不适用于本次新图**。
 
 ## harbor.png
 
@@ -47,3 +47,25 @@ Change ONLY her facial expression to quiet relief: a small warm closed-mouth smi
 ## 透明底处理
 
 生成器将棋盘格或白色背景写进 RGB，不能把预览中的棋盘格当作透明证明。按 Owner 明确授权在本地去掉与画面外侧连通的浅色背景，并补清理发梢和手臂的封闭空隙，仅建立 alpha 通道及边缘抗锯齿。人物 RGB 保持生成图原值；已在深、浅底上检查发梢、手指、信封和外轮廓。运行素材使用真实透明 PNG，生成器的原始候选保留在项目之外。
+
+## 2026-09-23：批准 A4 样图后的运行素材
+
+以 Owner 最后批准的上下双画面样图为输入；上半封面没有人物，下半阅读页保留短发成年邮差。以下为生产素材编辑的核心提示词。背景、字标与正常立绘分别生成，不把样图 UI 烘焙进背景。
+
+### logo
+
+Use case: background-extraction. Extract ONLY the exact approved blue Chinese title logo "雾港来信" from the upper panel of the reference into a production-ready PNG with a genuinely transparent alpha background. Preserve the exact four character letterforms, proportions, dark-blue to cyan coloring, tiny envelope motif integrated above 信, and sweeping wave underline. Do not redesign, retype, simplify or add text. No sky, clouds, sea, background, white rectangle, baked checkerboard, menus or label. The logo should fill the transparent canvas with a small even safety margin. Wide horizontal aspect ratio approximately 2.5:1. Clean anti-aliased edges. This is extraction of approved art, not a new logo concept.
+
+### background
+
+Use case: precise-object-edit. Produce the background layer for the UPPER cover panel of the reference as a single 16:9 landscape game background. Extract the approved sunny blue harbor, lighthouse, wooden pier and right-side post office composition. Remove ALL UI overlays: remove the large "雾港来信" logo and underline, remove the five menu lines on the left, remove the outer option label and white margins. Inpaint only those text regions with their naturally continuous sky/water. No people. Retain the post office sign and environmental chalkboard as part of the scenery. Omit the entire lower panel. Preserve approved art, palette, perspective, camera and shoreline; no redesign, extra houses, new objects or atmospheric changes. The left sky and sea must remain bright and open, suitable for the approved logo/menu as separate overlays. Output one clean full-bleed landscape background, no frames, no captions.
+
+### portrait
+
+Use case: background-extraction / identity-preserve. Extract the APPROVED short-haired adult heroine from the LOWER reading panel of the reference into a production-ready character sprite with genuinely transparent alpha background. Keep EXACTLY her approved face drawing, eyes, black/dark-brown bob haircut, expression, navy coat over white shirt, diagonal strap, pose and raised hand holding the closed envelope. Do not reinterpret her face or style, do not add hair gloss or soft airbrushed skin. Remove scenery and all dialogue/UI overlays. Reconstruct only the clothing/arm areas occluded by the dialogue box, extending the coat naturally to mid-thigh for game sprite placement; avoid inventing accessories. Keep both hands anatomically correct and the face/upper-body proportions from the original. Vertical canvas, head entirely visible with a small top margin, shoulders and arms not cropped. No ground shadow, background, white rectangle, checkerboard or text. Clean transparent edges, no white halo. Output ONE normal-expression sprite, not a sheet.
+
+### 定稿约束与表情变体
+
+字标首版出现了不需要的立体高光，未采用；第二次限定 flat 2D lettering、no bevel、no glossy highlights，保留深蓝四字与青色波浪下划线。常态立绘再次要求清理背景、真实透明 alpha、保持脸部与服装，不增加场景、阴影、光晕或厚涂。
+
+犹豫与微笑均以最终常态立绘为输入，只改表情，保留 1024×1536 画布、人物位置、服装、信封和线条：犹豫为内眉微提、视线略低、抿嘴；微笑为轻微闭口释然、眉眼放松。共同要求 same face identity, exact pose and canvas, true transparent PNG, no background, no halo, no extra accessories, no text。没有本地抠图、裁切或重画；保留生成器原始输出。

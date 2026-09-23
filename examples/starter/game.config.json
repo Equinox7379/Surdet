@@ -18,8 +18,9 @@
     }
   },
   "fonts": {
-    "body": "content/assets/fonts/MiSans-Regular.otf",
-    "ui": "content/assets/fonts/MiSans-Regular.otf"
+    "body": "content/assets/fonts/NotoSerifSC-Variable.ttf",
+    "title": "content/assets/fonts/NotoSerifSC-Variable.ttf",
+    "ui": "content/assets/fonts/NotoSerifSC-Variable.ttf"
   },
   "variables": {
     "gold": {

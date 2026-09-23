@@ -598,21 +598,21 @@ describe('DialogueLayer v2 projection contract', () => {
       facade.commands.dialogue.showText('lynn', '稳定 ID 台词');
       expect(layer.debugSnapshot()).toMatchObject({
         activeSpeakerId: 'lynn',
-        speakerText: '「凛」',
+        speakerText: '凛',
       });
       expect(worldFocus).toHaveBeenLastCalledWith('lynn');
 
       facade.commands.dialogue.showText('凛', '唯一显示名台词');
       expect(layer.debugSnapshot()).toMatchObject({
         activeSpeakerId: 'lynn',
-        speakerText: '「凛」',
+        speakerText: '凛',
       });
       expect(worldFocus).toHaveBeenLastCalledWith('lynn');
 
       facade.commands.dialogue.showText('未知说话人', '未知映射');
       expect(layer.debugSnapshot()).toMatchObject({
         activeSpeakerId: null,
-        speakerText: '「未知说话人」',
+        speakerText: '未知说话人',
       });
       expect(worldFocus).toHaveBeenLastCalledWith(null);
 
@@ -623,7 +623,7 @@ describe('DialogueLayer v2 projection contract', () => {
       facade.commands.dialogue.showText('同名', '同名不得猜测');
       expect(layer.debugSnapshot()).toMatchObject({
         activeSpeakerId: null,
-        speakerText: '「同名」',
+        speakerText: '同名',
       });
       expect(worldFocus).toHaveBeenLastCalledWith(null);
 
@@ -634,7 +634,7 @@ describe('DialogueLayer v2 projection contract', () => {
       facade.commands.dialogue.showText('lynn', 'ID 与显示名冲突时 ID 优先');
       expect(layer.debugSnapshot()).toMatchObject({
         activeSpeakerId: 'lynn',
-        speakerText: '「凛」',
+        speakerText: '凛',
       });
       expect(worldFocus).toHaveBeenLastCalledWith('lynn');
     } finally {

@@ -13,14 +13,7 @@ import growth from '../content/config/growth.json';
 import achievements from '../content/config/achievements.json';
 
 const PROJECT_THEME = {
-  colors: {
-    canvas: 0x101d28, scrim: 0x101d28, panel: 0x142b37, surface: 0x203e4a,
-    surfaceStrong: 0x30535e, line: 0x648c8e, accent: 0xddbe84, accentSoft: 0x756b51,
-    text: 0xebf2f5, textMuted: 0xa7bcc8, textDisabled: 0x728994, textOnAccent: 0x142b37,
-    danger: 0xd7968c,
-  },
-  opacity: { scrim: 0.46, panel: 0.94, surface: 0.92 },
-  typography: { titleSize: 62, titleLetterSpacing: 8, bodySize: 28, uiSize: 23, captionSize: 18 },
+  typography: { bodySize: 28, uiSize: 24, captionSize: 18 },
 };
 const assetFiles = Object.fromEntries(Object.entries(import.meta.glob<string>(
   '../content/assets/**/*.{png,jpg,jpeg,webp,gif,avif,svg,mp3,ogg,wav,m4a,flac}',
@@ -35,8 +28,10 @@ void startPlayer({
   assetFiles,
   fontFiles: import.meta.glob<string>('../content/assets/fonts/*.{woff2,woff,ttf,otf}', { query: '?url', import: 'default', eager: true }),
   theme: PROJECT_THEME,
-  subtitle: '一封退回的信，一座尚未醒来的港口\nSurdet · 使用 MiSans 字体',
+  showSpeakerAvatars: false,
+  subtitle: '',
   titleBackground: 'harbor',
+  titleLogo: 'title_logo',
   additionalEntrypoints: [{ id: 'explore', label: '自由探索', scene: 'playground' }],
   endScenes: Object.keys(sceneFiles).map((path) => path.split('/').pop()!.replace(/\.gal$/, ''))
     .filter((id) => id.startsWith('ending_') || id === 'playground'),

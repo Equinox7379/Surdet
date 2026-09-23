@@ -297,8 +297,8 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#speakerAvatar.visible = false;
 
     this.#continueIndicator = bindThemeGraphicsProjection(new Graphics()
-      .poly([0, -8, 8, 0, 0, 8, -8, 0]).stroke({ color: this.#theme.colors.accent, alpha: 0.8, width: 1 })
-      .poly([0, -3, 3, 0, 0, 3, -3, 0]).fill({ color: this.#theme.colors.text, alpha: 0.95 }), ['accent', 'text']);
+      .moveTo(-10, -4).quadraticCurveTo(-3, -3, 0, 4).quadraticCurveTo(3, -3, 10, -4)
+      .stroke({ color: this.#theme.colors.line, alpha: 1, width: 2 }), ['line']);
     this.#continueIndicator.visible = false;
     this.#continueIndicator.x = this.#w - 68;
     this.#continueIndicator.y = this.#h - 46;
@@ -311,10 +311,10 @@ export class DialogueLayer implements DialogueProjectionPort {
       style: {
         fontSize: this.#theme.typography.uiSize,
         fill: this.#theme.colors.accent,
-        fontWeight: 'normal',
+        fontWeight: '600',
         letterSpacing: 1,
         fontFamily: this.#assets.fontFamily('body'),
-        stroke: { width: 1.2, color: this.#theme.colors.textOnAccent },
+        stroke: { width: 0, color: this.#theme.colors.textOnAccent },
       } satisfies TextStyleOptions,
     }), { fill: 'accent', stroke: 'textOnAccent' });
     this.#dialogText = bindThemeTextProjection(new PText({
@@ -322,11 +322,11 @@ export class DialogueLayer implements DialogueProjectionPort {
       style: {
         fontSize: this.#theme.typography.bodySize,
         fill: this.#theme.colors.text,
-        fontWeight: 'normal',
+        fontWeight: '500',
         fontFamily: this.#assets.fontFamily('body'),
         letterSpacing: 0.3,
         lineHeight: this.#theme.typography.bodySize * 1.6,
-        stroke: { width: 1.35, color: this.#theme.colors.textOnAccent },
+        stroke: { width: 0, color: this.#theme.colors.textOnAccent },
       } satisfies TextStyleOptions,
     }), { fill: 'text', stroke: 'textOnAccent' });
     this.#dialogText.mask = this.#dialogMask;
@@ -461,15 +461,15 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#drawDialogPanel();
     this.#drawSpeakerPlate();
     this.#continueIndicator.clear()
-      .poly([0, -8, 8, 0, 0, 8, -8, 0]).stroke({ color: theme.colors.accent, alpha: 0.8, width: 1 })
-      .poly([0, -3, 3, 0, 0, 3, -3, 0]).fill({ color: theme.colors.text, alpha: 0.95 });
+      .moveTo(-10, -4).quadraticCurveTo(-3, -3, 0, 4).quadraticCurveTo(3, -3, 10, -4)
+      .stroke({ color: theme.colors.line, alpha: 1, width: 2 });
     this.#speakerText.style.fill = theme.colors.accent;
-    this.#speakerText.style.stroke = { width: 1.2, color: theme.colors.textOnAccent };
+    this.#speakerText.style.stroke = { width: 0, color: theme.colors.textOnAccent };
     this.#dialogText.style.fill = theme.colors.text;
-    this.#dialogText.style.stroke = { width: 1.35, color: theme.colors.textOnAccent };
+    this.#dialogText.style.stroke = { width: 0, color: theme.colors.textOnAccent };
     for (const ruby of [...this.#rubyBasePool, ...this.#rubyTextPool]) {
       ruby.style.fill = theme.colors.text;
-      ruby.style.stroke = { width: 0.8, color: theme.colors.textOnAccent };
+      ruby.style.stroke = { width: 0, color: theme.colors.textOnAccent };
     }
     this.#nvlBackground.clear().rect(0, 0, this.#w, this.#h).fill({ color: theme.colors.panel, alpha: 0.86 });
     this.#bannerText.style.fill = theme.colors.text;
@@ -591,7 +591,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#projectionVersion += 1;
     const profile = speaker ? this.#speakerProfiles.get(speaker.trim()) : undefined;
     this.setActiveSpeaker(profile?.id ?? null);
-    this.#speakerText.text = speaker !== null && speaker.length > 0 ? `「${profile?.name ?? speaker}」` : '';
+    this.#speakerText.text = speaker !== null && speaker.length > 0 ? (profile?.name ?? speaker) : '';
     this.#drawSpeakerPlate();
     this.#updateSpeakerAvatar();
     this.#renderDialogText(value);
@@ -1146,17 +1146,26 @@ export class DialogueLayer implements DialogueProjectionPort {
     const style = this.#dialogText.style;
     const family = style.fontFamily;
     const familyText = Array.isArray(family) ? family.join(', ') : String(family);
-    ctx.font = `${style.fontSize}px ${familyText}`;
-    return wrapCjkMeasure(plain, this.#dialogWidth(), (text) => ctx.measureText(text).width);
+    ctx.font = `${style.fontWeight} ${style.fontSize}px ${familyText}`;
+    return wrapCjkMeasure(plain, this.#dialogWidth() - Number(style.fontSize), (text) =>
+      ctx.measureText(text).width + Math.max(0, Array.from(text).length - 1) * style.letterSpacing);
   }
 
   #dialogLeft(): number { return this.#speakerAvatar?.visible ? this.#w * 0.025 + 200 : this.#w * 0.025 + 46; }
   #dialogWidth(): number { return Math.max(120, this.#w - this.#dialogLeft() - 78); }
 
   #drawDialogPanel(): void {
-    const inset = this.#w * 0.025;
-    drawPlayerFrame(this.#dialogPanel, this.#theme, inset, this.#dialogTop, this.#w - inset * 2, this.#h - this.#dialogTop - 12,
-      { alpha: this.#theme.opacity.panel * 0.78, ornament: true });
+    const panel = this.#dialogPanel.clear();
+    const top = this.#dialogTop;
+    // Fade into the scenery above the text, keeping the actual reading area stable.
+    const fadeHeight = 44;
+    for (let step = 0; step < 22; step++) {
+      panel.rect(0, top - fadeHeight + step * 2, this.#w, 2)
+        .fill({ color: this.#theme.colors.panel, alpha: this.#theme.opacity.panel * step / 22 });
+    }
+    panel.rect(0, top, this.#w, this.#h - top).fill({ color: this.#theme.colors.panel, alpha: this.#theme.opacity.panel });
+    panel.moveTo(0, top + 1).lineTo(this.#w, top + 1).stroke({ color: this.#theme.colors.line, width: 1.5, alpha: 0.85 });
+    bindThemeGraphicsProjection(panel, [...Array<keyof RendererTheme['colors']>(23).fill('panel'), 'line']);
   }
 
   #drawSpeakerPlate(): void {
@@ -1164,10 +1173,16 @@ export class DialogueLayer implements DialogueProjectionPort {
     const show = this.#speakerText.text.length > 0 && !this.#interfaceHidden && !this.#nvlActive;
     this.#speakerPlate.visible = show;
     if (!show) return;
-    const w = Math.min(this.#dialogWidth(), Math.max(138, this.#speakerText.width + 30));
-    drawPlayerFrame(this.#speakerPlate, this.#theme, this.#dialogLeft() - 15, this.#dialogTop - 5, w, 40, { alpha: this.#theme.opacity.panel });
+    const w = Math.min(this.#dialogWidth(), Math.max(176, this.#speakerText.width + 42));
+    const x = this.#dialogLeft() - 18, y = this.#dialogTop;
+    this.#speakerPlate.poly([x + 10, y - 38, x + w, y - 38, x + w - 10, y + 2, x, y + 2])
+      .fill({ color: this.#theme.colors.panel, alpha: this.#theme.opacity.panel });
+    this.#speakerPlate.moveTo(x + 8, y + 1).lineTo(x + w * 0.42, y + 1)
+      .bezierCurveTo(x + w * 0.66, y + 2, x + w * 0.73, y - 20, x + w - 4, y - 9)
+      .stroke({ color: this.#theme.colors.line, width: 1.5, alpha: 0.9 });
+    bindThemeGraphicsProjection(this.#speakerPlate, ['panel', 'line']);
     this.#speakerText.anchor.set(0.5);
-    this.#speakerText.position.set(this.#dialogLeft() - 15 + w / 2, this.#dialogTop + 15);
+    this.#speakerText.position.set(x + w / 2, y - 18);
   }
 
   #renderDialogText(value: string): void {
@@ -1190,8 +1205,8 @@ export class DialogueLayer implements DialogueProjectionPort {
     const measure = {
       base: (text: string): number => {
         if (!ctx) return text.length * this.#theme.typography.bodySize;
-        ctx.font = `${this.#theme.typography.bodySize}px ${familyText}`;
-        return ctx.measureText(text).width;
+        ctx.font = `500 ${this.#theme.typography.bodySize}px ${familyText}`;
+        return ctx.measureText(text).width + Math.max(0, Array.from(text).length - 1) * 0.3;
       },
       ruby: (text: string): number => {
         if (!ctx) return text.length * this.#theme.typography.bodySize / 2;
@@ -1203,17 +1218,17 @@ export class DialogueLayer implements DialogueProjectionPort {
     const baseStyle = {
       fontSize: this.#theme.typography.bodySize,
       fill: this.#theme.colors.text,
-      fontWeight: 'normal',
+      fontWeight: '500',
       fontFamily: family,
       letterSpacing: 0.3,
       lineHeight: this.#theme.typography.bodySize * 1.6,
-      stroke: { width: 1.35, color: this.#theme.colors.textOnAccent },
+      stroke: { width: 0, color: this.#theme.colors.textOnAccent },
     } satisfies TextStyleOptions;
     const rubyStyle = {
       fontSize: this.#theme.typography.bodySize / 2,
       fill: this.#theme.colors.text,
       fontFamily: family,
-      stroke: { width: 0.8, color: this.#theme.colors.textOnAccent },
+      stroke: { width: 0, color: this.#theme.colors.textOnAccent },
     } satisfies TextStyleOptions;
     let rubyIndex = 0;
     layouts.forEach((layout: RubyGlyphLayout, index) => {
@@ -1266,7 +1281,8 @@ export class DialogueLayer implements DialogueProjectionPort {
     drawPlayerFrame(view.bg, this.#theme, 0, 0, w, h,
       { color: selected ? 'surfaceStrong' : 'panel', alpha: this.#theme.opacity.surface, active: selected });
     view.bar.clear();
-    if (selected) view.bar.poly([16, h / 2, 21, h / 2 - 5, 26, h / 2, 21, h / 2 + 5]).fill({ color: this.#theme.colors.accent, alpha: 0.95 });
+    if (selected) view.bar.moveTo(16, h / 2 - 5).lineTo(23, h / 2).lineTo(16, h / 2 + 5)
+      .stroke({ color: this.#theme.colors.accent, width: 1.5, alpha: 0.95 });
     bindThemeGraphicsProjection(view.bar, ['accent']);
     view.label.position.set(40, Math.max(12, (h - view.label.height) / 2));
     this.#requestFrame();
@@ -1335,24 +1351,28 @@ export class DialogueLayer implements DialogueProjectionPort {
     const startX = Math.max(12, this.#w - railW - 48);
     const top = this.#h - railH - 20;
     this.#commandRailLayout = { x: startX, y: top, width: railW, height: railH };
-    layer.addChild(bindThemeGraphicsProjection(new Graphics()
-      .moveTo(startX, top - 4).lineTo(startX + railW, top - 4)
-      .stroke({ width: 0.6, color: this.#theme.colors.line, alpha: 0.32 }), ['line']));
+    const separators = new Graphics();
+    for (let index = 1; index < count; index++) {
+      const x = startX + railPad + index * (slotW + slotGap) - slotGap / 2;
+      separators.moveTo(x, top + 12).lineTo(x, top + 25)
+        .stroke({ width: 0.6, color: this.#theme.colors.line, alpha: 0.65 });
+    }
+    layer.addChild(bindThemeGraphicsProjection(separators, Array<keyof RendererTheme['colors']>(Math.max(0, count - 1)).fill('line')));
 
     this.#commandRailItems.forEach((item, index) => {
       const row = new Container();
       row.position.set(startX + railPad + index * (slotW + slotGap), top + 3);
       const hit = new Graphics();
       const paintHit = (active: boolean): void => {
-        if (active) drawPlayerFrame(hit, this.#theme, 0, 0, slotW, railH - 6, { alpha: 0.5, active: true });
-        else bindThemeGraphicsProjection(hit.clear().rect(0, 0, slotW, railH - 6)
-          .fill({ color: this.#theme.colors.panel, alpha: 0.001 }), ['panel']);
+        bindThemeGraphicsProjection(hit.clear().rect(0, 0, slotW, railH - 6)
+          .fill({ color: this.#theme.colors.panel, alpha: active ? 0.6 : 0.001 }), ['panel']);
       };
       paintHit(item.active === true);
       const label = bindThemeTextProjection(new PText({
         text: item.label,
         style: {
           fontSize: 18,
+          fontWeight: '600',
           fill: item.enabled === false ? this.#theme.colors.textDisabled : item.active ? this.#theme.colors.text : this.#theme.colors.textMuted,
           letterSpacing: 0,
           fontFamily: this.#assets.fontFamily('ui'),
@@ -1402,13 +1422,8 @@ export class DialogueLayer implements DialogueProjectionPort {
 
     const rail = this.#commandRail.visible ? this.#commandRailLayout : null;
     if (rail) {
-      const x = rail.x - 19;
-      if (x - 9 < 0) {
-        this.#continueIndicator.visible = false;
-        return;
-      }
-      this.#continueIndicatorAnchorX = x;
-      this.#continueIndicatorAnchorY = rail.y + rail.height / 2;
+      this.#continueIndicatorAnchorX = this.#w - 68;
+      this.#continueIndicatorAnchorY = Math.min(this.#dialogTop + 70, rail.y - 24);
     } else {
       this.#continueIndicatorAnchorX = this.#w - 68;
       this.#continueIndicatorAnchorY = this.#h - 46;

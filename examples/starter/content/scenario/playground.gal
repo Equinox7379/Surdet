@@ -1,7 +1,7 @@
 @scene playground
 @label start
 @bg harbor
-@show lynn:coat normal @ right
+@show lynn:coat normal @ pos=780
 
 @label hub
 旁白：旧邮局的工作台重新开门了。地图、柜台和港口演练场都可以使用。

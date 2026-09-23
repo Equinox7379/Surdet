@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { Container, Sprite, Texture } from 'pixi.js';
+import { Container, Sprite, Texture, TextureSource } from 'pixi.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
@@ -57,10 +57,10 @@ function disposeRuntime(runtime: WorldRuntime): void {
   runtime.lifecycle.dispose();
 }
 
-function findSprite(root: Container, width: number): Sprite {
+function findPortrait(root: Container): Sprite {
   const visit = (container: Container): Sprite | undefined => {
     for (const child of container.children) {
-      if (child instanceof Sprite && child.width === width) return child;
+      if (child instanceof Sprite && child.anchor.y === 1) return child;
       if (child instanceof Container) {
         const found = visit(child);
         if (found) return found;
@@ -90,6 +90,32 @@ function snapshot(runtime: WorldRuntime): WorldPresentationSnapshot {
 }
 
 describe('WorldLayer direct presentation contract', () => {
+  it('keeps tall portraits proportional and the head in frame through timeline show and focus changes', async () => {
+    const runtime = makeRuntime();
+    const texture = new Texture({ source: new TextureSource({ width: 1024, height: 1536 }) });
+    try {
+      await runtime.assets.registerPortrait('lynn', 'coat', 'normal', texture);
+      const cue = { atMs: 0, durationMs: 100, easing: 'linear' as const, action: 'show' as const, expression: 'normal', position: '780' };
+      const frame = { track: 'portrait' as const, target: 'lynn:coat', cue };
+      runtime.layer.applyTimelineFrame({ ...frame, started: true, final: false, progress: 0, elapsedMs: 0 });
+      const portrait = findPortrait(runtime.layer.worldContainer);
+      expect(portrait.alpha).toBe(0);
+      expect(portrait.width / portrait.height).toBeCloseTo(2 / 3);
+      expect(portrait.x).toBe(780);
+      runtime.layer.applyTimelineFrame({ ...frame, started: false, final: false, progress: 0.5, elapsedMs: 50 });
+      runtime.layer.setPortraitFocus('narrator');
+      expect(portrait.alpha).toBe(0.5);
+      expect(portrait.y - portrait.height).toBeGreaterThanOrEqual(0);
+      runtime.layer.applyTimelineFrame({ ...frame, started: false, final: true, progress: 1, elapsedMs: 100 });
+      expect(portrait.alpha).toBe(1);
+      const top = portrait.y - portrait.height;
+      expect(top).toBeGreaterThanOrEqual(0);
+      expect(top).toBeLessThan(40);
+      runtime.layer.setPortrait('lynn:coat', { charId: 'lynn', costume: 'coat', expression: 'normal', pos: '780' });
+      expect(portrait.y - portrait.height).toBe(top);
+    } finally { disposeRuntime(runtime); texture.destroy(true); }
+  });
+
   it('projects backgrounds, composite portraits, focus dimming, replacement, and character removal', async () => {
     const runtime = makeRuntime();
     try {
@@ -108,9 +134,12 @@ describe('WorldLayer direct presentation contract', () => {
 
       expect(snapshot(runtime).backgroundKey).toBe('hall');
       expect(snapshot(runtime).portraits).toHaveLength(3);
-      expect(findSprite(runtime.layer.worldContainer, 430).alpha).toBe(1);
+      expect(findPortrait(runtime.layer.worldContainer).alpha).toBe(1);
       expect(findSprites(runtime.layer.worldContainer).map((sprite) => sprite.alpha)).toEqual(
-        expect.arrayContaining([1, 0.46]),
+        [1, 1, 1, 1],
+      );
+      expect(findSprites(runtime.layer.worldContainer).map((sprite) => sprite.tint)).toEqual(
+        [0xffffff, 0xffffff, 0xffffff, 0xc4cddd],
       );
 
       runtime.layer.setBackground('night');
@@ -132,7 +161,7 @@ describe('WorldLayer direct presentation contract', () => {
       runtime.layer.setPortrait('lynn:armor', {
         charId: 'lynn', costume: 'armor', expression: 'normal', pos: 'center',
       });
-      const portrait = findSprite(runtime.layer.worldContainer, 430);
+      const portrait = findPortrait(runtime.layer.worldContainer);
       runtime.layer.movePortrait('lynn:armor', 'right', 100);
       runtime.layer.update(50);
       expect(portrait.x).toBeCloseTo(800, 5);
@@ -212,7 +241,7 @@ describe('WorldLayer direct presentation contract', () => {
     }
   });
 
-  it('keeps expression replacement fades within the current speaker focus alpha', async () => {
+  it('dims inactive portraits without transparency and preserves expression fades across focus changes', async () => {
     const runtime = makeRuntime();
     try {
       await registerWorldAssets(runtime.assets);
@@ -230,11 +259,14 @@ describe('WorldLayer direct presentation contract', () => {
       runtime.layer.update(130);
       const lynnSprites = () => findSprites(runtime.layer.worldContainer).filter((sprite) => sprite.x === 320);
       expect(lynnSprites().map((sprite) => sprite.alpha)).toEqual([
-        expect.closeTo(0.23, 5),
-        expect.closeTo(0.23, 5),
+        expect.closeTo(0.5, 5),
+        expect.closeTo(0.5, 5),
       ]);
+      expect(lynnSprites().map((sprite) => sprite.tint)).toEqual([0xc4cddd, 0xc4cddd]);
 
       runtime.layer.setPortraitFocus('lynn');
+      expect(lynnSprites().map((sprite) => sprite.alpha)).toEqual([0.5, 0.5]);
+      expect(lynnSprites().map((sprite) => sprite.tint)).toEqual([0xffffff, 0xffffff]);
       runtime.layer.update(65);
       const alphas = lynnSprites().map((sprite) => sprite.alpha);
       expect(Math.min(...alphas)).toBeCloseTo(0.25, 5);
@@ -382,7 +414,8 @@ describe('WorldLayer direct presentation contract', () => {
 
       runtime.layer.setPortraitFocus('mio');
       runtime.layer.restorePresentation(saved);
-      expect(findSprites(runtime.layer.worldContainer).map((sprite) => sprite.alpha)).toEqual([1, 0.46]);
+      expect(findSprites(runtime.layer.worldContainer).map((sprite) => sprite.alpha)).toEqual([1, 1]);
+      expect(findSprites(runtime.layer.worldContainer).map((sprite) => sprite.tint)).toEqual([0xffffff, 0xc4cddd]);
     } finally {
       disposeRuntime(runtime);
     }

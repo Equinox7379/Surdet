@@ -1,7 +1,7 @@
 @scene ending_unanswered
 @label start
 @bg lighthouse_dawn
-@show lynn:coat hesitant @ right
+@show lynn:coat hesitant @ pos=780
 @unlock_text t_ending_unanswered
 
 @flag cleared

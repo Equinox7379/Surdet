@@ -1,7 +1,7 @@
 @scene ch01_02
 @label start
 @bg post_office
-@show lynn:coat hesitant @ right
+@show lynn:coat hesitant @ pos=780
 @unlock_cg post_office
 @unlock_text t_post_office
 
@@ -33,7 +33,7 @@
 
 @label wait_for_lynn
 主角：信先不拆。把退回章和登记册带上，沈岳可以自己看。
-@show lynn:coat normal @ right
+@show lynn:coat normal @ pos=780
 凛：好。我把封口留着，也把旧地址的复印页夹在后面。
 @jump ch02
 
