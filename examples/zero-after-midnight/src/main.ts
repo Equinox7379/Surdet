@@ -74,6 +74,7 @@ import { createSystemAdapters } from './system-adapters.js';
 import { ResolvedAudio } from '../../shared/resolved-audio.js';
 import { createSettingsStorage } from '../../shared/settings-storage.js';
 import { createBrowserSaveStorage, gameStoragePrefix } from '../../shared/player/browser-save-storage.js';
+import { listPlayerSaveSlots } from '../../shared/player/save-slot-list.js';
 import { createConfiguredFontJobs } from '../../shared/font-jobs.js';
 import { installSceneHotReload } from '../../shared/scene-hmr.js';
 import { sceneFiles } from './scene-hmr-boundary.js';
@@ -609,9 +610,10 @@ async function main(): Promise<void> {
 
   // 存档存储：Electron 壳（打包 exe）落 userData/saves 文件系统（异步 invoke IPC）；浏览器回退 localStorage
   const desktopSave = window.surdetSave;
+  const browserSave = desktopSave ? null : createBrowserSaveStorage(localStorage, browserPrefix);
   const saveStorage: SaveStorage = desktopSave
     ? createElectronSaveStorage(desktopSave)
-    : createBrowserSaveStorage(localStorage, browserPrefix);
+    : browserSave!;
   const saves = new SaveManager(saveStorage);
 
   // 剧本 @autosave：写入自动存档槽位（读档用 F9 只覆盖快速档；自动档需另行提供读档入口）
@@ -1096,32 +1098,16 @@ async function main(): Promise<void> {
     source: 'title' | 'game' | 'system-menu' = uiSnapshot().base,
   ): Promise<void> {
     if (source === 'title') leaveTitleForOverlay();
-    let metas: Awaited<ReturnType<typeof saves.list>>;
-    let backupMetas: Awaited<ReturnType<typeof saves.listBackupMeta>> = [];
+    let slots: SaveSlotView[];
     try {
-      metas = await saves.list();
-      if (mode === 'load') backupMetas = await saves.listBackupMeta();
+      slots = await listPlayerSaveSlots(saves, browserSave, SLOT_IDS, mode);
     } catch (err) {
       if (source === 'title') showTitleScreen();
       else refreshCommandRail();
       console.error('[zero] 存档列表读取失败:', err);
+      dialogue.showBanner('存档列表读取失败，请重试。', 'tip');
       return;
     }
-    const byId = new Map(metas.map((m) => [m.id, m]));
-    const backupIds = new Set(backupMetas.map((m) => m.id));
-    const slots: SaveSlotView[] = SLOT_IDS.map((id) => {
-      const m = byId.get(id);
-      return {
-        id,
-        empty: !m,
-        label: m?.chapter,
-        updatedAt: m?.updatedAt,
-        thumbnail: m?.thumbnail,
-        playTimeSec: m?.playTimeSec,
-        backupAvailable: mode === 'load' && backupIds.has(id),
-        kind: id === QUICK_SLOT ? 'quick' : id === AUTO_SLOT ? 'auto' : 'manual',
-      };
-    });
     activeSaveLoad = { mode, slots };
     playerShell!.commands.open({ slot: 'save-load', source, mode });
   }
@@ -1141,7 +1127,7 @@ async function main(): Promise<void> {
     playerShell!.commands.consumePointer();
     if (mode === 'load') {
       const slot = activeSaveLoad?.slots.find((candidate) => candidate.id === slotId);
-      if (!slot || slot.empty) {
+      if (!slot || slot.empty || slot.readError) {
         console.warn('[zero] 忽略无效读档槽位：', slotId);
         return false;
       }
@@ -1189,7 +1175,7 @@ async function main(): Promise<void> {
   async function restoreSaveLoad(slotId: string): Promise<boolean> {
     playerShell!.commands.consumePointer();
     const slot = activeSaveLoad?.slots.find((candidate) => candidate.id === slotId);
-    if (!slot || slot.empty || !slot.backupAvailable) {
+    if (!slot || !slot.backupAvailable) {
       console.warn('[zero] 忽略无效备份恢复槽位：', slotId);
       return false;
     }

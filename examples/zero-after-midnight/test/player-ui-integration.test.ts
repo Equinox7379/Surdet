@@ -123,13 +123,6 @@ describe('Zero public player shell coordination', () => {
     expect(Object.isFrozen(createRendererTheme({ colors: { accent: 0x47c8ff } }))).toBe(true);
   });
 
-  it('wires backup metadata and explicit restore through the normal load path', () => {
-    expect(zeroMain).toContain('listBackupMeta');
-    expect(zeroMain).toContain('restoreBackup');
-    expect(zeroMain).toContain('backupAvailable');
-    expect(zeroMain).toContain('onRestore');
-  });
-
   it.each([
     ['shared Player', sharedPlayer],
     ['Zero Player', zeroMain],

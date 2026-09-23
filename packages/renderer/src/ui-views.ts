@@ -44,6 +44,10 @@ export interface SaveSlotView {
   playTimeSec?: number;
   /** 该槽位存在可由玩家明确触发的上一版本备份。仅 load 页面投影。 */
   backupAvailable?: boolean;
+  /** Occupied but unreadable main save; cannot load, still requires overwrite confirmation. */
+  readError?: string;
+  /** Unreadable backup diagnostic; it must not be offered as restorable. */
+  backupError?: string;
 }
 
 export interface SaveLoadView {

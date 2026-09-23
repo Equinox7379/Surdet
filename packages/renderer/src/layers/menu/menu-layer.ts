@@ -711,7 +711,7 @@ export class MenuLayer implements MenuProjectionPort {
     view.slots.slice(this.#saveLoadPage * 6, (this.#saveLoadPage + 1) * 6).forEach((slot, i) => {
       const x = startX + (i % cols) * (cardW + gapX);
       const y = startY + Math.floor(i / cols) * (cardH + gapY);
-      const selectable = view.mode === 'save' || !slot.empty;
+      const selectable = view.mode === 'save' || (!slot.empty && !slot.readError);
       const card = new Container();
       card.position.set(x, y);
       const surface = this.#surface(0, 0, cardW, cardH, selectable ? 'surfaceStrong' : 'panel', 'surface', 'md', true);
@@ -742,7 +742,7 @@ export class MenuLayer implements MenuProjectionPort {
       }), { fill: selectable ? 'accentSoft' : 'textDisabled', fontSize: 'captionSize' })).position.set(textX, 14);
       const kindLabel = slot.kind === 'auto' ? '自动' : slot.kind === 'quick' ? '快速' : '手动';
       card.addChild(bindThemeTextProjection(new PText({
-        text: slot.empty ? '空槽位' : (slot.label ?? '未命名场景'),
+        text: slot.readError ?? (slot.empty ? '空槽位' : (slot.label ?? '未命名场景')),
         style: { fontSize: this.#theme.typography.uiSize, fill: selectable ? this.#theme.colors.text : this.#theme.colors.textDisabled, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: cardW - textX - 20 } satisfies TextStyleOptions,
       }), { fill: selectable ? 'text' : 'textDisabled', fontSize: 'uiSize' })).position.set(textX, 34);
       if (!slot.empty) {
@@ -750,12 +750,12 @@ export class MenuLayer implements MenuProjectionPort {
           ? ` · ${Math.floor(slot.playTimeSec / 60)}分钟`
           : '';
         card.addChild(bindThemeTextProjection(new PText({
-          text: `${kindLabel}　${formatSlotTime(slot.updatedAt) || '时间未提供'}${playtime}`,
+          text: slot.backupError ?? `${kindLabel}　${formatSlotTime(slot.updatedAt) || '时间未提供'}${playtime}`,
           style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions,
         }), { fill: 'textMuted', fontSize: 'captionSize' })).position.set(textX, 112);
       } else {
         card.addChild(bindThemeTextProjection(new PText({
-          text: `${kindLabel}　等待记录`,
+          text: slot.backupError ?? `${kindLabel}　等待记录`,
           style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.textDisabled } satisfies TextStyleOptions,
         }), { fill: 'textDisabled', fontSize: 'captionSize' })).position.set(textX, 112);
       }
@@ -825,7 +825,7 @@ export class MenuLayer implements MenuProjectionPort {
       }
       if (selectable) {
         let overwriteConfirmed = false;
-        bindPlayerControl(card, { label: `${view.mode === 'save' ? '保存到' : '读取'}槽位 ${slot.id}：${slot.empty ? '空槽位' : (slot.label ?? '场景未提供')}`, width: cardW, height: cardH });
+        bindPlayerControl(card, { label: `${view.mode === 'save' ? '保存到' : '读取'}槽位 ${slot.id}：${slot.readError ?? (slot.empty ? '空槽位' : (slot.label ?? '场景未提供'))}`, width: cardW, height: cardH });
         card.eventMode = 'static';
         card.cursor = 'pointer';
         card.on('pointerover', () => {
