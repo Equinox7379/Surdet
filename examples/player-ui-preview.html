@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>雾港来信 · 界面样稿</title>
+  <link rel="icon" href="data:,">
+  <style>
+    /* Standalone visual study, not a Player implementation. Existing art and script only.
+       Fog #f3f8f8 / ink #223d4a / sea #477a85 / mist #9ec3c8 / rule #dce9eb.
+       Song-style title; MiSans for reading and controls. The only motif is a letter fold. */
+    @font-face { font-family: MiSans; src: url('./starter/content/assets/fonts/MiSans-Regular.otf') format('opentype'); font-display: swap; }
+    :root { --ink: #223d4a; --sea: #477a85; --fog: #f3f8f8; --rule: #dce9eb; font-family: MiSans, 'Microsoft YaHei', sans-serif; color: var(--ink); }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100svh; background: #e8eff0; }
+    button, input { font: inherit; }
+    button { color: inherit; cursor: pointer; border: 0; background: none; }
+    button:disabled { cursor: default; opacity: .38; }
+    button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--sea); outline-offset: 5px; }
+    [hidden] { display: none !important; }
+    .preview-bar { min-height: 56px; padding: 10px 24px; display: flex; align-items: center; gap: 24px; background: #f9fbfb; border-bottom: 1px solid #d4e1e3; font-size: 12px; }
+    .preview-bar strong { font-size: 13px; font-weight: 500; }
+    .preview-bar nav { display: flex; gap: 5px; }
+    .preview-bar button { padding: 7px 14px; border-radius: 3px; }
+    .preview-bar button[aria-pressed="true"] { background: #e2edef; color: #315a66; }
+    .preview-bar p { margin: 0 0 0 auto; color: #5c737b; }
+    .preview-body { min-height: calc(100svh - 56px); display: grid; place-items: center; padding: 20px 24px; }
+    .game { position: relative; width: min(100%, calc((100svh - 96px) * 16 / 9)); aspect-ratio: 16 / 9; overflow: hidden; container-type: inline-size; background: #c7d5d7; box-shadow: 0 12px 45px #29464e14; isolation: isolate; --reading-size: 1.92cqw; --paper-opacity: .97; }
+    .background { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .title-screen { position: absolute; inset: 0; }
+    .title-wash { position: absolute; inset: 0; background: linear-gradient(90deg, #f3f8f8fa 0%, #f3f8f8ed 22%, #edf5f5c2 35%, #e8f3f352 47%, transparent 65%); }
+    .title-content { position: absolute; inset: 10.5% auto 7% 9%; width: 28%; display: flex; flex-direction: column; align-items: flex-start; }
+    .title-rule { width: 3.9cqw; height: 1px; background: #6c939b; margin-bottom: 1.8cqw; }
+    h1 { margin: 0; font-family: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', serif; font-weight: 400; font-size: 6.15cqw; letter-spacing: .14em; line-height: 1.2; color: #294c5a; }
+    h1 span { display: block; }
+    h1 span + span { margin: .2cqw 0 0 3.6cqw; }
+    .title-note { margin: 1.5cqw 0 0 .2cqw; font-size: 1.03cqw; letter-spacing: .23em; color: #496974; }
+    .title-nav { display: flex; flex-direction: column; align-items: stretch; gap: .2cqw; width: 17cqw; margin-top: 3.9cqw; }
+    .title-nav button { position: relative; text-align: left; padding: .75cqw 0 .75cqw 2.9cqw; font-size: clamp(14px, 1.36cqw, 22px); letter-spacing: .15em; transition: color .2s, transform .2s; }
+    .title-nav button::before { content: ''; position: absolute; width: 1.7cqw; height: 1px; left: 0; top: 50%; background: var(--sea); opacity: 0; transform: translateX(-.5cqw); transition: opacity .2s, transform .2s; }
+    .title-nav .start { color: #265c6a; }
+    .title-nav .start::before, .title-nav button:not(:disabled):hover::before, .title-nav button:focus-visible::before { opacity: 1; transform: none; }
+    .title-nav button:not(:disabled):hover { color: #155365; transform: translateX(.25cqw); }
+    .title-small { margin-top: auto; display: flex; align-items: center; gap: 1cqw; font-size: .83cqw; letter-spacing: .2em; color: #526e79; }
+    .envelope { width: 2cqw; height: 1.25cqw; border: 1px solid #789aa2; position: relative; overflow: hidden; }
+    .envelope::before { content: ''; position: absolute; width: 1.36cqw; height: 1.36cqw; border-right: 1px solid #789aa2; border-bottom: 1px solid #789aa2; transform: rotate(45deg); top: -.92cqw; left: .25cqw; }
+    .reading-screen { position: absolute; inset: 0; }
+    .portrait { position: absolute; height: 122%; width: auto; left: 44%; bottom: -24%; pointer-events: none; }
+    .chapter { position: absolute; left: 4.7%; top: 5%; display: flex; align-items: center; gap: 1.2cqw; font-size: clamp(11px, 1cqw, 16px); letter-spacing: .16em; color: #f3f8f8; text-shadow: 0 1px 6px #172e38, 0 1px 2px #172e38; }
+    .chapter::before { content: ''; width: 2cqw; height: 1px; background: #dce9eb; }
+    .scene-next { position: absolute; inset: 0 0 31%; cursor: pointer; }
+    .scene-next:focus-visible { outline-offset: -8px; }
+    .dialogue { position: absolute; left: 5.5%; right: 5.5%; bottom: 4%; min-height: 27%; padding: 1.45cqw 3.4cqw .7cqw; background: rgb(243 248 248 / var(--paper-opacity)); box-shadow: 0 4px 24px #213e4912; }
+    .dialogue::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: linear-gradient(90deg, #6b9fa9, #abcbd0 42%, #d5e5e8); }
+    .dialogue::after { content: ''; position: absolute; right: 0; top: 0; width: 1.7cqw; height: 1.7cqw; background: linear-gradient(45deg, #d5e6e9 50%, #eff6f6 50%); }
+    .speaker { font-size: 1.36cqw; font-weight: 600; letter-spacing: .16em; color: #376571; margin-bottom: .62cqw; }
+    .dialogue-text { display: block; text-align: left; width: 100%; min-height: 5.8cqw; padding: 0 2cqw 0 0; font-size: var(--reading-size); letter-spacing: .035em; line-height: 1.75; color: #253f49; }
+    .dialogue-text::after { content: ''; width: .55cqw; height: .55cqw; border-right: 1px solid #4b7a85; border-bottom: 1px solid #4b7a85; transform: rotate(45deg); position: absolute; right: 3.5cqw; bottom: calc(28px + 2.3cqw); }
+    .dialogue-text:disabled { opacity: 1; }
+    .dialogue-text:disabled::after { display: none; }
+    .reading-tools { margin-top: .55cqw; padding-top: .45cqw; display: flex; justify-content: flex-end; gap: 1.6cqw; border-top: 1px solid #d7e4e6; }
+    .reading-tools button { padding: .3cqw .3cqw; min-height: 28px; font-size: clamp(12px, 1.1cqw, 18px); color: #4f707b; letter-spacing: .09em; }
+    .reading-tools button:hover { color: #163f4e; text-decoration: underline; text-underline-offset: .3em; }
+    .reading-tools .return-title { margin-left: .8cqw; }
+    .choice-screen { position: absolute; inset: 0 0 32%; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; padding-left: 9%; gap: 1.2cqw; background: #2448571c; }
+    .choice-screen button { width: 46%; position: relative; padding: 1.2cqw 2.4cqw; background: #f3f8f8f5; font-size: 1.55cqw; letter-spacing: .05em; border-left: 2px solid #729fa8; box-shadow: 0 3px 16px #18323b12; transition: background .18s, transform .18s; }
+    .choice-screen button::after { content: ''; position: absolute; right: 1.7cqw; top: 45%; width: .38cqw; height: .38cqw; border-top: 1px solid #7897a0; border-right: 1px solid #7897a0; transform: rotate(45deg); }
+    .choice-screen button:hover { background: #dcebed; transform: translateX(.35cqw); }
+    .unhide { position: absolute; right: 3%; bottom: 4%; padding: .8cqw 1.3cqw; font-size: 1.1cqw; background: #f3f8f8eb; }
+    .overlay { position: absolute; inset: 0; background: #e9f2f2e8; backdrop-filter: blur(9px); z-index: 5; padding: 5% 9%; }
+    .overlay header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #b7cdd1; padding-bottom: 1.45cqw; }
+    .overlay h2 { font-family: 'Noto Serif SC', 'SimSun', serif; font-weight: 400; font-size: 2.8cqw; letter-spacing: .14em; margin: 0; }
+    .overlay .close { font-size: clamp(12px, 1.12cqw, 18px); padding: .6cqw 0 .6cqw 1cqw; color: #466977; }
+    .settings-content { max-width: 61cqw; margin: 3.5cqw auto 0; }
+    .setting-row { display: flex; align-items: center; justify-content: space-between; padding: 1.7cqw 0; border-bottom: 1px solid #ccdfe2; }
+    .setting-label { font-size: 1.5cqw; }
+    .segmented { display: flex; gap: 1.2cqw; }
+    .segmented button { border-bottom: 2px solid transparent; padding: .6cqw 1.25cqw; color: #58757e; font-size: clamp(12px, 1.18cqw, 19px); }
+    .segmented button[aria-pressed="true"] { border-color: var(--sea); color: #224e5d; background: #dcebed; }
+    .type-preview { margin-top: 3cqw; background: rgb(243 248 248 / var(--paper-opacity)); padding: 1.7cqw 2.4cqw; border-left: 2px solid #7ca8b0; }
+    .type-preview small { display: block; margin-bottom: 1cqw; color: #557681; font-size: 1cqw; }
+    .type-preview p { font-size: var(--reading-size); line-height: 1.75; margin: 0; }
+    .history-list { height: 82%; overflow-y: auto; padding: 1cqw 2cqw 2cqw 0; margin: 0; list-style: none; scrollbar-color: #98b7be transparent; scrollbar-width: thin; }
+    .history-list li { display: grid; grid-template-columns: 6cqw 1fr; gap: 2cqw; padding: 1.5cqw 0; border-bottom: 1px solid #cbdde0; font-size: 1.45cqw; line-height: 1.8; }
+    .history-list strong { color: #477380; font-size: 1.15cqw; font-weight: 500; }
+    .history-list p { margin: 0; }
+    @media (max-width: 720px) {
+      .preview-bar { flex-wrap: wrap; gap: 6px 12px; padding: 8px 12px; }
+      .preview-bar p { margin: 0; width: 100%; font-size: 11px; }
+      .preview-bar button { padding: 6px 10px; }
+      .preview-body { padding: 10px; min-height: calc(100svh - 82px); }
+      .game { width: min(100%, calc((100svh - 102px) * 16 / 9)); }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+  </style>
+</head>
+<body>
+  <header class="preview-bar">
+    <strong>雾港来信 · 界面样稿</strong>
+    <nav aria-label="切换样稿画面">
+      <button data-preview="title" aria-pressed="true">标题</button>
+      <button data-preview="reading" aria-pressed="false">阅读</button>
+      <button data-preview="choice" aria-pressed="false">选择</button>
+    </nav>
+    <p>剧情节选 · 仅预览界面，不读写游戏存档</p>
+  </header>
+  <main class="preview-body">
+    <section class="game" aria-label="雾港来信交互样稿">
+      <img class="background" src="./starter/content/assets/bg/harbor.png" alt="晨雾中的港口，灯塔立在远处的海岸">
+      <section class="title-screen" aria-label="游戏标题">
+        <div class="title-wash"></div>
+        <div class="title-content">
+          <div class="title-rule" aria-hidden="true"></div>
+          <h1 aria-label="雾港来信"><span>雾港</span><span>来信</span></h1>
+          <p class="title-note">一封退回三次的信。</p>
+          <nav class="title-nav" aria-label="游戏主菜单">
+            <button class="start" id="start">开始阅读</button>
+            <button id="continue" disabled>继续阅读</button>
+            <button data-open="settings">阅读设置</button>
+          </nav>
+          <div class="title-small"><i class="envelope" aria-hidden="true"></i><span>雾港 · 清晨五点四十</span></div>
+        </div>
+      </section>
+      <section class="reading-screen" aria-label="剧情阅读" hidden>
+        <img class="portrait" src="./starter/content/assets/portrait/lynn_coat_normal.png" alt="凛，穿着深蓝色外套，手里拿着一封信">
+        <div class="chapter">第一章 / 港口来信</div>
+        <button class="scene-next" aria-label="继续剧情"></button>
+        <div class="dialogue">
+          <div class="speaker" id="speaker">旁白</div>
+          <button class="dialogue-text" id="advance" aria-label="下一句"><span id="line" aria-live="polite"></span></button>
+          <nav class="reading-tools" aria-label="阅读操作">
+            <button data-open="history">回看</button>
+            <button id="auto" aria-pressed="false">自动</button>
+            <button data-open="settings">设置</button>
+            <button id="hide-dialogue">收起</button>
+            <button class="return-title" data-title>标题</button>
+          </nav>
+        </div>
+        <div class="choice-screen" role="group" aria-label="选择接下来的行动" hidden>
+          <button data-choice="0">先问凛和沈岳的关系</button>
+          <button data-choice="1">在窗口查退回章的理由</button>
+          <button data-choice="2">先收下信，等她自己开口</button>
+        </div>
+        <button class="unhide" id="show-dialogue" hidden>显示对话</button>
+      </section>
+      <section class="overlay" id="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
+        <header><h2 id="settings-title">阅读设置</h2><button class="close" data-close>返回 ×</button></header>
+        <div class="settings-content">
+          <div class="setting-row"><span class="setting-label" id="size-label">文字大小</span><div class="segmented" role="group" aria-labelledby="size-label"><button data-size="normal" aria-pressed="true">标准</button><button data-size="large" aria-pressed="false">较大</button></div></div>
+          <div class="setting-row"><span class="setting-label" id="paper-label">对话底色</span><div class="segmented" role="group" aria-labelledby="paper-label"><button data-paper="solid" aria-pressed="true">清晰</button><button data-paper="soft" aria-pressed="false">轻透</button></div></div>
+          <div class="type-preview"><small>阅读效果</small><p>清晨五点四十，雾贴着港口的仓门，<br>潮水把缆绳一根根绷紧。</p></div>
+        </div>
+      </section>
+      <section class="overlay" id="history" role="dialog" aria-modal="true" aria-labelledby="history-title" hidden>
+        <header><h2 id="history-title">对话回看</h2><button class="close" data-close>返回 ×</button></header>
+        <ol class="history-list"></ol>
+      </section>
+    </section>
+  </main>
+  <script type="module">
+    // This deliberately small interaction sample does not use Core, profiles or storage.
+    // Excerpts are from starter/content/scenario/ch01_01.gal; no new story is persisted.
+    const $ = selector => document.querySelector(selector);
+    const $$ = selector => [...document.querySelectorAll(selector)];
+    const lines = [
+      ['旁白', '清晨五点四十，雾贴着港口的仓门，潮水把缆绳一根根绷紧。'],
+      ['旁白', '你和凛是雾港的代送搭档。今天，旧邮局把一只封好的信封交给你们；退回章已经盖了三次。'],
+      ['凛', '收件人写的是沈岳，山上灯塔的守夜人。'],
+      ['主角', '信封还封着。你为什么不自己送？'],
+      ['凛', '因为我不知道他还在不在灯塔，也不知道他还愿不愿意见我。'],
+      ['凛', '父亲出海以后，沈岳替我守过那盏灯。我只知道自己一直没有把话说完。'],
+      ['凛', '我还没想好，要从哪一句开始说。'],
+    ];
+    const replies = [
+      ['凛', '沈岳是我父亲的搭档。父亲出海失踪后，是他把父亲的罗盘送回我手里。'],
+      ['主角', '三枚章上写的都是“地址已撤出邮路”，不是“拒收”。'],
+      ['主角', '先收下。到了档案室再查地址，你愿意说的时候再说。'],
+    ];
+    let index = 0, reading = false, choosing = false, reply = null, started = false;
+    let timer = null, activeOverlay = null, returnFocus = null;
+    let history = [];
+    function stopAuto() {
+      clearTimeout(timer); timer = null;
+      $('#auto').setAttribute('aria-pressed', 'false'); $('#auto').textContent = '自动';
+    }
+    function scheduleAuto() {
+      if ($('#auto').getAttribute('aria-pressed') !== 'true') return;
+      clearTimeout(timer);
+      timer = setTimeout(next, Math.max(3800, $('#line').textContent.length * 150));
+    }
+    function showLine(line, record = true) {
+      $('#speaker').textContent = line[0]; $('#line').textContent = line[1];
+      if (record) history.push(line);
+      scheduleAuto();
+    }
+    function setPreview(name) { $$('[data-preview]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.preview === name))); }
+    function closeOverlay() {
+      if (!activeOverlay) return;
+      activeOverlay.hidden = true; activeOverlay = null;
+      $('.title-screen').inert = false; $('.reading-screen').inert = false; $('.preview-bar').inert = false;
+      if (returnFocus?.isConnected && !returnFocus.closest('[hidden]')) returnFocus.focus();
+    }
+    function hideDialogue(hidden) {
+      const restoringFocus = document.activeElement === $('#show-dialogue');
+      $('.dialogue').hidden = hidden; $('#show-dialogue').hidden = !hidden;
+      if (hidden) { stopAuto(); $('#show-dialogue').focus(); }
+      else if (restoringFocus) (choosing ? $('[data-choice]') : $('#advance')).focus();
+    }
+    function showTitle() {
+      closeOverlay(); stopAuto(); reading = false;
+      $('.title-screen').hidden = false; $('.reading-screen').hidden = true;
+      $('#continue').disabled = !started; setPreview('title'); $('#start').focus({ preventScroll: true });
+    }
+    function showReading(reset = false) {
+      closeOverlay(); stopAuto();
+      if (reset || !started) { index = 0; history = []; reply = null; choosing = false; }
+      const first = !started || reset;
+      started = true; reading = true;
+      $('.title-screen').hidden = true; $('.reading-screen').hidden = false;
+      hideDialogue(false); $('.choice-screen').hidden = !choosing;
+      $('.scene-next').disabled = choosing; $('#advance').disabled = choosing; $('#auto').disabled = choosing;
+      showLine(reply ?? lines[index], first); setPreview(choosing ? 'choice' : 'reading');
+      (choosing ? $('[data-choice]') : $('#advance')).focus({ preventScroll: true });
+    }
+    function showChoice() {
+      stopAuto(); choosing = true; reply = null;
+      $('.choice-screen').hidden = false; $('.scene-next').disabled = true; $('#advance').disabled = true; $('#auto').disabled = true;
+      hideDialogue(false); setPreview('choice'); $('[data-choice]').focus({ preventScroll: true });
+    }
+    function next() {
+      if (!reading || choosing || activeOverlay) return;
+      if ($('.dialogue').hidden) { hideDialogue(false); $('#advance').focus(); return; }
+      if (reply) { showChoice(); return; }
+      if (index === lines.length - 1) { showChoice(); return; }
+      showLine(lines[++index]);
+    }
+    function openOverlay(name, trigger) {
+      stopAuto(); returnFocus = trigger; activeOverlay = $('#' + name);
+      if (name === 'history') {
+        $('.history-list').replaceChildren(...history.map(([speaker, text]) => {
+          const li = document.createElement('li'), who = document.createElement('strong'), body = document.createElement('p');
+          who.textContent = speaker; body.textContent = text; li.append(who, body); return li;
+        }));
+      }
+      $('.title-screen').inert = true; $('.reading-screen').inert = true; $('.preview-bar').inert = true;
+      activeOverlay.hidden = false; activeOverlay.querySelector('[data-close]').focus();
+      if (name === 'history') $('.history-list').scrollTop = $('.history-list').scrollHeight;
+    }
+    $('#start').addEventListener('click', () => showReading(true));
+    $('#continue').addEventListener('click', () => showReading());
+    $('#advance').addEventListener('click', next); $('.scene-next').addEventListener('click', next);
+    $$('[data-title]').forEach(button => button.addEventListener('click', showTitle));
+    $$('[data-open]').forEach(button => button.addEventListener('click', () => openOverlay(button.dataset.open, button)));
+    $$('[data-close]').forEach(button => button.addEventListener('click', closeOverlay));
+    $('#hide-dialogue').addEventListener('click', () => hideDialogue(true));
+    $('#show-dialogue').addEventListener('click', () => { hideDialogue(false); $('#advance').focus(); });
+    $('#auto').addEventListener('click', () => {
+      if ($('#auto').getAttribute('aria-pressed') === 'true') { stopAuto(); return; }
+      if (choosing) return;
+      $('#auto').setAttribute('aria-pressed', 'true'); $('#auto').textContent = '自动 · 开'; scheduleAuto();
+    });
+    $$('[data-preview]').forEach(button => button.addEventListener('click', () => {
+      if (button.dataset.preview === 'title') { showTitle(); return; }
+      showReading(true);
+      index = button.dataset.preview === 'choice' ? lines.length - 1 : 2;
+      history = lines.slice(0, index + 1); showLine(lines[index], false);
+      if (button.dataset.preview === 'choice') showChoice();
+    }));
+    $$('[data-choice]').forEach(button => button.addEventListener('click', () => {
+      reply = replies[Number(button.dataset.choice)]; choosing = false; $('.choice-screen').hidden = true;
+      $('.scene-next').disabled = false; $('#advance').disabled = false; $('#auto').disabled = false; setPreview('reading'); showLine(reply); $('#advance').focus();
+    }));
+    $$('[data-size]').forEach(button => button.addEventListener('click', () => {
+      $('.game').style.setProperty('--reading-size', button.dataset.size === 'large' ? '2.28cqw' : '1.92cqw');
+      $$('[data-size]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+    }));
+    $$('[data-paper]').forEach(button => button.addEventListener('click', () => {
+      $('.game').style.setProperty('--paper-opacity', button.dataset.paper === 'soft' ? '.88' : '.97');
+      $$('[data-paper]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+    }));
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        if (activeOverlay) closeOverlay();
+        else if (reading) hideDialogue(!$('.dialogue').hidden);
+        event.preventDefault();
+      }
+      if (activeOverlay && event.key === 'Tab') {
+        const buttons = [...activeOverlay.querySelectorAll('button:not(:disabled)')];
+        if (event.shiftKey && document.activeElement === buttons[0]) { buttons.at(-1).focus(); event.preventDefault(); }
+        else if (!event.shiftKey && document.activeElement === buttons.at(-1)) { buttons[0].focus(); event.preventDefault(); }
+      }
+    });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) stopAuto(); });
+  </script>
+</body>
+</html>
