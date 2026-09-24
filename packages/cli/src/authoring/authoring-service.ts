@@ -606,10 +606,12 @@ export class AuthoringService {
     return { snapshot: context.snapshot, assetFiles, gallery, metadata: metadataForChange(context.session), view: 'working' as const };
   }
 
-  async inspectProject(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof inspectProject> & { view: 'project' | 'working'; playerConfig: Awaited<ReturnType<typeof inspectPlayerConfig>> }>> {
+  async inspectProject(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof inspectProject> & { view: 'project' | 'working'; charactersFingerprint: string; playerConfig: Awaited<ReturnType<typeof inspectPlayerConfig>> }>> {
     const { snapshot, assetFiles, gallery, metadata, view } = await this.readProjectView(projectRoot, changeId, true);
     const index = buildObjectIndex(snapshot);
-    return { ...metadata, result: { ...inspectProject(snapshot, index, assetFiles, gallery), view, playerConfig: await inspectPlayerConfig(snapshot.config, { sha256: async text => hashText(text) }) } };
+    return { ...metadata, result: { ...inspectProject(snapshot, index, assetFiles, gallery), view,
+      charactersFingerprint: await charactersFingerprint(snapshot.config, { sha256: async text => hashText(text) }),
+      playerConfig: await inspectPlayerConfig(snapshot.config, { sha256: async text => hashText(text) }) } };
   }
 
   async projectAssets(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof buildAssetCatalog> & { view: 'project' | 'working' }>> {

@@ -112,11 +112,28 @@ export function buildAssetCatalog(
     scenes: [],
     timelines: [],
   };
+  const intelligence = buildProjectAssetIntelligence(emptySnapshot, facts, options);
+  for (const entry of [...backgrounds, ...portraits]) {
+    const item = intelligence.items.find(item => item.sourcePath === entry.sourcePath);
+    if (!entry.resolved || !item || item.issues.some(issue => issue !== 'ASSET_UNUSED')) continue;
+    // Generic instruction arguments are serialized as DSL tokens. Quoting also
+    // preserves spaces, apostrophes and modifier-looking names in legal files.
+    const token = (value: string) => `"${value}"`;
+    entry.usage = entry.kind === 'background'
+      ? {
+        scene: { kind: 'instruction', name: 'bg', args: [token(entry.key)] },
+        timeline: { kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: entry.key }] },
+      }
+      : {
+        scene: { kind: 'instruction', name: 'show', args: [token(entry.timelineTarget!), token(entry.expression!)], modifiers: { pos: 'center' } },
+        timeline: { kind: 'portrait', target: entry.timelineTarget!, cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'show', expression: entry.expression!, position: 'center' }] },
+      };
+  }
   return {
     backgrounds,
     portraits,
     avatars,
-    intelligence: buildProjectAssetIntelligence(emptySnapshot, facts, options),
+    intelligence,
   };
 }
 

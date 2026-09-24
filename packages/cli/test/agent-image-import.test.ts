@@ -252,6 +252,61 @@ it('reconciles an interrupted multi-image upload through MCP and preserves struc
   } finally { await client.close(); await server.close(); await session.close(); }
 });
 
+it('authors real catalog examples and the first character using only public read facts', async () => {
+  const f = await fixture();
+  const session = await f.open('apply');
+  const server = createAgentPortServer(session);
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'asset-usage-author', version: '1.0.0' });
+  await server.connect(serverTransport); await client.connect(clientTransport);
+  const call = async (name: string, args: Record<string, unknown> = {}) => {
+    const response = await client.callTool({ name, arguments: args });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    return result(response.structuredContent);
+  };
+  try {
+    const request = await requestFor(session, '夜港 @ evening.png');
+    request.items.push({ ...request.items[0]!, itemId: crypto.randomUUID(), kind: 'portrait', fileName: 'rin_coat_smile.png' });
+    const staged = await call('surdet_asset_import_stage', request);
+    await call('surdet_asset_import_commit', { operationId: request.operationId, planFingerprint: staged.plan.planFingerprint });
+    const source = await call('surdet_project_inspect', { view: 'project' });
+    expect(source.characters).toEqual([]);
+    expect(source.charactersFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    await call('surdet_change_begin', { compositionMode: 'direct' });
+    const before = await call('surdet_project_inspect', { view: 'working' });
+    await call('surdet_character_ensure', { operationId: 'first-character', id: 'rin', name: '凛', expectedFingerprint: before.charactersFingerprint });
+    const changed = await call('surdet_project_inspect', { view: 'working' });
+    expect(changed.charactersFingerprint).not.toBe(before.charactersFingerprint);
+    expect((await call('surdet_project_inspect', { view: 'project' })).charactersFingerprint).toBe(before.charactersFingerprint);
+    const stale = await client.callTool({ name: 'surdet_character_ensure', arguments: { operationId: 'stale-character', id: 'rin', name: '新名字', expectedFingerprint: before.charactersFingerprint } });
+    expect(stale.structuredContent).toMatchObject({ ok: false, error: { code: 'OBJECT_REF_STALE' } });
+    const assets = await call('surdet_project_assets', { view: 'working' });
+    const background = assets.backgrounds[0];
+    const portrait = assets.portraits[0];
+    await call('surdet_timeline_create', { operationId: 'arrival', timelineId: 'arrival', definition: {
+      version: 1, id: 'arrival', durationMs: 0, tracks: [background.usage.timeline, portrait.usage.timeline],
+    } });
+    await call('surdet_scene_create', { operationId: 'shown', sceneId: 'shown', blocks: [
+      background.usage.scene, portrait.usage.scene,
+      { kind: 'instruction', name: 'timeline', args: ['arrival'], modifiers: { blocking: '' } },
+      { kind: 'text', speaker: '凛', value: '在夜港等你。' }, { kind: 'instruction', name: 'clear', args: ['done'] },
+    ] });
+    expect((await call('surdet_project_validate')).ok).toBe(true);
+    const trace = await call('surdet_runtime_run_from', { sceneId: 'shown', choices: [] });
+    expect(trace.status).toBe('passed');
+    const serialized = await fs.readFile(path.join(f.projectRoot, 'game.config.json'), 'utf8');
+    expect(JSON.parse(serialized).characters).toBeUndefined();
+    const scene = await call('surdet_object_inspect', { view: 'working', objectRef: 'scene:shown', fragment: {} });
+    expect(JSON.stringify(scene)).toContain('夜港 @ evening');
+    await call('surdet_change_diff');
+    const premature = await client.callTool({ name: 'surdet_change_commit', arguments: {} });
+    expect(premature.structuredContent).toMatchObject({ ok: false, error: { code: 'SIMULATION_REQUIRED' } });
+    await call('surdet_project_simulate', { sceneId: 'shown' });
+    await call('surdet_change_commit');
+    expect(JSON.parse(await fs.readFile(path.join(f.projectRoot, 'game.config.json'), 'utf8')).characters.rin.name).toBe('凛');
+  } finally { await client.close(); await server.close(); await session.close(); }
+});
+
 it('recovers the same real stdio import after the server process exits after writing its receipt', async () => {
   const f = await fixture();
   const staging = await f.open('stage');

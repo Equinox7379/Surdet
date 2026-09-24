@@ -359,6 +359,11 @@ export interface AssetEntry {
   sourcePath: string;
   format: string;
   resolved: boolean;
+  /** Minimal examples using this exact asset. Absent for ambiguous/invalid assets and avatars. */
+  usage?: {
+    scene: Extract<SceneBlockInput, { kind: 'instruction' }>;
+    timeline: { kind: 'background' | 'portrait'; target?: string; cues: TimelineCueInput[] };
+  };
 }
 
 /** 素材中心共享类型；稳定英文值供 Agent/DOM 使用，Editor 负责显示自然中文。 */
