@@ -87,7 +87,8 @@ export async function replayCompositionOperation(
   };
   switch (operation.capabilityId) {
     case 'scene.create':
-      return applySceneCreate(change, replayInput as never);
+      return applySceneCreate(change, replayInput as never, hasher,
+        operation.producedObjects.find((item) => item.objectRef === operation.primaryObject)?.finalFingerprint);
     case 'scene.patch':
       return applyScenePatch(change, replayInput as never);
     case 'variable.ensure':

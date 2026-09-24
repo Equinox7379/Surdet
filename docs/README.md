@@ -14,7 +14,7 @@
 | 人类与 Agent 在同一项目接力 | [接力与草稿保护](human-agent-relay-wave-7.md) |
 | 迁移已有运行消费方 | [Renderer 迁移](renderer-v2-migration.md)、[Player Shell 迁移](player-shell-migration.md) |
 
-`capabilities.json` 与能力矩阵由现有 `npm run docs:capabilities` 流程维护；不要手工复制第二份能力清单。各作品、模板、资产和字体的说明继续放在所属目录，许可证保留原位。
+`capabilities.json` 与能力矩阵描述渲染及运行支持情况，由现有 `npm run docs:capabilities` 流程维护；创作工具（如 scene.create）的合同通过 Agent Port 的 `capabilities.describe` 读取，见 AI-GUIDE。不要手工复制第二份能力清单。各作品、模板、资产和字体的说明继续放在所属目录，许可证保留原位。
 
 ## 项目状态与记录
 

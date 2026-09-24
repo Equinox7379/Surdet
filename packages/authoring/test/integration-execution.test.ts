@@ -142,6 +142,37 @@ async function beginIntegrationChange(plan: IntegrationPlan, repository: ChangeR
 }
 
 describe('Wave 5 integration execution', () => {
+  it.each(['current', 'previous'] as const)('replays the sealed %s scene terminator without changing its fingerprint', async (format) => {
+    const expected = '@scene alpha\n终章。\n@end\n' + (format === 'previous' ? '@end\n' : '');
+    const fingerprint = await hasher.sha256(expected);
+    const operation: PlannedReplayOperation = {
+      ...makePlan().replayOperations[1]!,
+      normalizedInput: { operationId: 'source-ending', sceneId: 'alpha', blocks: [{ kind: 'text', value: '终章。' }, { kind: 'instruction', name: 'end' }] },
+      producedObjects: [{ objectRef: 'scene:alpha', disposition: 'create', finalFingerprint: fingerprint }],
+    };
+    const finalFingerprint = (await fingerprintWorkingObject({ 'content/scenario/alpha.gal': expected }, 'scene:alpha', hasher)).fingerprint;
+    const plan = makePlan({ replayOperations: [operation], dryRun: { status: 'passed', finalObjectFingerprints: { 'scene:alpha': finalFingerprint }, errors: [] } });
+    const change = await beginIntegrationChange(plan);
+    expect((await executeIntegrationReplay(change, plan, hasher)).status).toBe('READY');
+    expect(change.record.workingFiles['content/scenario/alpha.gal']).toBe(expected);
+    const saved = structuredClone(change.record);
+    await replayCompositionOperation(change, operation, hasher);
+    expect(change.record).toEqual(saved);
+  });
+
+  it('rejects an unrelated sealed scene fingerprint without persisting a guessed repair', async () => {
+    const change = await beginIntegrationChange(makePlan());
+    const operation: PlannedReplayOperation = {
+      ...makePlan().replayOperations[1]!,
+      normalizedInput: { operationId: 'source-ending', sceneId: 'alpha', blocks: [{ kind: 'instruction', name: 'end' }] },
+      producedObjects: [{ objectRef: 'scene:alpha', disposition: 'create', finalFingerprint: await hasher.sha256('@scene alpha\n被改写的正文\n@end\n') }],
+    };
+    const before = structuredClone(change.record);
+    await expect(replayCompositionOperation(change, operation, hasher)).rejects.toMatchObject({ code: 'COMPOSITION_REPLAY_FAILED' });
+    expect(change.record).toEqual(before);
+    expect(await change.repository.read(change.record.changeId)).toEqual(before);
+  });
+
   it.each(['missing', 'ambiguous'] as const)('rejects a %s entry scene before advancing integration', async (target) => {
     const plan = makePlan();
     const repository = new InMemoryChangeRepository();

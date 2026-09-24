@@ -4,7 +4,7 @@ import { loadProjectSnapshot } from '../src/project-snapshot.js';
 import { InMemoryChangeRepository, beginChange, openChange } from '../src/change-session.js';
 import { applySceneCreate, applyScenePatch, ensureVariable } from '../src/operations.js';
 import { buildObjectIndex } from '../src/object-index.js';
-import type { ScenePatchInput } from '../src/contracts.js';
+import type { SceneBlockInput, ScenePatchInput } from '../src/contracts.js';
 
 function digest(text: string): string {
   let hash = 0x811c9dc5;
@@ -296,6 +296,41 @@ describe('typed authoring operations', () => {
     const config = JSON.parse(change.record.workingFiles['game.config.json']!) as { variables: Record<string, unknown> };
     expect(Object.prototype.hasOwnProperty.call(config.variables, '__proto__')).toBe(true);
     expect(config.variables['__proto__']).toEqual({ type: 'number', initial: 7 });
+  });
+
+  it.each<{ name: string; blocks: SceneBlockInput[]; body: string }>([
+    { name: 'empty scene', blocks: [], body: '@end\n' },
+    { name: 'implicit end', blocks: [{ kind: 'text', value: '终章。' }], body: '终章。\n@end\n' },
+    {
+      name: 'explicit end',
+      blocks: [{ kind: 'text', value: '终章。' }, { kind: 'instruction', name: 'clear', args: ['done'] }, { kind: 'instruction', name: 'end' }],
+      body: '终章。\n@clear done\n@end\n',
+    },
+    {
+      name: 'separate branch endings',
+      blocks: [
+        { kind: 'instruction', name: 'end' }, { kind: 'label', name: 'alternate' },
+        { kind: 'text', value: '另一个终点。' }, { kind: 'instruction', name: 'end' },
+      ],
+      body: '@end\n@label alternate\n另一个终点。\n@end\n',
+    },
+    {
+      name: 'conditional end still needs a scene terminator',
+      blocks: [{ kind: 'condition', branches: [{ kind: 'if', expr: 'false', blocks: [{ kind: 'instruction', name: 'end' }] }] }],
+      body: '@if false\n  @end\n@endif\n@end\n',
+    },
+  ])('preserves scene termination when creating $name', async ({ blocks, body }) => {
+    const storage = fixtureStorage();
+    const repository = new InMemoryChangeRepository();
+    const change = await beginChange(await loadProjectSnapshot(storage, hasher), repository);
+    const input = { operationId: 'create-ending', sceneId: 'ending', blocks };
+    await applySceneCreate(change, input, hasher);
+    expect(change.record.workingFiles['content/scenario/ending.gal']).toBe(`@scene ending\n${body}`);
+    const saved = structuredClone(change.record);
+    await applySceneCreate(change, input, hasher);
+    expect(change.record).toEqual(saved);
+    expect(await repository.read(change.record.changeId)).toEqual(saved);
+    expect(await storage.exists('content/scenario/ending.gal')).toBe(false);
   });
 
   it('serializes typed choice effects as instructions after the arrow', async () => {
