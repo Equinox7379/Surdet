@@ -35,12 +35,14 @@ npm run dev:project -w surdet-editor -- --project <项目目录绝对路径>
 
 ID 是原生名称，不是 MCP 工具名。省略参数仍返回完整列表。描述含 schemas、前置条件、错误修复办法和最小示例；摘要只是目录，不代表能力在当前权限/状态下可用。以 `session.describe` 与工具实际返回为准。
 
+`docs/capabilities.json` 是渲染与运行支持矩阵，不是创作工具目录；查 scene.create 等工具合同时使用上述 `capabilities.describe`。
+
 1. **读取事实。** 用 `project.inspect`、`project.assets`、`project.gallery` 获取入口、变量、角色与素材。四个读取入口（含 object.inspect）始终显式传 `view: "project"` 或 `view: "working"`；working 必须有 active change。旧省略参数调用保留原范围：inspect/assets 读来源、object/gallery 优先工作版本，不应混用。用场景的 `childRefs` 或正文片段返回的 objectRefs 取得子对象，再 object.inspect 获取当前指纹。
 2. **建立隔离变更。** 无 active change 时调用 `change.begin`，普通章节传 `compositionMode: "direct"`，写明 intent、acceptanceCriteria 和 `initiator: "external-agent"`。续接已有草稿时用启动参数 `--resume-change <changeId>` 保留其身份，不为每个修正新建 change。
 3. **先满足依赖，再修改内容。** 变量用 `variable.ensure` 声明，角色/时间轴等沿各自能力处理；素材 key 来自公开目录。调用 scene.create/scene.patch，操作编号标识一次确定操作，收到未知结果时先核对原编号，不换编号盲重试。
 4. **验证工作版本。** 调用 `project.validate`、`project.simulate`；用 `runtime.run-from` 指定起点、选择与变量走关键路径。label 仅指真实场景标签，从场景开头运行就省略。已有 trace 可用 `runtime.read-trace` 查询，画面观测用 `runtime.read-preview`。
 5. **修正后继续。** 读取错误 code/details/repairActions，修正输入或重新取得事实。修改后重读对象；旧匿名引用和指纹不是稳定地址。不能将运行失败、预算不足或未覆盖路线称为成功。
-6. **查看与交付。** 用 `change.diff` 查看差异，在编辑器明确选中该 working-change 试玩，再继续原 change 返修。stage 交付草稿/胶囊不会自动写回项目；经授权的 apply 才能提交，integration 仍需原人类批准。胶囊固定的是封存事实，更新后的工作画面不能冒充封存版本。
+6. **查看与交付。** 用 `change.diff` 查看差异，在编辑器明确选中该 working-change 试玩，再继续原 change 返修。stage 交付草稿/胶囊不会自动写回项目；经授权的 apply 才能提交，integration 仍需原人类批准。胶囊固定的是封存事实，更新后的工作画面不能冒充封存版本。新作品交付时更新项目 README 的标题、剧情介绍、启动方式与实际素材范围，不沿用不再符合内容的模板说明。
 
 ### 预算与失败后继续
 
@@ -76,11 +78,15 @@ ID 是原生名称，不是 MCP 工具名。省略参数仍返回完整列表。
 
 创建后从 `scene:first_chapter` 读取真实子对象并试玩。是否设为项目入口、是否替换已有内容，按创作要求决定，不擅自覆盖同名场景。
 
+scene.create 自动补齐文档末尾的 `@end`；blocks 已以该指令收尾时不会再追加。分支中有意放置的 `@end` 会保留，不做全文去重。这只是场景结束，不会自动记录通关。
+
 ### 读取正文与续页
 
 调用 `object.inspect`：`{ "objectRef": "scene:first_chapter", "view": "working", "fragment": { "limit": 100 } }`。片段包含原始文本、行尾、行号、实际对象引用及版本；每页最多 200 行。若有 nextLine，续页必须传 `fromLine: nextLine`、`expectedRevision: fragment.revision`，working 还要传 `expectedWorkingRevision: fragment.workingRevision`。版本变化会拒绝续页，应从首页重读，不能拼接两次版本。
 
 scene.create/scene.patch 的 `continuation` 是当前工作版本的父场景入口。操作原结果中的 path/line 属于原回执，尤其旧 operationId 重试时不保证仍是当前行号；用 continuation.sceneRef 重读再修改。删除对象不会得到伪造的替代引用。
+
+匿名子对象引用绑定读取时的项目/工作版本；写操作改变版本后，即使目标在另一场景、文字没变，也不要复用之前缓存的引用。连续使用匿名引用做 patch 时，每次成功后先重读再取得下一处引用/指纹；收到过期错误就刷新，不猜新引用或绕过保护。这不意味着无对象引用的独立操作（如创建不同场景）也必须每次 inspect。
 
 标签先读取 `label:场景.标签` 的指纹，再用 scene.patch 的 `renameLabel`（含 name）或 `removeLabel`。这两个变体仅限 direct：改名同时更新实际本地/跨场景引用，返回 affectedScenes；删除仍被引用的标签会拒绝并列出调用位置。普通胶囊不可组合或进入正式候选/结果审批；审读使用 change.diff、working-change 试玩及原草稿续接，不把新工作版本当作旧胶囊画面。
 
@@ -107,6 +113,21 @@ scene.create/scene.patch 的 `continuation` 是当前工作版本的父场景入
 示例背景必须已出现在 project.assets，两个结局场景也必须已建立。读取中的 null 表示字段未提供；patch 的 null 移除该字段，空字符串/空数组则明确清空。消费优先级为显式 PlayerProject 参数 > game.config.json > 不依赖具体作品的默认行为；显式参数消费者不受新配置覆盖。标题改变不会改变 package name 所确定的存档身份。标签改名也同步文本回想 texts[].label；素材改名同步配置标题背景，其他字段保持原值。
 
 Editor 会阻止改名或删除仍被 `player.endScenes` 引用的场景，并指出配置来源。先通过上述配置入口调整结束场景引用，再进行场景操作；本轮不自动改写结束数组。
+
+### 场景结束、通关记录与回到标题
+
+- `@end` 结束当前场景，不等于通关，也不会填充模拟结果的 endings。
+- `@clear ending_a` 记录结局 `ending_a`，随后仍会继续执行；在需要计入通关的终点放在 `@end` 前。普通章节结束不用强行记录通关。
+- `player.endScenes` 指定哪些场景结束后由共享 Player 返回标题，不会替你执行 `@clear`；它存的是场景 ID，可以与通关结局 ID 不同。
+
+```gal
+@scene ending_a
+旁白：这一程到这里结束。
+@clear ending_a
+@end
+```
+
+多结局作品验收时，除确认模拟未报错、未耗尽预算，还要核对 `endings` 是否包含所有预期结局，逐项检查 `deadEndScenes` 是否为遗漏的跳转或通关指令。`status: "passed"` 只表示运行检查通过，不替代这些作品目标；最后仍须真实试玩。浏览器存读档检查应复用同一站点地址和浏览器数据环境，新建临时/无痕环境看不到旧档不等于存档丢失。
 
 ## 2. DSL 速查
 
@@ -147,6 +168,7 @@ Editor 会阻止改名或删除仍被 `player.endScenes` 引用的场景，并�
 @jump ch02.start
 @unlock_cg cg_end
 @autosave
+@clear ending_a
 ```
 
 ### 时间轴 JSON 速查

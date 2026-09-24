@@ -690,7 +690,7 @@ describe('CompositionService compare/plan/dry-run', () => {
   it('matches typed replay results against plan final fingerprints', async () => {
     const fixture = await setup('fingerprints');
     const first = await sealCandidate(fixture.projectRoot, 'fp-a', async (session) => {
-      expect((await session.invoke('scene.create', { operationId: 'op-fp-scene', sceneId: 'fp_scene', blocks: [{ kind: 'text', value: '初稿' }] })).ok).toBe(true);
+      expect((await session.invoke('scene.create', { operationId: 'op-fp-scene', sceneId: 'fp_scene', blocks: [{ kind: 'text', value: '初稿' }, { kind: 'instruction', name: 'end' }] })).ok).toBe(true);
       const scene = await session.invoke('object.inspect', { objectRef: 'scene:fp_scene' });
       if (!scene.ok) throw new Error(scene.error.message);
       const text = await session.invoke('object.inspect', { objectRef: (scene.result as AuthoringObject).childRefs![1] });
@@ -714,6 +714,10 @@ describe('CompositionService compare/plan/dry-run', () => {
         expect(result.plan.dryRun.finalObjectFingerprints[entry.targetObject]).toBeDefined();
       }
     }
+    const executed = await fixture.service.executePlan({ planId: result.plan.planId, artifactSha256: result.identity.sha256, executeOperationId: 'explicit-end-replay' });
+    expect(executed.status).toBe('READY');
+    const integration = await NodeChangeStoreStatic.openByChangeId(executed.changeId);
+    expect(integration!.record.workingFiles['content/scenario/fp_scene.gal']).toBe('@scene fp_scene\n定稿\n@end\n');
   });
 
   it('resolves all six working object fingerprint kinds and rejects unknown products', async () => {

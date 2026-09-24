@@ -81,6 +81,7 @@ describe('agent authoring CLI vertical slice', () => {
         { kind: 'text', speaker: '凛', value: '正向。' },
         { kind: 'label', name: 'negative' },
         { kind: 'text', speaker: '凛', value: '负向。' },
+        { kind: 'instruction', name: 'end' },
       ],
     });
     expect(runCli(['scene', 'create', '--change', changeId, '--input', sceneInput, '--json'], env).status).toBe(0);
@@ -156,6 +157,7 @@ describe('agent authoring CLI vertical slice', () => {
     expect(committed.status).toBe(0);
     expect(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8')).toContain('trust');
     expect(fs.readFileSync(path.join(root, 'content/scenario/agent.gal'), 'utf8')).toContain('@jump agent.positive');
+    expect(fs.readFileSync(path.join(root, 'content/scenario/agent.gal'), 'utf8').split('\n').filter((line) => line === '@end')).toHaveLength(1);
     expect(fs.readFileSync(path.join(root, 'content/scenario/prologue.gal'), 'utf8')).toBe(originalScene);
   });
 });

@@ -537,7 +537,7 @@ function rewriteLabelReferences(source: string, path: string, currentScene: stri
   return serializeSceneDocument(document, defaultEol(document));
 }
 
-export async function applySceneCreate(change: ChangeSession, input: SceneCreateInput, hasher: TextHasher = compositionTextHasher): Promise<{ sceneId: string; path: string }> {
+export async function applySceneCreate(change: ChangeSession, input: SceneCreateInput, hasher: TextHasher = compositionTextHasher, sealedFingerprint?: string): Promise<{ sceneId: string; path: string }> {
   const path = scenePath(input.sceneId);
   return runOperation(change, input, async (record) => {
     if (resolveUniqueScenarioPath(record.workingFiles, input.sceneId) !== undefined) {
@@ -550,9 +550,21 @@ export async function applySceneCreate(change: ChangeSession, input: SceneCreate
     const lines: SceneDocumentLine[] = [
       { kind: 'instr', name: 'scene', raw: `@scene ${input.sceneId}`, eol: '\n' as const },
       ...bodyLines,
-      { kind: 'instr', name: 'end', raw: '@end', eol: '\n' as const },
     ];
-    const text = serializeSceneDocument(lines);
+    const last = bodyLines.at(-1);
+    if (last?.kind !== 'instr' || last.name !== 'end') {
+      lines.push({ kind: 'instr', name: 'end', raw: '@end', eol: '\n' as const });
+    }
+    let text = serializeSceneDocument(lines);
+    if (sealedFingerprint !== undefined && await hasher.sha256(text) !== sealedFingerprint) {
+      // Older sealed creates always appended @end, including after an explicit one.
+      // Preserve only that exact historical output; never rewrite a capsule or guess other repairs.
+      const previousText = text + '@end\n';
+      if (last?.kind !== 'instr' || last.name !== 'end' || await hasher.sha256(previousText) !== sealedFingerprint) {
+        throw new AuthoringOperationError('COMPOSITION_REPLAY_FAILED', `场景创建结果与封存指纹不匹配：${input.sceneId}`);
+      }
+      text = previousText;
+    }
     validateSceneCandidate(path, input.sceneId, text);
     return {
       result: { sceneId: input.sceneId, path },
