@@ -176,10 +176,10 @@ function validateJournal(value: unknown, changeId: string, file: string): Commit
     if (typeof entry.path !== 'string'
       || entry.path.length === 0
       || (entry.originalSha256 !== undefined && (typeof entry.originalSha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(entry.originalSha256)))
-      || typeof entry.targetSha256 !== 'string'
-      || !/^[0-9a-f]{64}$/i.test(entry.targetSha256)
-      || typeof entry.stagedIdentity !== 'string'
-      || entry.stagedIdentity.length === 0
+      || (entry.kind === 'delete'
+        ? typeof entry.originalSha256 !== 'string' || entry.targetSha256 !== undefined || entry.stagedIdentity !== undefined
+        : (entry.kind !== undefined && entry.kind !== 'write') || typeof entry.targetSha256 !== 'string'
+          || !/^[0-9a-f]{64}$/i.test(entry.targetSha256) || typeof entry.stagedIdentity !== 'string' || entry.stagedIdentity.length === 0)
       || typeof entry.replaced !== 'boolean'
       || typeof entry.restored !== 'boolean') {
       throw journalCorrupt(`commit journal 文件条目字段无效：${file}`, { path: file, changeId, index });
@@ -207,6 +207,7 @@ function validateJournalContinuation(previous: CommitJournal, journal: CommitJou
     || journal.files.some((entry) => {
       const baseline = previousFiles.get(entry.path);
       return baseline === undefined
+        || (baseline.kind ?? 'write') !== (entry.kind ?? 'write')
         || baseline.originalSha256 !== entry.originalSha256
         || baseline.targetSha256 !== entry.targetSha256
         || baseline.stagedIdentity !== entry.stagedIdentity;

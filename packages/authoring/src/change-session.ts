@@ -633,6 +633,11 @@ export async function commitChange(
   };
   try {
     for (const path of paths) {
+      if (change.record.workingFiles[path] === undefined) {
+        if (storage.removePath === undefined) throw new Error(`存储不支持删除：${path}`);
+        journal.files.push({ kind: 'delete', path, originalSha256: change.record.baseFiles[path]!.sha256, replaced: false, restored: false });
+        continue;
+      }
       const staged = await storage.stageText(path, change.record.workingFiles[path]!, change.record.changeId);
       journal.files.push({
         path,
@@ -645,7 +650,7 @@ export async function commitChange(
     }
     await writeJournal('STAGING');
   } catch (error) {
-    for (const entry of journal.files) await storage.removeStage(entry.stagedIdentity);
+    for (const entry of journal.files) if (entry.kind !== 'delete') await storage.removeStage(entry.stagedIdentity);
     throw new AuthoringOperationError('COMMIT_FAILED_RECOVERED', `提交前 staging 失败：${String(error)}`);
   }
 
@@ -654,12 +659,22 @@ export async function commitChange(
   try {
     for (const entry of journal.files) {
       pendingReplacement = entry;
-      await storage.replaceFromStage(entry.path, entry.stagedIdentity);
+      if (entry.kind === 'delete') {
+        const original = await storage.readText(entry.path);
+        if (original.sha256 !== entry.originalSha256) throw new Error(`删除前文件身份已变化：${entry.path}`);
+        await storage.removePath!(entry.path);
+      } else {
+        await storage.replaceFromStage(entry.path, entry.stagedIdentity);
+      }
       entry.replaced = true;
       pendingReplacement = undefined;
       await writeJournal('REPLACING');
-      const finalFile = await storage.readText(entry.path);
-      if (finalFile.sha256 !== entry.targetSha256) throw new Error(`最终文件身份不匹配：${entry.path}`);
+      if (entry.kind === 'delete') {
+        if (await storage.exists(entry.path)) throw new Error(`删除后文件仍存在：${entry.path}`);
+      } else {
+        const finalFile = await storage.readText(entry.path);
+        if (finalFile.sha256 !== entry.targetSha256) throw new Error(`最终文件身份不匹配：${entry.path}`);
+      }
     }
   } catch (error) {
     let recoveryError: unknown;
@@ -706,6 +721,7 @@ export async function commitChange(
       throw new AuthoringOperationError('COMMIT_RECOVERY_FAILED', `提交失败且恢复失败：${String(recoveryError)}`, { cause: String(error) });
     }
     for (const entry of journal.files) {
+      if (entry.kind === 'delete') continue;
       try { await storage.removeStage(entry.stagedIdentity); } catch { /* 失败证据由 journal 保留 */ }
     }
     await writeJournal('RECOVERED');
@@ -718,6 +734,7 @@ export async function commitChange(
   await persistRecord(change, next);
 
   for (const entry of journal.files) {
+    if (entry.kind === 'delete') continue;
     try {
       await storage.removeStage(entry.stagedIdentity);
     } catch {

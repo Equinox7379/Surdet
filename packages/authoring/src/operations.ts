@@ -1,4 +1,4 @@
-import { compileScene, isValidSceneId, Lexer, Parser, findChoiceArrow, splitOutsideQuotes, parseInlineInstructions, type AstBlock } from '@surdet/core';
+import { collectConfigSceneRoots, compileScene, isValidSceneId, Lexer, Parser, findChoiceArrow, splitOutsideQuotes, parseInlineInstructions, type AstBlock } from '@surdet/core';
 import {
   insertLinesAfter,
   parseSceneDocument,
@@ -16,6 +16,7 @@ import type {
   SceneChoiceOptionInput,
   SceneBlockInput,
   SceneCreateInput,
+  SceneRemoveInput,
   SceneDocumentLineInput,
   SceneDocumentLine,
   ScenePatchInput,
@@ -32,6 +33,8 @@ import { buildSceneOperationCompositionDraft, buildVariableOperationCompositionD
 import { REPLACEABLE_SCENE_INSTRUCTIONS } from './contracts.js';
 import { resolveUniqueScenarioPath, sceneIdFromScenarioPath } from './scenario-identity.js';
 import { GALLERY_PATH } from './gallery-operations.js';
+import { analyzeSceneCompositionReferences } from './composition-reference-analysis.js';
+import { inspectPlayerConfig } from './config-operations.js';
 
 function sceneCharacters(files: Record<string, string>): Record<string, unknown> {
   const characters = parseProjectConfigDocument(files['game.config.json'] ?? '{}')['characters'];
@@ -574,6 +577,65 @@ export async function applySceneCreate(change: ChangeSession, input: SceneCreate
       }),
       workingFiles: { ...record.workingFiles, [path]: text },
     };
+  });
+}
+
+export async function applySceneRemove(change: ChangeSession, input: SceneRemoveInput, hasher: TextHasher = compositionTextHasher) {
+  if (change.record.composition?.mode !== 'direct' || change.record.integration !== undefined) {
+    throw new AuthoringOperationError('UNSUPPORTED_OPERATION', '场景删除只支持普通 direct 草稿，不进入候选或组合结果', { operationApplied: false, operationId: input.operationId });
+  }
+  scenePath(input.sceneId);
+  return runOperation(change, input, async (record) => {
+    const path = resolveUniqueScenarioPath(record.workingFiles, input.sceneId);
+    if (path === undefined) throw new AuthoringOperationError('OBJECT_NOT_FOUND', `场景不存在：${input.sceneId}`);
+    const source = record.workingFiles[path]!;
+    const fingerprint = await hasher.sha256(source);
+    if (fingerprint !== input.expectedFingerprint) throw new AuthoringOperationError('OBJECT_REF_STALE', '场景正文已变化，请重新读取 object.inspect');
+
+    const references: Array<{ path: string; line?: number; kind: string; target: string }> = [];
+    const config = parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}');
+    const scenes = Object.keys(record.workingFiles).filter(file => file.startsWith('content/scenario/') && file.toLowerCase().endsWith('.gal')).sort();
+    const entryScene = typeof config['entryScene'] === 'string' && config['entryScene'].length > 0
+      ? config['entryScene'] : sceneIdFromScenarioPath(scenes[0]!);
+    if (entryScene === input.sceneId) references.push({ path: 'game.config.json', kind: 'entryScene', target: input.sceneId });
+    if ((await inspectPlayerConfig(config, hasher)).values.endScenes?.includes(input.sceneId)) {
+      references.push({ path: 'game.config.json', kind: 'player.endScenes', target: input.sceneId });
+    }
+    for (const file of scenes) {
+      if (file === path) continue; // The removed file's own references disappear with it.
+      try {
+        for (const ref of analyzeSceneCompositionReferences({ sceneId: sceneIdFromScenarioPath(file), path: file, text: record.workingFiles[file]!, characters: sceneCharacters(record.workingFiles) })) {
+          if (ref.kind === 'scene' && ref.objectRef === `scene:${input.sceneId}`) {
+            references.push({ path: file, line: ref.source.line, kind: 'scene', target: ref.token });
+          }
+        }
+      } catch {
+        throw new AuthoringOperationError('PROJECT_INVALID', `无法安全分析场景引用：${file}；请先修正剧本`, { path: file, operationApplied: false });
+      }
+    }
+    for (const kind of ['events', 'growth', 'calendar'] as const) {
+      const file = `content/config/${kind}.json`;
+      const raw = record.workingFiles[file];
+      if (raw === undefined) continue;
+      const roots = collectConfigSceneRoots({ [kind]: parseProjectConfigDocument(raw, file) });
+      for (const target of roots) {
+        if (target.split('.')[0] === input.sceneId) references.push({ path: file, kind, target });
+      }
+    }
+    const gallery = record.workingFiles[GALLERY_PATH];
+    if (gallery !== undefined) {
+      const texts = parseProjectConfigDocument(gallery, GALLERY_PATH)['texts'];
+      if (texts !== undefined && !Array.isArray(texts)) throw new AuthoringOperationError('PROJECT_INVALID', `${GALLERY_PATH} 的 texts 必须是数组`);
+      for (const item of texts as Array<{ scene?: unknown; id?: unknown }> | undefined ?? []) {
+        if (item?.scene === input.sceneId) references.push({ path: GALLERY_PATH, kind: 'gallery.texts', target: String(item.id ?? input.sceneId) });
+      }
+    }
+    if (references.length > 0) {
+      throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `场景仍被引用，未删除：${input.sceneId}`, { operationApplied: false, references });
+    }
+    const workingFiles = { ...record.workingFiles };
+    delete workingFiles[path];
+    return { result: { sceneId: input.sceneId, path, removed: true }, workingFiles };
   });
 }
 

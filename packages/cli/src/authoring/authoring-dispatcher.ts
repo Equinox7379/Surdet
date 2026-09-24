@@ -107,6 +107,8 @@ export async function dispatchAuthoringCapability(
       }, { compositionMode: (payload['compositionMode'] as 'direct' | 'candidate' | undefined) ?? (context.policy === 'stage' ? 'candidate' : 'direct') }) };
     case 'scene.create':
       return { value: await service.sceneCreate(requireChange(context), payload as unknown as Parameters<AuthoringService['sceneCreate']>[1]), operationId: operationIdFrom(payload) };
+    case 'scene.remove':
+      return { value: await service.sceneRemove(requireChange(context), payload as unknown as Parameters<AuthoringService['sceneRemove']>[1]), operationId: operationIdFrom(payload) };
     case 'scene.patch':
       return { value: await service.scenePatch(requireChange(context), payload as unknown as Parameters<AuthoringService['scenePatch']>[1]), operationId: operationIdFrom(payload) };
     case 'variable.ensure':

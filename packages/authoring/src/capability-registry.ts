@@ -700,6 +700,7 @@ const changeDiffProperties: SchemaProperties = {
   summary: strictObject({
     createdScenes: integerSchema,
     modifiedScenes: integerSchema,
+    removedScenes: integerSchema,
     changedVariables: integerSchema,
     warnings: stringArraySchema,
   }, ['createdScenes', 'modifiedScenes', 'changedVariables', 'warnings']),
@@ -708,6 +709,7 @@ const changeDiffProperties: SchemaProperties = {
     path: stringSchema,
     beforeSha256: stringSchema,
     afterSha256: stringSchema,
+    changeType: { enum: ['created', 'modified', 'deleted'] },
     unifiedDiff: stringSchema,
     unexpectedFormatChange: booleanSchema,
   }, ['path', 'unifiedDiff', 'unexpectedFormatChange'])),
@@ -1029,6 +1031,11 @@ const definitions = {
       { kind: 'condition', branches: [{ kind: 'if', expr: 'trust > 0', blocks: [{ kind: 'text', value: '进入下一段。' }] }, { kind: 'else', blocks: [{ kind: 'text', value: '暂时停留。' }] }] },
     ] }, expectedResultShape: { sceneId: 'agent_port_entry', path: 'content/scenario/agent_port_entry.gal' } },
   },
+  sceneRemove: {
+    inputSchema: strictObject({ operationId: stringSchema, sceneId: stringSchema, expectedFingerprint: stringSchema }, ['operationId', 'sceneId', 'expectedFingerprint']),
+    outputSchema: strictObject({ sceneId: stringSchema, path: stringSchema, removed: booleanSchema }, ['sceneId', 'path', 'removed']),
+    example: { input: { operationId: 'remove-unused', sceneId: 'unused', expectedFingerprint: 'copy from object.inspect scene:unused, view:working' }, expectedResultShape: { sceneId: 'unused', path: 'content/scenario/unused.gal', removed: true } },
+  },
   scenePatch: {
     inputSchema: { ...strictObject({ operationId: stringSchema, sceneId: stringSchema, patch: scenePatchSchema }, ['operationId', 'patch']),
       $defs: sceneSchemaDefinitions,
@@ -1198,6 +1205,7 @@ export const AUTHORING_CAPABILITY_IDS = [
   'object.inspect',
   'change.begin',
   'scene.create',
+  'scene.remove',
   'scene.patch',
   'variable.ensure',
   'variable.patch-initial',
@@ -1266,6 +1274,7 @@ const mutateRepair = [
 const imageImportErrors = ["IMPORT_OPERATION_NOT_FOUND","IMPORT_OPERATION_CONFLICT","IMPORT_PLAN_BLOCKED","IMPORT_PLAN_STALE","IMPORT_PROJECT_STALE","IMPORT_TARGET_UNSAFE","IMPORT_TARGET_EXISTS","IMPORT_RECOVERY_REQUIRED","IMPORT_LIMIT_EXCEEDED","IMPORT_UPLOAD_BUSY","IMPORT_UPLOAD_TIMEOUT","IMPORT_UPLOAD_MISMATCH","IMPORT_AUTHORITY_NOT_READY","IMPORT_FILESYSTEM_UNSUPPORTED","IMPORT_PUBLICATION_FAILED","IMPORT_IO_FAILED","ASSET_SOURCE_FORBIDDEN","ASSET_SOURCE_CHANGED","ASSET_IMAGE_INVALID","PROJECT_BUSY","HUMAN_WORKSPACE_DIRTY","HUMAN_WORKSPACE_BUSY","HUMAN_WORKSPACE_STATE_CORRUPT","SESSION_STATE_INVALID","POLICY_BLOCKED"] as const;
 
 const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
+  'scene.remove': { title: 'Remove scene', purpose: 'Remove one unreferenced scene from an isolated direct draft, never the source project immediately. Read scene:<id> with view:working for its full-file fingerprint. Refuse entry/end scenes, incoming jump/call/choice targets, gallery text replays and event/growth/calendar roots; no cascading edits. The normal diff, validation, capsule and authorized commit record and publish the deletion.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['active change is OPEN and direct, not candidate/integration', 'scene identity is unique and full-file fingerprint is current', 'no incoming references remain'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS', 'OBJECT_REF_STALE', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Read object.inspect scene:<id> with view:working and copy fingerprint; do not compute or guess it.', 'Inspect error details.references and explicitly update callers/config first. Deletion never removes references for you.', ...mutateRepair] },
   'project.player-config.patch': { title: 'Patch player configuration', purpose: 'Patch finite display settings in game.config.json using project.inspect.playerConfig fingerprint. Explicit PlayerProject options override config, which overrides content-independent defaults. Ordinary direct drafts only; no arbitrary JSON or source editing.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['active change is OPEN and direct', 'working playerConfig fingerprint is current', 'background and ending scene references exist'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['read project.inspect with view=working and copy playerConfig.fingerprint; null restores absence, empty values explicitly clear', ...mutateRepair] },
   'project.gallery': { title: 'Inspect CG gallery', purpose: 'Read CG id/name/src and per-entry fingerprints from the active working change, or the bound project when no change is active. src is a project.assets background key; omitted src uses id.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['bound project or active change is readable'], possibleErrors: [...commonErrors, 'CHANGE_NOT_FOUND', 'OBJECT_AMBIGUOUS'], repairRecipes: readRepair },
   'gallery.cg.create': { title: 'Create CG entry', purpose: 'Add one CG without replacing gallery.json or changing other CG/music/text/unknown fields. Import images first, refresh project.assets, create CGs before scenes that unlock them with the existing unlock_cg instruction. Unlocks follow existing per-save rules.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'id is new', 'src or id names a resolved project.assets.backgrounds key'], possibleErrors: [...commonErrors, 'OBJECT_PRECONDITION_FAILED', 'OBJECT_AMBIGUOUS', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Read project.gallery before creating; configure CGs before adding @unlock_cg references with scene.create/scene.patch.', ...mutateRepair] },
@@ -1334,6 +1343,8 @@ function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition
             ? 'begin'
             : id === 'scene.create'
               ? 'sceneCreate'
+              : id === 'scene.remove'
+                ? 'sceneRemove'
               : id === 'scene.patch'
                 ? 'scenePatch'
                 : id === 'variable.ensure'

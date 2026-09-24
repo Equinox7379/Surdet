@@ -182,7 +182,7 @@ function safeInvocationSummary(records: InvocationRecord[], journal: unknown): u
   const journalFiles = Array.isArray(journalRecord?.['files'])
     ? journalRecord['files'].filter(isRecord).map((file) => ({
         path: file['path'],
-        stagedIdentity: file['stagedIdentity'],
+        ...(file['kind'] === 'delete' ? { kind: 'delete' } : { stagedIdentity: file['stagedIdentity'] }),
         replaced: file['replaced'],
         restored: file['restored'],
       }))
