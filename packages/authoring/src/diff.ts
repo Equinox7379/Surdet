@@ -1,5 +1,6 @@
 export interface ChangeDiffFile {
   path: string;
+  changeType?: 'created' | 'modified' | 'deleted';
   beforeSha256?: string;
   afterSha256?: string;
   unifiedDiff: string;
@@ -7,7 +8,7 @@ export interface ChangeDiffFile {
 }
 
 export interface ChangeDiff {
-  summary: { createdScenes: number; modifiedScenes: number; changedVariables: number; warnings: string[] };
+  summary: { createdScenes: number; modifiedScenes: number; removedScenes?: number; changedVariables: number; warnings: string[] };
   semantic: {
     kind: string;
     objectBefore?: string;

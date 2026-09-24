@@ -94,11 +94,15 @@ async function prepareInterruptedChange(
   await NodeChangeStore.withChangeLeaseForProject(changeId, rootIdentity, async (store) => {
     const record = await store.read(changeId);
     if (record === null) throw new Error(`missing record ${changeId}`);
-    const changedPaths = Object.keys(record.workingFiles)
+    const changedPaths = [...new Set([...Object.keys(record.workingFiles), ...Object.keys(record.baseContents)])]
       .filter((filePath) => record.baseContents[filePath] !== record.workingFiles[filePath])
       .sort((left, right) => left.localeCompare(right));
     const files: CommitJournal['files'] = [];
     for (const filePath of changedPaths) {
+      if (record.workingFiles[filePath] === undefined) {
+        files.push({ kind: 'delete', path: filePath, originalSha256: record.baseFiles[filePath]!.sha256, replaced: false, restored: false });
+        continue;
+      }
       const staged = await storage.stageText(filePath, record.workingFiles[filePath]!, changeId);
       stagedIdentities.push(staged.stagedIdentity);
       files.push({
@@ -128,13 +132,15 @@ async function prepareInterruptedChange(
     if (mode === 'replacing-mixed') {
       const first = files[0];
       if (first === undefined) throw new Error('recovery fixture has no changed files');
-      await storage.replaceFromStage(first.path, first.stagedIdentity);
+      if (first.kind === 'delete') await storage.removePath(first.path);
+      else await storage.replaceFromStage(first.path, first.stagedIdentity);
       first.replaced = true;
       await write(3, 'REPLACING');
       return;
     }
     for (const entry of files) {
-      await storage.replaceFromStage(entry.path, entry.stagedIdentity);
+      if (entry.kind === 'delete') await storage.removePath(entry.path);
+      else await storage.replaceFromStage(entry.path, entry.stagedIdentity);
       entry.replaced = true;
       await write((files.indexOf(entry) + 3), 'REPLACING');
     }
@@ -148,6 +154,50 @@ async function readRecordAndJournalBytes(fixture: Fixture, rootIdentity: string,
 }
 
 describe('Task 7：Node recovery service 与 fresh-process reopen', () => {
+  it.each(['staging', 'replacing-mixed', 'committed'] as const)('recovers a durable scene deletion from %s in a fresh process', async (mode) => {
+    await withFixture(`surdet-delete-recovery-${mode}-`, async fixture => {
+      const target = 'content/scenario/unused.gal';
+      const original = '@scene unused\n原始模板。\n@end\n';
+      fs.writeFileSync(path.join(fixture.projectRoot, target), original);
+      const service = new AuthoringService();
+      const begun = await service.begin(fixture.projectRoot, {}, { compositionMode: 'direct' });
+      const changeId = begun.result.changeId;
+      const inspected = await service.inspectObject(fixture.projectRoot, 'scene:unused', changeId);
+      await service.sceneRemove(changeId, { operationId: 'remove', sceneId: 'unused', expectedFingerprint: (inspected.result as { fingerprint: string }).fingerprint });
+      await prepareInterruptedChange(fixture, changeId, mode);
+      const cli = fileURLToPath(new URL('../dist/index.js', import.meta.url));
+      const check = spawnSync(process.execPath, [cli, 'change', 'recovery', 'inspect', '--change', changeId, '--json'], { encoding: 'utf8', env: process.env });
+      expect(check.status, check.stderr + check.stdout).toBe(0);
+      const inspection = JSON.parse(check.stdout).result;
+      expect(inspection.disposition).toBe(mode === 'staging' ? 'REOPEN_OPEN' : mode === 'committed' ? 'FINALIZE_COMMITTED' : 'ROLL_BACK_TO_BASE');
+      const execute = spawnSync(process.execPath, [cli, 'change', 'recovery', 'execute', '--change', changeId, '--input', '-', '--json'], {
+        encoding: 'utf8', env: process.env, input: JSON.stringify({ operationId: 'recover-delete', recoveryToken: inspection.recoveryToken }),
+      });
+      expect(execute.status, execute.stderr + execute.stdout).toBe(0);
+      expect(fs.existsSync(path.join(fixture.projectRoot, target))).toBe(mode !== 'committed');
+      if (mode !== 'committed') expect(fs.readFileSync(path.join(fixture.projectRoot, target), 'utf8')).toBe(original);
+    });
+  }, 30000);
+
+  it('preserves a foreign file recreated at a deleted path during durable recovery', async () => {
+    await withFixture('surdet-delete-recovery-foreign-', async fixture => {
+      const target = 'content/scenario/unused.gal';
+      fs.writeFileSync(path.join(fixture.projectRoot, target), '@scene unused\n原文。\n@end\n');
+      const service = new AuthoringService();
+      const changeId = (await service.begin(fixture.projectRoot, {}, { compositionMode: 'direct' })).result.changeId;
+      const inspected = await service.inspectObject(fixture.projectRoot, 'scene:unused', changeId);
+      await service.sceneRemove(changeId, { operationId: 'remove', sceneId: 'unused', expectedFingerprint: (inspected.result as { fingerprint: string }).fingerprint });
+      await prepareInterruptedChange(fixture, changeId, 'replacing-mixed');
+      fs.writeFileSync(path.join(fixture.projectRoot, target), '用户重新创建的内容');
+      const before = (await NodeChangeStore.openByChangeId(changeId))!.record;
+      const recovery = await service.inspectRecovery(changeId);
+      expect(recovery.result).toMatchObject({ projectState: 'ambiguous', manualRecoveryRequired: true });
+      await expect(service.executeRecovery(changeId, { operationId: 'recover', recoveryToken: recovery.result.recoveryToken! })).rejects.toMatchObject({ code: 'RECOVERY_AMBIGUOUS' });
+      expect(fs.readFileSync(path.join(fixture.projectRoot, target), 'utf8')).toBe('用户重新创建的内容');
+      expect((await NodeChangeStore.openByChangeId(changeId))!.record).toEqual(before);
+    });
+  });
+
   it('写回恢复不能越过当前人类草稿；拒绝后保留原恢复计划', async () => {
     await withFixture('surdet-recovery-human-draft-', async fixture => {
       const service = new AuthoringService();
@@ -224,7 +274,8 @@ describe('Task 7：Node recovery service 与 fresh-process reopen', () => {
         expect(capsule.composition.eligibility).toBe('unavailable');
         expect(capsule.composition.manifest).toBeUndefined();
         expect(capsule.composition.reasons).toEqual(expect.arrayContaining([
-          expect.objectContaining({ operationId: 'recover-order' }),
+          policy === 'apply' ? expect.objectContaining({ code: 'DIRECT_CHANGE' })
+            : expect.objectContaining({ operationId: 'recover-order' }),
         ]));
         const reopened = (await NodeChangeStore.openForProject(changeId, prepared.rootIdentity))!.record;
         expect(expectedOrder.map((id) => reopened.operations[id]!.sequence)).toEqual(expectedOrder.map((_, index) => index));

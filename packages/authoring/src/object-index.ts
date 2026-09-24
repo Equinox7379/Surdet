@@ -61,6 +61,7 @@ function sceneObject(scene: ProjectSnapshotScene): AuthoringObject {
     kind: 'scene',
     semanticId: `scene:${scene.id}`,
     objectRef: `scene:${scene.id}`,
+    fingerprint: scene.file.sha256,
     source: sourceOf(scene.path, 1, first?.raw ?? ''),
     references: [],
     referencedBy: [],

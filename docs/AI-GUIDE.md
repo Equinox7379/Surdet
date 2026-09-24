@@ -90,6 +90,20 @@ scene.create/scene.patch 的 `continuation` 是当前工作版本的父场景入
 
 标签先读取 `label:场景.标签` 的指纹，再用 scene.patch 的 `renameLabel`（含 name）或 `removeLabel`。这两个变体仅限 direct：改名同时更新实际本地/跨场景引用，返回 affectedScenes；删除仍被引用的标签会拒绝并列出调用位置。普通胶囊不可组合或进入正式候选/结果审批；审读使用 change.diff、working-change 试玩及原草稿续接，不把新工作版本当作旧胶囊画面。
 
+### 删除不再使用的场景
+
+先读取 `object.inspect({ "objectRef": "scene:unused", "view": "working" })` 的完整场景 `fingerprint`，再调用 `scene.remove`（MCP：`surdet_scene_remove`）：
+
+```json
+{ "operationId": "remove-unused-scene", "sceneId": "unused", "expectedFingerprint": "复制刚读到的场景 fingerprint" }
+```
+
+仅支持 OPEN 的普通 direct 草稿，stage 不会因此获得来源写权限；candidate/integration 会在修改前拒绝。它删除按场景 ID 唯一定位的整个文件（含子目录、`.GAL`），不是 removeObject 删除一行，也不会伪造已删除对象的续接引用。
+
+入口、player.endScenes、其他场景的 jump/call/选择项、文本回想以及事件/成长/日历配置仍有引用时，错误的 `details.references` 会列出来源，不能强制或级联删除。先明确调整调用者及配置，再重读并删除；清理模板时通常先修改 entryScene 和 player.endScenes。没有公开修改入口的配置由人类按正常编辑流程处理，不在已有草稿外偷偷改来源。失败不修改草稿；相同 operationId 和相同请求可以安全重试。
+
+删除随后进入正常 change.diff、validate、simulate、真实试玩、封存和获授权的 apply 提交。差异中的文件标记 `changeType: "deleted"`、不提供 afterSha256，并计入 `summary.removedScenes`；不能把删除当成覆盖为空文件。提交中断仍走已有 change.recovery.inspect/execute；遇到外部重建或改写的未知文件，保留内容并停止自动恢复。事件和日历配置现已纳入快照版本检查，旧草稿若因此报告来源变化，应保留旧记录并重新读取项目，不强行改基线。
+
 ### 项目展示配置
 
 `project.inspect` 的 `playerConfig` 返回有限字段的 `values` 与修改所需 `fingerprint`。`title` 存在 game.config.json 根部，`subtitle`、`titleBackground`、`endScenes`、`firstRunHint` 存在其 `player` 对象中；无需打开或修改 src/main.ts。

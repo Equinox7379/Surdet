@@ -31,10 +31,13 @@ function validJournal(journal: CommitJournal | null, changeId: string): journal 
     || !Number.isInteger(journal.recordVersionAtCommitStart) || journal.recordVersionAtCommitStart < 0
     || typeof journal.projectRevisionAtCommitStart !== 'string' || !Array.isArray(journal.files)) return false;
   return journal.files.every((entry) => typeof entry === 'object' && entry !== null
-    && typeof entry.path === 'string' && typeof entry.targetSha256 === 'string'
-    && typeof entry.stagedIdentity === 'string' && typeof entry.replaced === 'boolean'
+    && typeof entry.path === 'string' && typeof entry.replaced === 'boolean'
     && typeof entry.restored === 'boolean'
-    && (entry.originalSha256 === undefined || typeof entry.originalSha256 === 'string'));
+    && (entry.kind === 'delete'
+      ? typeof entry.originalSha256 === 'string' && entry.targetSha256 === undefined && entry.stagedIdentity === undefined
+      : (entry.kind === undefined || entry.kind === 'write') && typeof entry.targetSha256 === 'string'
+        && typeof entry.stagedIdentity === 'string'
+        && (entry.originalSha256 === undefined || typeof entry.originalSha256 === 'string')));
 }
 
 function projectPathIsSafe(value: string): boolean {
@@ -109,6 +112,7 @@ async function classifyFile(storage: ProjectWriteStorage, entry: CommitJournal['
     return { path: entry.path, state: 'unexpected' };
   }
   if (!exists) {
+    if (entry.kind === 'delete') return { path: entry.path, state: 'target' };
     return entry.originalSha256 === undefined
       ? { path: entry.path, state: 'absent-expected' }
       : { path: entry.path, state: 'unexpected' };
@@ -237,6 +241,9 @@ async function executeRollback(
     for (const entry of [...journal.files].reverse()) {
       const state = stateByPath.get(entry.path);
       if (state !== 'target') continue;
+      const current = await classifyFile(input.storage, entry);
+      if (baseState(current.state)) continue;
+      if (current.state !== 'target') throw new AuthoringOperationError('RECOVERY_EXECUTION_FAILED', `恢复前文件身份已变化：${entry.path}`);
       if (entry.originalSha256 === undefined) {
         if (input.storage.removePath === undefined) throw new AuthoringOperationError('RECOVERY_EXECUTION_FAILED', `无法删除恢复新文件：${entry.path}`);
         await input.storage.removePath(entry.path);
@@ -318,12 +325,13 @@ export async function executeTransactionRecovery(input: {
     let journal = input.journal;
     if (journal.status === 'STAGING') {
       for (const entry of journal.files) {
+        if (entry.kind === 'delete') continue;
         if (!stageIsLegal(input.storage, entry.stagedIdentity)) {
           throw new AuthoringOperationError('RECOVERY_AMBIGUOUS', `stagedIdentity 不在合法范围：${entry.stagedIdentity}`);
         }
       }
       try {
-        for (const entry of journal.files) await input.storage.removeStage(entry.stagedIdentity);
+        for (const entry of journal.files) if (entry.kind !== 'delete') await input.storage.removeStage(entry.stagedIdentity);
       } catch (error) {
         try {
           await writeJournal(input.change, journal, 'RECOVERY_FAILED');
@@ -346,6 +354,7 @@ export async function executeTransactionRecovery(input: {
   }
   if (fresh.disposition === 'FINALIZE_COMMITTED') {
     for (const entry of input.journal.files) {
+      if (entry.kind === 'delete') continue;
       if (!stageIsLegal(input.storage, entry.stagedIdentity)) continue;
       await input.storage.removeStage(entry.stagedIdentity).catch(() => undefined);
     }

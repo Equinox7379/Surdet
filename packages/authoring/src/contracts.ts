@@ -50,7 +50,7 @@ export interface AuthoringObject {
   childRefs?: string[];
   /** 对象结构（timeline 为 definition；track/cue 为对应 JSON 片段；asset 为 catalog 条目或 null）。 */
   details?: unknown;
-  /** SHA-256 规范化 JSON 指纹（timeline/track/cue；由 hasher 注入方填充）。 */
+  /** 场景为完整源码文件 SHA-256；timeline/track/cue 等为对应对象的规范化指纹。 */
   fingerprint?: string;
 }
 
@@ -74,14 +74,12 @@ export interface GalleryCgPatchInput {
 
 export type CommitJournalStatus = 'STAGING' | 'REPLACING' | 'RECOVERED' | 'RECOVERY_FAILED' | 'COMMITTED';
 
-export interface CommitJournalEntry {
+export type CommitJournalEntry = {
   path: string;
-  originalSha256?: string;
-  targetSha256: string;
-  stagedIdentity: string;
   replaced: boolean;
   restored: boolean;
-}
+} & ({ kind?: 'write'; originalSha256?: string; targetSha256: string; stagedIdentity: string }
+  | { kind: 'delete'; originalSha256: string; targetSha256?: never; stagedIdentity?: never });
 
 export interface CommitJournal {
   formatVersion: 2;
@@ -186,7 +184,7 @@ export interface ProjectWriteStorage extends ProjectStorage {
   removeStage(stagedIdentity: string): Promise<void>;
   /** Optional audit hook used to prove approval was checked before staging. */
   onCommitEvent?(event: 'approval-checked'): void | Promise<void>;
-  /** 新文件恢复时的可选删除能力；旧文件恢复仍只使用 restoreText。 */
+  /** 删除提交及新文件恢复；旧文件恢复使用 restoreText。 */
   removePath?(path: string): Promise<void>;
 }
 
@@ -260,6 +258,12 @@ export interface SceneCreateInput {
   operationId: string;
   sceneId: string;
   blocks?: SceneBlockInput[];
+}
+
+export interface SceneRemoveInput {
+  operationId: string;
+  sceneId: string;
+  expectedFingerprint: string;
 }
 
 export interface ScenePatchInput {

@@ -59,6 +59,7 @@ import {
   nativeCapabilityToMcpTool,
   openChange,
   applySceneCreate,
+  applySceneRemove,
   applyScenePatch,
   queryTrace,
   recordValidation,
@@ -88,6 +89,7 @@ import {
   type CommitJournal,
   type RecoveryInspection,
   type SceneCreateInput,
+  type SceneRemoveInput,
   type ScenePatchInput,
   type TimelineCreateInput,
   type TimelinePatchInput,
@@ -386,6 +388,7 @@ function diffForChange(session: ChangeSession): ReturnType<typeof createChangeDi
   const files = paths.map((filePath) => {
     const before = session.record.baseContents[filePath] ?? '';
     const after = session.record.workingFiles[filePath] ?? '';
+    const removed = session.record.workingFiles[filePath] === undefined;
     const diff = createChangeDiff({
       operationId: `change.diff:${filePath}`,
       before: {
@@ -394,19 +397,24 @@ function diffForChange(session: ChangeSession): ReturnType<typeof createChangeDi
         ...(session.record.baseFiles[filePath]?.sha256 === undefined ? {} : { sha256: session.record.baseFiles[filePath]!.sha256 }),
       },
       after: { path: filePath, text: after, sha256: hashText(after) },
-      directChange: { path: filePath },
+      directChange: { path: filePath, ...(removed ? { deleted: true } : {}) },
       potentialImpact: [],
       observedImpact: [],
-      kind: filePath === 'game.config.json' ? 'variable' : filePath.startsWith('content/timelines/') ? 'timeline' : 'scene',
+      kind: removed ? 'scene.remove' : filePath === 'game.config.json' ? 'variable' : filePath.startsWith('content/timelines/') ? 'timeline' : 'scene',
     });
+    for (const file of diff.files) {
+      file.changeType = removed ? 'deleted' : session.record.baseFiles[filePath] === undefined ? 'created' : 'modified';
+      if (removed) delete file.afterSha256;
+    }
     return diff;
   });
   const diffFiles = files.flatMap((diff) => diff.files);
   return {
     compositionReadiness: inspectCandidateCompositionReadiness(session.record),
     summary: {
-      createdScenes: paths.filter((filePath) => session.record.baseFiles[filePath] === undefined && filePath.endsWith('.gal')).length,
-      modifiedScenes: paths.filter((filePath) => session.record.baseFiles[filePath] !== undefined && filePath.endsWith('.gal')).length,
+      createdScenes: paths.filter((filePath) => session.record.baseFiles[filePath] === undefined && filePath.toLowerCase().endsWith('.gal')).length,
+      modifiedScenes: paths.filter((filePath) => session.record.baseFiles[filePath] !== undefined && session.record.workingFiles[filePath] !== undefined && filePath.toLowerCase().endsWith('.gal')).length,
+      removedScenes: paths.filter((filePath) => session.record.workingFiles[filePath] === undefined && filePath.toLowerCase().endsWith('.gal')).length,
       changedVariables: paths.includes('game.config.json') ? 1 : 0,
       warnings: diffFiles.flatMap((file) => file.unexpectedFormatChange ? [`${file.path}: 检测到与语义修改无关的行终止符变化`] : []),
     },
@@ -463,6 +471,7 @@ async function safeStagedIdentity(root: string, stagedIdentity: string): Promise
 
 async function assertRecoveryStageIdentities(storage: NodeProjectStorage, journal: CommitJournal): Promise<void> {
   for (const entry of journal.files) {
+    if (entry.kind === 'delete') continue;
     if (!await safeStagedIdentity(storage.rootIdentity, entry.stagedIdentity)) {
       throw new AuthoringOperationError('RECOVERY_AMBIGUOUS', `stagedIdentity 不在合法项目范围内：${entry.stagedIdentity}`, {
         path: entry.stagedIdentity,
@@ -1007,6 +1016,13 @@ export class AuthoringService {
     });
   }
 
+  async sceneRemove(changeId: string, input: SceneRemoveInput): Promise<ServiceResult<unknown>> {
+    return this.withOpenChange(changeId, async (context) => {
+      const result = await applySceneRemove(context.session, input);
+      return { ...metadataForChange(context.session), result };
+    });
+  }
+
   async scenePatch(changeId: string, input: ScenePatchInput): Promise<ServiceResult<unknown>> {
     return this.withOpenChange(changeId, async (context) => {
       // Public requests must use a current reference. Sealed replay calls the
@@ -1433,7 +1449,7 @@ export class AuthoringService {
           operationId: input.operationId,
         });
         if (result.disposition === 'ROLL_BACK_TO_BASE') {
-          for (const entry of journal.files) await storage.removeStage(entry.stagedIdentity).catch(() => undefined);
+          for (const entry of journal.files) if (entry.kind !== 'delete') await storage.removeStage(entry.stagedIdentity).catch(() => undefined);
         }
         const projectSnapshot = await loadSnapshot(storage);
         return {

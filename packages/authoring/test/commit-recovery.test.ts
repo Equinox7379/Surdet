@@ -95,6 +95,61 @@ class FaultyWriteStorage implements ProjectWriteStorage {
   async removeStage(stagedIdentity: string): Promise<void> { this.staged.delete(stagedIdentity); }
 }
 
+describe('committing removed source files', () => {
+  async function deletion(storage: FaultyWriteStorage) {
+    const repository = new InMemoryChangeRepository();
+    const change = await beginChange(await loadProjectSnapshot(storage, hasher), repository, storage);
+    delete change.record.workingFiles['content/scenario/unused.gal'];
+    change.record.workingFiles['game.config.json'] = '{"entryScene":"start","title":"new"}';
+    await recordValidation(change, { evidenceId: 'delete-valid', errors: 0 });
+    return { change, repository };
+  }
+  const files = () => ({
+    'game.config.json': '{"entryScene":"start"}',
+    'content/scenario/start.gal': '@scene start\n@end\n',
+    'content/scenario/unused.gal': '@scene unused\n保留以供恢复。\n@end\n',
+  });
+
+  it('commits absence, not an empty replacement, with an explicit deletion journal entry', async () => {
+    const storage = new FaultyWriteStorage(files(), Infinity);
+    const { change, repository } = await deletion(storage);
+    await expect(commitChange(change, storage)).resolves.toMatchObject({ status: 'COMMITTED' });
+    expect(await storage.exists('content/scenario/unused.gal')).toBe(false);
+    expect(storage.files['game.config.json']).toContain('new');
+    expect(await repository.readLatestJournal(change.record.changeId)).toMatchObject({ status: 'COMMITTED', files: expect.arrayContaining([
+      { kind: 'delete', path: 'content/scenario/unused.gal', originalSha256: digest(files()['content/scenario/unused.gal']), replaced: true, restored: false },
+    ]) });
+  });
+
+  it('restores the removed bytes when a later file replacement fails', async () => {
+    const original = files();
+    const storage = new FaultyWriteStorage({ ...original }, 1);
+    const { change } = await deletion(storage);
+    await expect(commitChange(change, storage)).rejects.toMatchObject({ code: 'COMMIT_FAILED_RECOVERED' });
+    expect(storage.replaceCount).toBe(1);
+    expect(storage.files).toEqual(original);
+  });
+
+  it('classifies a deletion that succeeds before its storage acknowledgement fails', async () => {
+    const original = files();
+    const storage = new FaultyWriteStorage({ ...original }, Infinity);
+    let removed = false;
+    storage.removePath = async (path) => { delete storage.files[path]; removed = true; throw new Error('after unlink'); };
+    const { change } = await deletion(storage);
+    await expect(commitChange(change, storage)).rejects.toMatchObject({ code: 'COMMIT_FAILED_RECOVERED' });
+    expect(removed).toBe(true);
+    expect(storage.files).toEqual(original);
+  });
+
+  it('preserves an external recreation instead of restoring over it', async () => {
+    const storage = new FaultyWriteStorage(files(), Infinity);
+    storage.removePath = async (path) => { storage.files[path] = 'external replacement'; throw new Error('after recreation'); };
+    const { change } = await deletion(storage);
+    await expect(commitChange(change, storage)).rejects.toMatchObject({ code: 'COMMIT_RECOVERY_FAILED' });
+    expect(storage.files['content/scenario/unused.gal']).toBe('external replacement');
+  });
+});
+
 class PostReplaceCleanupFaultStorage extends FaultyWriteStorage {
   readonly removeStageCalls: string[] = [];
 
