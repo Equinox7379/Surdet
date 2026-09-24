@@ -143,6 +143,59 @@ Editor 会阻止改名或删除仍被 `player.endScenes` 引用的场景，并�
 
 多结局作品验收时，除确认模拟未报错、未耗尽预算，还要核对 `endings` 是否包含所有预期结局，逐项检查 `deadEndScenes` 是否为遗漏的跳转或通关指令。`status: "passed"` 只表示运行检查通过，不替代这些作品目标；最后仍须真实试玩。浏览器存读档检查应复用同一站点地址和浏览器数据环境，新建临时/无痕环境看不到旧档不等于存档丢失。
 
+### 从已有素材做一段有演出的剧情
+
+先读取 `project.assets({ "view": "working" })`（未建草稿时用 project）。背景和立绘的可用条目带有 `usage.scene` 与 `usage.timeline`：前者是可直接放进 scene.create 的 blocks 或 scene.patch 的 insertAfter.blocks 的指令对象，后者是可放进 timeline.create 的 definition.tracks 的轨道。示例已经使用当前项目的真实键，并处理场景参数的引号，不要把 sourcePath 当成素材键，也不要去掉示例 args 内的引号。
+
+- 背景：复制所选 backgrounds 条目的 usage.scene；它是 `bg` 指令。
+- 立绘登场或换表情：在 portraits 中选同一 timelineTarget 的不同 expression，分别使用其 usage.scene（`show`）。再次 show 同一角色/服装会更新表情；默认居中，可将 modifiers.pos 改为 left/right/center。不是每说一句话都重新 show。
+- 头像不是立绘：avatars 用于角色的对话头像，不能拿来作为 show 的目标。角色表中的 id/name 管台词身份与显示名，立绘的 role/outfit/expression 管图像；需要说话焦点对应时，让角色 id 与素材 role 对应。新增/改名先读取 `project.inspect({ "view": "working" })` 的 charactersFingerprint 并传给 character.ensure.expectedFingerprint；角色表为空也能读取，不为换表情改角色名。
+- usage 是最小用法，不是预设审美或动画：时间轴 cue 默认 atMs=0、durationMs=0、easing=linear。需要渐入就主动设时长；整条时间轴 durationMs 必须覆盖所有 cue 的 atMs+durationMs。没有 usage 的条目先查 intelligence.issues；不能只凭 resolved=true 忽略同名冲突、非法名称或不支持格式。已有音频沿原路径保留，本轮不新增音频生产。
+
+一个简单顺序是：**背景 → 正常表情登场 → 一句台词 → 微笑表情 → 一句台词 → 隐藏角色**。使用读取返回的两个 usage.scene 对象，并将台词写为 `{ "kind": "text", "speaker": "实际角色 ID 或显示名", "value": "正文" }`。隐藏用 `{ "kind": "instruction", "name": "hide", "args": ["实际 role"] }`，不是 timelineTarget。普通表情切换直接用场景指令即可，不必为了两句台词建立时间轴。
+
+需要背景/人物/镜头同时变化时，再创建时间轴：从 usage.timeline 复制背景和立绘轨道，按需要改位置与时长，也可增加镜头轨道。下例只有镜头，不依赖某个示例素材：
+
+```json
+{
+  "operationId": "create-arrival", "timelineId": "arrival",
+  "definition": {
+    "version": 1, "id": "arrival", "durationMs": 800,
+    "tracks": [{ "kind": "camera", "cues": [
+      { "atMs": 0, "durationMs": 800, "easing": "inOutSine", "action": "pan", "x": -24, "y": 0 }
+    ] }]
+  }
+}
+```
+
+传给 `timeline.create` 后，在剧情 blocks 的可达位置插入 `{ "kind": "instruction", "name": "timeline", "args": ["arrival"], "modifiers": { "blocking": "" } }`。省略 blocking 就与台词并行；名字是 timeline，不是 timeline.play。不必把时间轴效果再用场景指令重复执行一次。
+
+返修原演出：inspect `timeline:arrival`，从 childRefs 逐层取得轨道、cue 的引用和当前指纹；timeline.patch 的 replaceCue 要传完整 cue，而不是仅改过的字段。成功后重读再继续；旧指纹拒绝时不要猜数组序号。背景/表情写错，用场景对象的当前引用和指纹调用 scene.patch 的 replaceInstruction；场景内单行指纹与时间轴指纹不能混用。
+
+验证不仅是 simulate passed：在 working-change 真正看到背景、人物、至少一次表情切换和预期演出后，再检查返修后的版本、保存重开和结局。runtime.run-from 只提供运行事件，不证明图像可见或演出好看。保留默认 UI，不改 src/main.ts 来绕过内容工具。
+
+### 项目缺少图片时：先导入，再开剧情草稿
+
+没有足够素材时明确说明缺什么，不把“只用一个背景”说成用户默认要求，也不凭空写出素材键。复用已有图片或新增美术由实际授权决定；本流程不下载、生成图片或新增音频。
+
+1. 获授权的执行者启动 Agent Port 时追加 `--asset-source <图片目录绝对路径>`；可多次指定。stage 可以暂存，但发布图片需要明确的 apply 会话。已开剧情草稿时先完成/处理原草稿，不擅自丢弃它来导入。
+2. `asset.sources({})` 取得 roots 的 sourceId，再用 `{ "sourceId": "返回的 ID", "path": "目录内相对图片路径" }` 取得 file.sha256。当前导入支持 PNG/JPEG/WebP；摘要从公开读取复制，不自己猜，也不传任意本机路径。
+3. 调用 `asset.import.stage`，例如下方结构。operationId 和 itemId 使用本次新建的 UUID；对同一请求重试保持原编号与内容。
+
+```json
+{
+  "operationId": "本次导入 UUID",
+  "items": [{
+    "itemId": "本张图片 UUID", "sourceId": "roots 返回的 ID",
+    "sourcePath": "目录内相对图片路径", "sha256": "file.sha256",
+    "kind": "portrait", "fileName": "rin_coat_smile.png"
+  }]
+}
+```
+
+4. 在 apply 会话用原 operationId 和返回的 plan.planFingerprint 调用 `asset.import.commit`；不覆盖同名文件。portrait 文件名遵守 role_outfit_expression 三段规则，背景 kind 用 background。不同表情各导入一张，不能将一张图改名冒充多个表情。
+5. 重新读取 project.assets/project.inspect，确认发布后能找到新素材，再 change.begin。后续仍走普通草稿、验证与获授权写回。响应丢失先 asset.import.inspect 原 operationId，需要恢复时按回执使用 asset.import.recover，不换号重复发布。
+
 ## 2. DSL 速查
 
 注释必须独占一行，以 `//` 开头；行尾的 `#` 或 `//` 不具有注释语义。选项箭头两侧留空格。
@@ -188,6 +241,8 @@ Editor 会阻止改名或删除仍被 `player.endScenes` 引用的场景，并�
 ### 时间轴 JSON 速查
 
 文件路径：`content/timelines/<id>.json`。`id` 必须与文件名和 `@timeline` 参数一致。
+
+以下只展示格式，castle_night、lynn:uniform 和 normal 不是所有项目都有的素材。实际创作优先复制上方 project.assets 的 usage.timeline，再调整节奏，不原样猜用这些名称。
 
 ```json
 {

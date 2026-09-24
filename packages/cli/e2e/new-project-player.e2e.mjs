@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -31,9 +32,10 @@ async function authorChapter(game) {
   process.env.SURDET_AGENT_DATA_DIR = path.join(engine, 'agent-data');
   const main = await fs.readFile(path.join(game, 'src/main.ts'), 'utf8');
   const configBefore = await fs.readFile(path.join(game, 'game.config.json'), 'utf8');
-  await fs.copyFile(path.join(repo, 'examples/starter/content/assets/bg/post_office.png'), path.join(game, 'content/assets/bg/post_office.png'));
   const connect = async (policy, resumeChangeId) => {
-    const session = await openAgentPortSession({ projectRoot: game, policy, ...(resumeChangeId ? { resumeChangeId } : {}) });
+    const session = await openAgentPortSession({ projectRoot: game, policy,
+      assetSources: [path.join(repo, 'examples/starter/content/assets')], assetImportDataRoot: path.join(engine, 'asset-data'),
+      ...(resumeChangeId ? { resumeChangeId } : {}) });
     const server = createAgentPortServer(session);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'default-authoring-path', version: '1.0.0' });
@@ -46,13 +48,42 @@ async function authorChapter(game) {
     assert.equal(response.structuredContent.ok, true, JSON.stringify(response));
     return response.structuredContent.result;
   };
+  await connect('apply');
+  const sourceId = (await call('surdet_asset_sources')).roots[0].sourceId;
+  const items = [];
+  for (const [sourcePath, kind] of [['bg/post_office.png', 'background'], ['portrait/lynn_coat_normal.png', 'portrait'], ['portrait/lynn_coat_smile.png', 'portrait']]) {
+    const { file } = await call('surdet_asset_sources', { sourceId, path: sourcePath });
+    items.push({ itemId: randomUUID(), sourceId, sourcePath, sha256: file.sha256, kind, fileName: path.basename(sourcePath) });
+  }
+  const operationId = randomUUID();
+  const staged = await call('surdet_asset_import_stage', { operationId, items });
+  await call('surdet_asset_import_commit', { operationId, planFingerprint: staged.plan.planFingerprint });
+  await agent.close(); agent = null;
   await connect('stage');
+  const assets = await call('surdet_project_assets', { view: 'project' });
+  const harbor = assets.backgrounds.find(asset => asset.key === 'harbor');
+  const office = assets.backgrounds.find(asset => asset.key === 'post_office');
+  const normal = assets.portraits.find(asset => asset.expression === 'normal');
+  const smile = assets.portraits.find(asset => asset.expression === 'smile');
+  assert.ok(harbor.usage && office.usage && normal.usage && smile.usage);
   const { changeId } = await call('surdet_change_begin', { compositionMode: 'direct' });
+  const { charactersFingerprint } = await call('surdet_project_inspect', { view: 'working' });
+  await call('surdet_character_ensure', { operationId: 'speaker', id: normal.role, name: '凛', expectedFingerprint: charactersFingerprint });
   await call('surdet_variable_ensure', { operationId: 'visited', name: 'visited', type: 'flag', initial: false });
   await call('surdet_timeline_create', { operationId: 'intro', timelineId: 'intro', definition: {
-    version: 1, id: 'intro', durationMs: 100,
-    tracks: [{ kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'post_office' }] }],
+    version: 1, id: 'intro', durationMs: 600,
+    tracks: [office.usage.timeline, normal.usage.timeline,
+      { kind: 'camera', cues: [{ atMs: 0, durationMs: 600, easing: 'inOutSine', action: 'pan', x: -8, y: 0 }] }],
   } });
+  const timeline = await call('surdet_object_inspect', { view: 'working', objectRef: 'timeline:intro' });
+  const tracks = await Promise.all(timeline.childRefs.map(objectRef => call('surdet_object_inspect', { view: 'working', objectRef })));
+  const camera = tracks.find(track => track.details.kind === 'camera');
+  const cue = await call('surdet_object_inspect', { view: 'working', objectRef: camera.childRefs[0] });
+  const patch = { kind: 'replaceCue', cueRef: cue.objectRef, expectedFingerprint: cue.fingerprint,
+    cue: { ...cue.details, x: -24 } };
+  await call('surdet_timeline_patch', { operationId: 'refine-pan', timelineId: 'intro', patch });
+  const stale = await agent.client.callTool({ name: 'surdet_timeline_patch', arguments: { operationId: 'stale-pan', timelineId: 'intro', patch } });
+  assert.equal(stale.structuredContent.error.code, 'OBJECT_REF_STALE');
   for (const [sceneId, value] of [['end_a', '你拆开信封，故乡的风从纸页间吹来。'], ['end_b', '你把信放进行囊，留给航程里的一个清晨。']]) {
     await call('surdet_scene_create', { operationId: sceneId, sceneId, blocks: [{ kind: 'text', speaker: '旁白', value }, { kind: 'instruction', name: 'end' }] });
   }
@@ -61,7 +92,11 @@ async function authorChapter(game) {
     { kind: 'instruction', name: 'set', args: ['visited', '=', 'true'] }, { kind: 'instruction', name: 'return' },
   ] });
   await call('surdet_scene_create', { operationId: 'hub', sceneId: 'hub_scene', blocks: [
-    { kind: 'instruction', name: 'timeline', args: ['intro'] },
+    harbor.usage.scene, normal.usage.scene,
+    { kind: 'text', speaker: '凛', value: '港口的风停了，去邮局看看吧。' },
+    { kind: 'instruction', name: 'timeline', args: ['intro'], modifiers: { blocking: '' } },
+    { kind: 'text', speaker: '凛', value: '邮局到了，你的信就在里面。' },
+    smile.usage.scene,
     { kind: 'condition', branches: [{ kind: 'if', expr: '!visited', blocks: [{ kind: 'instruction', name: 'call', args: ['shop_scene.greeting'] }] }] },
     { kind: 'text', speaker: '旁白', value: '待续写的句子。' },
     { kind: 'choice', options: [
@@ -71,7 +106,8 @@ async function authorChapter(game) {
   ] });
   const scene = await call('surdet_object_inspect', { view: 'working', objectRef: 'scene:hub_scene', fragment: {} });
   const children = await Promise.all(scene.childRefs.map(objectRef => call('surdet_object_inspect', { view: 'working', objectRef })));
-  const text = children.find(object => object.kind === 'text');
+  const text = children.find(object => object.kind === 'text' && object.source.raw === '旁白：待续写的句子。');
+  assert.ok(text, 'the authored revision target must be found by its actual content');
   await call('surdet_scene_patch', { operationId: 'rewrite', patch: { kind: 'replaceText', target: text.objectRef, expectedFingerprint: text.fingerprint, value: '你回到码头，手中多了一封没有署名的信。' } });
   const label = await call('surdet_object_inspect', { view: 'working', objectRef: 'label:shop_scene.greeting' });
   await call('surdet_scene_patch', { operationId: 'rename', patch: { kind: 'renameLabel', target: label.objectRef, expectedFingerprint: label.fingerprint, name: 'arrival' } });
@@ -202,7 +238,20 @@ try {
   assert.ok((await canvasTexts(page)).includes('风停之后'));
   assert.ok((await canvasTexts(page)).includes('一封信，两段航程'));
   await page.screenshot({ path: path.join(output, '01-new-project-title.png') });
-  await activate(page, '开始游戏'); await advanceToChoice(page);
+  await activate(page, '开始游戏');
+  await page.waitForFunction(() => window.__surdetDebug.rendererStatus === 'awaiting'
+    && window.__surdetDebug.presentationSnapshot.stage.portraits.some(p => p.key === 'lynn:coat' && p.view.expression === 'normal'));
+  assert.equal(await page.evaluate(() => window.__surdetDebug.presentationSnapshot.stage.backgroundKey), 'harbor');
+  await page.screenshot({ path: path.join(output, '01a-normal-harbor.png') });
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press('Space');
+  await page.waitForFunction(() => window.__surdetDebug.presentationSnapshot.stage.cameraPan.x === -24
+    && window.__surdetDebug.rendererStatus === 'awaiting');
+  assert.equal(await page.evaluate(() => window.__surdetDebug.presentationSnapshot.stage.backgroundKey), 'post_office');
+  await page.screenshot({ path: path.join(output, '01b-authored-timeline.png') });
+  await advanceToChoice(page);
+  assert.equal(await page.evaluate(() => window.__surdetDebug.presentationSnapshot.stage.portraits.find(p => p.key === 'lynn:coat')?.view.expression), 'smile');
+  await page.screenshot({ path: path.join(output, '01c-smile-choice.png') });
   assert.equal(await page.evaluate(() => window.surdetDebug.store.get('visited')), true, 'cross-scene call did not return');
   assert.ok(!(await canvasTexts(page)).includes('点击或空格继续 · Esc 打开菜单 · ↑ 回看上一句'), 'empty hint fell back to the template hint');
   await activate(page, '现在打开');
@@ -219,6 +268,8 @@ try {
   await activate(page, savedSlot); await waitOverlay(page, 'none');
   assert.deepEqual((await state(page)).position, saved, 'generated project did not restore the actual saved position');
   assert.equal(await page.evaluate(() => window.surdetDebug.store.get('opened')), true);
+  assert.equal(await page.evaluate(() => window.__surdetDebug.presentationSnapshot.stage.portraits.find(p => p.key === 'lynn:coat')?.view.expression), 'smile');
+  assert.equal(await page.evaluate(() => window.__surdetDebug.presentationSnapshot.stage.cameraPan.x), -24);
   await finishToTitle(page);
   await activate(page, '开始游戏'); await advanceToChoice(page);
   assert.equal(await page.evaluate(() => window.surdetDebug.store.get('opened')), false, 'new game did not reset project variables');
