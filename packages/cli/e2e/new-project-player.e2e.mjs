@@ -184,7 +184,28 @@ async function continueInEditor(game, errors) {
     await page.getByRole('textbox', { name: 'narrator 的显示名称', exact: true }).waitFor();
   };
   const configBefore = JSON.parse((await fs.readFile(path.join(game, 'game.config.json'), 'utf8')).replace(/^\uFEFF/, ''));
+  const eventsPath = path.join(game, 'content/config/events.json');
+  const eventsBefore = JSON.stringify({ events: [], scheduled: [] });
+  await fs.mkdir(path.dirname(eventsPath), { recursive: true });
+  await fs.writeFile(eventsPath, '{');
   await open();
+  await page.getByRole('button', { name: '事件', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: 'events.json' }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '保存事件配置', exact: true }).count(), 0);
+  assert.equal(await fs.readFile(eventsPath, 'utf8'), '{');
+  await page.screenshot({ path: path.join(output, '04b-config-read-error.png') });
+  await page.locator('[data-editor-mode="editor"]').click();
+  const failedRename = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/workspace/finish'));
+  await page.locator('.scene-row').filter({ has: page.locator('[data-scene-id="第一章/邮局/post_office_visit"]') }).hover();
+  await page.getByRole('button', { name: '重命名场景 第一章/邮局/post_office_visit.gal', exact: true }).click();
+  await failedRename;
+  await page.waitForFunction(() => document.getElementById('status')?.textContent?.includes('events.json')
+    && document.querySelector('[data-action="save-project"]')?.disabled === false);
+  assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.pendingSceneDeletes.length), 0);
+  await fs.writeFile(eventsPath, eventsBefore);
+  await page.close();
+  await open();
+  assert.deepEqual(await page.evaluate(() => window.surdetEditorDebug.state.configReadErrors), {});
   assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('第一章/邮局/post_office_visit')?.id), 'post_office_visit');
   await page.locator('[data-editor-mode="editor"]').click();
   const visitBefore = await fs.readFile(path.join(game, 'content/scenario/第一章/邮局/post_office_visit.gal'), 'utf8');

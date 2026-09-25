@@ -9,6 +9,7 @@ const original = {
   scenes: state.scenes,
   timelines: state.timelines,
   configFiles: state.configFiles,
+  configReadErrors: state.configReadErrors,
 };
 
 afterEach(() => {
@@ -17,9 +18,15 @@ afterEach(() => {
   state.scenes = original.scenes;
   state.timelines = original.timelines;
   state.configFiles = original.configFiles;
+  state.configReadErrors = original.configReadErrors;
 });
 
 describe('editor authoring project storage', () => {
+  it('refuses an authoring snapshot with unreadable config instead of omitting its dependencies', async () => {
+    state.configReadErrors = { events: 'content/config/events.json 解析失败' };
+    await expect(loadEditorProjectSnapshot()).rejects.toThrow(/events.json/);
+    await expect(createEditorProjectStorage({ ...state }).listFiles()).rejects.toThrow(/events.json/);
+  });
   it('reads dirty in-memory scene text and computes Web Crypto SHA-256', async () => {
     state.dirName = 'memory-project';
     state.gameConfigText = JSON.stringify({ entryScene: 'intro', variables: {} });

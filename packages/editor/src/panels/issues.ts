@@ -3,6 +3,7 @@
  * Worker 优先（不阻塞主线程），异常永久回退同步校验；结果按 seq 对齐丢弃过期回包。
  */
 import { state, h, setStatus } from '../state.js';
+import { configSourceError, configSourcePath, type ConfigSourceName } from '../config-source.js';
 import { validateProject } from '../validate.js';
 import type { Issue } from '../validate.js';
 import type { CompiledScene } from '@surdet/core';
@@ -59,6 +60,12 @@ function buildValidateInput(): { sources: { key: string; id: string; file: strin
 /** 应用校验结果并刷新 UI（Worker 回包与同步路径共用）。
  *  scenes 为编译产物（E1a 起保留：流程图从编译产物提取，不重新解析） */
 export function applyValidation(issues: Issue[], edges: { from: string; to: string; kind: 'jump' | 'call' }[], scenes: Map<string, CompiledScene> = new Map()): void {
+  const configIssues = (Object.keys(state.handles) as ConfigSourceName[]).flatMap(name => {
+    const error = configSourceError(name);
+    return error ? [{ severity: 'error' as const, code: 'CONFIG_READ_ERROR', file: configSourcePath(name), line: 1, col: 1,
+      text: error, hint: '请修正文件或恢复读取权限后重新打开项目；原文件未被修改。' }] : [];
+  });
+  issues = [...issues, ...configIssues];
   state.lastValidation = { issues, scenes };
   state.lastEdges = edges;
   renderIssues();

@@ -11,6 +11,7 @@
  *  - 渲染：真实节点常驻 SVG，避免平移到远端场景时出现“只剩空框”的错觉；规模目标 100 场景 / 800 标签
  */
 import { state, h, setStatus } from '../state.js';
+import { assertConfigSourcesReadable } from '../config-source.js';
 import {
   assertProjectWriteUnlocked,
   isSceneFilePathReserved,
@@ -184,6 +185,7 @@ function validSceneId(value: string): boolean {
 }
 
 function sceneConfigReferences(sceneId: string): string[] {
+  assertConfigSourcesReadable(['gameConfig', 'events', 'growth', 'calendar', 'gallery']);
   const references: string[] = [];
   // Use the current working text, including unsaved config, not a second disk view.
   const config = state.gameConfigText === '' && state.handles.gameConfig === null
@@ -368,6 +370,7 @@ export async function moveSceneAtKey(sceneKey: string): Promise<void> {
       ...[...state.scenes.values()].map(scene => sceneProjectPath(scene.file)),
       ...state.pendingSceneDeletes.map(pending => sceneProjectPath(pending.file)),
     ]);
+    assertConfigSourcesReadable(['gameConfig']);
     const config = parseProjectConfigDocument(workingGameConfigText() || '{}');
     if (config['entryScene'] !== undefined && typeof config['entryScene'] !== 'string') throw new Error('请先修正配置中的开场场景');
     const implicitEntry = config['entryScene'] ? undefined

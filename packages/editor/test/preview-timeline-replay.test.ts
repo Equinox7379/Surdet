@@ -246,6 +246,13 @@ describe('timeline preview replay', () => {
     reload!.onclick?.();
     await vi.waitFor(() => expect(postedPreviewMessages).toHaveLength(5));
     expect((postedPreviewMessages[4] as { payload: { traceId: string } }).payload.traceId).not.toBe(savedTraceId);
+    state.configReadErrors = { events: 'content/config/events.json 解析失败' };
+    try {
+      reload!.onclick?.();
+      await vi.waitFor(() => expect(container.textContent).toContain('events.json'));
+      expect(postedPreviewMessages).toHaveLength(5);
+      expect(container.textContent).toContain('保留的旧画面不代表新版本');
+    } finally { state.configReadErrors = {}; }
   });
 
   it('restores memory labels after switching back from a saved preview source', async () => {

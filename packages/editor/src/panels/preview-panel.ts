@@ -5,6 +5,7 @@
  * 跨场景 @jump 在预览内可正常跳转（多场景预览）。
  */
 import { state, h, setStatus } from '../state.js';
+import { assertConfigSourcesReadable } from '../config-source.js';
 import { parseScript } from '../model.js';
 import { isPreviewSourcePath, normalizePreviewTraceMessage, parseProjectConfigDocument, previewSourceText,
   type RuntimeTraceEvent, type PreviewTraceMessage, type PreviewTraceEventMessage,
@@ -60,6 +61,7 @@ function previewSourceKey(): string {
     scenes: [...state.scenes.entries()].map(([key, entry]) => [key, entry.id, entry.file, entry.text]),
     config: state.gameConfigText,
     configs: state.configFiles,
+    configReadErrors: state.configReadErrors,
     timelines: state.timelines.map((entry) => [entry.file, entry.text]),
     assets: state.dirAssets.map((entry) => [entry.sourcePath, entry.key, entry.expr, entry.bytes, entry.lastModified]),
   });
@@ -705,6 +707,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     const requestedTarget = selectedTarget;
     const publisher = editorPreviewPublisher(requestRoot);
     try {
+      if (requestedTarget === null) assertConfigSourcesReadable();
       const loaded = requestedTarget === null ? undefined : await publisher?.content(requestedTarget);
       if (requestedTarget !== null && loaded === undefined) throw new Error('请从正常绑定项目入口打开，才能读取隔离试玩内容');
       const projection = loaded === undefined ? undefined : await projectPreviewContent(loaded);

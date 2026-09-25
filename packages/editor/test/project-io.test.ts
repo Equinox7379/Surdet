@@ -182,6 +182,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     state.autosaveProjectId = 'test-project';
     state.dirHandle = {} as FileSystemDirectoryHandle;
     state.reviewPreviewReadOnly = false;
+    state.configReadErrors = {};
     state.scenes.clear();
     state.timelines = [];
     state.pendingSceneDeletes = [];
@@ -1465,6 +1466,43 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     await expect(deleteSceneAtKey('end_a')).rejects.toThrow(/game.config.json/);
     expect(state.scenes.has('end_a')).toBe(true);
     expect(state.pendingSceneDeletes).toEqual([]);
+    expect(log).toEqual([]);
+  });
+
+  it.each(['{', '[]', '', 'null', '0'])('坏事件配置不能被当作缺失配置放行场景改名或删除：%s', async (config) => {
+    const handle = fileHandle(null, log, 'events.json', config);
+    const root = directoryHandle('invalid-events', { content: directoryHandle('content', {
+      config: directoryHandle('config', {}, { 'events.json': handle }),
+      scenario: directoryHandle('scenario', {}, {
+        'end_a.gal': fileHandle(null, log, 'end_a.gal', '@scene end_a\n结束。\n@end\n'),
+      }),
+    }) }, { 'game.config.json': fileHandle(null, log, 'game.config.json', '{}') });
+    await openProjectFromHandle(root);
+    expect(state.handles.events).toBe(handle);
+    await expect(renameSceneAtKey('end_a')).rejects.toThrow(/events.json/);
+    await expect(deleteSceneAtKey('end_a')).rejects.toThrow(/events.json/);
+    expect(state.scenes.has('end_a')).toBe(true);
+    expect(state.pendingSceneDeletes).toEqual([]);
+    expect(log).toEqual([]);
+  });
+
+  it('读取带 BOM 的对象配置和成就数组，缺失配置没有错误，重开清除旧错误', async () => {
+    const events = { events: [], extension: { keep: '原文' } };
+    const achievements = [{ id: 'first', name: '初见' }];
+    state.configReadErrors = { events: 'previous failure' };
+    const root = directoryHandle('valid-configs', { content: directoryHandle('content', {
+      config: directoryHandle('config', {}, {
+        'events.json': fileHandle(null, log, 'events.json', '\uFEFF' + JSON.stringify(events)),
+        'achievements.json': fileHandle(null, log, 'achievements.json', '\uFEFF' + JSON.stringify(achievements)),
+      }),
+      scenario: directoryHandle('scenario'),
+    }) }, { 'game.config.json': fileHandle(null, log, 'game.config.json', '{}') });
+    await openProjectFromHandle(root);
+    expect(state.configReadErrors).toEqual({});
+    expect(state.configFiles.events).toEqual(events);
+    expect(state.configFiles.achievements).toEqual(achievements);
+    expect(state.configFiles.gallery).toBeNull();
+    expect(state.handles.gallery).toBeNull();
     expect(log).toEqual([]);
   });
 
