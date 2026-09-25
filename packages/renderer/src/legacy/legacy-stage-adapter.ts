@@ -153,7 +153,7 @@ export class LegacyStageAdapter implements AdvStage {
     if (this.host.dialogueLayer.projectionVersion !== before) this.setPortraitFocus(this.host.dialogueLayer.activeSpeakerId);
   }
   hideVideo(): void { this.host.hideVideo(); }
-  showVideo(src: string, onEnd: () => void): void { this.host.showVideo(src, onEnd); }
+  showVideo(src: string, onEnd: (failure?: Error) => void): void { this.host.showVideo(src, onEnd); }
 
   showGallery(opts: {
     cgs: GalleryItemView[];

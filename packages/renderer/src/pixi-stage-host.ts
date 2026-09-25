@@ -640,7 +640,7 @@ export class RendererStageHost {
   }
 
   /** @video projection remains a legacy delegate; the layer owns DOM listeners and generations. */
-  showVideo(src: string, onEnd: () => void): void {
+  showVideo(src: string, onEnd: (failure?: Error) => void): void {
     this.#system.showVideo(src, onEnd);
   }
 

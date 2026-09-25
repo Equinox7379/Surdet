@@ -19,7 +19,7 @@ import { FadeTween } from '../transitions.js';
 import type { AudioHandle, FrameRequestHandler, PortraitView } from '../types.js';
 import { NULL_AUDIO } from '../types.js';
 import { TimelinePlayer, type TimelineFrameEvent, type TimelinePlayerSnapshot } from '../timeline-player.js';
-import { RendererCommandError } from '../api/renderer-errors.js';
+import { RendererCommandError, RendererError } from '../api/renderer-errors.js';
 import type { RendererPluginHost } from '../plugin-host.js';
 import type { ShakeDirection } from '../world-effects-controller.js';
 import { BacklogSearchController } from '../backlog-search-controller.js';
@@ -218,6 +218,7 @@ export interface AdvRendererOptions {
 }
 
 export interface PresentationControllerOptions extends AdvRendererOptions {
+  readonly onError?: (error: RendererError) => void;
   readonly commands: RendererCommands;
   readonly queries: RendererQueries;
   readonly lifecycle?: RenderLifecycle;
@@ -280,6 +281,7 @@ export class PresentationController {
   /** @wait 截止时间戳（null = 未在等待） */
   #waitDeadline: number | null = null;
   #onWaitEnd?: () => void;
+  #onError?: (error: RendererError) => void;
   /** wait/video 会话号：stateReset 后递增，残留的结束回调因此作废（审计修复 C1） */
   #waitSession = 0;
   /** 当前是否有一个尚未结束、由本控制器启动的视频。 */
@@ -317,6 +319,7 @@ export class PresentationController {
     this.#onAdvance = options.onAdvance;
     this.#onSelect = options.onSelect;
     this.#onWaitEnd = options.onWaitEnd;
+    this.#onError = options.onError;
     this.#autoBaseDelayMs = Math.max(0, options.autoBaseDelayMs ?? 0);
     this.#autoPerCharMs = Math.max(0, options.autoPerCharMs ?? 0);
     this.#backlog = options.backlog ?? null;
@@ -994,6 +997,7 @@ export class PresentationController {
   /** @video：舞台支持播放则交给舞台（播完/跳过回调 onWaitEnd）；不支持/快进中直接结束 */
   #onVideo(p: { src: string }): void {
     if (this.#disposed) return;
+    const source = dequote(p.src);
     // 会话令牌：读档后 stateReset 递增会话号，残留的视频结束回调被忽略（审计修复 C1）
     const session = this.#waitSession;
     if (this.#skipMode) {
@@ -1002,12 +1006,19 @@ export class PresentationController {
     }
     this.#videoActive = true;
     let completed = false;
-    this.#commands.system.showVideo(p.src, () => {
+    this.#commands.system.showVideo(source, (failure) => {
       if (completed) return;
       completed = true;
       if (session !== this.#waitSession) return;
       this.#videoActive = false;
-      this.#onWaitEnd?.();
+      try {
+        if (failure) {
+          const error = failure instanceof RendererError ? failure : new RendererError(`视频 ${source} 无法播放：${failure.message}`,
+            { code: 'MEDIA_PLAYBACK_FAILED', domain: 'video', command: 'showVideo', cause: failure });
+          this.#commands.dialogue.showBanner(error.message, 'tip');
+          if (this.#onError) this.#onError(error); else console.error(error);
+        }
+      } finally { this.#onWaitEnd?.(); }
     });
   }
 

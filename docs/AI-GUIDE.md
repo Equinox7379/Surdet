@@ -239,7 +239,7 @@ Editor 会阻止改名或删除仍被 `player.endScenes` 引用的场景，并�
 4. 在 apply 会话用原 operationId 和返回的 plan.planFingerprint 调用 `asset.import.commit`；不覆盖同名文件。portrait 文件名遵守 role_outfit_expression 三段规则，背景 kind 用 background。不同表情各导入一张，不能将一张图改名冒充多个表情。
 5. 重新读取 project.assets/project.inspect，确认发布后能找到新素材，再 change.begin。后续仍走普通草稿、验证与获授权写回。响应丢失先 asset.import.inspect 原 operationId，需要恢复时按回执使用 asset.import.recover，不换号重复发布。
 
-声音分别使用 `music`（bgm）、`ambience`、`sound-effect`（se）、`voice`，视频使用 `video`，字体使用 `font`；`fileName` 只填保留原格式的单个文件名，不填目录。每文件最多 32 MiB、每批 32 项且总计 128 MiB。新媒体发布后可在 `project.assets.intelligence.items` 查看物理路径、用途和引用。声音键按四个声道独立解析，`@bgm`、`@ambience`、`@se`、`@voice` 使用各自的真实键，含空格时用引号包住；普通 Player 与 Editor 试玩均可使用环境音。导入回执不是运行验收；P2 的视频消费、字体配置和许可随附仍在施工，不得仅凭媒体已列出或入包就承诺完整可播或可分发。
+声音分别使用 `music`（bgm）、`ambience`、`sound-effect`（se）、`voice`，视频使用 `video`，字体使用 `font`；`fileName` 只填保留原格式的单个文件名，不填目录。每文件最多 32 MiB、每批 32 项且总计 128 MiB。新媒体发布后可在 `project.assets.intelligence.items` 查看物理路径、用途和引用。声音键按四个声道独立解析，`@bgm`、`@ambience`、`@se`、`@voice` 使用各自的真实键，含空格时用引号包住；普通 Player 与 Editor 试玩均可使用环境音。导入回执不是运行验收；视频使用 `@video "真实素材键"`，会阻塞至结束或点击跳过；Player 与 Editor 都从项目素材解析，不要改入口文件手接 URL。坏视频会报告具体文件与原因，Editor 试玩会记为失败；不能以剧情仍能继续就称该视频通过。字体公开配置、许可随附及其余 P2 工作仍在施工，不得仅凭媒体已列出或入包就承诺完整可播或可分发。
 
 ## 2. DSL 速查
 

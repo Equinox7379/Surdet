@@ -1,4 +1,5 @@
 import type { BacklogEntry } from '../backlog.js';
+import { RendererError } from '../api/renderer-errors.js';
 import { DEFAULT_POST_PROCESS, type PostProcessSettings } from '../post-process.js';
 import { DEFAULT_PRESENTATION_PREFERENCES, type PresentationPreferences } from '../presentation.js';
 import type {
@@ -49,7 +50,7 @@ export interface PresentationStage extends
   captureThumbnail?: () => string | null;
   validatePresentation?: (snapshot: unknown) => void;
   getFontFamily?: (role: RendererFontRole) => string;
-  showVideo?: (source: string, onEnd: () => void) => void;
+  showVideo?: (source: string, onEnd: (failure?: Error) => void) => void;
   hideVideo?: () => void;
   getQuality?: () => RenderQuality;
   getPresentationPreferences?: () => PresentationPreferences;
@@ -123,6 +124,10 @@ export function createPresentationPorts(
         return;
       }
       await stage.registerPortrait?.(charId, costume, expression, source, format);
+    },
+    registerVideo: async (key, source, sourcePath) => {
+      if (!options.assetRegistry) throw new Error('Video asset registry is not configured');
+      await options.assetRegistry.registerVideo(key, source, sourcePath);
     },
     registerAvatar: async (key, source, format) => {
       if (options.assetRegistry) {
@@ -236,7 +241,8 @@ export function createPresentationPorts(
     hideBaseCommands: () => undefined,
     showVideo: (source, onEnd) => {
       if (stage.showVideo) stage.showVideo(source, onEnd);
-      else onEnd();
+      else onEnd(new RendererError(`视频 ${source} 无法播放：当前舞台没有视频播放能力`,
+        { code: 'MEDIA_PLAYBACK_FAILED', domain: 'video', command: 'showVideo' }));
     },
     hideVideo: () => stage.hideVideo?.(),
   };

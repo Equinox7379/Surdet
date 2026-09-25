@@ -47,11 +47,13 @@ import {
 interface SceneSrc { id: string; text: string }
 
 interface PreviewImage {
+  sourcePath?: string;
   buffer: ArrayBuffer;
   mime: string;
 }
 
 interface PreviewAssets {
+  videos?: { key: string; file: PreviewImage }[];
   backgrounds: { key: string; image: PreviewImage }[];
   portraits: { charId: string; costume: string; expression: string; image: PreviewImage }[];
   avatars: { key: string; image: PreviewImage }[];
@@ -402,6 +404,7 @@ async function boot(): Promise<void> {
       onAdvance: () => guardRun(() => interp?.advance()),
       onSelect: (i) => guardRun(() => interp?.choose(i)),
       onWaitEnd: () => guardRun(() => interp?.finishWait()),
+      onError: error => showError(error.message),
     }),
     appendCanvas: (canvas) => root?.appendChild(canvas),
     addResizeListener: (listener) => {
@@ -952,6 +955,11 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<vo
     }
   }
   previewAudio.setUrls(audioEntries);
+  for (const asset of assets.videos ?? []) {
+    const url = URL.createObjectURL(new Blob([asset.file.buffer as unknown as BlobPart], { type: asset.file.mime }));
+    await rendererAssets.registerVideo(asset.key, url, asset.file.sourcePath);
+    urls.push(url);
+  }
   await Promise.all([
     ...assets.backgrounds.map((asset) => register(
       asset.image.buffer,

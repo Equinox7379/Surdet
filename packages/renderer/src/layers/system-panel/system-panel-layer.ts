@@ -15,6 +15,7 @@ import type {
 } from '../../api/renderer-commands.js';
 import type { SystemPanelOverlayState } from '../../api/renderer-queries.js';
 import { RenderAssetRegistry } from '../../services/render-asset-registry.js';
+import { RendererError } from '../../api/renderer-errors.js';
 import { bindPlayerControl, markPlayerModal } from '../../player-controls.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
 import {
@@ -652,17 +653,23 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     callback?.();
   }
 
-  showVideo(source: string, onEnd: () => void): void {
+  showVideo(source: string, onEnd: (failure?: Error) => void): void {
     if (!this.#ensureActive()) return;
     this.#requestFrame();
     this.#cancelVideo();
+    const registered = this.#assets.resolveVideo(source);
+    const url = registered?.url ?? source;
+    const failure = (reason: unknown) => new RendererError(
+      `视频 ${registered?.sourcePath ?? source} 无法播放：${reason instanceof Error ? reason.message : String(reason)}`,
+      { code: 'MEDIA_PLAYBACK_FAILED', domain: 'video', command: 'showVideo', cause: { source, url, reason } },
+    );
     if (typeof document === 'undefined') {
-      onEnd();
+      onEnd(failure('当前环境没有视频播放能力'));
       return;
     }
     const token = this.#videoGeneration.token();
     const video = document.createElement('video');
-    video.src = source;
+    video.src = url;
     video.autoplay = true;
     video.playsInline = true;
     Object.assign(video.style, {
@@ -676,24 +683,24 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     });
     this.#activeVideo = video;
     let done = false;
-    const finish = (): void => {
+    const finish = (error?: Error): void => {
       if (done || !token.current || this.#activeVideo !== video) return;
       done = true;
-      this.#activeVideo = null;
-      this.#lifecycle.release('system', 'listener', 'video-listeners');
-      video.remove();
-      onEnd();
+      this.#cancelVideo();
+      if (error) onEnd(error); else onEnd();
     };
-    video.addEventListener('ended', finish);
-    video.addEventListener('error', finish);
-    video.addEventListener('pointerdown', finish);
+    const ended = () => finish();
+    const failed = () => finish(failure(video.error?.message || `媒体读取或解码失败（${video.error?.code ?? 'unknown'}）`));
+    video.addEventListener('ended', ended);
+    video.addEventListener('error', failed);
+    video.addEventListener('pointerdown', ended);
     this.#lifecycle.register('system', 'listener', 'video-listeners', () => {
-      video.removeEventListener('ended', finish);
-      video.removeEventListener('error', finish);
-      video.removeEventListener('pointerdown', finish);
+      video.removeEventListener('ended', ended);
+      video.removeEventListener('error', failed);
+      video.removeEventListener('pointerdown', ended);
     });
     document.body.appendChild(video);
-    void video.play().catch(finish);
+    void video.play().catch(error => finish(failure(error)));
   }
 
   hideVideo(): void {
@@ -911,6 +918,8 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#lifecycle.release('system', 'listener', 'video-listeners');
     if (!video) return;
     video.pause();
+    video.removeAttribute('src');
+    video.load();
     video.remove();
   }
 }

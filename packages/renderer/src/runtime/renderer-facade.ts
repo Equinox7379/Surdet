@@ -272,6 +272,11 @@ export class RendererFacade {
     this.#projectionSnapshot = options.projectionSnapshot;
 
     const assets: AssetCommands = {
+      registerVideo: async (key, source, sourcePath) => {
+        this.#ensureActive('assets', 'registerVideo');
+        if (!this.#assetRegistry) this.#missing('assets', 'registerVideo');
+        await this.#assetRegistry.registerVideo(key, source, sourcePath);
+      },
       registerBackground: async (key, source, format) => {
         this.#ensureActive('assets', 'registerBackground');
         if (this.#assetRegistry) {

@@ -212,6 +212,7 @@ interface PreviewImage {
 }
 
 interface PreviewAssets {
+  videos: { key: string; file: PreviewImage }[];
   backgrounds: { key: string; image: PreviewImage }[];
   portraits: { charId: string; costume: string; expression: string; image: PreviewImage }[];
   avatars: { key: string; image: PreviewImage }[];
@@ -335,6 +336,7 @@ async function readProjectImages(): Promise<PreviewAssets> {
   const backgrounds = new Map<string, { key: string; image: PreviewImage }>();
   const portraits = new Map<string, { charId: string; costume: string; expression: string; image: PreviewImage }>();
   const avatars = new Map<string, { key: string; image: PreviewImage }>();
+  const videos = new Map<string, { key: string; file: PreviewImage }>();
   const audio = new Map<string, { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }>();
   for (const asset of state.dirAssets) {
     if (!asset.handle) continue;
@@ -343,6 +345,10 @@ async function readProjectImages(): Promise<PreviewAssets> {
       const ext = (file.name.split('.').pop() ?? '').toLowerCase();
       const buffer = await file.arrayBuffer();
       const sourcePath = asset.sourcePath ?? assetPathForHandle(asset.handle);
+      if (asset.kind === 'video') {
+        videos.set(asset.key, { key: asset.key, file: { buffer, mime: file.type || ({ mp4: 'video/mp4', webm: 'video/webm', ogv: 'video/ogg' }[ext]) || 'application/octet-stream', sourcePath } });
+        continue;
+      }
       if (asset.kind === 'bgm' || asset.kind === 'ambience' || asset.kind === 'se' || asset.kind === 'voice') {
         audio.set(`${asset.kind}:${asset.key}`, {
           kind: asset.kind,
@@ -368,7 +374,7 @@ async function readProjectImages(): Promise<PreviewAssets> {
       // 单个损坏/失权素材不应阻断整个剧情预览；舞台会为缺失项保留占位回退。
     }
   }
-  return { backgrounds: [...backgrounds.values()], portraits: [...portraits.values()], avatars: [...avatars.values()], audio: [...audio.values()] };
+  return { backgrounds: [...backgrounds.values()], portraits: [...portraits.values()], avatars: [...avatars.values()], audio: [...audio.values()], videos: [...videos.values()] };
 }
 
 async function readProjectTimelines(): Promise<unknown[]> {
@@ -384,7 +390,7 @@ async function previewSourceFacts(assets: PreviewAssets, content?: PreviewConten
     : await Promise.all(Object.entries(content.files).filter(([path]) => isPreviewSourcePath(path)).map(async ([path, text]) => ({ path,
       sha256: await previewTextHash(previewSourceText(path, text)) })));
   const buffers = [...assets.backgrounds.map(value => value.image), ...assets.portraits.map(value => value.image),
-    ...assets.avatars.map(value => value.image), ...assets.audio.map(value => value.file)];
+    ...assets.avatars.map(value => value.image), ...assets.audio.map(value => value.file), ...assets.videos.map(value => value.file)];
   const facts = await Promise.all(buffers.map(async value => {
     if (!value.sourcePath) throw new Error('无法核对预览素材来源，请重新加载项目。');
     const hash = await crypto.subtle.digest('SHA-256', value.buffer);
@@ -829,6 +835,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       ...assets.portraits.map((a) => a.image.buffer),
       ...assets.avatars.map((a) => a.image.buffer),
       ...assets.audio.map((a) => a.file.buffer),
+      ...assets.videos.map((a) => a.file.buffer),
       ...Object.values(fonts).map((font) => font.buffer),
     ];
     const target = frame.contentWindow;
