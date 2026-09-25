@@ -16,7 +16,7 @@ const PROJECT_THEME = {
   typography: { bodySize: 28, uiSize: 24, captionSize: 18 },
 };
 const assetFiles = Object.fromEntries(Object.entries(import.meta.glob<string>(
-  '../content/assets/**/*.{png,jpg,jpeg,webp,gif,avif,svg,mp3,ogg,wav,m4a,flac}',
+  '../content/assets/**/*',
   { query: '?url', import: 'default', eager: true },
 )).map(([path, url]) => [path.replace('../content/assets/', ''), url]));
 

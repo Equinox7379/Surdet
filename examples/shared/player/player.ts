@@ -569,8 +569,8 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
       } else if (kind === 'avatar' && IMG.test(fname)) {
         await assets.registerAvatar(fname.replace(IMG, ''), url, format);
         return true;
-      } else if ((kind === 'bgm' || kind === 'se' || kind === 'voice') && AUD.test(fname)) {
-        audioUrls.set(fname.replace(AUD, ''), url);
+      } else if ((kind === 'bgm' || kind === 'music' || kind === 'ambience' || kind === 'se' || kind === 'voice') && AUD.test(fname)) {
+        audioUrls.set(`${kind === 'music' ? 'bgm' : kind}:${fname.replace(AUD, '')}`, url);
         audioManager.setSourceFormat(url, fname.split('.').pop() ?? '');
         return true;
       }

@@ -27,6 +27,40 @@ let page;
 let agent;
 let editorServer;
 const previousDataRoot = process.env.SURDET_AGENT_DATA_DIR;
+const mediaSource = path.join(engine, 'prepared-media');
+
+// Synthetic test tones only, not production audio. Different durations expose
+// same-basename channel collisions through the real Web Audio source nodes.
+async function prepareTestAudio() {
+  for (const [index, channel] of ['bgm', 'ambience', 'se', 'voice'].entries()) {
+    const samples = (index + 1) * 2000;
+    const bytes = Buffer.alloc(44 + samples * 2);
+    bytes.write('RIFF'); bytes.writeUInt32LE(bytes.length - 8, 4); bytes.write('WAVEfmt ', 8);
+    bytes.writeUInt32LE(16, 16); bytes.writeUInt16LE(1, 20); bytes.writeUInt16LE(1, 22);
+    bytes.writeUInt32LE(8000, 24); bytes.writeUInt32LE(16000, 28); bytes.writeUInt16LE(2, 32); bytes.writeUInt16LE(16, 34);
+    bytes.write('data', 36); bytes.writeUInt32LE(samples * 2, 40);
+    for (let sample = 0; sample < samples; sample++) bytes.writeInt16LE(Math.round(Math.sin(sample * Math.PI / 20) * 500), 44 + sample * 2);
+    await fs.mkdir(path.join(mediaSource, channel), { recursive: true });
+    await fs.writeFile(path.join(mediaSource, channel, '同名 声音.WAV'), bytes);
+  }
+}
+
+async function observeAudio(target) {
+  await target.addInitScript(() => {
+    window.__playedAudioDurations = [];
+    const start = AudioBufferSourceNode.prototype.start;
+    AudioBufferSourceNode.prototype.start = function (...args) {
+      const result = Reflect.apply(start, this, args);
+      if (this.buffer) window.__playedAudioDurations.push(this.buffer.duration);
+      return result;
+    };
+  });
+}
+
+async function verifyPlayedAudio(target, expected = [0.25, 0.5, 0.75, 1]) {
+  await target.waitForFunction(expected => expected.every(duration => window.__playedAudioDurations?.some(actual => Math.abs(actual - duration) < 0.002)), expected);
+  return target.evaluate(() => window.__playedAudioDurations);
+}
 
 async function authorChapter(game) {
   process.env.SURDET_AGENT_DATA_DIR = path.join(engine, 'agent-data');
@@ -34,7 +68,7 @@ async function authorChapter(game) {
   const configBefore = await fs.readFile(path.join(game, 'game.config.json'), 'utf8');
   const connect = async (policy, resumeChangeId) => {
     const session = await openAgentPortSession({ projectRoot: game, policy,
-      assetSources: [path.join(repo, 'examples/starter/content/assets')], assetImportDataRoot: path.join(engine, 'asset-data'),
+      assetSources: [path.join(repo, 'examples/starter/content/assets'), mediaSource], assetImportDataRoot: path.join(engine, 'asset-data'),
       ...(resumeChangeId ? { resumeChangeId } : {}) });
     const server = createAgentPortServer(session);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -49,11 +83,18 @@ async function authorChapter(game) {
     return response.structuredContent.result;
   };
   await connect('apply');
-  const sourceId = (await call('surdet_asset_sources')).roots[0].sourceId;
+  const roots = (await call('surdet_asset_sources')).roots;
+  const sourceId = roots.find(root => root.name === 'assets').sourceId;
   const items = [];
   for (const [sourcePath, kind] of [['bg/post_office.png', 'background'], ['portrait/lynn_coat_normal.png', 'portrait'], ['portrait/lynn_coat_smile.png', 'portrait']]) {
     const { file } = await call('surdet_asset_sources', { sourceId, path: sourcePath });
     items.push({ itemId: randomUUID(), sourceId, sourcePath, sha256: file.sha256, kind, fileName: path.basename(sourcePath) });
+  }
+  const mediaSourceId = roots.find(root => root.name === 'prepared-media').sourceId;
+  for (const [channel, kind] of [['bgm', 'music'], ['ambience', 'ambience'], ['se', 'sound-effect'], ['voice', 'voice']]) {
+    const sourcePath = `${channel}/同名 声音.WAV`;
+    const { file } = await call('surdet_asset_sources', { sourceId: mediaSourceId, path: sourcePath });
+    items.push({ itemId: randomUUID(), sourceId: mediaSourceId, sourcePath, sha256: file.sha256, kind, fileName: '同名 声音.WAV' });
   }
   const operationId = randomUUID();
   const staged = await call('surdet_asset_import_stage', { operationId, items });
@@ -93,6 +134,7 @@ async function authorChapter(game) {
   ] });
   await call('surdet_scene_create', { operationId: 'hub', sceneId: 'hub_scene', blocks: [
     harbor.usage.scene, normal.usage.scene,
+    ...['bgm', 'ambience', 'se', 'voice'].map(name => ({ kind: 'instruction', name, args: ['"同名 声音"'] })),
     { kind: 'text', speaker: '凛', value: '港口的风停了，去邮局看看吧。' },
     { kind: 'instruction', name: 'timeline', args: ['intro'], modifiers: { blocking: '' } },
     { kind: 'text', speaker: '凛', value: '邮局到了，你的信就在里面。' },
@@ -178,6 +220,7 @@ async function continueInEditor(game, errors) {
   };
   const open = async () => {
     page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await observeAudio(page);
     page.on('console', message => { if (message.type() === 'error') errors.push(`Editor: ${message.text()}`); });
     page.on('pageerror', error => errors.push(`Editor: ${error.message}`));
     page.on('response', response => {
@@ -403,6 +446,15 @@ async function continueInEditor(game, errors) {
   assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('imported_dialogue').text), importedBeforeEdit);
   assert.match(importedBeforeEdit, /引路人：@jump secret 只是印在信上的字。/);
   console.log('PASS CSV: UTF-8 file -> mapped preview -> new unsaved scene -> edit/undo -> normal save -> project reopen; literal instructions remain dialogue');
+  await page.locator('[data-editor-mode="editor"]').click();
+  await page.locator('[data-scene-id="hub_scene"]').click();
+  await page.keyboard.press('Control+p');
+  await page.getByRole('button', { name: '重新播放', exact: true }).click();
+  const preview = await page.locator('iframe.preview-frame').elementHandle();
+  const frame = await preview.contentFrame();
+  assert.ok(frame);
+  await verifyPlayedAudio(frame);
+  console.log('PASS Editor preview: four same-name audio channels really decoded and started');
 }
 
 async function resumePublicAuthoring(game) {
@@ -438,6 +490,7 @@ try {
   await fs.symlink(path.join(repo, 'node_modules'), path.join(engine, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.equal(await cmdNew('first-letter', { engineRoot: engine }), 0);
   const game = path.join(engine, 'games/first-letter');
+  await prepareTestAudio();
   const main = await authorChapter(game);
   // Exercise native File reads and byte fingerprints, not a text-only mock.
   for (const file of ['game.config.json', 'content/scenario/第一章/邮局/post_office_visit.gal']) {
@@ -453,6 +506,7 @@ try {
   await fs.mkdir(output, { recursive: true });
   browser = await chromium.launch({ headless: true });
   page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  await observeAudio(page);
   page.setDefaultTimeout(30000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -466,6 +520,7 @@ try {
   await page.waitForFunction(() => window.__surdetDebug.rendererStatus === 'awaiting'
     && window.__surdetDebug.presentationSnapshot.stage.portraits.some(p => p.key === 'lynn:coat' && p.view.expression === 'normal'));
   assert.equal(await page.evaluate(() => window.__surdetDebug.presentationSnapshot.stage.backgroundKey), 'harbor');
+  const playedAudio = await verifyPlayedAudio(page);
   await page.screenshot({ path: path.join(output, '01a-normal-harbor.png') });
   await page.evaluate(() => document.activeElement?.blur());
   await page.keyboard.press('Space');
@@ -494,6 +549,7 @@ try {
   assert.equal(await page.evaluate(() => window.surdetDebug.store.get('opened')), true);
   assert.equal(await page.evaluate(() => window.__surdetDebug.presentationSnapshot.stage.portraits.find(p => p.key === 'lynn:coat')?.view.expression), 'smile');
   assert.equal(await page.evaluate(() => window.__surdetDebug.presentationSnapshot.stage.cameraPan.x), -24);
+  await verifyPlayedAudio(page, [0.25, 0.5]);
   await finishToTitle(page);
   await activate(page, '开始游戏'); await advanceToChoice(page);
   assert.equal(await page.evaluate(() => window.surdetDebug.store.get('opened')), false, 'new game did not reset project variables');
@@ -538,7 +594,7 @@ try {
   await page.screenshot({ path: path.join(output, '05-ending-after-editor-save.png') });
   await resumePublicAuthoring(game);
   assert.deepEqual(errors, []);
-  await fs.writeFile(path.join(output, 'evidence.json'), JSON.stringify({ generatedBy: 'cmdNew + public MCP', typecheck: true, build: true, unchangedMain: true, explicitOptions: true, editorContinued: true, endingSceneProtected: true, endingAfterEditorSave: true, branches: 2, savedPosition: saved, reloadedPosition: saved, returnedToTitle: true, errors }, null, 2));
+  await fs.writeFile(path.join(output, 'evidence.json'), JSON.stringify({ generatedBy: 'cmdNew + public MCP', typecheck: true, build: true, unchangedMain: true, explicitOptions: true, editorContinued: true, endingSceneProtected: true, endingAfterEditorSave: true, branches: 2, savedPosition: saved, reloadedPosition: saved, returnedToTitle: true, playedAudioDurations: playedAudio, audioRestoredAfterLoad: true, editorAudioChannels: true, errors }, null, 2));
   console.log(`PASS actual surdet new project: typecheck/build, two branches, menu save, reload/title load and both endings / ${output}`);
 } catch (error) {
   if (page) {

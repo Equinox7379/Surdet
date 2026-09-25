@@ -215,7 +215,7 @@ interface PreviewAssets {
   backgrounds: { key: string; image: PreviewImage }[];
   portraits: { charId: string; costume: string; expression: string; image: PreviewImage }[];
   avatars: { key: string; image: PreviewImage }[];
-  audio: { kind: 'bgm' | 'se' | 'voice'; key: string; file: PreviewImage }[];
+  audio: { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }[];
 }
 
 interface SpeakerProfile {
@@ -335,7 +335,7 @@ async function readProjectImages(): Promise<PreviewAssets> {
   const backgrounds = new Map<string, { key: string; image: PreviewImage }>();
   const portraits = new Map<string, { charId: string; costume: string; expression: string; image: PreviewImage }>();
   const avatars = new Map<string, { key: string; image: PreviewImage }>();
-  const audio = new Map<string, { kind: 'bgm' | 'se' | 'voice'; key: string; file: PreviewImage }>();
+  const audio = new Map<string, { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }>();
   for (const asset of state.dirAssets) {
     if (!asset.handle) continue;
     try {
@@ -343,7 +343,7 @@ async function readProjectImages(): Promise<PreviewAssets> {
       const ext = (file.name.split('.').pop() ?? '').toLowerCase();
       const buffer = await file.arrayBuffer();
       const sourcePath = asset.sourcePath ?? assetPathForHandle(asset.handle);
-      if (asset.kind === 'bgm' || asset.kind === 'se' || asset.kind === 'voice') {
+      if (asset.kind === 'bgm' || asset.kind === 'ambience' || asset.kind === 'se' || asset.kind === 'voice') {
         audio.set(`${asset.kind}:${asset.key}`, {
           kind: asset.kind,
           key: asset.key,
