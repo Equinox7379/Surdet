@@ -50,15 +50,32 @@ export function searchScenes(scenes: Iterable<SceneText>, query: string, useRege
   return results;
 }
 
-/** 与查找相同的逐行匹配，保留原行结束符；count=0 时调用方不应写入。 */
-export function replaceInSceneText(text: string, query: string, replacement: string, useRegex: boolean): { text: string; count: number } | null {
+export interface ReplacementPreview {
+  text: string;
+  count: number;
+  changes: { line: number; before: string; after: string; count: number }[];
+}
+
+/** Preview and application share one replacement pass; row numbers refer to the original source. */
+export function previewSceneReplacement(text: string, query: string, replacement: string, useRegex: boolean): ReplacementPreview | null {
   const re = buildMatcher(query, useRegex);
   if (!re) return null;
-  if (!query) return { text, count: 0 };
+  if (!query) return { text, count: 0, changes: [] };
   let count = 0;
-  const next = parseSceneDocument(text).map(line => {
+  const changes: ReplacementPreview['changes'] = [];
+  const next = parseSceneDocument(text).map((line, index) => {
     re.lastIndex = 0;
-    return line.raw.replace(re, () => { count++; return replacement; }) + line.eol;
+    let rowCount = 0;
+    const after = line.raw.replace(re, () => { rowCount++; return replacement; });
+    count += rowCount;
+    if (after !== line.raw) changes.push({ line: index, before: line.raw, after, count: rowCount });
+    return after + line.eol;
   }).join('');
-  return { text: next, count };
+  return { text: next, count, changes };
+}
+
+/** 与查找相同的逐行匹配，保留原行结束符；count=0 时调用方不应写入。 */
+export function replaceInSceneText(text: string, query: string, replacement: string, useRegex: boolean): { text: string; count: number } | null {
+  const preview = previewSceneReplacement(text, query, replacement, useRegex);
+  return preview && { text: preview.text, count: preview.count };
 }

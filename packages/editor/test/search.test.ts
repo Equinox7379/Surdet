@@ -2,7 +2,7 @@
  * M6 E5-1 搜索/替换纯逻辑测试。
  */
 import { describe, expect, it } from 'vitest';
-import { buildMatcher, searchScenes, replaceInSceneText } from '../src/search.js';
+import { buildMatcher, searchScenes, replaceInSceneText, previewSceneReplacement } from '../src/search.js';
 import type { SceneText } from '../src/search.js';
 
 const scenes: SceneText[] = [
@@ -54,6 +54,20 @@ describe('searchScenes', () => {
 });
 
 describe('replaceInSceneText', () => {
+  it('预览仅列出实际差异，原行号、字面替换和混合换行与应用完全一致', () => {
+    const text = '\uFEFF@scene start\r\n凛：灯塔灯塔\r// 保留\n凛：灯塔';
+    const preview = previewSceneReplacement(text, '灯塔', '$&<img>\n下一行', false)!;
+    expect(preview.changes).toEqual([
+      { line: 1, before: '凛：灯塔灯塔', after: '凛：$&<img>\n下一行$&<img>\n下一行', count: 2 },
+      { line: 3, before: '凛：灯塔', after: '凛：$&<img>\n下一行', count: 1 },
+    ]);
+    expect(replaceInSceneText(text, '灯塔', '$&<img>\n下一行', false)).toEqual({ text: preview.text, count: 3 });
+    expect(preview.text.startsWith('\uFEFF@scene start\r\n')).toBe(true);
+    expect(preview.text.includes('\r// 保留\n')).toBe(true);
+    expect(previewSceneReplacement(text, '灯塔', '灯塔', false)?.changes).toEqual([]);
+    expect(previewSceneReplacement(text, '', '新增', true)?.changes).toEqual([]);
+    expect(previewSceneReplacement(text, '[', '', true)).toBeNull();
+  });
   it.each(['\u2028', '\u2029'])('替换其他词时保留 %j 所在行与说话人', (separator) => {
     const text = `@scene start\r\n林汀：前半句${separator}后半句\n周渡：灯塔还亮着。\r@end`;
     const documents = [{ key: 'start', id: 'start', text }];

@@ -1,6 +1,6 @@
 /** Search UI only. Documents and replacements keep the shared search/history paths. */
 import { state, h, setStatus, type SceneEntry } from '../state.js';
-import { buildMatcher, searchScenes, replaceInSceneText, type SearchResult } from '../search.js';
+import { buildMatcher, searchScenes, previewSceneReplacement, type SearchResult } from '../search.js';
 import { setSceneText } from '../history.js';
 import { renderSidebar } from './sidebar.js';
 import { renderEditor } from './editor.js';
@@ -79,7 +79,7 @@ export function renderSearchPanel(container: HTMLElement): void {
     replaceToggle.setAttribute('aria-expanded', String(view.replaceExpanded));
     replace.textContent = view.scope === 'scene' ? '替换当前场景' : '替换整个项目';
     replace.setAttribute('aria-label', replace.textContent);
-    replace.title = `${replace.textContent}中的全部匹配，可在各场景撤销`;
+    replace.title = `${replace.textContent}：先查看差异，确认后可在各场景撤销`;
   };
   const results = h('div', 'search-results'); results.setAttribute('role', 'region'); results.setAttribute('aria-label', '查找结果');
   container.append(bar, options, replacementRow, results);
@@ -143,20 +143,57 @@ export function renderSearchPanel(container: HTMLElement): void {
   }
   function replaceAll(): void {
     if (!current() || !allowedToEdit(container) || state.reviewPreviewReadOnly || !view.query) return;
-    // Use current documents, the selected scope and existing per-scene undo points.
-    let total = 0, touched = 0;
-    for (const scene of sceneEntries()) {
-      const result = replaceInSceneText(scene.text, view.query, view.replacement, view.regex);
-      if (!result) { refresh(); return; }
-      if (result.count && result.text !== scene.text) {
-        setSceneText(scene.key, result.text); total += result.count; touched++;
+    if (container.querySelector('.search-replace-dialog')) return;
+    const request = { query: view.query, replacement: view.replacement, regex: view.regex, scope: view.scope, current: state.current };
+    // Include unchanged scoped documents, so adding/removing a scene cannot silently widen a preview.
+    const originals = sceneEntries().map(scene => ({ ...scene, entry: state.scenes.get(scene.key)!, file: state.scenes.get(scene.key)!.file }));
+    const changes = originals.map(scene => ({ ...scene, result: previewSceneReplacement(scene.text, request.query, request.replacement, request.regex) }))
+      .filter(scene => scene.result !== null && scene.result.changes.length > 0);
+    if (!changes.length) { setStatus('没有需要替换的内容', true, 2500); refresh(); return; }
+    const total = changes.reduce((sum, scene) => sum + scene.result!.changes.reduce((count, line) => count + line.count, 0), 0);
+    const dialog = h('dialog', 'v4-insert-dialog search-replace-dialog'); dialog.setAttribute('aria-label', '替换预览');
+    const summary = request.scope === 'scene' ? `当前场景 ${originals[0]?.file ?? ''}` : `整个项目（检查 ${originals.length} 个场景）`;
+    dialog.append(h('h2', undefined, '替换预览'), h('p', undefined, `${summary}；将修改 ${changes.length} 个场景、${total} 处。确认后仅改变草稿，可逐场景撤销。`),
+      h('p', undefined, `${request.regex ? '正则' : '查找'}：${request.query} → ${request.replacement || '（清空）'}`));
+    for (const [index, scene] of changes.entries()) {
+      const section = h('details'); section.open = index === 0;
+      section.append(h('summary', undefined, `${scene.file} · ${scene.result!.changes.length} 行`));
+      for (const line of scene.result!.changes) {
+        const row = h('div'); row.dataset.replacementLine = String(line.line);
+        row.append(h('p', undefined, `第 ${line.line + 1} 行`));
+        for (const [label, text] of [['替换前', line.before], ['替换后', line.after]]) {
+          const content = h('pre', undefined, text); content.setAttribute('aria-label', label!);
+          content.style.whiteSpace = 'pre-wrap'; content.style.overflowWrap = 'anywhere';
+          row.append(h('strong', undefined, label), content);
+        }
+        section.append(row);
       }
+      dialog.append(section);
     }
-    if (total) {
+    const message = h('p'); message.setAttribute('role', 'alert');
+    const close = (): void => { dialog.close(); dialog.remove(); if (current()) replace.focus(); };
+    const confirm = button('确认替换', '确认替换', () => {
+      if (!allowedToEdit(container) || state.reviewPreviewReadOnly) { message.textContent = '当前项目不可编辑，请关闭预览后重试。'; return; }
+      const latest = sceneEntries();
+      const stale = request.query !== view.query || request.replacement !== view.replacement || request.regex !== view.regex || request.scope !== view.scope
+        || (request.scope === 'scene' && request.current !== state.current) || latest.length !== originals.length
+        || originals.some((scene, index) => latest[index]?.key !== scene.key || state.scenes.get(scene.key) !== scene.entry
+          || scene.entry.text !== scene.text || scene.entry.id !== scene.id || scene.entry.file !== scene.file);
+      if (stale) { message.textContent = '正文、范围或替换条件已变化，请关闭后重新预览；本次未应用。'; confirm.disabled = true; return; }
+      for (const scene of changes) setSceneText(scene.key, scene.result!.text);
+      close();
       onEditedHook(); renderSidebar(); renderEditor();
-      setStatus(`已替换 ${total} 处（${touched} 个场景，可逐场景撤销；尚未保存）`, true, 5000);
-    } else setStatus('没有需要替换的内容', true, 2500);
-    view.active = null; refresh();
+      setStatus(`已替换 ${total} 处（${changes.length} 个场景，可逐场景撤销；尚未保存）`, true, 5000);
+      view.active = null; refresh();
+    });
+    const footer = h('footer'); footer.append(button('取消', '取消替换', close), confirm);
+    dialog.append(message, footer); container.append(dialog);
+    dialog.oncancel = event => { event.preventDefault(); close(); };
+    dialog.onkeydown = event => {
+      event.stopPropagation();
+      if ((event.ctrlKey || event.metaKey) && ['s', 'z', 'y'].includes(event.key.toLowerCase())) event.preventDefault();
+    };
+    dialog.showModal();
   }
   query.oninput = () => { if (usable(query)) { view.query = query.value; view.active = null; refresh(); } };
   replacement.oninput = () => { if (usable(replacement)) view.replacement = replacement.value; };
