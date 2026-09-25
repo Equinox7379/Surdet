@@ -18,6 +18,7 @@ import { editorPreviewPublisher, editorWorkspaceStatus } from '../editor-workspa
 import { previewTextHash, projectPreviewContent } from '../preview-content.js';
 import { previewCheckpointKey, readPreviewCheckpoint, writePreviewCheckpoint } from '../preview-checkpoints.js';
 import type { FontRole } from '@surdet/renderer';
+import { resolveProjectFontPaths } from '@surdet/core';
 import { normalizePreviewDiagnostic, type PreviewDiagnostic } from '../preview-diagnostics.js';
 import {
   dispatchPreviewTraceSelection,
@@ -188,6 +189,7 @@ interface PreviewFont {
   mime: string;
   /** 文件版本标识：替换同路径字体后不能命中旧缓存 */
   version: string;
+  sourcePath?: string;
 }
 
 export function clonePreviewFontsForTransfer(
@@ -250,24 +252,11 @@ const previewFontsCache = new WeakMap<FileSystemDirectoryHandle, {
 }>();
 
 /** 从项目目录读取 game.config.json 的字体角色文件；旧版 font 自动作为三个角色的来源。 */
-async function readProjectFonts(): Promise<Partial<Record<FontRole, PreviewFont>>> {
-  let cfg: Record<string, unknown>;
-  try {
-    cfg = state.gameConfigText.trim() ? parseProjectConfigDocument(state.gameConfigText) : {};
-  } catch {
-    return {};
-  }
+async function readProjectFonts(configText: string): Promise<Partial<Record<FontRole, PreviewFont>>> {
+  const cfg = configText.trim() ? parseProjectConfigDocument(configText) : {};
   const root = state.dirHandle;
   if (!root) return {};
-  const configured = cfg.fonts && typeof cfg.fonts === 'object'
-    ? cfg.fonts as Partial<Record<FontRole, unknown>>
-    : null;
-  const legacy = typeof cfg.font === 'string' ? cfg.font : undefined;
-  const paths: Partial<Record<FontRole, string>> = {};
-  for (const role of ['body', 'title', 'ui'] as FontRole[]) {
-    const path = configured && typeof configured[role] === 'string' ? configured[role] as string : legacy;
-    if (path && path.length > 0) paths[role] = path;
-  }
+  const paths = resolveProjectFontPaths(cfg);
   if (Object.keys(paths).length === 0) return {};
   const MIME: Record<string, string> = { woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', otf: 'font/otf' };
   const files = new Map<FontRole, File>();
@@ -279,8 +268,12 @@ async function readProjectFonts(): Promise<Partial<Record<FontRole, PreviewFont>
       const segs = fontPath.split('/').filter((s) => s.length > 0);
       const fname = segs.pop()!;
       let dir: FileSystemDirectoryHandle = root;
-      for (const s of segs) dir = await dir.getDirectoryHandle(s);
-      const file = await (await dir.getFileHandle(fname)).getFile();
+      let file: File;
+      try {
+        for (const s of segs) dir = await dir.getDirectoryHandle(s);
+        file = await (await dir.getFileHandle(fname)).getFile();
+      }
+      catch (error) { throw new Error(`字体读取失败：${fontPath}（${error instanceof Error ? error.message : String(error)}）`); }
       files.set(role, file);
       versions.push(`${role}:${fontPath}:${file.lastModified}:${file.size}`);
     }
@@ -290,17 +283,20 @@ async function readProjectFonts(): Promise<Partial<Record<FontRole, PreviewFont>
     const result: Partial<Record<FontRole, PreviewFont>> = {};
     for (const [role, file] of files) {
       const ext = (file.name.split('.').pop() ?? '').toLowerCase();
+      const buffer = await file.arrayBuffer();
+      const digest = await crypto.subtle.digest('SHA-256', buffer);
       result[role] = {
-        buffer: await file.arrayBuffer(),
+        buffer,
         mime: MIME[ext] ?? 'font/ttf',
-        version: `${file.lastModified}:${file.size}`,
+        sourcePath: paths[role],
+        version: [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join(''),
       };
     }
     previewFontsCache.set(root, { key, fonts: result });
     return result;
-  } catch {
+  } catch (error) {
     previewFontsCache.delete(root);
-    return {};
+    throw error;
   }
 }
 
@@ -382,7 +378,7 @@ async function readProjectTimelines(): Promise<unknown[]> {
 }
 
 /** Hash the buffers actually sent to the iframe, before transferring their ownership. */
-async function previewSourceFacts(assets: PreviewAssets, content?: PreviewContent): Promise<PreviewSourceFacts> {
+async function previewSourceFacts(assets: PreviewAssets, fonts: Partial<Record<FontRole, PreviewFont>>, content?: PreviewContent): Promise<PreviewSourceFacts> {
   const storage = createEditorProjectStorage();
   const files = content === undefined
     ? await Promise.all((await storage.listFiles()).filter(isPreviewSourcePath).map(async path => ({ path,
@@ -390,13 +386,19 @@ async function previewSourceFacts(assets: PreviewAssets, content?: PreviewConten
     : await Promise.all(Object.entries(content.files).filter(([path]) => isPreviewSourcePath(path)).map(async ([path, text]) => ({ path,
       sha256: await previewTextHash(previewSourceText(path, text)) })));
   const buffers = [...assets.backgrounds.map(value => value.image), ...assets.portraits.map(value => value.image),
-    ...assets.avatars.map(value => value.image), ...assets.audio.map(value => value.file), ...assets.videos.map(value => value.file)];
+    ...assets.avatars.map(value => value.image), ...assets.audio.map(value => value.file), ...assets.videos.map(value => value.file), ...Object.values(fonts)];
   const facts = await Promise.all(buffers.map(async value => {
     if (!value.sourcePath) throw new Error('无法核对预览素材来源，请重新加载项目。');
     const hash = await crypto.subtle.digest('SHA-256', value.buffer);
     return { path: value.sourcePath, sha256: [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, '0')).join('') };
   }));
-  return { files, assets: facts };
+  const unique = new Map<string, { path: string; sha256: string }>();
+  for (const fact of facts) {
+    const prior = unique.get(fact.path);
+    if (prior && prior.sha256 !== fact.sha256) throw new Error(`读取期间素材发生变化：${fact.path}`);
+    unique.set(fact.path, fact);
+  }
+  return { files, assets: [...unique.values()] };
 }
 
 export interface PreviewPanelOptions {
@@ -753,8 +755,15 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     const requestScene = state.current ? state.scenes.get(state.current) : undefined;
     const requestAssets = state.dirAssets;
     const requestSource = requestKey();
-    // 项目内嵌字体一并下发（预览首帧即用正确字体；缺失回退系统字体）
-    const cachedFonts = await readProjectFonts();
+    // 使用本次选择的内容版本，不从编辑器原配置借用字体。
+    let cachedFonts: Partial<Record<FontRole, PreviewFont>>;
+    try { cachedFonts = await readProjectFonts(projected?.configText ?? state.gameConfigText); }
+    catch (error) {
+      if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !container.isConnected) return;
+      sourceState.dataset.previewSourceState = 'stale';
+      sourceState.textContent = `预览未启动：${error instanceof Error ? error.message : String(error)}`;
+      return;
+    }
     const fonts = clonePreviewFontsForTransfer(cachedFonts);
     const assets = await readProjectImages();
     const timelineContent = projected === undefined ? undefined : parsePreviewTimelines(projected.timelines);
@@ -775,7 +784,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       && (!status.dirty || (isolated !== undefined && isolated.target.kind !== 'saved-project')) && !status.saving && status.update === 'none') {
       const previewGeneration = ++publishedPreviewGeneration;
       try {
-        const source = await previewSourceFacts(assets, isolated);
+        const source = await previewSourceFacts(assets, cachedFonts, isolated);
         if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || requestKey() !== requestSource) return;
         await publisher.publish({ action: 'begin', previewId: traceId, previewGeneration, sceneId: cur.id,
           seed,

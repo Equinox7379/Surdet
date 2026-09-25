@@ -57,7 +57,7 @@ describe('Agent commit and real human workspace state', () => {
     const session = await openAgentPortSession({ projectRoot: project, policy: 'apply', resumeChangeId: changeId });
     try {
       const described = await session.describe();
-      expect(described.contractVersion).toBe('2.12.0');
+      expect(described.contractVersion).toBe('2.13.0');
       expect(described.humanWorkspace).toMatchObject({ availability: 'dirty', dirtyScopes: ['config'] });
       expect(described.capabilities.find(capability => capability.id === 'change.commit')?.availability).toBe('state-blocked');
       expect(described.capabilities.find(capability => capability.id === 'project.inspect')?.availability).toBe('available');

@@ -149,7 +149,7 @@ candidate/integration 明确拒绝该跨文件操作，既有候选创建/修改
 
 ### 项目展示配置
 
-`project.inspect` 的 `playerConfig` 返回有限字段的 `values` 与修改所需 `fingerprint`。`title` 存在 game.config.json 根部，`subtitle`、`titleBackground`、`endScenes`、`firstRunHint` 存在其 `player` 对象中；无需打开或修改 src/main.ts。
+`project.inspect` 的 `playerConfig` 返回有限字段的 `values` 与修改所需 `fingerprint`。`title`、旧式 `font`、字体角色表 `fonts` 存在 game.config.json 根部，`subtitle`、`titleBackground`、`endScenes`、`firstRunHint` 存在其 `player` 对象中；无需打开或修改 src/main.ts。
 
 普通 direct 草稿先以 `view: "working"` 读取，再调用 `project.player-config.patch`（MCP：`surdet_project_player_config_patch`），提供 operationId、刚读到的 expectedFingerprint 及 patch。只写要改的字段；旧指纹会被拒绝，成功后重新读取。该操作不支持 candidate/integration。
 
@@ -168,6 +168,10 @@ candidate/integration 明确拒绝该跨文件操作，既有候选创建/修改
 ```
 
 示例背景必须已出现在 project.assets，两个结局场景也必须已建立。读取中的 null 表示字段未提供；patch 的 null 移除该字段，空字符串/空数组则明确清空。消费优先级为显式 PlayerProject 参数 > game.config.json > 不依赖具体作品的默认行为；显式参数消费者不受新配置覆盖。标题改变不会改变 package name 所确定的存档身份。标签改名也同步文本回想 texts[].label；素材改名同步配置标题背景，其他字段保持原值。
+
+字体复制 `project.assets.intelligence.items` 中 `kind: "font"` 的完整 `sourcePath`，不是 basename 或素材短键。例如 `patch: { fonts: { body: "content/assets/fonts/正文.TTF", title: "", ui: null } }`：body 换字体、title 明确使用默认字体、ui 删除该角色配置，未提供的角色保持原值。`fonts` 对象整体优先于旧 `font`，缺省/空角色不会从旧 font 继承；`fonts: {}` 表示建立/保留角色表，`fonts: null` 才删除整表并恢复旧 font 或默认行为。未知配置字段仍保留，读取的角色 null 表示未提供。路径区分目录与大小写；不同目录同名字体不是重复键。字体目录同时列出每个角色的实际引用。
+
+字体修改只支持 direct；candidate 场景引用基线字体路径并记录有效角色配置的重放指纹，不得伴随写配置。未封存旧草稿若缺少新增字体事实，须保留原记录并新建候选，不能补写历史；已封存胶囊不改写。隔离工作版本试玩读取未写回的配置，坏字体明确显示文件与失败原因并记失败；Player 会报告失败并使用默认字体，不能把回退当作字体加载成功。字体许可随附仍在 P2 后续施工，作者须保留原授权文件。
 
 Editor 会阻止改名或删除仍被 `player.endScenes` 引用的场景，并指出配置来源。先通过上述配置入口调整结束场景引用，再进行场景操作；本轮不自动改写结束数组。
 
@@ -243,7 +247,7 @@ Editor 会阻止改名或删除仍被 `player.endScenes` 引用的场景，并�
 4. 在 apply 会话用原 operationId 和返回的 plan.planFingerprint 调用 `asset.import.commit`；不覆盖同名文件。portrait 文件名遵守 role_outfit_expression 三段规则，背景 kind 用 background。不同表情各导入一张，不能将一张图改名冒充多个表情。
 5. 重新读取 project.assets/project.inspect，确认发布后能找到新素材，再 change.begin。后续仍走普通草稿、验证与获授权写回。响应丢失先 asset.import.inspect 原 operationId，需要恢复时按回执使用 asset.import.recover，不换号重复发布。
 
-声音分别使用 `music`（bgm）、`ambience`、`sound-effect`（se）、`voice`，视频使用 `video`，字体使用 `font`；`fileName` 只填保留原格式的单个文件名，不填目录。每文件最多 32 MiB、每批 32 项且总计 128 MiB。新媒体发布后可在 `project.assets.intelligence.items` 查看物理路径、用途和引用。声音键按四个声道独立解析，`@bgm`、`@ambience`、`@se`、`@voice` 使用各自的真实键，含空格时用引号包住；普通 Player 与 Editor 试玩均可使用环境音。导入回执不是运行验收；视频使用 `@video "真实素材键"`，会阻塞至结束或点击跳过；Player 与 Editor 都从项目素材解析，不要改入口文件手接 URL。坏视频会报告具体文件与原因，Editor 试玩会记为失败；不能以剧情仍能继续就称该视频通过。字体公开配置、许可随附及其余 P2 工作仍在施工，不得仅凭媒体已列出或入包就承诺完整可播或可分发。
+声音分别使用 `music`（bgm）、`ambience`、`sound-effect`（se）、`voice`，视频使用 `video`，字体使用 `font`；`fileName` 只填保留原格式的单个文件名，不填目录。每文件最多 32 MiB、每批 32 项且总计 128 MiB。新媒体发布后可在 `project.assets.intelligence.items` 查看物理路径、用途和引用。声音键按四个声道独立解析，`@bgm`、`@ambience`、`@se`、`@voice` 使用各自的真实键，含空格时用引号包住；普通 Player 与 Editor 试玩均可使用环境音。导入回执不是运行验收；视频使用 `@video "真实素材键"`，会阻塞至结束或点击跳过；Player 与 Editor 都从项目素材解析，不要改入口文件手接 URL。坏视频会报告具体文件与原因，Editor 试玩会记为失败；不能以剧情仍能继续就称该视频通过。字体使用上文“项目展示配置”的公开读写；许可随附及其余 P2 工作仍在施工，不得仅凭媒体已列出或入包就承诺完整可播或可分发。
 
 ## 2. DSL 速查
 

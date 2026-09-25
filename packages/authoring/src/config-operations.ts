@@ -18,6 +18,7 @@ import { buildSpeakerCharacterRefs } from './object-index.js';
 import { buildCharacterOperationCompositionDraft, buildEntrySceneOperationCompositionDraft } from './operation-composition-facts.js';
 import type { CompositionOperation } from './composition-contracts.js';
 import { resolveUniqueScenarioPath } from './scenario-identity.js';
+import { resolveProjectFontPaths, type ProjectFontRole } from '@surdet/core';
 
 const CONFIG_PATH = 'game.config.json';
 
@@ -27,19 +28,21 @@ export interface PlayerConfigValues {
   titleBackground: string | null;
   endScenes: string[] | null;
   firstRunHint: string | null;
+  font: string | null;
+  fonts: Record<ProjectFontRole, string | null> | null;
 }
 
 export interface PlayerConfigPatchInput {
   operationId: string;
   expectedFingerprint: string;
-  patch: Partial<PlayerConfigValues>;
+  patch: Partial<Omit<PlayerConfigValues, 'fonts'>> & { fonts?: Partial<Record<ProjectFontRole, string | null>> | null };
 }
 
 /** Null explicitly describes an absent field; empty strings/arrays remain values. */
 export async function inspectPlayerConfig(config: Record<string, unknown>, hasher: TextHasher): Promise<{ values: PlayerConfigValues; fingerprint: string }> {
   if (config['player'] !== undefined && !isRecord(config['player'])) throw new AuthoringOperationError('PROJECT_INVALID', 'game.config.json.player 必须是对象');
   const player = (config['player'] ?? {}) as Record<string, unknown>;
-  const values: PlayerConfigValues = { title: null, subtitle: null, titleBackground: null, endScenes: null, firstRunHint: null };
+  const values: PlayerConfigValues = { title: null, subtitle: null, titleBackground: null, endScenes: null, firstRunHint: null, font: null, fonts: null };
   for (const field of ['title', 'subtitle', 'titleBackground', 'firstRunHint'] as const) {
     const value = field === 'title' ? config[field] : player[field];
     if (value !== undefined && typeof value !== 'string') throw new AuthoringOperationError('PROJECT_INVALID', `展示配置 ${field} 必须是字符串`);
@@ -48,6 +51,15 @@ export async function inspectPlayerConfig(config: Record<string, unknown>, hashe
   const endings = player['endScenes'];
   if (endings !== undefined && (!Array.isArray(endings) || !endings.every((id) => typeof id === 'string'))) throw new AuthoringOperationError('PROJECT_INVALID', 'player.endScenes 必须是场景 ID 数组');
   values.endScenes = endings === undefined ? null : [...endings as string[]];
+  const font = config['font'];
+  if (font !== undefined && typeof font !== 'string') throw new AuthoringOperationError('PROJECT_INVALID', 'font 必须是字符串');
+  values.font = font ?? null;
+  try { resolveProjectFontPaths(config); }
+  catch (error) { throw new AuthoringOperationError('PROJECT_INVALID', error instanceof Error ? error.message : String(error)); }
+  if (config['fonts'] !== undefined) {
+    const fonts = config['fonts'] as Record<string, string | undefined>;
+    values.fonts = { body: fonts['body'] ?? null, title: fonts['title'] ?? null, ui: fonts['ui'] ?? null };
+  }
   return { values, fingerprint: await hasher.sha256(stableStringify(values)) };
 }
 
@@ -65,12 +77,28 @@ export async function applyPlayerConfigPatch(change: ChangeSession, input: Playe
       if (!Object.hasOwn(before.values, field)) throw new AuthoringOperationError('INVALID_REQUEST', `不支持的展示字段：${field}`);
       const value = input.patch[field];
       if (value === undefined) throw new AuthoringOperationError('INVALID_REQUEST', '重置字段请显式传 null');
-      const target = field === 'title' ? config : player;
+      if (field === 'fonts' && value !== null) {
+        if (!isRecord(value)) throw new AuthoringOperationError('INVALID_REQUEST', 'fonts 必须是角色对象或 null');
+        const fonts = { ...config['fonts'] as Record<string, unknown> | undefined };
+        for (const [role, path] of Object.entries(value)) {
+          if (!['body', 'title', 'ui'].includes(role) || (path !== null && typeof path !== 'string')) throw new AuthoringOperationError('INVALID_REQUEST', `不支持的字体角色或路径：${role}`);
+          if (path === null) delete fonts[role]; else fonts[role] = path;
+        }
+        config['fonts'] = fonts;
+        continue;
+      }
+      const target = field === 'title' || field === 'font' || field === 'fonts' ? config : player;
       if (value === null) delete target[field];
       else target[field] = value;
     }
     config['player'] = player;
     const after = await inspectPlayerConfig(config, hasher);
+    for (const fontPath of new Set(Object.values(resolveProjectFontPaths(config)))) {
+      if (!assets.intelligence.items.some(item => item.physical && item.kind === 'font' && item.sourcePath === fontPath
+        && item.issues.every(issue => issue === 'ASSET_UNUSED'))) {
+        throw new AuthoringOperationError('VALIDATION_FAILED', `字体不存在或不支持，请复制 project.assets 中的完整 sourcePath：${fontPath}`);
+      }
+    }
     const background = after.values.titleBackground;
     if (background !== null && background !== '' && !assets.backgrounds.some((asset) => asset.key === background && asset.resolved)) throw new AuthoringOperationError('VALIDATION_FAILED', `标题背景不存在或不支持：${background}`);
     for (const sceneId of after.values.endScenes ?? []) {

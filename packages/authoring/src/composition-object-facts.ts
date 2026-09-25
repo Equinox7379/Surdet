@@ -10,6 +10,7 @@ import { GALLERY_PATH, readGalleryDocument } from './gallery-operations.js';
 import { timelineIdFromPath } from './timeline-identity.js';
 import { parseTimelineDefinition, timelineFingerprint } from './timeline-operations.js';
 import { mediaAssetCommand } from './asset-intelligence.js';
+import { resolveProjectFontPaths } from '@surdet/core';
 
 export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, hasher: TextHasher): Promise<ReplayStatePrecondition[]> {
   const { cgs } = readGalleryDocument(snapshot.files.find((file) => file.path === GALLERY_PATH)?.text);
@@ -25,6 +26,7 @@ export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, has
   }));
   return [
     { objectRef: 'config:characters', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.config['characters'] ?? {})) },
+    { objectRef: 'config:fonts', expectedFingerprint: await hasher.sha256(stableStringify(resolveProjectFontPaths(snapshot.config))) },
     ...snapshot.scenes.map((scene) => ({ objectRef: `scene:${scene.id}`, expectedFingerprint: scene.file.sha256 })),
     ...timelineObjects,
     ...await Promise.all(Object.entries(snapshot.variables).sort(([left], [right]) => compareCanonicalText(left, right)).map(async ([name, declaration]) => ({
@@ -44,6 +46,7 @@ export function resolvedCompositionAssetRefs(assetPaths: readonly string[]): str
     ...catalog.portraits.filter((asset) => asset.resolved && usablePaths.has(asset.sourcePath)).map((asset) => portraitAssetRef(asset.role!, asset.outfit!, asset.expression!)),
     ...catalog.avatars.filter((asset) => asset.resolved && usablePaths.has(asset.sourcePath)).map((asset) => avatarAssetRef(asset.key)),
     ...usable.flatMap(item => {
+      if (item.kind === 'font') return [`asset:font:${item.sourcePath}`];
       const channel = mediaAssetCommand(item.kind);
       return channel && !(channel === 'ambience' && item.key === 'off')
         ? [`asset:${channel}:${item.key}`] : [];

@@ -75,7 +75,7 @@ import { ResolvedAudio } from '../../shared/resolved-audio.js';
 import { createSettingsStorage } from '../../shared/settings-storage.js';
 import { createBrowserSaveStorage, gameStoragePrefix } from '../../shared/player/browser-save-storage.js';
 import { listPlayerSaveSlots } from '../../shared/player/save-slot-list.js';
-import { createConfiguredFontJobs } from '../../shared/font-jobs.js';
+import { createConfiguredFontJobs, resolveBundledFontUrl } from '../../shared/font-jobs.js';
 import { installSceneHotReload } from '../../shared/scene-hmr.js';
 import { sceneFiles } from './scene-hmr-boundary.js';
 import type { PlayerOverlay, PlayerShellController } from '@surdet/host';
@@ -686,18 +686,15 @@ async function main(): Promise<void> {
         return null;
       }
     }
-    const fonts = import.meta.glob('../content/assets/fonts/*.{woff2,woff,ttf,otf}', { query: '?url', import: 'default', eager: true });
-    const wanted = fontPath.split('/').pop() ?? '';
-    for (const [p, url] of Object.entries(fonts)) {
-      if (p.endsWith(`/${wanted}`)) return url as string;
-    }
-    return null;
+    const fonts = import.meta.glob<string>('../content/assets/**/*', { query: '?url', import: 'default', eager: true });
+    return resolveBundledFontUrl(fontPath, {}, fonts);
   }
 
   const configuredFontJobs = createConfiguredFontJobs({
     config: gameConfig,
     fontBlobUrls,
     label: 'zero',
+    onError: message => dialogue.showBanner(message, 'tip'),
     resolveFontUrl,
     assets,
   });

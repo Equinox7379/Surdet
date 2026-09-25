@@ -830,6 +830,16 @@ export const v4WorkbenchCases: BrowserCase[] = [
     delayed.release(); await tick(); await nextTask();
     assert(state.previewTrace[0] === observed && state.selectedTraceStep === 0, 'detached preview erased the prior observation');
   } },
+  { name: 'role font map overrides the entire legacy font configuration', run: async () => {
+    fixture();
+    state.dirHandle = makeFontRoot('role-fonts', [1, 2, 3]);
+    state.gameConfigText = JSON.stringify({ font: 'font.ttf', fonts: { body: 'font.ttf', title: '' } });
+    const host = document.createElement('section'); document.body.append(host); renderPreviewPanel(host);
+    const sent = await startPreviewLoad(host); await waitForPublishedPreviewLoad(sent);
+    const load = sent.loads.find((value) => (value as { type?: string })?.type === 'surdet-preview-load') as { payload: { fonts: Record<string, unknown> } };
+    assert(JSON.stringify(Object.keys(load.payload.fonts)) === '["body"]', 'absent ui role incorrectly inherited legacy font');
+    disposePreviewPanel();
+  } },
   { name: 'same-name project roots do not reuse a prior font buffer', run: async () => {
     fixture();
     state.dirName = 'same-name-project'; state.dirHandle = makeFontRoot('same-name-project', [21, 22, 23]);

@@ -76,7 +76,7 @@ import { ResolvedAudio } from '../resolved-audio.js';
 import { createSettingsStorage } from '../settings-storage.js';
 import { createBrowserSaveStorage, gameStoragePrefix } from './browser-save-storage.js';
 import { listPlayerSaveSlots } from './save-slot-list.js';
-import { createConfiguredFontJobs } from '../font-jobs.js';
+import { createConfiguredFontJobs, resolveBundledFontUrl } from '../font-jobs.js';
 import { installSceneHotReload, type SceneHotModule } from '../scene-hmr.js';
 import { createStarterOwnerTeardown } from './owner-teardown.js';
 import { showPlayerRecovery } from './recovery-screen.js';
@@ -90,6 +90,7 @@ export interface PlayerProject {
     entryScene: string;
     variables: Record<string, unknown>;
     characters?: Record<string, { name?: string; avatar?: string }>;
+    font?: string;
     fonts?: Partial<Record<'body' | 'title' | 'ui', string>>;
     player?: { subtitle?: string; titleBackground?: string; endScenes?: readonly string[]; firstRunHint?: string };
   };
@@ -520,18 +521,14 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         return null;
       }
     }
-    const fonts = project.fontFiles;
-    const wanted = fontPath.split('/').pop() ?? '';
-    for (const [p, url] of Object.entries(fonts)) {
-      if (p.endsWith(`/${wanted}`)) return url as string;
-    }
-    return null;
+    return resolveBundledFontUrl(fontPath, project.assetFiles, project.fontFiles);
   }
 
   const configuredFontJobs = createConfiguredFontJobs({
     config: gameConfig,
     fontBlobUrls,
     label: 'starter',
+    onError: message => dialogue.showBanner(message, 'tip'),
     resolveFontUrl,
     assets,
   });

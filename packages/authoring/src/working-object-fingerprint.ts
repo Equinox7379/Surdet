@@ -4,6 +4,7 @@ import { resolveUniqueTimelinePath } from './timeline-identity.js';
 import type { TextHasher } from './contracts.js';
 import { resolveUniqueScenarioPath } from './scenario-identity.js';
 import { GALLERY_PATH, readGalleryDocument } from './gallery-operations.js';
+import { resolveProjectFontPaths } from '@surdet/core';
 
 export type ComposableObjectRef =
   | `scene:${string}`
@@ -12,6 +13,7 @@ export type ComposableObjectRef =
   | `character:${string}`
   | `gallery:cgs:${string}`
   | 'config:characters'
+  | 'config:fonts'
   | 'config:entryScene';
 
 export interface WorkingObjectFingerprintResult {
@@ -49,7 +51,7 @@ function parseConfigObject(text: string | undefined): {
 }
 
 /**
- * Six composable object kinds share one working-file fingerprint truth.
+ * Composable objects and configuration dependencies share one working-file fingerprint truth.
  * The resolver never infers an object from a diff or operation result.
  */
 export async function fingerprintWorkingObject(
@@ -105,6 +107,7 @@ function readWorkingObject(workingFiles: Readonly<Record<string, string>>, objec
   }
 
   const config = parseConfigObject(workingFiles['game.config.json']);
+  if (objectRef === 'config:fonts') return present(resolveProjectFontPaths(parseProjectConfigDocument(workingFiles['game.config.json'] ?? '{}')));
   if (objectRef.startsWith('variable:')) {
     const id = objectRef.slice('variable:'.length);
     return Object.prototype.hasOwnProperty.call(config.variables, id)

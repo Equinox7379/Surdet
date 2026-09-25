@@ -15,7 +15,7 @@ import {
   applyEntrySceneSet,
 } from './config-operations.js';
 import { applyTimelineCreate, applyTimelinePatch } from './timeline-operations.js';
-import { fingerprintWorkingObject } from './working-object-fingerprint.js';
+import { fingerprintWorkingObject, fingerprintWorkingObjectValue } from './working-object-fingerprint.js';
 import { applyGalleryCgCreate, applyGalleryCgPatch } from './gallery-operations.js';
 
 export interface IntegrationReplayReceipt {
@@ -85,6 +85,13 @@ export async function replayCompositionOperation(
     // 只替换 operationId：integration ledger 与 resume 都以 integrationOperationId 为锚。
     operationId: operation.integrationOperationId,
   };
+  // Older sealed capsules did not claim font state. Check an explicitly sealed
+  // dependency before new replay work; successful operation receipts stay idempotent.
+  const fonts = operation.replayStateRequirements?.find(item => item.objectRef === 'config:fonts');
+  if (fonts && change.record.operations[operation.integrationOperationId] === undefined
+    && await fingerprintWorkingObjectValue(change.record.workingFiles, 'config:fonts', hasher) !== fonts.expectedFingerprint) {
+    throw new AuthoringOperationError('COMPOSITION_REPLAY_FAILED', '封存场景依赖的字体配置已变化：config:fonts');
+  }
   switch (operation.capabilityId) {
     case 'scene.create':
       return applySceneCreate(change, replayInput as never, hasher,

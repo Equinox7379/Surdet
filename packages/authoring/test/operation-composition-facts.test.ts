@@ -28,6 +28,7 @@ async function seal(change: ChangeSession) {
       baseObjects: [{ objectRef: 'scene:A', references: [], fingerprint: change.record.baseFiles['content/scenario/A.gal']!.sha256 }, { objectRef: 'config:entryScene', references: ['scene:A'] }],
       baseReplayStates: [
         { objectRef: 'config:characters', expectedFingerprint: sha('{}') },
+        { objectRef: 'config:fonts', expectedFingerprint: sha('{}') },
         { objectRef: 'scene:A', expectedFingerprint: sha('@scene A\n旁白：开场。\n@end\n') },
       ],
       workingObjects: [], baseAssetRefs: change.record.composition!.baseAssetRefs, workingAssetRefs: change.record.composition!.baseAssetRefs,

@@ -1,4 +1,4 @@
-import { collectConfigSceneRoots, compileScene, isValidSceneId, Lexer, Parser, findChoiceArrow, splitOutsideQuotes, parseInlineInstructions, type AstBlock } from '@surdet/core';
+import { collectConfigSceneRoots, compileScene, isValidSceneId, Lexer, Parser, findChoiceArrow, splitOutsideQuotes, parseInlineInstructions, resolveProjectFontPaths, type AstBlock } from '@surdet/core';
 import {
   insertLinesAfter,
   parseSceneDocument,
@@ -575,7 +575,7 @@ export async function applySceneCreate(change: ChangeSession, input: SceneCreate
       result: { sceneId: input.sceneId, path },
       compositionDraft: await buildSceneOperationCompositionDraft({
         capabilityId: 'scene.create', sceneId: input.sceneId, path, afterText: text,
-        characters: sceneCharacters(record.workingFiles), hasher,
+        characters: sceneCharacters(record.workingFiles), fontPaths: resolveProjectFontPaths(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')), hasher,
       }),
       workingFiles: { ...record.workingFiles, [path]: text },
     };
@@ -806,7 +806,7 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
         result: { path, line: startLine, kind: patch.kind },
         compositionDraft: await buildSceneOperationCompositionDraft({
           capabilityId: 'scene.patch', sceneId, path, beforeText: source, afterText: text,
-          characters: sceneCharacters(record.workingFiles), hasher,
+          characters: sceneCharacters(record.workingFiles), fontPaths: resolveProjectFontPaths(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')), hasher,
         }),
         workingFiles: { ...record.workingFiles, [path]: text },
       };
@@ -859,7 +859,7 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
       result: { path, line: index + 1, kind: patch.kind },
       compositionDraft: await buildSceneOperationCompositionDraft({
         capabilityId: 'scene.patch', sceneId, path, beforeText: source, afterText: text,
-        characters: sceneCharacters(record.workingFiles), hasher,
+        characters: sceneCharacters(record.workingFiles), fontPaths: resolveProjectFontPaths(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')), hasher,
       }),
       workingFiles: { ...record.workingFiles, [path]: text },
     };

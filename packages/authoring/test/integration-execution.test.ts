@@ -142,6 +142,21 @@ async function beginIntegrationChange(plan: IntegrationPlan, repository: ChangeR
 }
 
 describe('Wave 5 integration execution', () => {
+  it('rejects changed sealed font state before scene replay and keeps successful retries idempotent', async () => {
+    const operation = structuredClone(makePlan().replayOperations[1]!);
+    operation.replayStateRequirements = [{ objectRef: 'config:fonts', source: 'base', expectedFingerprint: await hasher.sha256('{}') }];
+    const repository = new InMemoryChangeRepository();
+    const change = await beginChange(makeSnapshot(), repository);
+    change.record.workingFiles['game.config.json'] = JSON.stringify({ entryScene: 'start', variables: {}, fonts: { body: 'content/assets/fonts/changed.ttf' } });
+    const before = structuredClone(change.record);
+    await expect(replayCompositionOperation(change, operation, hasher)).rejects.toMatchObject({ code: 'COMPOSITION_REPLAY_FAILED' });
+    expect(change.record).toEqual(before);
+    change.record.workingFiles['game.config.json'] = JSON.stringify({ entryScene: 'start', variables: {} });
+    await replayCompositionOperation(change, operation, hasher);
+    const revision = change.record.workingRevision;
+    await replayCompositionOperation(change, operation, hasher);
+    expect(change.record.workingRevision).toBe(revision);
+  });
   it.each(['current', 'previous'] as const)('replays the sealed %s scene terminator without changing its fingerprint', async (format) => {
     const expected = '@scene alpha\n终章。\n@end\n' + (format === 'previous' ? '@end\n' : '');
     const fingerprint = await hasher.sha256(expected);
