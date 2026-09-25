@@ -45,10 +45,25 @@ describe('fresh native CLI arguments', () => {
     }
     expect(run(cwd, ['lint', '', '--json']).status).toBe(1);
   });
-  it.each(['lint', 'stats', 'audit', 'build', 'manifest', 'pack'])('%s rejects unknown flags before filesystem actions', command => {
+  it.each(['new', 'lint', 'stats', 'audit', 'build', 'manifest', 'pack'])('%s rejects unknown flags before filesystem actions', command => {
     const cwd = root(); const result = run(cwd, [command, '--typo']);
     expect(result.status).toBe(1); expect(result.stderr).toContain('不支持参数 --typo');
     expect(fs.readdirSync(cwd)).toEqual([]);
+  });
+  it('new parses independent directories/templates and rejects bad option values without writes', () => {
+    const cwd = root();
+    for (const args of [
+      ['--directory'], ['--template'], ['--template', 'typo'],
+      ['--directory', ''], ['--template', 'blank', '--template', 'example'],
+    ]) {
+      expect(run(cwd, ['new', 'story', ...args]).status).toBe(1);
+      expect(fs.readdirSync(cwd)).toEqual([]);
+    }
+    const game = path.join(cwd, '中文 作品');
+    const result = run(cwd, ['new', '--template', 'blank', 'story', '--directory', game]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(fs.readFileSync(path.join(game, 'game.config.json'), 'utf8')).entryScene).toBe('start');
+    expect(run(cwd, ['lint', game, '--json']).status).toBe(0);
   });
   it('keeps simulate flag values distinct from same-named positional paths and rejects invalid budgets', () => {
     const cwd = root(); const game = path.join(cwd, '7'); fs.mkdirSync(path.join(game, 'content/scenario'), { recursive: true });

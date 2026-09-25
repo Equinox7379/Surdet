@@ -29,10 +29,11 @@ function readVersion(): string {
 }
 const VERSION = readVersion();
 
-function projectArguments(command: string, args: string[]): string[] {
-  const flags: Record<string, string[]> = { new: [], lint: ['--json'], stats: ['--json'], audit: ['--no-run'],
+function projectArguments(command: string, args: string[]): { positional: string[]; options: Map<string, string> } {
+  const flags: Record<string, string[]> = { new: ['--directory', '--template'], lint: ['--json'], stats: ['--json'], audit: ['--no-run'],
     build: ['--web'], manifest: [], pack: [], simulate: ['--json', '--assume', '--seed', '--max-paths', '--max-steps'] };
-  const values = new Set(['--assume', '--seed', '--max-paths', '--max-steps']);
+  const values = new Set(['--assume', '--seed', '--max-paths', '--max-steps', '--directory', '--template']);
+  const options = new Map<string, string>();
   const positional: string[] = [];
   let literal = false;
   for (let index = 0; index < args.length; index += 1) {
@@ -43,11 +44,13 @@ function projectArguments(command: string, args: string[]): string[] {
       if (values.has(argument)) {
         const value = args[++index];
         if (value === undefined || value.startsWith('--')) throw new Error(`${argument} 缺少参数值`);
+        if (command === 'new' && options.has(argument)) throw new Error(`${argument} 不能重复指定`);
+        options.set(argument, value);
       }
     } else positional.push(argument);
   }
   if (positional.length > 1 || positional.some(value => value.trim() === '')) throw new Error(`${command} 需要一个有效的项目目录或名称`);
-  return positional;
+  return { positional, options };
 }
 
 const HELP = `Surdet Engine CLI v${VERSION}
@@ -55,7 +58,9 @@ const HELP = `Surdet Engine CLI v${VERSION}
 用法:
   surdet --version         输出版本
   surdet --help            显示帮助
-  surdet new <name>        创建新游戏脚手架（games/<name>）
+  surdet new <name>        创建新游戏（源码仓库默认 games/<name>，独立 CLI 默认当前目录/<name>）
+      --directory <dir>    指定独立项目目录，不修改引擎 workspace
+      --template <type>    example（默认）或 blank（空白）
   surdet lint [dir]        校验游戏内容（剧本语法/结构/引用完整性）
       --json               输出机器可读 JSON（含每条问题的 hint 修复建议，AI 自我修正循环用）
   surdet stats [dir]       输出项目文本/分支/结局/可达性/素材统计
@@ -97,7 +102,7 @@ async function main(): Promise<number> {
   if (cmd !== undefined && AUTHORING_CAPABILITY_REGISTRY.some(capability => capability.id.split('.')[0] === cmd)) {
     return await authoringCommand(args);
   }
-  const positional = projectArguments(cmd ?? '', args.slice(1));
+  const { positional, options } = projectArguments(cmd ?? '', args.slice(1));
 
   switch (cmd) {
     case 'new': {
@@ -106,7 +111,11 @@ async function main(): Promise<number> {
         process.stderr.write('用法：surdet new <游戏名>\n');
         return 1;
       }
-      return await cmdNew(name);
+      const template = options.get('--template');
+      if (template !== undefined && template !== 'example' && template !== 'blank') {
+        throw new Error(`未知模板 '${template}'（example / blank）`);
+      }
+      return await cmdNew(name, { directory: options.get('--directory'), template });
     }
 
     case 'audit': {

@@ -2,7 +2,7 @@
 
 一个可以直接游玩的 Surdet 新项目：标题、选择分支、存读档、记录、设置和返回标题已经接好。
 
-引擎依赖与构建按仓库 README 准备；已有可用环境无需重装。在本项目目录运行：
+本项目可以放在任意目录，共享 Player 来自 `@surdet/player` 包，不需要引擎源码目录。仓库内复用 workspace 依赖；独立项目安装同批提供的 `@surdet/core`、`@surdet/renderer`、`@surdet/host`、`@surdet/player`、`@surdet/authoring`、`@surdet/cli` 包归档，以及本项目声明的 Vite/TypeScript 依赖。不要假定 Surdet 已在公共 npm 发布。示例安装方式为 `npm install /提供方目录/surdet-core-0.1.0.tgz /提供方目录/surdet-renderer-0.1.0.tgz /提供方目录/surdet-host-0.1.0.tgz /提供方目录/surdet-player-0.1.0.tgz /提供方目录/surdet-authoring-0.1.0.tgz /提供方目录/surdet-cli-0.1.0.tgz`，保留安装锁与交接所需归档；已有可用环境无需重装。在本项目目录运行：
 
 ```sh
 npm run dev
@@ -31,7 +31,7 @@ npm run preview
 - `content/assets/bg/`：背景；剧本 `@bg harbor` 对应 `harbor.png`。
 - `src/main.ts`：共享 Player 启动与素材发现接线；普通剧情和展示配置不需要修改它。
 
-玩家入口来自引擎仓库的 `examples/shared/player/player.ts`。这个项目位于 `games/<项目名>` 下，与 Starter 共用同一份入口实现；不用复制菜单、状态机或保存算法。构建时 Vite 会把所需代码打进本项目的产物。
+玩家入口来自 `@surdet/player`，与 Starter 共用同一份实现，不用复制菜单、状态机或保存算法。构建时 Vite 把所需代码打入本项目产物；`dist/` 可交给独立静态 HTTP 服务运行，不依赖源码仓库或原开发服务。`package.json` 的名称是存档身份，修改展示标题不应改变它。
 
 外部 Agent 按仓库 `docs/AI-GUIDE.md` 使用公开读取与窄字段修改入口。`@end` 结束场景，`@clear 结局ID` 记录通关，`player.endScenes` 决定何时返回标题，三者不能相互替代。
 
