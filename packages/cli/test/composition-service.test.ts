@@ -106,6 +106,40 @@ async function planFromComparison(
 }
 
 describe('CompositionService compare/plan/dry-run', () => {
+  it('uses configured portrait aliases in scene/timeline candidates and freezes their baseline config', async () => {
+    const fixture = await setup('portrait-baseline');
+    const image = 'content/assets/portrait/art_coat_smile.svg';
+    fs.mkdirSync(path.dirname(path.join(fixture.projectRoot, image)), { recursive: true });
+    fs.writeFileSync(path.join(fixture.projectRoot, image), '<svg/>');
+    const config = { entryScene: 'start', variables: {}, characters: { rin: { name: '凛', portraits: { uniform: { normal: image } } } } };
+    fs.writeFileSync(path.join(fixture.projectRoot, 'game.config.json'), JSON.stringify(config));
+    const scene = await sealCandidate(fixture.projectRoot, 'portrait-scene', async session => {
+      const described = await session.invoke('project.inspect', { view: 'working' });
+      if (!described.ok) throw new Error(JSON.stringify(described));
+      const expectedFingerprint = (described.result as { charactersFingerprint: string }).charactersFingerprint;
+      const bad = await session.invoke('character.ensure', { operationId: 'forbidden', id: 'rin', name: '凛', portraits: null, expectedFingerprint });
+      expect(bad).toMatchObject({ ok: false, error: { code: 'UNSUPPORTED_OPERATION' } });
+      const retained = await session.invoke('character.ensure', { operationId: 'keep-profile', id: 'rin', name: '凛', avatar: null, expectedFingerprint });
+      expect(retained.ok, JSON.stringify(retained)).toBe(true);
+      const created = await session.invoke('scene.create', { operationId: 'portrait-scene', sceneId: 'portrait_scene', blocks: [{ kind: 'instruction', name: 'show', args: ['rin:uniform', 'normal'] }, { kind: 'text', value: '映射立绘。' }] });
+      expect(created.ok, JSON.stringify(created)).toBe(true);
+    });
+    const timeline = await sealCandidate(fixture.projectRoot, 'portrait-timeline', async session => {
+      const created = await session.invoke('timeline.create', { operationId: 'portrait-timeline', timelineId: 'mapped', definition: { version: 1, id: 'mapped', durationMs: 100, tracks: [{ kind: 'portrait', target: 'rin:uniform', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'show', expression: 'normal', position: 'center' }] }] } });
+      expect(created.ok, JSON.stringify(created)).toBe(true);
+    });
+    const refs = [scene.ref, timeline.ref];
+    const compared = await fixture.service.compare(refs);
+    for (const manifest of Object.values(compared.comparison.candidateManifests!)) {
+      const operation = manifest.operations.find(operation => operation.capabilityId !== 'character.ensure')!;
+      expect(operation.requiredObjects).toContainEqual({ objectRef: 'asset:portrait:rin:uniform:normal', source: 'base' });
+      expect(operation.replayStateRequirements).toEqual(expect.arrayContaining([expect.objectContaining({ objectRef: 'config:portraits', source: 'base' })]));
+    }
+    expect((await planFromComparison(fixture, refs)).plan.dryRun.status).toBe('passed');
+    config.characters.rin.portraits.uniform.normal = 'content/assets/portrait/gone_a_b.svg';
+    fs.writeFileSync(path.join(fixture.projectRoot, 'game.config.json'), JSON.stringify(config));
+    expect((await fixture.service.compare(refs)).comparison.status).toBe('review-only');
+  });
   it('seals exact baseline font dependencies and detects a changed font configuration', async () => {
     const fixture = await setup('font-baseline');
     const fontPath = 'content/assets/fonts/正文 字体.TTF';

@@ -339,6 +339,8 @@ export interface TimelineCueInput {
   action: Wave2Action;
   key?: string;
   expression?: string;
+  configured?: true;
+  overriddenSourcePaths?: string[];
   position?: string;
   alpha?: number;
   scale?: number;
@@ -630,6 +632,8 @@ export interface CharacterEnsureInput {
   name: string;
   /** undefined=保留原值；null=移除；字符串=设置。 */
   avatar?: string | null;
+  /** Replace outfit/expression mappings; omitted preserves, null returns to filename discovery. Direct only. */
+  portraits?: import('@surdet/core').CharacterPortraits | null;
   /** 当前角色表（characters 字段）规范化 JSON 片段的 SHA-256；角色表缺失时 = 空对象指纹。 */
   expectedFingerprint: string;
 }

@@ -16,6 +16,29 @@ const hasher: TextHasher = {
   sha256: async (text) => createHash('sha256').update(text, 'utf8').digest('hex'),
 };
 
+it('moves explicit portrait source paths without changing logical slots and rejects conflicting slot renames', async () => {
+  const sourcePath = 'content/assets/portrait/lynn_uniform_normal.png';
+  const targetPath = 'content/assets/portrait/cast/lynn_uniform_normal.png';
+  const config = { entryScene: 'start', characters: { lynn: { name: '凛', portraits: { uniform: { normal: sourcePath } } } } };
+  const input = await makeInput({ files: { 'game.config.json': JSON.stringify(config), 'content/scenario/start.gal': '@scene start\n@show lynn:uniform normal\n@end\n' },
+    assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath });
+  const moved = await planProjectAssetRelocation(input, hasher);
+  expect(moved.plan.blockers).toEqual([]);
+  expect(JSON.parse(moved.textChanges.find(c => c.path === 'game.config.json')!.afterText).characters.lynn.portraits.uniform.normal).toBe(targetPath);
+  expect(moved.textChanges.some(c => c.path.endsWith('.gal'))).toBe(false);
+  const renamed = await makeInput({ files: { 'game.config.json': JSON.stringify(config) }, assets: [{ path: sourcePath, bytes: 1 }], sourcePath,
+    targetPath: 'content/assets/portrait/lynn_uniform_smile.png' });
+  expect((await planProjectAssetRelocation(renamed, hasher)).plan.blockers.some(b => b.code === 'ASSET_RELOCATION_OPAQUE_REFERENCE')).toBe(true);
+  const batch = await makeBatchInput({ files: { 'game.config.json': JSON.stringify(config), 'content/scenario/start.gal': '@scene start\n@show lynn:uniform normal\n@end\n' },
+    assets: [{ path: sourcePath, bytes: 1 }], items: [{ itemId: 'one', sourcePath, targetPath }] });
+  const batchMoved = await planProjectAssetRelocationBatch(batch, hasher);
+  expect(batchMoved.plan.blockers).toEqual([]);
+  expect(JSON.parse(batchMoved.textChanges.find(c => c.path === 'game.config.json')!.afterText).characters.lynn.portraits.uniform.normal).toBe(targetPath);
+  const batchRename = await makeBatchInput({ files: { 'game.config.json': JSON.stringify(config) }, assets: [{ path: sourcePath, bytes: 1 }],
+    items: [{ itemId: 'one', sourcePath, targetPath: 'content/assets/portrait/lynn_uniform_smile.png' }] });
+  expect((await planProjectAssetRelocationBatch(batchRename, hasher)).plan.blockers.some(b => b.code === 'ASSET_RELOCATION_OPAQUE_REFERENCE')).toBe(true);
+});
+
 it('素材改名更新选择项内的实际指令，保留选项、引号内 @ 与行尾', async () => {
   const input = await makeInput({
     files: {

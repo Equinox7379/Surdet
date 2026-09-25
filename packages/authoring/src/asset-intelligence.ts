@@ -1,4 +1,4 @@
-import { resolveProjectFontPaths, type GenericInstr } from '@surdet/core';
+import { projectPortraitOverrides, resolveProjectPortraits, resolveProjectFontPaths, type GenericInstr } from '@surdet/core';
 import type {
   ProjectAssetFileFact,
   ProjectAssetIntelligence,
@@ -274,6 +274,13 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
   }
 
   const player = asRecord(snapshot.config.player);
+  for (const portrait of projectPortraitOverrides(snapshot.config)) {
+    add('portrait', `${portrait.role}:${portrait.outfit}`, {
+      referenceId: `character:${safeIdPart(portrait.role)}:portrait:${safeIdPart(portrait.outfit)}:${safeIdPart(portrait.expression)}`,
+      sourceKind: 'character', sourceLabel: `角色 ${portrait.role} · ${portrait.outfit} / ${portrait.expression}`,
+      sourcePath: 'game.config.json', objectRef: `character:${portrait.role}`,
+    }, portrait.expression);
+  }
   for (const [role, fontPath] of Object.entries(resolveProjectFontPaths(snapshot.config))) {
     add('font', fontPath, { referenceId: `config:fonts:${role}`, sourceKind: 'config', sourceLabel: `字体 ${role}`, sourcePath: 'game.config.json' });
   }
@@ -460,10 +467,21 @@ export function buildProjectAssetIntelligence(
   }));
   const byTarget = new Map<string, ProjectAssetItem[]>();
   for (const item of items) {
+    if (item.kind === 'portrait') continue;
     const key = targetKey(item.kind, item.key, item.variant);
     const current = byTarget.get(key) ?? [];
     current.push(item);
     byTarget.set(key, current);
+  }
+  const portraits = resolveProjectPortraits(snapshot.config, uniqueFacts.map(fact => fact.path));
+  for (const portrait of portraits) {
+    if (!portrait.configured && describeProjectAssetPath(portrait.sourcePath)?.invalidName) continue;
+    const item = items.find(item => item.sourcePath === portrait.sourcePath);
+    if (!item) continue;
+    const key = targetKey('portrait', `${portrait.role}:${portrait.outfit}`, portrait.expression);
+    const matches = byTarget.get(key) ?? [];
+    if (!matches.includes(item)) matches.push(item);
+    byTarget.set(key, matches);
   }
 
   const issues: ProjectAssetIssue[] = [];
@@ -508,7 +526,10 @@ export function buildProjectAssetIntelligence(
   const missingByTarget = new Map<string, ProjectAssetItem>();
   for (const target of references) {
     const key = targetKey(target.kind, target.key, target.variant);
-    const matches = target.roleGroup
+    const matches = target.kind === 'portrait' && (target.roleGroup || target.allVariants)
+      ? [...new Set(portraits.filter(p => target.roleGroup ? p.role === target.key : `${p.role}:${p.outfit}` === target.key)
+        .flatMap(p => byTarget.get(targetKey('portrait', `${p.role}:${p.outfit}`, p.expression)) ?? []))]
+      : target.roleGroup
       ? items.filter((item) => item.physical && item.kind === 'portrait' && item.key.split(':')[0] === target.key)
       : target.allVariants
       ? items.filter((item) => item.physical && item.kind === target.kind && item.key === target.key)

@@ -1,3 +1,4 @@
+import { projectPortraitOverrides } from '@surdet/core';
 import type { OperationCompositionDraft } from './composition-contracts.js';
 import type { TextHasher } from './project-storage.js';
 import { stableStringify } from './change-session.js';
@@ -46,6 +47,7 @@ export async function buildSceneOperationCompositionDraft(input: {
     objectFingerprintAfter,
     replayStatePreconditions: [
       { objectRef: 'config:fonts', expectedFingerprint: await input.hasher.sha256(stableStringify(input.fontPaths)) },
+      { objectRef: 'config:portraits', expectedFingerprint: await input.hasher.sha256(stableStringify(projectPortraitOverrides({ characters: input.characters }))) },
       ...(input.beforeText === undefined ? [] : [{ objectRef: primaryObject, expectedFingerprint: await input.hasher.sha256(input.beforeText) }]),
     ],
   };
@@ -57,6 +59,7 @@ export async function buildTimelineOperationCompositionDraft(input: {
   path?: string;
   beforeDefinition?: unknown;
   afterDefinition: unknown;
+  config: Record<string, unknown>;
   hasher: TextHasher;
 }): Promise<OperationCompositionDraft> {
   const primaryObject = `timeline:${input.timelineId}`;
@@ -69,12 +72,13 @@ export async function buildTimelineOperationCompositionDraft(input: {
     producedObjects: [{ objectRef: primaryObject, disposition: input.capabilityId === 'timeline.create' ? 'create' : 'update', finalFingerprint: objectFingerprintAfter }],
     ...(input.beforeDefinition === undefined ? {} : { objectFingerprintBefore: await input.hasher.sha256(stableStringify(input.beforeDefinition)) }),
     objectFingerprintAfter,
-    ...(input.beforeDefinition === undefined ? {} : {
-      replayStatePreconditions: [{
+    replayStatePreconditions: [
+      ...(input.beforeDefinition === undefined ? [] : [{
         objectRef: primaryObject,
         expectedFingerprint: await input.hasher.sha256(stableStringify(input.beforeDefinition)),
-      }],
-    }),
+      }]),
+      { objectRef: 'config:portraits', expectedFingerprint: await input.hasher.sha256(stableStringify(projectPortraitOverrides(input.config))) },
+    ],
   };
 }
 

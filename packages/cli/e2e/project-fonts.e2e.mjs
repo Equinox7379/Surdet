@@ -21,6 +21,9 @@ const oldData = process.env.SURDET_AGENT_DATA_DIR;
 const fontA = 'content/assets/fonts/甲/同名 字体.TTF';
 const fontB = 'content/assets/fonts/乙/同名 字体.TTF';
 const badFont = 'content/assets/fonts/损坏.TTF';
+const portraitA = 'content/assets/portrait/lynn_uniform_normal.svg';
+const portraitB = 'content/assets/portrait/library_casual_smile.svg';
+const badPortrait = 'content/assets/portrait/broken_casual_smile.svg';
 let browser, page, editorServer, playerServer, session;
 const errors = [], loads = [];
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -60,6 +63,29 @@ async function waitForVisibleStory(target) {
   });
 }
 
+async function verifyMappedPortrait(target) {
+  // Inspect the actual rendered world, not only configuration or registration keys.
+  const pixels = await target.evaluate(async () => {
+    const queries = window.surdetPreviewDebug?.runtime?.queries ?? window.__surdetDebug?.queries;
+    const image = new Image(); image.src = queries.world.captureThumbnail(); await image.decode();
+    const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+    const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let blue = 0, red = 0, stageBlue = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] < 40 && data[i + 1] < 65 && data[i + 2] > 210) {
+        blue++;
+        const x = (i / 4) % canvas.width, y = Math.floor(i / 4 / canvas.width);
+        if (x > canvas.width * .4 && x < canvas.width * .6 && y < canvas.height * .5) stageBlue++;
+      }
+      if (data[i] > 210 && data[i + 1] < 40 && data[i + 2] < 65) red++;
+    }
+    return { blue, red, stageBlue };
+  });
+  assert.ok(pixels.stageBlue > 100 && pixels.red === 0, `configured portrait not rendered: ${JSON.stringify(pixels)}`);
+  loads.push({ mappedPortraitPixels: pixels });
+}
+
 try {
   await fs.mkdir(output, { recursive: true });
   await fs.writeFile(path.join(engine, 'package.json'), JSON.stringify({ name: 'font-fixture', private: true, type: 'module', workspaces: ['games/*'] }));
@@ -76,6 +102,16 @@ try {
   const configPath = path.join(game, 'game.config.json');
   const sourceConfig = JSON.parse(await fs.readFile(configPath, 'utf8'));
   sourceConfig.font = fontA; sourceConfig.fonts = { body: fontA, title: '', ui: '' };
+  sourceConfig.characters.lynn = { name: '凛', avatar: 'lynn', portraits: { uniform: { normal: portraitA } }, custom: 'preserve' };
+  await fs.mkdir(path.dirname(path.join(game, portraitA)), { recursive: true });
+  await fs.mkdir(path.join(game, 'content/assets/avatar'), { recursive: true });
+  const marker = fill => `<svg xmlns="http://www.w3.org/2000/svg" width="257" height="389"><rect width="257" height="389" fill="${fill}"/></svg>`;
+  await fs.writeFile(path.join(game, portraitA), marker('#f01020'));
+  await fs.writeFile(path.join(game, portraitB), marker('#1020f0'));
+  await fs.writeFile(path.join(game, badPortrait), 'not an SVG');
+  await fs.writeFile(path.join(game, 'content/assets/avatar/lynn.svg'), marker('#1020f0'));
+  const storyPath = path.join(game, 'content/scenario/ch01_01.gal');
+  await fs.writeFile(storyPath, (await fs.readFile(storyPath, 'utf8')).replace('@bg harbor', '@bg harbor\n@show lynn:uniform normal @ pos=center').replace('旁白：港口还没有醒来', 'lynn：港口还没有醒来'));
   await fs.writeFile(configPath, JSON.stringify(sourceConfig));
   const sourceBefore = await fs.readFile(configPath, 'utf8');
   process.env.SURDET_AGENT_DATA_DIR = path.join(engine, 'agent-data');
@@ -108,6 +144,14 @@ try {
     await call('project.player-config.patch', { operationId: `font-${body === fontB ? 'good' : 'bad'}-${Date.now()}`, expectedFingerprint: playerConfig.fingerprint, patch: { fonts: { body, title: '', ui: null } } });
   };
   await patchFont(fontB);
+  const patchPortrait = async sourcePath => {
+    const inspected = await call('project.inspect', { view: 'working' });
+    await call('character.ensure', { operationId: `portrait-${Date.now()}`, id: 'lynn', name: '澪', avatar: 'lynn',
+      portraits: { uniform: { normal: sourcePath, smile: sourcePath } }, expectedFingerprint: inspected.charactersFingerprint });
+    const reread = await call('project.inspect', { view: 'working' });
+    assert.deepEqual(reread.characters.find(c => c.id === 'lynn').declaration.portraits, { uniform: { normal: sourcePath, smile: sourcePath } });
+  };
+  await patchPortrait(portraitB);
   assert.equal(await fs.readFile(configPath, 'utf8'), sourceBefore);
   const portProbe = net.createServer();
   await new Promise(resolve => portProbe.listen(0, '127.0.0.1', resolve));
@@ -153,6 +197,7 @@ try {
   assert.ok(frame);
   await verifyLoadedBody(frame, hash(bytesB));
   await waitForVisibleStory(frame);
+  await verifyMappedPortrait(frame);
   assert.equal(await fs.readFile(configPath, 'utf8'), sourceBefore);
   assert.equal(JSON.parse(await page.evaluate(() => window.surdetEditorDebug.state.gameConfigText)).fonts.body, fontA);
   await page.screenshot({ path: path.join(output, 'working-font.png') });
@@ -162,6 +207,12 @@ try {
   await page.screenshot({ path: path.join(output, 'bad-font.png') });
   await patchFont(fontB);
   await selectWorking(); await verifyLoadedBody(frame, hash(bytesB)); await waitForVisibleStory(frame);
+  await patchPortrait(badPortrait);
+  await selectWorking();
+  await page.waitForFunction(bad => window.__previewMessages.some(message => message.type === 'surdet-preview-trace-complete' && message.status === 'failed' && JSON.stringify(message).includes(bad)), badPortrait);
+  await patchPortrait(portraitB);
+  await selectWorking(); await waitForVisibleStory(frame); await verifyMappedPortrait(frame);
+  await page.screenshot({ path: path.join(output, 'working-portrait.png') });
   await page.close(); await editorServer.close(); editorServer = null;
   await session.close(); session = await openAgentPortSession({ projectRoot: game, policy: 'apply', resumeChangeId: changeId });
   await call('project.validate'); await call('project.simulate'); await call('runtime.run-from', { sceneId: sourceConfig.entryScene, choices: [0] });
@@ -184,13 +235,17 @@ try {
   page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${playerServer.httpServer.address().port}/`); await waitTitle(page);
   await verifyLoadedBody(page, hash(bytesB));
-  assert.equal(await page.evaluate(() => window.__surdetDebug.assetLoading.failed), 0);
+  // The intentionally broken, now-unused portrait remains on disk; the loader
+  // still reports that physical file while the configured slot uses the valid image.
+  assert.equal(await page.evaluate(() => window.__surdetDebug.assetLoading.failed), 1);
   await activate(page, '开始游戏');
   await waitForVisibleStory(page);
+  await verifyMappedPortrait(page);
   await page.screenshot({ path: path.join(output, 'built-player-font.png') });
   assert.deepEqual(errors, []);
   await fs.writeFile(path.join(output, 'evidence.json'), JSON.stringify({ workingUsesUnpublishedConfig: true, sourceUnchangedBeforeCommit: true,
-    badFontReportedAsFailed: true, recoveredSameChange: true, unchangedMain: true, builtPlayerLoadedExactFont: true, licenseBatchImported: true, builtLicenses, loads, errors }, null, 2));
+    badFontReportedAsFailed: true, badConfiguredPortraitReportedAsFailed: true, workingAndBuiltPortraitRendered: true, retainedUnusedBrokenPortraitFailures: 1,
+    recoveredSameChange: true, unchangedMain: true, builtPlayerLoadedExactFont: true, licenseBatchImported: true, builtLicenses, loads, errors }, null, 2));
   console.log(`PASS project fonts: working preview, bad font recovery, authorized commit, built Player / ${output}`);
 } catch (error) {
   if (page && !page.isClosed()) {

@@ -55,7 +55,7 @@ interface PreviewImage {
 interface PreviewAssets {
   videos?: { key: string; file: PreviewImage }[];
   backgrounds: { key: string; image: PreviewImage }[];
-  portraits: { charId: string; costume: string; expression: string; image: PreviewImage }[];
+  portraits: { charId: string; costume: string; expression: string; image: PreviewImage; configured?: true }[];
   avatars: { key: string; image: PreviewImage }[];
   audio: { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }[];
 }
@@ -937,13 +937,15 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<vo
   if (!assets || !rendererAssets) return;
   const urls: string[] = [];
   const audioEntries: { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; url: string; format: string; sourcePath?: string }[] = [];
-  const register = async (buffer: ArrayBuffer, mime: string, fn: (url: string) => Promise<void>): Promise<void> => {
+  let configuredFailure: Error | undefined;
+  const register = async (buffer: ArrayBuffer, mime: string, fn: (url: string) => Promise<void>, requiredSource?: string): Promise<void> => {
     const url = URL.createObjectURL(new Blob([buffer as unknown as BlobPart], { type: mime }));
     try {
       await fn(url);
       urls.push(url);
     } catch (err) {
       URL.revokeObjectURL(url);
+      if (requiredSource) configuredFailure ??= new Error(`角色立绘加载失败：${requiredSource} · ${err instanceof Error ? err.message : String(err)}`);
       console.warn('[preview] 图片素材加载失败，回退占位：', err);
     }
   };
@@ -972,6 +974,7 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<vo
       asset.image.buffer,
       asset.image.mime,
       (url) => rendererAssets.registerPortrait(asset.charId, asset.costume, asset.expression, url, asset.image.mime),
+      asset.configured ? asset.image.sourcePath : undefined,
     )),
     ...(assets.avatars ?? []).map((asset) => register(
       asset.image.buffer,
@@ -980,6 +983,7 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<vo
     )),
   ]);
   appliedAssetUrls = urls;
+  if (configuredFailure) throw configuredFailure;
 }
 
 function invalidatePreviewSession(): void {

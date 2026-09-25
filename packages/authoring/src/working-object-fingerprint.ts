@@ -4,7 +4,7 @@ import { resolveUniqueTimelinePath } from './timeline-identity.js';
 import type { TextHasher } from './contracts.js';
 import { resolveUniqueScenarioPath } from './scenario-identity.js';
 import { GALLERY_PATH, readGalleryDocument } from './gallery-operations.js';
-import { resolveProjectFontPaths } from '@surdet/core';
+import { projectPortraitOverrides, resolveProjectFontPaths } from '@surdet/core';
 
 export type ComposableObjectRef =
   | `scene:${string}`
@@ -14,6 +14,7 @@ export type ComposableObjectRef =
   | `gallery:cgs:${string}`
   | 'config:characters'
   | 'config:fonts'
+  | 'config:portraits'
   | 'config:entryScene';
 
 export interface WorkingObjectFingerprintResult {
@@ -108,6 +109,7 @@ function readWorkingObject(workingFiles: Readonly<Record<string, string>>, objec
 
   const config = parseConfigObject(workingFiles['game.config.json']);
   if (objectRef === 'config:fonts') return present(resolveProjectFontPaths(parseProjectConfigDocument(workingFiles['game.config.json'] ?? '{}')));
+  if (objectRef === 'config:portraits') return present(projectPortraitOverrides(parseProjectConfigDocument(workingFiles['game.config.json'] ?? '{}')));
   if (objectRef.startsWith('variable:')) {
     const id = objectRef.slice('variable:'.length);
     return Object.prototype.hasOwnProperty.call(config.variables, id)

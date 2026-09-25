@@ -4,6 +4,8 @@
  */
 import {
   compileScene,
+  resolveProjectPortraits,
+  type CharacterPortraits,
   Interpreter,
   SceneRegistry,
   EventBus,
@@ -89,7 +91,7 @@ export interface PlayerProject {
     title?: string;
     entryScene: string;
     variables: Record<string, unknown>;
-    characters?: Record<string, { name?: string; avatar?: string }>;
+    characters?: Record<string, { name?: string; avatar?: string; portraits?: CharacterPortraits }>;
     font?: string;
     fonts?: Partial<Record<'body' | 'title' | 'ui', string>>;
     player?: { subtitle?: string; titleBackground?: string; endScenes?: readonly string[]; firstRunHint?: string };
@@ -535,6 +537,14 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
 
   // ===== 素材管线：content/assets 约定 bg/<key>.png | portrait/<角色>_<服装>_<表情>.png | avatar/<角色>.png | bgm|se|voice/<key>.音频 =====
   async function loadAssets(): Promise<void> {
+    const desktopAsset = window.surdetAsset;
+    const files = desktopAsset ? await desktopAsset.list() : Object.keys(project.assetFiles);
+    const portraitBindings = resolveProjectPortraits(gameConfig, files.map(rel => `content/assets/${rel}`));
+    for (const binding of portraitBindings) {
+      if (binding.configured && !files.includes(binding.sourcePath.slice('content/assets/'.length))) {
+        throw new Error(`角色立绘文件不存在：${binding.role}:${binding.outfit}:${binding.expression} → ${binding.sourcePath}`);
+      }
+    }
     const IMG = /\.(png|jpe?g|webp|gif|avif|svg)$/i;
     const AUD = /\.(mp3|ogg|wav|m4a|flac)$/i;
     const VID = /\.(mp4|webm|ogv)$/i;
@@ -560,11 +570,11 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         await assets.registerBackground(fname.replace(IMG, ''), url, format);
         return true;
       } else if (kind === 'portrait' && IMG.test(fname)) {
-        const seg = fname.replace(IMG, '').split('_');
-        if (seg[0]) {
-          await assets.registerPortrait(seg[0], seg[1] ?? 'normal', seg[2] ?? 'normal', url, format);
-          return true;
+        const bindings = portraitBindings.filter(value => value.sourcePath === `content/assets/${rel}`);
+        for (const binding of bindings) {
+          await assets.registerPortrait(binding.role, binding.outfit, binding.expression, url, format);
         }
+        return bindings.length > 0;
       } else if (kind === 'avatar' && IMG.test(fname)) {
         await assets.registerAvatar(fname.replace(IMG, ''), url, format);
         return true;
@@ -590,15 +600,17 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         else revoke?.();
       } catch (error) {
         revoke?.();
+        if (portraitBindings.some(binding => binding.configured && binding.sourcePath === `content/assets/${rel}`)) {
+          dialogue.showBanner(`角色立绘加载失败：content/assets/${rel} · ${error instanceof Error ? error.message : String(error)}`, 'tip');
+        }
         throw error;
       }
     };
     const jobs: AssetLoadJob[] = [...configuredFontJobs()];
-    const desktopAsset = window.surdetAsset;
     if (desktopAsset) {
       // 打包环境：素材经主进程读取（自动解密）→ Blob URL 注册
-      const files = (await desktopAsset.list()).filter((rel) => !rel.startsWith('fonts/'));
       for (const rel of files) {
+        if (rel.startsWith('fonts/')) continue;
         jobs.push({
           id: rel,
           priority: priorityFor(rel),

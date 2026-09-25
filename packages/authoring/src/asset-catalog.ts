@@ -1,3 +1,4 @@
+import { resolveProjectPortraits } from '@surdet/core';
 import { buildProjectAssetIntelligence } from './asset-intelligence.js';
 import type { AssetEntry, ProjectAssetCatalog, ProjectAssetFileFact } from './contracts.js';
 import type { ProjectSnapshot } from './project-snapshot.js';
@@ -24,7 +25,6 @@ export function avatarAssetRef(name: string): string {
 }
 
 const BG_PREFIX = 'content/assets/bg/';
-const PORTRAIT_PREFIX = 'content/assets/portrait/';
 const AVATAR_PREFIX = 'content/assets/avatar/';
 
 function extensionOf(sourcePath: string): string {
@@ -67,28 +67,6 @@ export function buildAssetCatalog(
       }
       continue;
     }
-    if (sourcePath.startsWith(PORTRAIT_PREFIX)) {
-      const segments = stemOf(sourcePath).split('_');
-      if (segments.length !== 3 || segments.some((segment) => segment.length === 0)) continue;
-      const [role, outfit, expression] = segments as [string, string, string];
-      const format = extensionOf(sourcePath);
-      const entry: AssetEntry = {
-        kind: 'portrait',
-        key: `${role}:${outfit}`,
-        timelineTarget: `${role}:${outfit}`,
-        role,
-        outfit,
-        expression,
-        sourcePath,
-        format,
-        resolved: isSupportedAssetFormat(format),
-      };
-      if (!seen.has(entry.sourcePath)) {
-        seen.add(entry.sourcePath);
-        portraits.push(entry);
-      }
-      continue;
-    }
     if (sourcePath.startsWith(AVATAR_PREFIX)) {
       const key = stemOf(sourcePath);
       if (key.length === 0 || key.startsWith('.')) continue;
@@ -113,6 +91,13 @@ export function buildAssetCatalog(
     timelines: [],
   };
   const intelligence = buildProjectAssetIntelligence(emptySnapshot, facts, options);
+  for (const portrait of resolveProjectPortraits(emptySnapshot.config, paths)) {
+    const { role, outfit, expression, sourcePath } = portrait;
+    if (!portrait.configured && stemOf(sourcePath).split('_').length !== 3) continue;
+    const item = intelligence.items.find(item => item.sourcePath === sourcePath);
+    portraits.push({ ...portrait, kind: 'portrait', key: `${role}:${outfit}`, timelineTarget: `${role}:${outfit}`,
+      format: extensionOf(sourcePath), resolved: !!item && item.issues.every(issue => issue === 'ASSET_UNUSED') });
+  }
   for (const entry of [...backgrounds, ...portraits]) {
     const item = intelligence.items.find(item => item.sourcePath === entry.sourcePath);
     if (!entry.resolved || !item || item.issues.some(issue => issue !== 'ASSET_UNUSED')) continue;

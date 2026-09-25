@@ -766,7 +766,8 @@ export class AuthoringService {
 
   async characterEnsure(changeId: string, input: CharacterEnsureInput): Promise<ServiceResult<unknown>> {
     return this.withOpenChange(changeId, async (context) => {
-      const result = await applyCharacterEnsure(context.session, input, { sha256: async (text) => hashText(text) });
+      const assets = input.portraits == null ? undefined : await withProjectLeaseRetry(this.leaseManager, context.storage.rootIdentity, async () => buildAssetCatalog(assetPathsFromFiles(await context.storage.listFiles())));
+      const result = await applyCharacterEnsure(context.session, input, { sha256: async (text) => hashText(text) }, undefined, assets);
       return { ...metadataForChange(context.session), result };
     });
   }
@@ -1000,7 +1001,7 @@ export class AuthoringService {
     const storage = await NodeProjectStorage.open(projectRoot);
     const { snapshot, assetFiles } = await this.loadProjectContext(storage);
     const store = await NodeChangeStore.forProject(snapshot.rootIdentity, this.leaseManager.dataRoot);
-    const baseAssetRefs = resolvedCompositionAssetRefs(assetFiles.map((file) => file.path));
+    const baseAssetRefs = resolvedCompositionAssetRefs(assetFiles.map((file) => file.path), snapshot);
     const composition = { mode: options?.compositionMode ?? 'direct', operationFactsVersion: '1.0.0' as const, baseAssetRefs };
     const session = await beginChange(snapshot, store, storage, intent, {
       composition,
@@ -1106,7 +1107,7 @@ export class AuthoringService {
     return this.withOpenChange(changeId, async (context) => {
       const index = buildObjectIndex(context.snapshot);
       const assetPaths = assetPathsFromFiles(await context.storage.listFiles());
-      const assetCatalog = buildAssetCatalog(assetPaths);
+      const assetCatalog = buildAssetCatalog(assetPaths, context.snapshot);
       const validation = validateSnapshot(context.snapshot, index, { assetCatalog, timelineReferenceScope: 'complete' });
       const evidence = validationEvidence(context.session.record.baseRevision, changeId, context.session.record.workingRevision, validation);
       await context.store.writeEvidence(changeId, evidence.evidenceId, evidence);

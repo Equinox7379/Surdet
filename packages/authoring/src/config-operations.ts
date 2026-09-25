@@ -18,7 +18,7 @@ import { buildSpeakerCharacterRefs } from './object-index.js';
 import { buildCharacterOperationCompositionDraft, buildEntrySceneOperationCompositionDraft } from './operation-composition-facts.js';
 import type { CompositionOperation } from './composition-contracts.js';
 import { resolveUniqueScenarioPath } from './scenario-identity.js';
-import { resolveProjectFontPaths, type ProjectFontRole } from '@surdet/core';
+import { projectPortraitOverrides, resolveProjectFontPaths, type ProjectFontRole } from '@surdet/core';
 
 const CONFIG_PATH = 'game.config.json';
 
@@ -189,7 +189,11 @@ export async function applyCharacterEnsure(
   input: CharacterEnsureInput,
   hasher: TextHasher,
   sealedOperation?: Pick<CompositionOperation, 'producedObjects' | 'replayStateRequirements'>,
+  assets?: ProjectAssetCatalog,
 ): Promise<CharacterOperationResult> {
+  if (input.portraits !== undefined && (change.record.composition?.mode !== 'direct' || change.record.integration !== undefined)) {
+    throw new AuthoringOperationError('UNSUPPORTED_OPERATION', '角色立绘配置修改只支持普通 direct 草稿', { operationApplied: false, operationId: input.operationId });
+  }
   return runOperation<CharacterOperationResult>(change, input, async (record) => {
     if (!validCharacterId(input.id)) {
       throw new AuthoringOperationError('VALIDATION_FAILED', `角色 ID 非法：${input.id}`);
@@ -318,6 +322,19 @@ export async function applyCharacterEnsure(
     }
     characters[input.id] = next;
     config['characters'] = characters;
+    if (input.portraits === null) delete next['portraits'];
+    else if (input.portraits !== undefined) {
+      next['portraits'] = input.portraits;
+      let mappings;
+      try { mappings = projectPortraitOverrides({ characters: { [input.id]: next } }); }
+      catch (error) { throw new AuthoringOperationError('VALIDATION_FAILED', error instanceof Error ? error.message : String(error)); }
+      for (const mapping of mappings) {
+        if (!assets?.intelligence.items.some(item => item.physical && item.kind === 'portrait' && item.sourcePath === mapping.sourcePath
+          && item.issues.every(issue => issue === 'ASSET_UNUSED' || issue === 'ASSET_KEY_DUPLICATE'))) {
+          throw new AuthoringOperationError('VALIDATION_FAILED', `角色立绘文件不存在或不支持：${mapping.sourcePath}`);
+        }
+      }
+    }
     const fingerprintAfter = await charactersFingerprint(config, hasher);
     const compositionDraft = await buildCharacterOperationCompositionDraft({
       capabilityId: 'character.ensure', id: input.id, beforeCharacter: existing,
@@ -365,6 +382,10 @@ export async function applyCharacterRemove(
   input: CharacterRemoveInput,
   hasher: TextHasher,
 ): Promise<CharacterOperationResult> {
+  const declaration = (parseProjectConfigDocument(change.record.workingFiles[CONFIG_PATH] ?? '{}')['characters'] as Record<string, unknown> | undefined)?.[input.id];
+  if (isRecord(declaration) && declaration['portraits'] !== undefined && (change.record.composition?.mode !== 'direct' || change.record.integration !== undefined)) {
+    throw new AuthoringOperationError('UNSUPPORTED_OPERATION', '移除带立绘配置的角色只支持普通 direct 草稿', { operationApplied: false, operationId: input.operationId });
+  }
   return runOperation<CharacterOperationResult>(change, input, async (record) => {
     if (!validCharacterId(input.id)) {
       throw new AuthoringOperationError('VALIDATION_FAILED', `角色 ID 非法：${input.id}`);

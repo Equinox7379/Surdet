@@ -1,4 +1,5 @@
 import { validateTimeline, type TimelineDefinition } from '@surdet/core';
+import { parseProjectConfigDocument } from './config-document.js';
 import {
   AuthoringOperationError,
   runOperation,
@@ -163,6 +164,7 @@ export async function applyTimelineCreate(
     return {
       compositionDraft: await buildTimelineOperationCompositionDraft({
         capabilityId: 'timeline.create', timelineId: input.timelineId, afterDefinition: definition, hasher,
+        config: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}'),
       }),
       result: {
         timelineId: input.timelineId,
@@ -323,6 +325,7 @@ export async function applyTimelinePatch(
     return {
       compositionDraft: await buildTimelineOperationCompositionDraft({
         capabilityId: 'timeline.patch', timelineId: input.timelineId, path, beforeDefinition: definition, afterDefinition: next, hasher,
+        config: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}'),
       }),
       result: {
         timelineId: input.timelineId,
