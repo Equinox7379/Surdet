@@ -98,6 +98,46 @@ describe('public direct scene removal', () => {
     } finally { await apply.close(); }
   }, 30000);
 
+  it.each([
+    ['double-quoted jump', '" -> " == " -> "', '@jump unused.entry'],
+    ['single-quoted call', "' -> ' == ' -> '", '@call unused.entry'],
+  ])('rejects a %s after a condition arrow through MCP without changing draft or source', async (_name, condition, action) => {
+    const projectRoot = fixture();
+    const callerPath = 'content/scenario/start.gal';
+    const caller = `@scene start\n@choice\n  继续 [if:${condition}] -> ${action}\n@end\n`;
+    const targetText = '@scene unused\n@label entry\n@return\n@end\n';
+    fs.writeFileSync(path.join(projectRoot, callerPath), caller);
+    fs.writeFileSync(path.join(projectRoot, unusedPath), targetText);
+    const configBefore = fs.readFileSync(path.join(projectRoot, 'game.config.json'), 'utf8');
+    const session = await openAgentPortSession({ projectRoot, policy: 'stage' });
+    const server = createAgentPortServer(session);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'choice-reference-test', version: '1.0.0' });
+    await server.connect(serverTransport); await client.connect(clientTransport);
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const response = await client.callTool({ name, arguments: args });
+      expect(response.structuredContent).toMatchObject({ ok: true });
+      return (response.structuredContent as { result: any }).result;
+    };
+    try {
+      const { changeId } = await call('surdet_change_begin', { compositionMode: 'direct' });
+      const object = await call('surdet_object_inspect', { objectRef: 'scene:unused', view: 'working' });
+      const before = (await NodeChangeStore.openByChangeId(changeId))!.record;
+      const response = await client.callTool({ name: 'surdet_scene_remove', arguments: {
+        operationId: 'remove-referenced-scene', sceneId: 'unused', expectedFingerprint: object.fingerprint,
+      } });
+      expect(response.isError).toBe(true);
+      expect(response.structuredContent).toMatchObject({ ok: false, error: {
+        code: 'OBJECT_PRECONDITION_FAILED', details: { operationApplied: false, references: [expect.objectContaining({ path: callerPath, line: 3, target: 'unused' })] },
+      } });
+      expect((await NodeChangeStore.openByChangeId(changeId))!.record).toEqual(before);
+      expect(object.referencedBy.some((ref: string) => ref.startsWith('scene:start/choice-option:'))).toBe(true);
+      expect(fs.readFileSync(path.join(projectRoot, callerPath), 'utf8')).toBe(caller);
+      expect(fs.readFileSync(path.join(projectRoot, unusedPath), 'utf8')).toBe(targetText);
+      expect(fs.readFileSync(path.join(projectRoot, 'game.config.json'), 'utf8')).toBe(configBefore);
+    } finally { await client.close(); await server.close(); await session.close(); }
+  });
+
   it('rejects candidate, stale fingerprint and incoming call without mutating the draft', async () => {
     const projectRoot = fixture();
     const candidate = await openAgentPortSession({ projectRoot, policy: 'stage' });

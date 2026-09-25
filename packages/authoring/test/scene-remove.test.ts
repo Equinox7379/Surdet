@@ -36,6 +36,37 @@ describe('direct scene removal', () => {
   });
 
   it.each([
+    ['double-quoted jump', '" -> " == " -> "', '@jump unused.entry'],
+    ['single-quoted call', "' -> ' == ' -> '", '@call unused.entry'],
+  ])('protects the real target after arrows inside a %s condition', async (_name, condition, action) => {
+    const callerPath = 'content/scenario/start.gal';
+    const caller = `@scene start\n@choice\n  继续 [if:${condition}] -> ${action}\n@end\n`;
+    const { change, files } = await fixture({ [callerPath]: caller });
+    const before = structuredClone(change.record);
+    await expect(applySceneRemove(change, await request(), hasher)).rejects.toMatchObject({
+      code: 'OBJECT_PRECONDITION_FAILED',
+      details: { operationApplied: false, references: expect.arrayContaining([
+        expect.objectContaining({ path: callerPath, line: 3, target: 'unused' }),
+      ]) },
+    });
+    expect(change.record).toEqual(before);
+    expect(await change.repository.read(change.record.changeId)).toEqual(before);
+    expect(files[target]).toBe(source);
+    expect(files[callerPath]).toBe(caller);
+  });
+
+  it('does not treat a quoted condition instruction as an incoming scene reference', async () => {
+    const { change, files } = await fixture({
+      'content/scenario/start.gal': '@scene start\n@choice\n  继续 [if:" -> @jump unused " == " -> @jump unused "] -> @jump unused_other\n@end\n',
+      'content/scenario/unused_other.gal': '@scene unused_other\n@end\n',
+    });
+    await expect(applySceneRemove(change, await request(), hasher)).resolves.toMatchObject({ removed: true });
+    expect(change.record.workingFiles[target]).toBeUndefined();
+    expect(change.record.workingFiles['content/scenario/unused_other.gal']).toBe(files['content/scenario/unused_other.gal']);
+    expect(files[target]).toBe(source);
+  });
+
+  it.each([
     ['entryScene', 'game.config.json', '{"entryScene":"unused"}'],
     ['player.endScenes', 'game.config.json', '{"entryScene":"start","player":{"endScenes":["unused"]}}'],
     ['jump', 'content/scenario/start.gal', '@scene start\n@jump unused.entry\n@end\n'],

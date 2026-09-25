@@ -1,6 +1,7 @@
 import { compareCanonicalText } from './canonical-order.js';
 import {
   collectVars,
+  findChoiceArrow,
   parseExpr,
   parseInlineInstructions,
 } from '@surdet/core';
@@ -189,9 +190,9 @@ function analyzeChoiceOption(
 ): void {
   const source = sourceFor(path, line, blockIndex, optionIndex);
   const trimmed = raw.trimStart();
-  const arrowMatch = /\s->(?:\s|$)/.exec(trimmed);
-  const arrowIndex = arrowMatch?.index ?? -1;
-  const arrowEnd = arrowMatch === null ? -1 : arrowMatch.index + arrowMatch[0].length;
+  const arrow = findChoiceArrow(trimmed);
+  const arrowIndex = arrow?.index ?? -1;
+  const arrowEnd = arrow?.end ?? -1;
   const labelPart = arrowIndex >= 0 ? trimmed.slice(0, arrowIndex) : trimmed;
   const inlinePart = arrowEnd >= 0 ? trimmed.slice(arrowEnd).trim() : '';
   const labelText = labelPart.trim();

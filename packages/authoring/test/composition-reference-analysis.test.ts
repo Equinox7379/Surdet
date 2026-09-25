@@ -57,6 +57,29 @@ describe('raw composition reference analysis', () => {
     expect(refs.find((ref) => ref.objectRef === 'variable:flag')?.source.optionIndex).toBe(1);
   });
 
+  it('keeps real dependencies and source lines after quoted arrows, brackets and escaped quotes', () => {
+    const literal = JSON.stringify('] -> @jump fake "quote"');
+    const refs = analyzeSceneCompositionReferences({
+      sceneId: 'entry', path: 'content/scenario/entry.gal', characters: {},
+      text: [
+        '@scene entry', '@if true', '@choice', '  // retained comment', '',
+        `  Continue [if:flag && ${literal} == ${literal}] -> @set score = 1 @bg dusk @jump other.entry @jump ignored`,
+        '@endif', '@end',
+      ].join('\n'),
+    });
+    expect(refs.map(ref => ref.objectRef).sort()).toEqual(['asset:bg:dusk', 'scene:other', 'variable:flag', 'variable:score']);
+    expect(refs.every(ref => ref.source.line === 6 && ref.source.blockIndex === 5 && ref.source.optionIndex === 0)).toBe(true);
+  });
+
+  it('reads an arrow-containing condition without actions and still rejects malformed conditions', () => {
+    const input = { sceneId: 'entry', path: 'content/scenario/entry.gal', characters: {},
+      text: '@scene entry\n@choice\n  Continue [if:flag && " -> " == " -> "]\n@end\n' };
+    expect(analyzeSceneCompositionReferences(input).map(ref => ref.objectRef)).toEqual(['variable:flag']);
+    expect(() => analyzeSceneCompositionReferences({ ...input,
+      text: '@scene entry\n@choice\n  Invalid [if:flag &&] -> @jump other\n@end\n',
+    })).toThrow(CompositionReferenceAnalysisError);
+  });
+
   it('collects set RHS and if/elif variables while ignoring quoted constants', () => {
     const refs = analyzeSceneCompositionReferences({
       sceneId: 'entry',
