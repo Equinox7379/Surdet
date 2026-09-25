@@ -299,6 +299,7 @@ export class PresentationController {
   /** 绑定外部帧调度器后，状态事件/输入可唤醒已暂停的 ticker。 */
   #frameRequest: FrameRequestHandler | null = null;
   #pluginHost?: RendererPluginHost;
+  #unbindAudioErrors?: () => void;
 
   constructor(
     commands: RendererCommands,
@@ -335,6 +336,12 @@ export class PresentationController {
         this.#syncText();
       }
     };
+    this.#unbindAudioErrors = this.#audio.onError?.(error => {
+      if (this.#disposed) return;
+      this.#commands.dialogue.showBanner(error.message, 'tip');
+      this.#requestFrame();
+      if (this.#onError) this.#onError(error); else console.error(error);
+    });
   }
 
   get status(): RenderStatus {
@@ -413,6 +420,8 @@ export class PresentationController {
 
   destroy(): void {
     if (this.#disposed) return;
+    this.#unbindAudioErrors?.();
+    this.#unbindAudioErrors = undefined;
     this.#waitSession += 1;
     this.#waitDeadline = null;
     if (this.#videoActive) {

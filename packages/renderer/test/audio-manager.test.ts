@@ -89,6 +89,34 @@ describe('AudioManager', () => {
     expect(mockPlay).toHaveBeenCalledTimes(2);
   });
 
+  it.each(['bgm', 'ambience', 'se', 'voice'] as const)('%s failures report their original file and detach after stop/dispose', channel => {
+    const am = new AudioManager(); const report = vi.fn();
+    const off = am.onError(report);
+    am.setSourceFormat('blob:broken', 'audio/wav', `content/assets/${channel}/损坏 声音.WAV`);
+    const play = () => ({ bgm: () => am.playBgm('blob:broken'), ambience: () => am.playAmbience('blob:broken'),
+      se: () => am.playSe('blob:broken'), voice: () => am.playVoice('blob:broken') })[channel]();
+    play();
+    const handlers = mockHowl.mock.calls.at(-1)![0];
+    handlers.onloaderror(null, 'decode failed');
+    expect(report).toHaveBeenCalledWith(expect.objectContaining({ code: 'MEDIA_PLAYBACK_FAILED', domain: 'audio',
+      message: expect.stringContaining(`content/assets/${channel}/损坏 声音.WAV`),
+      cause: expect.objectContaining({ channel, type: 'loaderror', source: 'blob:broken', reason: 'decode failed' }) }));
+    handlers.onplayerror(1, 'playback blocked'); expect(report).toHaveBeenCalledTimes(2);
+    am.stopAll(); handlers.onloaderror(null, 'late after stop'); expect(report).toHaveBeenCalledTimes(2);
+    play(); const old = handlers; am.dispose(); play();
+    old.onloaderror(null, 'late from disposed Howl'); expect(report).toHaveBeenCalledTimes(2);
+    off(); am.dispose();
+  });
+
+  it('late previous BGM failures do not contaminate the current BGM diagnostics', () => {
+    const am = new AudioManager(); const report = vi.fn(); am.onError(report);
+    am.playBgm('old.wav'); const old = mockHowl.mock.calls.at(-1)![0];
+    am.playBgm('current.wav'); old.onloaderror(null, 'obsolete');
+    expect(am.snapshotBgmDiagnostics().errors).toEqual([]); expect(report).not.toHaveBeenCalled();
+    mockHowl.mock.calls.at(-1)![0].onplayerror(1, 'blocked');
+    expect(am.snapshotBgmDiagnostics().errors).toEqual([{ type: 'playerror', message: 'blocked' }]);
+  });
+
   it('playBgm 切到新 src 时停止旧 BGM（交叉淡出：fade + 延时 stop）', () => {
     vi.useFakeTimers();
     const am = new AudioManager();

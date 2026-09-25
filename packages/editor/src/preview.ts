@@ -247,17 +247,19 @@ class PreviewAudio implements AudioHandle {
   #inner = new AudioManager();
   #urls = new Map<string, string>();
 
-  setUrls(entries: readonly { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; url: string; format?: string }[]): void {
+  setUrls(entries: readonly { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; url: string; format?: string; sourcePath?: string }[]): void {
     this.#urls.clear();
     for (const e of entries) {
       this.#urls.set(`${e.kind}:${e.key}`, e.url);
-      if (e.format) this.#inner.setSourceFormat(e.url, e.format);
+      if (e.format) this.#inner.setSourceFormat(e.url, e.format, e.sourcePath);
     }
   }
 
   dispose(): void {
     this.#inner.dispose();
   }
+
+  onError(listener: Parameters<AudioManager['onError']>[0]): () => void { return this.#inner.onError(listener); }
 
   #resolve(kind: 'bgm' | 'ambience' | 'se' | 'voice', src: string): string {
     return this.#urls.get(`${kind}:${src}`) ?? src;
@@ -934,7 +936,7 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<vo
   const rendererAssets = runtime?.commands.assets;
   if (!assets || !rendererAssets) return;
   const urls: string[] = [];
-  const audioEntries: { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; url: string; format: string }[] = [];
+  const audioEntries: { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; url: string; format: string; sourcePath?: string }[] = [];
   const register = async (buffer: ArrayBuffer, mime: string, fn: (url: string) => Promise<void>): Promise<void> => {
     const url = URL.createObjectURL(new Blob([buffer as unknown as BlobPart], { type: mime }));
     try {
@@ -948,7 +950,7 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<vo
   for (const asset of assets.audio) {
     try {
       const url = URL.createObjectURL(new Blob([asset.file.buffer as unknown as BlobPart], { type: asset.file.mime }));
-      audioEntries.push({ kind: asset.kind, key: asset.key, url, format: asset.file.mime });
+      audioEntries.push({ kind: asset.kind, key: asset.key, url, format: asset.file.mime, sourcePath: asset.file.sourcePath });
       urls.push(url);
     } catch (err) {
       console.warn('[preview] 音频素材加载失败，回退 key：', err);

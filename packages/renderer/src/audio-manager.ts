@@ -6,6 +6,7 @@ import type {
   BgmPlaybackOptions,
 } from './types.js';
 import type { AudioPlaybackSnapshot } from './rollback-buffer.js';
+import { RendererError } from './api/renderer-errors.js';
 
 /** BGM 切换交叉淡入淡出时长（毫秒） */
 const BGM_FADE_MS = 350;
@@ -18,6 +19,7 @@ interface AudioCacheEntry {
   channel: AudioChannel;
   howl: Howl;
   lastUsed: number;
+  session: number;
 }
 
 const CACHE_LIMITS: Record<AudioChannel, number> = { bgm: 8, ambience: 8, se: 32, voice: 8 };
@@ -27,7 +29,7 @@ const CACHE_LIMITS: Record<AudioChannel, number> = { bgm: 8, ambience: 8, se: 32
  *  - BGM 循环播放、同 key 不重复启动、切换时交叉淡入淡出（旧曲淡出后停止，新曲淡入）
  *  - 主音量（Howler 全局）× 分轨音量（BGM/SE/语音）两级音量，设置界面可直接接入
  *  - 语音播放状态查询（isVoicePlaying），宿主可做"语音播完再推进"等策略
- *  - 资源缺失时静默（占位素材阶段无音频文件）
+ *  - 活动素材加载或播放失败经公共错误回调报告
  */
 export class AudioManager implements AudioHandle {
   #bgm: Howl | null = null;
@@ -47,6 +49,9 @@ export class AudioManager implements AudioHandle {
   #voiceVolume = 1;
   /** 无扩展名的 Blob URL 不能让 Howler 自动选择 codec，宿主需在播放前注册格式。 */
   #sourceFormats = new Map<string, string>();
+  #sourcePaths = new Map<string, string>();
+  #errorListeners = new Set<(error: RendererError) => void>();
+  #session = 0;
   #bgmErrors: AudioBgmDiagnosticError[] = [];
   #bgmPlayCount = 0;
 
@@ -55,9 +60,15 @@ export class AudioManager implements AudioHandle {
    * 否则 Howler 会因 URL 没有扩展名而把资源判定为无 codec 支持。
    * 允许传 MIME（audio/wav）或扩展名（wav）。
    */
-  setSourceFormat(src: string, format: string): void {
+  setSourceFormat(src: string, format: string, sourcePath?: string): void {
     const normalized = format.trim().toLowerCase().replace(/^audio\//, '');
     if (normalized) this.#sourceFormats.set(src, normalized === 'mpeg' ? 'mp3' : normalized);
+    if (sourcePath) this.#sourcePaths.set(src, sourcePath);
+  }
+
+  onError(listener: (error: RendererError) => void): () => void {
+    this.#errorListeners.add(listener);
+    return () => { this.#errorListeners.delete(listener); };
   }
 
   playBgm(src: string | null, options?: BgmPlaybackOptions): void {
@@ -187,6 +198,7 @@ export class AudioManager implements AudioHandle {
 
   /** 停止全部音频（BGM/环境音/SE/语音）并重置活动声道记录 */
   stopAll(): void {
+    this.#session++;
     Howler.stop(); // howler 全局：停止所有 Howl 的全部播放实例
     // 推进代际：使尚在等待的旧 BGM 淡出延时停止定时器全部作废。
     // 否则 stopAll 后立即 playBgm，淡出窗口（350ms）内的旧定时器会误停新启播的 BGM → 静音。
@@ -221,6 +233,7 @@ export class AudioManager implements AudioHandle {
     for (const entry of this.#cache.values()) entry.howl.unload();
     this.#cache.clear();
     this.#sourceFormats.clear();
+    this.#sourcePaths.clear();
   }
 
   setMasterVolume(v: number): void {
@@ -295,13 +308,13 @@ export class AudioManager implements AudioHandle {
         volume,
         ...(format ? { format: [format] } : {}),
         onloaderror: (_id, error) => {
-          if (opts.channel === 'bgm') this.#recordBgmError('loaderror', error);
+          this.#reportError(entry, 'loaderror', error);
         },
         onplayerror: (_id, error) => {
-          if (opts.channel === 'bgm') this.#recordBgmError('playerror', error);
+          this.#reportError(entry, 'playerror', error);
         },
       });
-      entry = { key, src, channel: opts.channel, howl: h, lastUsed: ++this.#clock };
+      entry = { key, src, channel: opts.channel, howl: h, lastUsed: ++this.#clock, session: this.#session };
       this.#cache.set(key, entry);
       const onLifecycle = (): void => this.#evict(opts.channel);
       h.on('end', onLifecycle);
@@ -312,13 +325,25 @@ export class AudioManager implements AudioHandle {
       entry.howl.loop(opts.loop ?? false);
       entry.howl.volume(volume);
       entry.lastUsed = ++this.#clock;
+      entry.session = this.#session;
     }
     return entry.howl;
   }
 
-  #recordBgmError(type: AudioBgmDiagnosticError['type'], error: unknown): void {
-    this.#bgmErrors.push({ type, message: typeof error === 'string' ? error : String(error) });
-    if (this.#bgmErrors.length > 8) this.#bgmErrors.shift();
+  #reportError(entry: AudioCacheEntry | undefined, type: AudioBgmDiagnosticError['type'], reason: unknown): void {
+    if (!entry || this.#cache.get(entry.key) !== entry || entry.session !== this.#session) return;
+    if ((entry.channel === 'bgm' && entry.src !== this.#bgmKey) || (entry.channel === 'ambience' && entry.src !== this.#ambienceKey)) return;
+    const message = String(reason);
+    if (entry.channel === 'bgm') {
+      this.#bgmErrors.push({ type, message });
+      if (this.#bgmErrors.length > 8) this.#bgmErrors.shift();
+    }
+    const sourcePath = this.#sourcePaths.get(entry.src) ?? entry.src;
+    const error = new RendererError(`音频 ${sourcePath}（${entry.channel}）${type === 'loaderror' ? '加载' : '播放'}失败：${message}`,
+      { code: 'MEDIA_PLAYBACK_FAILED', domain: 'audio', command: type,
+        cause: { channel: entry.channel, type, source: entry.src, sourcePath, reason } });
+    if (this.#errorListeners.size === 0) console.error(error);
+    else for (const listener of this.#errorListeners) listener(error);
   }
 
   #evict(channel?: AudioChannel): void {
