@@ -55,7 +55,7 @@ interface PreviewAssets {
   backgrounds: { key: string; image: PreviewImage }[];
   portraits: { charId: string; costume: string; expression: string; image: PreviewImage }[];
   avatars: { key: string; image: PreviewImage }[];
-  audio: { kind: 'bgm' | 'se' | 'voice'; key: string; file: PreviewImage }[];
+  audio: { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }[];
 }
 
 /** 预览配置集（编辑器管理的四套；缺省/非法形状按无配置降级占位横幅） */
@@ -245,7 +245,7 @@ class PreviewAudio implements AudioHandle {
   #inner = new AudioManager();
   #urls = new Map<string, string>();
 
-  setUrls(entries: readonly { kind: 'bgm' | 'se' | 'voice'; key: string; url: string; format?: string }[]): void {
+  setUrls(entries: readonly { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; url: string; format?: string }[]): void {
     this.#urls.clear();
     for (const e of entries) {
       this.#urls.set(`${e.kind}:${e.key}`, e.url);
@@ -257,11 +257,12 @@ class PreviewAudio implements AudioHandle {
     this.#inner.dispose();
   }
 
-  #resolve(kind: 'bgm' | 'se' | 'voice', src: string): string {
+  #resolve(kind: 'bgm' | 'ambience' | 'se' | 'voice', src: string): string {
     return this.#urls.get(`${kind}:${src}`) ?? src;
   }
 
-  playBgm(src: string | null): void { this.#inner.playBgm(src === null ? null : this.#resolve('bgm', src)); }
+  playBgm(src: string | null, options?: Parameters<AudioHandle['playBgm']>[1]): void { this.#inner.playBgm(src === null ? null : this.#resolve('bgm', src), options); }
+  playAmbience(src: string | null, fadeMs?: number): void { this.#inner.playAmbience(src === null ? null : this.#resolve('ambience', src), fadeMs); }
   playSe(src: string): void { this.#inner.playSe(this.#resolve('se', src)); }
   playVoice(src: string): void { this.#inner.playVoice(this.#resolve('voice', src)); }
   stopAll(): void { this.#inner.stopAll(); }
@@ -269,6 +270,8 @@ class PreviewAudio implements AudioHandle {
   getMasterVolume(): number { return this.#inner.getMasterVolume(); }
   setBgmVolume(v: number): void { this.#inner.setBgmVolume(v); }
   getBgmVolume(): number { return this.#inner.getBgmVolume(); }
+  setAmbienceVolume(v: number): void { this.#inner.setAmbienceVolume(v); }
+  getAmbienceVolume(): number { return this.#inner.getAmbienceVolume(); }
   setSeVolume(v: number): void { this.#inner.setSeVolume(v); }
   getSeVolume(): number { return this.#inner.getSeVolume(); }
   setVoiceVolume(v: number): void { this.#inner.setVoiceVolume(v); }
@@ -928,7 +931,7 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<vo
   const rendererAssets = runtime?.commands.assets;
   if (!assets || !rendererAssets) return;
   const urls: string[] = [];
-  const audioEntries: { kind: 'bgm' | 'se' | 'voice'; key: string; url: string; format: string }[] = [];
+  const audioEntries: { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; url: string; format: string }[] = [];
   const register = async (buffer: ArrayBuffer, mime: string, fn: (url: string) => Promise<void>): Promise<void> => {
     const url = URL.createObjectURL(new Blob([buffer as unknown as BlobPart], { type: mime }));
     try {

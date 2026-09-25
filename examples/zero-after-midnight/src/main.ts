@@ -727,8 +727,8 @@ async function main(): Promise<void> {
       } else if (kind === 'avatar' && IMG.test(fname)) {
         await assets.registerAvatar(fname.replace(IMG, ''), url, fname.split('.').pop());
         return true;
-      } else if ((kind === 'bgm' || kind === 'se' || kind === 'voice') && AUD.test(fname)) {
-        audioUrls.set(fname.replace(AUD, ''), url);
+      } else if ((kind === 'bgm' || kind === 'music' || kind === 'ambience' || kind === 'se' || kind === 'voice') && AUD.test(fname)) {
+        audioUrls.set(`${kind === 'music' ? 'bgm' : kind}:${fname.replace(AUD, '')}`, url);
         audioManager.setSourceFormat(url, fname.split('.').pop() ?? '');
         return true;
       }
@@ -769,9 +769,8 @@ async function main(): Promise<void> {
       }
     } else {
       // 浏览器开发环境：vite 直接提供素材 URL（无素材时 glob 为空，占位策略兜底）
-      const imgs = import.meta.glob('../content/assets/**/*.{png,jpg,jpeg,webp,gif,avif,svg}', { query: '?url', import: 'default', eager: true });
-      const auds = import.meta.glob('../content/assets/**/*.{mp3,ogg,wav,m4a,flac}', { query: '?url', import: 'default', eager: true });
-      for (const [p, url] of [...Object.entries(imgs), ...Object.entries(auds)]) {
+      const files = import.meta.glob('../content/assets/**/*', { query: '?url', import: 'default', eager: true });
+      for (const [p, url] of Object.entries(files)) {
         const rel = p.replace('../content/assets/', '');
         jobs.push({ id: rel, priority: priorityFor(rel), load: () => loadAndRegister(rel, url as string) });
       }

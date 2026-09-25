@@ -7,7 +7,7 @@ import { sceneFiles } from './scene-hmr-boundary.js';
 document.title = (gameConfig as PlayerProject['config']).title ?? gamePackage.name;
 
 const assetFiles = Object.fromEntries(Object.entries(import.meta.glob<string>(
-  '../content/assets/**/*.{png,jpg,jpeg,webp,gif,avif,svg,mp3,ogg,wav,m4a,flac}',
+  '../content/assets/**/*',
   { query: '?url', import: 'default', eager: true },
 )).map(([path, url]) => [path.replace('../content/assets/', ''), url]));
 

@@ -68,7 +68,7 @@ export function galleryUnlockEntries(gallery: unknown): AssetEntry[] {
 }
 
 const DIR_KIND_MAP: Record<string, AssetKind> = {
-  bg: 'bg', portrait: 'portrait', avatar: 'avatar', bgm: 'bgm', ambience: 'ambience', se: 'se', voice: 'voice', video: 'video',
+  bg: 'bg', portrait: 'portrait', avatar: 'avatar', bgm: 'bgm', music: 'bgm', ambience: 'ambience', se: 'se', voice: 'voice', video: 'video',
   font: 'font', fonts: 'font',
 };
 
