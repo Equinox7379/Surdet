@@ -34,6 +34,8 @@ export interface AssetCommands {
   registerBackground(key: string, source: RendererAssetSource, format?: string): Promise<void>;
   registerPortrait(charId: string, costume: string, expression: string, source: RendererAssetSource, format?: string): Promise<void>;
   registerAvatar(key: string, source: RendererAssetSource, format?: string): Promise<void>;
+  /** URL ownership stays with the host; decoding occurs when the video is played. */
+  registerVideo(key: string, source: RendererAssetSource, sourcePath?: string): Promise<void>;
   registerFontRole(role: RendererFontRole, url: string, family?: string, timeoutMs?: number): Promise<boolean>;
   registerFont(url: string, family?: string, timeoutMs?: number): Promise<boolean>;
   resetFonts(): void;
@@ -206,7 +208,7 @@ export interface SystemPanelCommands {
   hideShop(): void;
   showBaseCommands(view: BasePanelView, onExecute: (commandId: string) => void, onClose: () => void): void;
   hideBaseCommands(): void;
-  showVideo(source: string, onEnd: () => void): void;
+  showVideo(source: string, onEnd: (failure?: Error) => void): void;
   hideVideo(): void;
 }
 

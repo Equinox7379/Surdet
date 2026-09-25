@@ -117,7 +117,7 @@ export interface AdvStage {
   /** NVL 页清空（@nvl clear） */
   clearNvlText?(): void;
   /** @video 阻塞播放：播完/出错/玩家点击跳过时回调 onEnd（宿主随后 finishWait） */
-  showVideo?(src: string, onEnd: () => void): void;
+  showVideo?(src: string, onEnd: (failure?: Error) => void): void;
   /** 强制停止当前 @video 播放（读档 stateReset 时调用，防残留播放；审计复核） */
   hideVideo?(): void;
   /** 选择肢键盘导航高亮（pos 为选项序号；可选能力） */

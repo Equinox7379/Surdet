@@ -36,6 +36,24 @@ afterEach(() => {
 });
 
 describe('RenderAssetRegistry', () => {
+  it('registers video URLs without texture decoding and clears only on the owning asset boundary', async () => {
+    const { registry, load, unload } = registryHarness();
+    await registry.registerVideo('片头', 'blob:clip', 'content/assets/video/片头.webm');
+    expect(registry.resolveVideo('片头')).toEqual({ url: 'blob:clip', sourcePath: 'content/assets/video/片头.webm' });
+    expect(load).not.toHaveBeenCalled();
+    registry.reset();
+    expect(registry.resolveVideo('片头')?.url).toBe('blob:clip');
+    registry.reset({ clearAssets: true });
+    expect(registry.resolveVideo('片头')).toBeNull();
+    await registry.registerVideo('片头', 'blob:next');
+    await registry.releaseRegisteredAssetSources();
+    expect(registry.resolveVideo('片头')).toBeNull();
+    expect(unload).not.toHaveBeenCalled(); // Host, not Pixi, owns video Blob URLs.
+    await registry.registerVideo('片头', 'blob:last');
+    registry.dispose();
+    expect(registry.resolveVideo('片头')).toBeNull();
+    await expect(registry.registerVideo('late', 'blob:late')).rejects.toMatchObject({ code: 'RENDERER_DISPOSED' });
+  });
   it('destroys the source of its final generated texture but preserves caller textures', () => {
     const { registry } = registryHarness();
     const source = new TextureSource({ width: 1, height: 1 });

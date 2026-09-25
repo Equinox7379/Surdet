@@ -72,6 +72,7 @@ export class RenderAssetRegistry {
   #backgrounds: AssetMap = new Map();
   #portraits: AssetMap = new Map();
   #avatars: AssetMap = new Map();
+  #videos = new Map<string, { url: string; sourcePath?: string }>();
   #registrations = new WeakMap<AssetMap, Map<string, object>>();
   #sourceRefs = new Map<string, number>();
   #sourceLoads = new Map<string, Promise<void>>();
@@ -118,6 +119,15 @@ export class RenderAssetRegistry {
 
   resolveAvatar(key: string): Texture | null {
     return this.#avatars.get(key)?.texture ?? null;
+  }
+
+  async registerVideo(key: string, source: string, sourcePath?: string): Promise<void> {
+    this.#ensureActive('registerVideo');
+    this.#videos.set(key, { url: source, ...(sourcePath === undefined ? {} : { sourcePath }) });
+  }
+
+  resolveVideo(key: string): { url: string; sourcePath?: string } | null {
+    return this.#videos.get(key) ?? null;
   }
 
   getOrCreateBackground(key: string, create: () => Texture): Texture {
@@ -187,6 +197,7 @@ export class RenderAssetRegistry {
     this.#generation.advance();
     if (options.preserveAssets) return;
     const clearAssets = options.clearAssets === true;
+    if (clearAssets) this.#videos.clear();
     this.#resetMap(this.#backgrounds, clearAssets);
     this.#resetMap(this.#portraits, clearAssets);
     this.#resetMap(this.#avatars, clearAssets);
@@ -194,6 +205,7 @@ export class RenderAssetRegistry {
 
   async releaseRegisteredAssetSources(): Promise<void> {
     this.#ensureActive('releaseRegisteredAssetSources');
+    this.#videos.clear();
     // Synchronous reset/dispose can start an unload before this awaited barrier.
     // Failed attempts remain owned until the caller explicitly retries release.
     for (const [source, release] of this.#sourceReleases) {
@@ -228,6 +240,7 @@ export class RenderAssetRegistry {
     this.#clearMap(this.#backgrounds);
     this.#clearMap(this.#portraits);
     this.#clearMap(this.#avatars);
+    this.#videos.clear();
     this.#resetFontsInternal();
     this.#lifecycle.release('runtime', 'async', 'asset-generation');
     this.#disposed = true;

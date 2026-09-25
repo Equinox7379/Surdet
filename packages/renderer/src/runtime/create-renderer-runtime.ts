@@ -197,6 +197,7 @@ function createControllerOptions(
     ...(options.onAdvance ? { onAdvance: options.onAdvance } : {}),
     ...(options.onSelect ? { onSelect: options.onSelect } : {}),
     ...(options.onWaitEnd ? { onWaitEnd: options.onWaitEnd } : {}),
+    ...(options.onError ? { onError: options.onError } : {}),
     commands: ports.commands,
     queries: ports.queries,
     validateStagePresentation: ports.validateStagePresentation,

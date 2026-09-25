@@ -122,6 +122,46 @@ function controllerFor(
 }
 
 describe('PresentationController', () => {
+  it('does not report an unsupported video host as successful playback', () => {
+    const stage = stageHarness();
+    const onError = vi.fn();
+    const onWaitEnd = vi.fn();
+    const controller = controllerFor(stage, { onError, onWaitEnd });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus);
+    try {
+      bus.emit('video', { src: 'intro' });
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'MEDIA_PLAYBACK_FAILED', message: expect.stringContaining('intro') }));
+      expect(onWaitEnd).toHaveBeenCalledOnce();
+    } finally { controller.dispose(); }
+  });
+  it('reports video failure without claiming a normal finish and ignores failures from an old session', () => {
+    const stage = stageHarness();
+    const banner = vi.fn();
+    stage.showBanner = banner;
+    let done!: (failure?: Error) => void;
+    const showVideo = vi.fn((_source: string, onEnd: (error?: Error) => void) => { done = onEnd; });
+    stage.showVideo = showVideo;
+    const onWaitEnd = vi.fn();
+    const onError = vi.fn();
+    const controller = controllerFor(stage, { onWaitEnd, onError });
+    const bus = new EventBus<CoreEventMap>();
+    controller.connect(bus);
+    try {
+      bus.emit('video', { src: '"片头 WEBM"' });
+      expect(showVideo).toHaveBeenCalledWith('片头 WEBM', expect.any(Function));
+      done(new Error('decode failed'));
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'MEDIA_PLAYBACK_FAILED', message: expect.stringContaining('片头') }));
+      expect(banner).toHaveBeenCalledWith(expect.stringContaining('decode failed'), 'tip');
+      expect(onWaitEnd).toHaveBeenCalledOnce();
+      done(new Error('repeat'));
+      expect(onWaitEnd).toHaveBeenCalledOnce();
+      bus.emit('video', { src: 'old' });
+      bus.emit('stateReset', { reason: 'load' });
+      done(new Error('stale error'));
+      expect(onError).toHaveBeenCalledOnce();
+      expect(onWaitEnd).toHaveBeenCalledOnce();
+    } finally { controller.dispose(); }
+  });
   it('state reset clears hidden interface state in both controller and stage', () => {
     const stage = stageHarness();
     const controller = controllerFor(stage);

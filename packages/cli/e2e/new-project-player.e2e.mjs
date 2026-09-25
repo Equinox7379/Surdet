@@ -27,6 +27,7 @@ let page;
 let agent;
 let editorServer;
 const previousDataRoot = process.env.SURDET_AGENT_DATA_DIR;
+const errors = [];
 const mediaSource = path.join(engine, 'prepared-media');
 
 // Synthetic test tones only, not production audio. Different durations expose
@@ -45,9 +46,64 @@ async function prepareTestAudio() {
   }
 }
 
+async function prepareTestVideo() {
+  const maker = await browser.newPage();
+  try {
+    for (const [extension, mime] of [['webm', 'video/webm;codecs=vp8'], ['mp4', 'video/mp4;codecs=avc1.42001E']]) {
+      const data = await maker.evaluate(async mime => {
+        if (!MediaRecorder.isTypeSupported(mime)) throw new Error(`Required fixture encoder unavailable: ${mime}`);
+        const canvas = document.createElement('canvas'); canvas.width = 192; canvas.height = 108;
+        const context = canvas.getContext('2d');
+        const stream = canvas.captureStream(15);
+        const recorder = new MediaRecorder(stream, { mimeType: mime });
+        const chunks = [];
+        const finished = new Promise((resolve, reject) => {
+          recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+          recorder.onerror = event => reject(new Error(String(event.error)));
+          recorder.onstop = resolve;
+        });
+        let frame = 0;
+        const draw = () => { context.fillStyle = frame++ % 2 ? '#426778' : '#658469'; context.fillRect(0, 0, 192, 108); context.fillStyle = '#fff'; context.font = '20px sans-serif'; context.fillText(`VIDEO ${frame}`, 24, 60); };
+        draw(); recorder.start();
+        const timer = setInterval(draw, 65);
+        try {
+          await new Promise(resolve => setTimeout(resolve, 1800));
+          recorder.stop(); await finished;
+          return [...new Uint8Array(await new Blob(chunks).arrayBuffer())];
+        } finally { clearInterval(timer); for (const track of stream.getTracks()) track.stop(); }
+      }, mime);
+      const bytes = Buffer.from(data);
+      await fs.writeFile(path.join(mediaSource, `片头 ${extension.toUpperCase()}.${extension}`), bytes);
+      if (extension === 'webm') await fs.writeFile(path.join(mediaSource, '损坏片段.webm'), bytes.subarray(0, 72));
+    }
+  } finally { await maker.close(); }
+}
+
+async function verifyVideo(target, format, screenshot, skip = false) {
+  await target.waitForFunction(() => {
+    const video = document.querySelector('video');
+    return video && video.videoWidth === 192 && video.videoHeight === 108 && video.currentTime > 0.05 && !video.paused;
+  });
+  const contentType = await target.evaluate(async () => (await fetch(document.querySelector('video').currentSrc)).headers.get('content-type'));
+  assert.ok(contentType?.startsWith(`video/${format}`), `expected ${format}, received ${contentType}`);
+  if (screenshot) await target.screenshot({ path: screenshot });
+  if (skip) await target.locator('video').click();
+  else await target.waitForFunction(format => {
+    const video = document.querySelector('video');
+    return !video || !video.currentSrc.includes(format);
+  }, format);
+}
+
 async function observeAudio(target) {
   await target.addInitScript(() => {
     window.__playedAudioDurations = [];
+    window.__videoEvents = [];
+    for (const type of ['loadedmetadata', 'playing', 'error', 'ended']) document.addEventListener(type, event => {
+      const video = event.target;
+      if (video instanceof HTMLVideoElement) window.__videoEvents.push({ type, src: video.currentSrc, width: video.videoWidth, height: video.videoHeight, time: video.currentTime, error: video.error?.message });
+    }, true);
+    window.__previewCompletions = [];
+    window.addEventListener('message', event => { if (event.data?.type === 'surdet-preview-trace-complete') window.__previewCompletions.push(event.data); });
     const start = AudioBufferSourceNode.prototype.start;
     AudioBufferSourceNode.prototype.start = function (...args) {
       const result = Reflect.apply(start, this, args);
@@ -96,6 +152,10 @@ async function authorChapter(game) {
     const { file } = await call('surdet_asset_sources', { sourceId: mediaSourceId, path: sourcePath });
     items.push({ itemId: randomUUID(), sourceId: mediaSourceId, sourcePath, sha256: file.sha256, kind, fileName: '同名 声音.WAV' });
   }
+  for (const sourcePath of ['片头 WEBM.webm', '片头 MP4.mp4', '损坏片段.webm']) {
+    const { file } = await call('surdet_asset_sources', { sourceId: mediaSourceId, path: sourcePath });
+    items.push({ itemId: randomUUID(), sourceId: mediaSourceId, sourcePath, sha256: file.sha256, kind: 'video', fileName: sourcePath });
+  }
   const operationId = randomUUID();
   const staged = await call('surdet_asset_import_stage', { operationId, items });
   await call('surdet_asset_import_commit', { operationId, planFingerprint: staged.plan.planFingerprint });
@@ -134,6 +194,7 @@ async function authorChapter(game) {
   ] });
   await call('surdet_scene_create', { operationId: 'hub', sceneId: 'hub_scene', blocks: [
     harbor.usage.scene, normal.usage.scene,
+    ...['片头 WEBM', '片头 MP4'].map(key => ({ kind: 'instruction', name: 'video', args: [`"${key}"`] })),
     ...['bgm', 'ambience', 'se', 'voice'].map(name => ({ kind: 'instruction', name, args: ['"同名 声音"'] })),
     { kind: 'text', speaker: '凛', value: '港口的风停了，去邮局看看吧。' },
     { kind: 'instruction', name: 'timeline', args: ['intro'], modifiers: { blocking: '' } },
@@ -145,6 +206,9 @@ async function authorChapter(game) {
       { label: '现在打开', when: 'visited', effects: [{ name: 'set', args: ['opened', '=', 'true'] }], target: { kind: 'jump', value: 'end_a' } },
       { label: '留到船上再读', target: { kind: 'jump', value: 'end_b' } },
     ] },
+  ] });
+  await call('surdet_scene_create', { operationId: 'video-error', sceneId: 'video_error', blocks: [
+    { kind: 'instruction', name: 'video', args: ['损坏片段'] }, { kind: 'text', value: '错误已报告，剧情可以继续。' },
   ] });
   const scene = await call('surdet_object_inspect', { view: 'working', objectRef: 'scene:hub_scene', fragment: {} });
   const children = await Promise.all(scene.childRefs.map(objectRef => call('surdet_object_inspect', { view: 'working', objectRef })));
@@ -453,8 +517,18 @@ async function continueInEditor(game, errors) {
   const preview = await page.locator('iframe.preview-frame').elementHandle();
   const frame = await preview.contentFrame();
   assert.ok(frame);
+  await verifyVideo(frame, 'webm', null, true);
+  await verifyVideo(frame, 'mp4', null, true);
   await verifyPlayedAudio(frame);
   console.log('PASS Editor preview: four same-name audio channels really decoded and started');
+  await page.locator('[data-editor-mode="editor"]').click();
+  await page.locator('[data-scene-id="video_error"]').click();
+  await page.keyboard.press('Control+p');
+  await page.getByRole('button', { name: '重新播放', exact: true }).click();
+  await page.frameLocator('iframe.preview-frame').locator('#preview-error').filter({ hasText: 'content/assets/video/损坏片段.webm' }).waitFor();
+  await page.waitForFunction(() => window.__previewCompletions.some(result => result.status === 'failed' && result.firstError?.includes('损坏片段.webm')));
+  await page.screenshot({ path: path.join(output, '04c-video-failure.png') });
+  console.log('PASS Editor video: real WebM/MP4 frames, explicit corrupt-file error and failed trace');
 }
 
 async function resumePublicAuthoring(game) {
@@ -490,7 +564,9 @@ try {
   await fs.symlink(path.join(repo, 'node_modules'), path.join(engine, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.equal(await cmdNew('first-letter', { engineRoot: engine }), 0);
   const game = path.join(engine, 'games/first-letter');
+  browser = await chromium.launch({ headless: true });
   await prepareTestAudio();
+  await prepareTestVideo();
   const main = await authorChapter(game);
   // Exercise native File reads and byte fingerprints, not a text-only mock.
   for (const file of ['game.config.json', 'content/scenario/第一章/邮局/post_office_visit.gal']) {
@@ -504,11 +580,9 @@ try {
   server = await createServer({ root: game, configFile: path.join(game, 'vite.config.ts'), cacheDir: path.join(output, '.vite'), logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
   await server.listen();
   await fs.mkdir(output, { recursive: true });
-  browser = await chromium.launch({ headless: true });
   page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   await observeAudio(page);
   page.setDefaultTimeout(30000);
-  const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/`); await waitTitle(page);
@@ -517,6 +591,8 @@ try {
   assert.ok((await canvasTexts(page)).includes('一封信，两段航程'));
   await page.screenshot({ path: path.join(output, '01-new-project-title.png') });
   await activate(page, '开始游戏');
+  await verifyVideo(page, 'webm', path.join(output, '01-video-webm.png'));
+  await verifyVideo(page, 'mp4', path.join(output, '01-video-mp4.png'), true);
   await page.waitForFunction(() => window.__surdetDebug.rendererStatus === 'awaiting'
     && window.__surdetDebug.presentationSnapshot.stage.portraits.some(p => p.key === 'lynn:coat' && p.view.expression === 'normal'));
   assert.equal(await page.evaluate(() => window.__surdetDebug.presentationSnapshot.stage.backgroundKey), 'harbor');
@@ -557,7 +633,7 @@ try {
   // A separate entry proves existing explicit consumers still override the new config.
   // The generated src/main.ts remains untouched throughout the authoring path.
   await fs.writeFile(path.join(game, 'explicit.html'), (await fs.readFile(path.join(game, 'index.html'), 'utf8')).replace('/src/main.ts', '/src/explicit.ts'));
-  await fs.writeFile(path.join(game, 'src/explicit.ts'), main.replace('config: gameConfig,', "config: gameConfig,\n  subtitle: '显式副标题', titleBackground: '', firstRunHint: '显式提示', endScenes: [],"));
+  await fs.writeFile(path.join(game, 'src/explicit.ts'), main.replace('config: gameConfig,', "config: gameConfig,\n  subtitle: '显式副标题', titleBackground: '', firstRunHint: '显式提示', endScenes: [],\n  additionalEntrypoints: [{id:'video-test', label:'视频故障测试', scene:'video_error'}],"));
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/explicit.html`); await waitTitle(page);
   await page.getByRole('button', { name: '开始游戏', exact: true }).waitFor();
   assert.ok((await canvasTexts(page)).includes('显式副标题'));
@@ -581,6 +657,19 @@ try {
   await advanceToChoice(page); await activate(page, '现在打开');
   for (let step = 0; step < 12; step++) { await page.keyboard.press('Space'); await page.waitForTimeout(80); }
   assert.notEqual((await state(page)).ui.base, 'title', 'explicit empty endings fell back to config');
+  const errorPage = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  const videoErrors = [];
+  try {
+    errorPage.on('console', message => { if (message.type() === 'error') videoErrors.push(message.text()); });
+    errorPage.on('pageerror', error => errors.push(error.message));
+    await errorPage.goto(`http://127.0.0.1:${server.httpServer.address().port}/explicit.html`); await waitTitle(errorPage);
+    await activate(errorPage, '视频故障测试');
+    await errorPage.waitForFunction(() => window.__surdetDebug.rendererStatus === 'awaiting' && window.__surdetDebug.position?.sceneId === 'video_error');
+    assert.ok(videoErrors.some(error => error.includes('损坏片段.webm')), JSON.stringify(videoErrors));
+    assert.ok(videoErrors.every(error => error.includes('损坏片段.webm')), JSON.stringify(videoErrors));
+    assert.equal(await errorPage.locator('video').count(), 0);
+    await errorPage.screenshot({ path: path.join(output, '03-video-failure.png') });
+  } finally { await errorPage.close(); }
   await page.close();
   await continueInEditor(game, errors);
   await page.close();
@@ -594,12 +683,13 @@ try {
   await page.screenshot({ path: path.join(output, '05-ending-after-editor-save.png') });
   await resumePublicAuthoring(game);
   assert.deepEqual(errors, []);
-  await fs.writeFile(path.join(output, 'evidence.json'), JSON.stringify({ generatedBy: 'cmdNew + public MCP', typecheck: true, build: true, unchangedMain: true, explicitOptions: true, editorContinued: true, endingSceneProtected: true, endingAfterEditorSave: true, branches: 2, savedPosition: saved, reloadedPosition: saved, returnedToTitle: true, playedAudioDurations: playedAudio, audioRestoredAfterLoad: true, editorAudioChannels: true, errors }, null, 2));
+  await fs.writeFile(path.join(output, 'evidence.json'), JSON.stringify({ generatedBy: 'cmdNew + public MCP', typecheck: true, build: true, unchangedMain: true, explicitOptions: true, editorContinued: true, endingSceneProtected: true, endingAfterEditorSave: true, branches: 2, savedPosition: saved, reloadedPosition: saved, returnedToTitle: true, playedAudioDurations: playedAudio, audioRestoredAfterLoad: true, editorAudioChannels: true, videoFormats: ['webm/vp8', 'mp4/avc1'], videoErrorReported: true, videoPreviewTraceFailed: true, expectedVideoErrors: videoErrors, errors }, null, 2));
   console.log(`PASS actual surdet new project: typecheck/build, two branches, menu save, reload/title load and both endings / ${output}`);
 } catch (error) {
   if (page) {
     await page.screenshot({ path: path.join(output, `failure-${Date.now()}.png`) }).catch(() => {});
     console.error('NEW_PROJECT_STATE', await state(page).catch(() => null));
+    console.error('MEDIA_FAILURE_CONTEXT', errors, await page.evaluate(() => window.__videoEvents).catch(() => null));
     console.error('EDITOR_STATE', await page.evaluate(() => ({ loading: window.surdetEditorDebug?.state?.projectLoading,
       workspace: window.surdetEditorDebug?.state?.assetImportWorkspace, status: document.getElementById('status')?.textContent })).catch(() => null));
   }

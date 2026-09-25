@@ -909,7 +909,8 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#bannerText.text = text;
     this.#bannerText.style = variant === 'chapter'
       ? { fontSize: 38, fill: this.#theme.colors.text, fontWeight: 'normal', letterSpacing: 6, fontFamily: this.#assets.fontFamily('title') } satisfies TextStyleOptions
-      : { fontSize: 20, fill: this.#theme.colors.text, fontFamily: this.#assets.fontFamily('ui') } satisfies TextStyleOptions;
+      : { fontSize: 20, fill: this.#theme.colors.text, fontFamily: this.#assets.fontFamily('ui'),
+        wordWrap: true, breakWords: true, wordWrapWidth: Math.max(120, this.#w - 120) } satisfies TextStyleOptions;
     this.#bannerBars.visible = variant === 'chapter';
     this.#bannerTipBg.clear();
     if (variant === 'chapter') {

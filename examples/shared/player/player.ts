@@ -540,10 +540,12 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   async function loadAssets(): Promise<void> {
     const IMG = /\.(png|jpe?g|webp|gif|avif|svg)$/i;
     const AUD = /\.(mp3|ogg|wav|m4a|flac)$/i;
+    const VID = /\.(mp4|webm|ogv)$/i;
     const MIME: Record<string, string> = {
       png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
       gif: 'image/gif', avif: 'image/avif', svg: 'image/svg+xml',
       mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4', flac: 'audio/flac',
+      mp4: 'video/mp4', webm: 'video/webm', ogv: 'video/ogg',
     };
     const blobAssetUrl = (rel: string, bytes: Uint8Array): string => {
       const filename = rel.split('/').pop() ?? 'asset.bin';
@@ -568,6 +570,9 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         }
       } else if (kind === 'avatar' && IMG.test(fname)) {
         await assets.registerAvatar(fname.replace(IMG, ''), url, format);
+        return true;
+      } else if (kind === 'video' && VID.test(fname)) {
+        await assets.registerVideo(fname.replace(VID, ''), url, `content/assets/${rel}`);
         return true;
       } else if ((kind === 'bgm' || kind === 'music' || kind === 'ambience' || kind === 'se' || kind === 'voice') && AUD.test(fname)) {
         audioUrls.set(`${kind === 'music' ? 'bgm' : kind}:${fname.replace(AUD, '')}`, url);

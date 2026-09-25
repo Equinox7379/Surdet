@@ -441,10 +441,12 @@ describe('SystemPanelLayer direct contract', () => {
       videos[0]!.emit('ended');
       expect(onEnd).toHaveBeenCalledOnce();
       expect(runtime.layer.system()).toEqual({ type: 'none' });
+      expect(videos[0]!.paused).toBe(true);
 
       runtime.layer.showVideo('error.mp4', onEnd);
       videos[1]!.emit('error');
       expect(onEnd).toHaveBeenCalledTimes(2);
+      expect(onEnd).toHaveBeenLastCalledWith(expect.objectContaining({ code: 'MEDIA_PLAYBACK_FAILED', message: expect.stringContaining('error.mp4') }));
 
       runtime.layer.showVideo('skip.mp4', onEnd);
       videos[2]!.emit('pointerdown');
@@ -481,6 +483,36 @@ describe('SystemPanelLayer direct contract', () => {
       disposeRuntime(runtime);
       vi.unstubAllGlobals();
     }
+  });
+
+  it('resolves a video key, reports its physical source on decode failure and discards late play rejection', async () => {
+    const videos: FakeVideo[] = [];
+    let rejectPlay!: (error: Error) => void;
+    vi.stubGlobal('document', makeVideoDocument(videos, () => new Promise<void>((_resolve, reject) => { rejectPlay = reject; })));
+    const runtime = makeRuntime();
+    const onEnd = vi.fn();
+    try {
+      await runtime.assets.registerVideo('片头', 'blob:movie', 'content/assets/video/片头.webm');
+      runtime.layer.showVideo('片头', onEnd);
+      expect(videos[0]!.src).toBe('blob:movie');
+      videos[0]!.emit('error');
+      expect(onEnd).toHaveBeenCalledOnce();
+      expect(onEnd).toHaveBeenLastCalledWith(expect.objectContaining({ code: 'MEDIA_PLAYBACK_FAILED', message: expect.stringContaining('content/assets/video/片头.webm') }));
+      expect(videos[0]!).toMatchObject({ paused: true, src: '', removed: true });
+      rejectPlay(new Error('late decode rejection'));
+      await Promise.resolve();
+      expect(onEnd).toHaveBeenCalledOnce();
+      runtime.layer.showVideo('片头', onEnd);
+      rejectPlay(new Error('autoplay blocked'));
+      await Promise.resolve();
+      expect(onEnd).toHaveBeenCalledTimes(2);
+      expect(onEnd).toHaveBeenLastCalledWith(expect.objectContaining({ message: expect.stringContaining('autoplay blocked') }));
+      runtime.layer.showVideo('片头', onEnd);
+      runtime.layer.hideVideo();
+      rejectPlay(new Error('old session'));
+      await Promise.resolve();
+      expect(onEnd).toHaveBeenCalledTimes(2);
+    } finally { disposeRuntime(runtime); }
   });
 
   it('keeps domain and host dependencies outside SystemPanelLayer', () => {
@@ -561,7 +593,7 @@ describe('SystemPanelLayer direct contract', () => {
 });
 
 interface FakeVideo {
-  readonly src: string;
+  src: string;
   readonly style: Record<string, string>;
   readonly listeners: Map<string, Set<() => void>>;
   paused: boolean;
@@ -571,12 +603,14 @@ interface FakeVideo {
   play(): Promise<void>;
   pause(): void;
   remove(): void;
+  removeAttribute(name: string): void;
+  load(): void;
   addEventListener(type: string, listener: () => void): void;
   removeEventListener(type: string, listener: () => void): void;
   emit(type: string): void;
 }
 
-function makeVideoDocument(videos: FakeVideo[]) {
+function makeVideoDocument(videos: FakeVideo[], play: () => Promise<void> = () => Promise.resolve()) {
   const context = {
     font: '',
     measureText: (text: string) => ({ width: text.length * 10, actualBoundingBoxAscent: 20, actualBoundingBoxDescent: 5 }),
@@ -594,9 +628,11 @@ function makeVideoDocument(videos: FakeVideo[]) {
         removed: false,
         autoplay: false,
         playsInline: false,
-        play: () => Promise.resolve(),
+        play,
         pause: () => { video.paused = true; },
         remove: () => { video.removed = true; },
+        removeAttribute: name => { if (name === 'src') video.src = ''; },
+        load: () => {},
         addEventListener: (type, listener) => {
           const bucket = listeners.get(type) ?? new Set<() => void>();
           bucket.add(listener);
