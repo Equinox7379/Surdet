@@ -185,7 +185,7 @@ async function continueInEditor(game, errors) {
   };
   const configBefore = JSON.parse((await fs.readFile(path.join(game, 'game.config.json'), 'utf8')).replace(/^\uFEFF/, ''));
   const eventsPath = path.join(game, 'content/config/events.json');
-  const eventsBefore = JSON.stringify({ events: [], scheduled: [] });
+  const eventsBefore = JSON.stringify({ events: [{ id: 'ending-event', scene: 'end_a', when: 'false', priority: 0, note: 'end_a' }], scheduled: [] });
   await fs.mkdir(path.dirname(eventsPath), { recursive: true });
   await fs.writeFile(eventsPath, '{');
   await open();
@@ -238,7 +238,7 @@ async function continueInEditor(game, errors) {
   });
   const configTextBefore = await fs.readFile(path.join(game, 'game.config.json'), 'utf8');
   page.on('dialog', dialog => { errors.push(`Unexpected scene-operation dialog: ${dialog.message()}`); void dialog.dismiss(); });
-  for (const action of ['重命名', '删除']) {
+  for (const action of ['删除']) {
     await page.locator('.scene-row').filter({ has: page.locator('[data-scene-id="end_a"]') }).hover();
     const settled = page.waitForResponse(response => response.ok() && new URL(response.url()).pathname.endsWith('/workspace/finish'));
     await page.getByRole('button', { name: `${action}场景 end_a.gal`, exact: true }).click();
@@ -253,24 +253,107 @@ async function continueInEditor(game, errors) {
   }
   assert.equal(await fs.readFile(path.join(game, 'game.config.json'), 'utf8'), configTextBefore);
   await page.screenshot({ path: path.join(output, '04-ending-scene-protected.png') });
+  page.removeAllListeners('dialog');
+  await page.locator('[data-editor-mode="config"]').click();
+  await page.getByRole('button', { name: '事件', exact: true }).click();
+  await page.getByRole('textbox', { name: '优先级，第 1 行', exact: true }).fill('7');
+  await page.locator('[data-editor-mode="editor"]').click();
+  const endingBefore = await fs.readFile(path.join(game, 'content/scenario/end_a.gal'), 'utf8');
+  assert.ok(endingBefore.startsWith('\uFEFF\t@scene end_a\r\n'));
+  await page.locator('.scene-item[data-scene-id="end_a"]').focus();
+  await page.keyboard.press('Enter');
+  const endingLine = page.locator('.block-text').getByRole('textbox', { name: '台词内容', exact: true });
+  const endingDialogue = await endingLine.inputValue();
+  await endingLine.fill(endingDialogue + '返修。');
+  await endingLine.blur();
+  await page.keyboard.press('Control+Z');
+  page.once('dialog', dialog => dialog.accept('final_a'));
+  const renameSettled = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/workspace/finish'));
+  await page.locator('.scene-row').filter({ has: page.locator('[data-scene-id="end_a"]') }).hover();
+  await page.getByRole('button', { name: '重命名场景 end_a.gal', exact: true }).click();
+  await renameSettled;
+  assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.has('final_a')), true, await page.locator('#status').textContent());
+  const renamedEnding = endingBefore.replace('@scene end_a', '@scene final_a');
+  assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('final_a').text), renamedEnding);
+  await page.keyboard.press('Control+Shift+Z');
+  assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('final_a').text), renamedEnding.replace(endingDialogue, endingDialogue + '返修。'));
+  await page.keyboard.press('Control+Z');
+  assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('final_a').text), renamedEnding);
+  assert.equal(await fs.readFile(path.join(game, 'game.config.json'), 'utf8'), configTextBefore, 'rename saved config before Save All');
+  assert.equal(await fs.readFile(eventsPath, 'utf8'), eventsBefore, 'rename saved the unfinished event draft');
+  await page.locator('[data-editor-mode="config"]').click();
+  await page.getByRole('button', { name: '事件', exact: true }).click();
+  assert.equal(await page.getByRole('textbox', { name: '场景，第 1 行', exact: true }).inputValue(), 'final_a');
+  await page.keyboard.press('Control+Z');
+  await page.keyboard.press('Control+Shift+Z');
+  assert.equal(await page.getByRole('textbox', { name: '场景，第 1 行', exact: true }).inputValue(), 'final_a');
+  assert.equal(await page.getByRole('textbox', { name: '优先级，第 1 行', exact: true }).inputValue(), '7');
+  await page.screenshot({ path: path.join(output, '04c-scene-config-rename-draft.png') });
+  const configSaveFinished = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/workspace/finish'));
+  await page.keyboard.press('Control+S');
+  await configSaveFinished;
+  console.log('CONFIG_RENAME_SAVE', await page.evaluate(() => ({ status: document.getElementById('status')?.textContent,
+    pending: window.surdetEditorDebug.state.pendingSceneCommit, saveState: document.querySelector('[data-save-state]')?.getAttribute('data-save-state') })), errors);
+  await page.waitForFunction(() => document.querySelector('[data-save-state]')?.getAttribute('data-save-state') === 'saved'
+    && document.querySelector('[data-action="save-project"]')?.disabled === false);
+  assert.deepEqual(JSON.parse((await fs.readFile(path.join(game, 'game.config.json'), 'utf8')).replace(/^\uFEFF/, '')).player.endScenes, ['final_a', 'end_b']);
+  const eventAfter = JSON.parse(await fs.readFile(eventsPath, 'utf8')).events[0];
+  assert.equal(eventAfter.scene, 'final_a');
+  assert.equal(eventAfter.priority, 7);
+  assert.equal(eventAfter.note, 'end_a');
+  await assert.rejects(fs.access(path.join(game, 'content/scenario/end_a.gal')), { code: 'ENOENT' });
+  assert.equal(await fs.readFile(path.join(game, 'content/scenario/final_a.gal'), 'utf8'), renamedEnding);
+  await page.close();
+  await open();
+  assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('final_a').text), renamedEnding);
+  await page.waitForFunction(() => window.surdetEditorDebug.state.lastValidation !== null);
+  assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.lastValidation.issues.some(issue => issue.code === 'SCENE_ID')), false);
   await page.locator('[data-editor-mode="config"]').click();
   await page.getByRole('button', { name: '角色', exact: true }).click();
   await page.getByRole('textbox', { name: 'narrator 的显示名称', exact: true }).fill('引路人');
+  const roleSaveFinished = page.waitForResponse(response => response.ok() && new URL(response.url()).pathname.endsWith('/workspace/finish'));
   await page.keyboard.press('Control+S');
+  await roleSaveFinished;
   await page.waitForFunction(() => document.querySelector('[data-save-state]')?.getAttribute('data-save-state') === 'saved'
     && document.querySelector('[data-save-state]')?.textContent === '已保存'
-    && document.querySelector('[data-action="save-project"]')?.disabled === false
-    && document.getElementById('status')?.textContent?.includes('全部成功'));
+    && document.querySelector('[data-action="save-project"]')?.disabled === false);
   const savedConfigText = await fs.readFile(path.join(game, 'game.config.json'), 'utf8');
   assert.ok(savedConfigText.startsWith('\uFEFF'), 'Editor stripped the source configuration BOM');
   const configAfter = JSON.parse(savedConfigText.replace(/^\uFEFF/, ''));
-  assert.deepEqual(configAfter.player, configBefore.player, 'Editor dropped player settings');
+  assert.deepEqual(configAfter.player, { ...configBefore.player, endScenes: ['final_a', 'end_b'] }, 'Editor dropped player settings');
   assert.equal(configAfter.characters.narrator.name, '引路人');
   assert.match(await fs.readFile(path.join(game, 'content/scenario/hub_scene.gal'), 'utf8'), /引路人：你回到码头/);
   await page.close();
   await open();
   assert.equal(await page.getByRole('textbox', { name: 'narrator 的显示名称', exact: true }).inputValue(), '引路人');
   await page.screenshot({ path: path.join(output, '04-editor-continued.png') });
+}
+
+async function resumePublicAuthoring(game) {
+  const session = await openAgentPortSession({ projectRoot: game, policy: 'stage' });
+  const server = createAgentPortServer(session);
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'post-editor-bom-revision', version: '1.0.0' });
+  agent = { client, close: async () => { await client.close(); await server.close(); await session.close(); } };
+  await server.connect(serverTransport); await client.connect(clientTransport);
+  const call = async (name, args = {}) => {
+    const response = await client.callTool({ name, arguments: args });
+    assert.notEqual(response.isError, true, JSON.stringify(response));
+    assert.equal(response.structuredContent.ok, true, JSON.stringify(response));
+    return response.structuredContent.result;
+  };
+  const before = await fs.readFile(path.join(game, 'content/scenario/final_a.gal'), 'utf8');
+  await call('surdet_change_begin', { compositionMode: 'direct' });
+  const scene = await call('surdet_object_inspect', { view: 'working', objectRef: 'scene:final_a', fragment: {} });
+  const children = await Promise.all(scene.childRefs.map(objectRef => call('surdet_object_inspect', { view: 'working', objectRef })));
+  const text = children.find(object => object.kind === 'text' && object.source.raw.includes('你拆开信封，故乡的风从纸页间吹来。'));
+  assert.ok(text);
+  await call('surdet_scene_patch', { operationId: 'post-editor-revision', patch: { kind: 'replaceText', target: text.objectRef, expectedFingerprint: text.fingerprint, value: '你拆开信封，故乡的风翻过纸页。' } });
+  await call('surdet_project_validate');
+  await call('surdet_project_simulate', { sceneId: 'final_a' });
+  assert.equal((await call('surdet_runtime_run_from', { sceneId: 'final_a', choices: [] })).status, 'passed');
+  assert.equal(await fs.readFile(path.join(game, 'content/scenario/final_a.gal'), 'utf8'), before, 'stage revision changed the saved source');
+  await agent.close(); agent = null;
 }
 try {
   // A fresh engine-shaped fixture keeps cmdNew's workspace registration off the user's repository.
@@ -285,6 +368,8 @@ try {
     const filePath = path.join(game, file);
     await fs.writeFile(filePath, '\uFEFF' + await fs.readFile(filePath, 'utf8'));
   }
+  const endingPath = path.join(game, 'content/scenario/end_a.gal');
+  await fs.writeFile(endingPath, '\uFEFF\t' + (await fs.readFile(endingPath, 'utf8')).replace(/\r?\n/g, '\r\n'));
   execFileSync(process.execPath, [path.join(repo, 'node_modules/typescript/bin/tsc'), '-p', path.join(game, 'tsconfig.json'), '--noEmit'], { cwd: engine, stdio: 'pipe', shell: false });
   await build({ root: game, configFile: path.join(game, 'vite.config.ts'), logLevel: 'error' });
   server = await createServer({ root: game, configFile: path.join(game, 'vite.config.ts'), cacheDir: path.join(output, '.vite'), logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
@@ -372,9 +457,10 @@ try {
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/`); await waitTitle(page);
   await activate(page, '开始游戏'); await advanceToChoice(page); await activate(page, '现在打开');
-  await page.waitForFunction(() => window.__surdetDebug.position?.sceneId === 'end_a');
+  await page.waitForFunction(() => window.__surdetDebug.position?.sceneId === 'final_a');
   await finishToTitle(page);
   await page.screenshot({ path: path.join(output, '05-ending-after-editor-save.png') });
+  await resumePublicAuthoring(game);
   assert.deepEqual(errors, []);
   await fs.writeFile(path.join(output, 'evidence.json'), JSON.stringify({ generatedBy: 'cmdNew + public MCP', typecheck: true, build: true, unchangedMain: true, explicitOptions: true, editorContinued: true, endingSceneProtected: true, endingAfterEditorSave: true, branches: 2, savedPosition: saved, reloadedPosition: saved, returnedToTitle: true, errors }, null, 2));
   console.log(`PASS actual surdet new project: typecheck/build, two branches, menu save, reload/title load and both endings / ${output}`);

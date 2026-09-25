@@ -13,6 +13,8 @@ import {
   runProjectWriteOperation,
   saveAll,
   sceneTextSha256,
+  prepareSceneConfigRename,
+  prepareSceneConfigRecovery,
 } from '../src/project-io.js';
 import { state } from '../src/state.js';
 import * as workspace from '../src/editor-workspace.js';
@@ -183,6 +185,8 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     state.dirHandle = {} as FileSystemDirectoryHandle;
     state.reviewPreviewReadOnly = false;
     state.configReadErrors = {};
+    state.pendingSceneConfigWrites = [];
+    state.pendingSceneConfigRenames = [];
     state.scenes.clear();
     state.timelines = [];
     state.pendingSceneDeletes = [];
@@ -216,6 +220,52 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(log).toEqual([]);
     expect(state.scenes.get('locked')?.dirty).toBe(true);
     expect(onSaveSettled).not.toHaveBeenCalled();
+  });
+
+  it('配置引用草稿保留未知字段与原指纹；恢复缺成员或外部已改时整组拒绝', async () => {
+    const rootText = '\uFEFF{"entryScene":"old","player":{"endScenes":["old"]},"note":"old"}\r\n';
+    const docs = {
+      events: { events: [{ id: 'e', scene: 'old', note: 'old' }], scheduled: [{ id: 's', scene: 'old' }] },
+      growth: { profiles: [{ levelEvents: { '2': 'old' }, note: 'old' }] },
+      calendar: { nodes: [{ eventId: 'old' }], baseCommands: [{ eventId: 'old' }] },
+      gallery: { texts: [{ scene: 'old', label: 'same', note: 'old' }] },
+    };
+    state.scenes = new Map([['old', scene('old', fileHandle(null, log, 'old.gal'))]]);
+    state.gameConfigText = rootText;
+    state.configFiles = { ...docs, achievements: null, terminology: null };
+    state.handles = { gameConfig: fileHandle(null, log, 'game.config.json', rootText), achievements: null, terminology: null,
+      events: fileHandle(null, log, 'events.json', JSON.stringify(docs.events)),
+      growth: fileHandle(null, log, 'growth.json', JSON.stringify(docs.growth)),
+      calendar: fileHandle(null, log, 'calendar.json', JSON.stringify(docs.calendar)),
+      gallery: fileHandle(null, log, 'gallery.json', JSON.stringify(docs.gallery)),
+    };
+    const apply = await prepareSceneConfigRename('old', 'new', 'old');
+    expect(state.gameConfigText).toBe(rootText);
+    expect(state.pendingSceneConfigWrites).toEqual([]);
+    expect(log).toEqual([]);
+    apply();
+    expect(state.configFiles).toMatchObject({
+      events: { events: [{ scene: 'new', note: 'old' }], scheduled: [{ scene: 'new' }] },
+      growth: { profiles: [{ levelEvents: { '2': 'new' }, note: 'old' }] },
+      calendar: { nodes: [{ eventId: 'new' }], baseCommands: [{ eventId: 'new' }] },
+      gallery: { texts: [{ scene: 'new', label: 'same', note: 'old' }] },
+    });
+    const writes = state.pendingSceneConfigWrites;
+    const renames = state.pendingSceneConfigRenames;
+    expect(writes).toHaveLength(5);
+    expect(writes.find(write => write.path === 'game.config.json')?.expectedSha256).toBe(await sceneTextSha256(rootText));
+    await expect(prepareSceneConfigRecovery(writes.slice(0, 4), renames)).rejects.toThrow('不能部分恢复');
+    const restore = await prepareSceneConfigRecovery(writes, renames);
+    state.gameConfigText = rootText;
+    state.configFiles = { ...docs, achievements: null, terminology: null };
+    restore();
+    expect(state.entryScene).toBe('new');
+    expect(state.gameConfigText.startsWith('\uFEFF')).toBe(true);
+    state.handles.events = fileHandle(null, log, 'events.json', '{"events":[],"external":true}');
+    const before = JSON.stringify(state.configFiles);
+    await expect(prepareSceneConfigRecovery(writes, renames)).rejects.toThrow('不能部分恢复');
+    expect(JSON.stringify(state.configFiles)).toBe(before);
+    expect(log).toEqual([]);
   });
 
   it('项目写操作按调用顺序串行执行', async () => {

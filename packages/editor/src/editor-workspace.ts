@@ -234,6 +234,14 @@ export function currentEditorWorkspaceWrite(): EditorWorkspaceWrite | undefined 
   return current?.writeLeaseId ? { ...stateFor(current), writeLeaseId: current.writeLeaseId } : undefined;
 }
 
+export function recordEditorSceneCommit(write: EditorWorkspaceWrite | undefined, receipt: { writes: Array<{ path: string; sha256: string }>; deletedPaths: string[] }): void {
+  if (write === undefined) return;
+  const current = connection;
+  if (current?.writeLeaseId !== write.writeLeaseId || current.baseline === null) throw new Error('场景保存回执不属于当前保存会话');
+  const changed = new Set([...receipt.writes.map(file => file.path), ...receipt.deletedPaths]);
+  current.baseline = { ...current.baseline, files: [...current.baseline.files.filter(file => !changed.has(file.path)), ...receipt.writes] };
+}
+
 export async function publishEditorWorkspaceFile(path: string, text: string | null): Promise<boolean> {
   const current = connection;
   if (current === null) return false;

@@ -52,7 +52,7 @@ export function visitSceneReferences(source: string, oldId: string, newId?: stri
   return { text: serializeSceneDocument(lines), count };
 }
 
-function renameDefinition(source: string, oldId: string, newId: string, file: string): string {
+export function renameSceneDefinition(source: string, oldId: string, newId: string, file: string): string {
   const lines = parseSceneDocument(source);
   for (const row of lines) {
     if (row.kind !== 'instr' || row.name !== 'scene') continue;
@@ -67,10 +67,11 @@ function renameDefinition(source: string, oldId: string, newId: string, file: st
 }
 
 /** Only the supported host-entry fields are rewritten, not same-looking text. */
-function renameConfigReferences(files: Record<string, string>, oldId: string, newId: string, fallbackEntry: string): void {
+export const sceneReferenceConfigPaths = ['game.config.json', ...['gallery', 'events', 'growth', 'calendar'].map(name => `content/config/${name}.json`)];
+
+export function renameConfigReferences(files: Record<string, string>, oldId: string, newId: string, fallbackEntry: string): void {
   const gamePath = 'game.config.json';
-  const configPaths = [gamePath, ...['gallery', 'events', 'growth', 'calendar'].map(name => `content/config/${name}.json`)];
-  for (const path of configPaths) {
+  for (const path of sceneReferenceConfigPaths) {
     const source = files[path];
     if (source === undefined && path !== gamePath) continue;
     const config = parseProjectConfigDocument(source ?? '{}', path);
@@ -143,7 +144,7 @@ export async function applySceneRename(change: ChangeSession, input: SceneRename
     const path = previousPath.slice(0, previousPath.lastIndexOf('/') + 1) + input.newSceneId + previousPath.slice(-4);
     const workingFiles = { ...record.workingFiles };
     for (const file of scenePaths) workingFiles[file] = visitSceneReferences(workingFiles[file]!, input.sceneId, input.newSceneId, file).text;
-    workingFiles[path] = renameDefinition(workingFiles[previousPath]!, input.sceneId, input.newSceneId, previousPath);
+    workingFiles[path] = renameSceneDefinition(workingFiles[previousPath]!, input.sceneId, input.newSceneId, previousPath);
     delete workingFiles[previousPath];
     renameConfigReferences(workingFiles, input.sceneId, input.newSceneId, sceneIdFromScenarioPath(scenePaths[0]!));
     const config = parseProjectConfigDocument(workingFiles['game.config.json'] ?? '{}');

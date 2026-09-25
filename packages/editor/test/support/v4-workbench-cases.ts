@@ -9,6 +9,8 @@ import { bindSearchHooks, renderSearchPanel, focusSearchInput, resetSearchSessio
 import { renderConfig, resetConfigSession, inspectConfigDraftState } from '../../src/panels/config.js';
 import { renderTimelinePanel, bindTimelineHooks, clearTimelineViewStates } from '../../src/panels/timeline-panel.js';
 import { clearTimelineHistories, timelineHistoryDepth } from '../../src/timeline-history.js';
+import { renderFlow } from '../../src/panels/flow.js';
+import { validateProject } from '../../src/validate.js';
 
 export const SOURCE = '@scene start\r\n@label opening\r\n@bg hall\r\n@show lynn:uniform normal @ right\r\n凛:你好。\r\n@wait 500\r\n@choice\r\n  继续 -> @goto again\r\n  离开 -> @goto done\r\n@label again\r\n凛：继续。\r\n@label done\r\n@end';
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
@@ -126,6 +128,22 @@ function searchKey(key: string, options: KeyboardEventInit = {}): void {
   control('#search-input').dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options }));
 }
 export const v4WorkbenchCases: BrowserCase[] = [
+  { name: '流程图按混合大小写 GAL 扩展名显示真实校验错误和警告', run: () => {
+    const scene = fixture('@scene start\n@jump broken\n');
+    state.entryScene = 'start';
+    state.scenes.set('chapter/broken', { ...scene, id: 'broken', file: 'chapter/broken.GAL', text: '@scene broken\n@jump missing_scene\n' });
+    state.scenes.set('warning', { ...scene, id: 'warning', file: 'warning.GaL', text: '@scene warning\n@choice\n  （还要看看。） -> @jump start\n' });
+    const result = validateProject([...state.scenes].map(([key, value]) => ({ key, id: value.id, file: value.file, source: value.text })), 'start');
+    assert(result.issues.some(issue => issue.file === 'chapter/broken.GAL' && issue.severity === 'error'), 'missing actual mixed-case error');
+    assert(result.issues.some(issue => issue.file === 'warning.GaL' && issue.severity === 'warning'), 'missing actual mixed-case warning');
+    state.lastValidation = result;
+    const host = document.createElement('div'); document.body.append(host);
+    renderFlow(host);
+    host.querySelector<HTMLButtonElement>('[data-flow-action="view-overview"]')!.click();
+    assert(host.querySelector('[data-flow-scene-frame="broken"].has-error'), 'error scene displayed without error');
+    assert(host.querySelector('[data-flow-scene-frame="warning"].has-warning'), 'warning scene displayed without warning');
+    assert(host.querySelector('[data-flow-scene-frame="broken"]')?.textContent?.includes('错误'), 'error count missing');
+  } },
   { name: '项目切换后拒绝旧名词表异步导入', run: async () => {
     fixture(); resetConfigSession();
     document.body.innerHTML = '<div id="config-view"></div><div id="status"></div>';

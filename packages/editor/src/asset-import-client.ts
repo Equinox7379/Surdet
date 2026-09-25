@@ -222,6 +222,7 @@ export interface SceneLifecyclePlanResult {
 
 export interface SceneLifecycleCommitInput {
   requestId: string;
+  configRenames?: Array<{ from: string; to: string }>;
   plans: Array<{ operationId: string; planFingerprint: string }>;
   writes: Array<{ path: string; text: string; expectedSha256: string | null }>;
 }

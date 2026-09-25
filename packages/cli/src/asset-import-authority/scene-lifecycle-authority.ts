@@ -2,7 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { isValidSceneId } from '@surdet/core';
-import { parseProjectConfigDocument, sceneDirectorySegments, stableStringify } from '@surdet/authoring';
+import { parseProjectConfigDocument, renameConfigReferences, sceneReferenceConfigPaths as sceneConfigPaths, sceneDirectorySegments, stableStringify } from '@surdet/authoring';
 import { NodeProjectStorage } from '../authoring/node-project-storage.js';
 import { createJsonRecord, readJsonRecord, replaceJsonRecord } from '../authoring/node-json-record.js';
 import { syncFileAndParent, syncParentDirectories } from '../authoring/node-durable-file.js';
@@ -20,6 +20,17 @@ import {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
+
+function normalizeConfigRenames(value: unknown): Array<{ from: string; to: string }> {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 100) throw new AssetImportAuthorityError('INVALID_REQUEST', '配置改名映射格式无效');
+  return value.map(item => {
+    if (!item || typeof item !== 'object' || Object.keys(item).some(key => key !== 'from' && key !== 'to')
+      || !isValidSceneId(item.from) || !isValidSceneId(item.to) || item.from.toLowerCase() === item.to.toLowerCase()) {
+      throw new AssetImportAuthorityError('INVALID_REQUEST', '配置改名映射格式无效');
+    }
+    return { from: item.from as string, to: item.to as string };
+  });
+}
 
 interface ScenePlanRecord {
   schemaVersion: 1;
@@ -60,6 +71,7 @@ interface SceneCommitRecord {
   requestId: string;
   commitFingerprint: string;
   plans: Array<{ operationId: string; planFingerprint: string }>;
+  configRenames?: Array<{ from: string; to: string }>;
   writes: SceneCommitWriteRecord[];
   deletes: SceneCommitDeleteRecord[];
   status: 'PREPARING' | 'PREPARED' | 'COMMITTED' | 'ROLLED_BACK' | 'RECOVERY_REQUIRED';
@@ -148,7 +160,7 @@ function normalizePlanRequest(input: SceneLifecyclePlanRequest): ScenePlanRecord
 }
 
 function normalizeWritePath(value: unknown, field: string): string {
-  if (value === 'game.config.json') return value;
+  if (typeof value === 'string' && sceneConfigPaths.includes(value)) return value;
   const normalized = normalizeScenePath(value, field);
   try { sceneDirectorySegments(path.posix.dirname(normalized).replace(/^content\/scenario\/?/, '')); }
   catch { throw new AssetImportAuthorityError('INVALID_REQUEST', '章节目标目录无效', { field }); }
@@ -383,10 +395,11 @@ function validEvidence(value: unknown): value is AssetRelocationFileEvidence {
     && typeof evidence.sha256 === 'string' && SHA256.test(evidence.sha256);
 }
 
-function commitSemantic(record: Pick<SceneCommitRecord, 'requestId' | 'plans' | 'writes'>): unknown {
+function commitSemantic(record: Pick<SceneCommitRecord, 'requestId' | 'plans' | 'writes' | 'configRenames'>): unknown {
   return {
     requestId: record.requestId,
     plans: record.plans,
+    ...(record.configRenames === undefined ? {} : { configRenames: record.configRenames }),
     writes: record.writes.map(({ path: file, text, expectedSha256 }) => ({
       path: file,
       text,
@@ -541,6 +554,7 @@ export class ProjectSceneLifecycleAuthority {
         throw new Error('invalid scene commit');
       }
       const planIds = new Set<string>();
+      if (record.configRenames !== undefined) normalizeConfigRenames(record.configRenames);
       for (const plan of record.plans) {
         if (!UUID.test(plan.operationId) || !SHA256.test(plan.planFingerprint) || planIds.has(plan.operationId)) {
           throw new Error('invalid scene commit plans');
@@ -874,7 +888,8 @@ export class ProjectSceneLifecycleAuthority {
       || new Set(writes.map((entry) => portableFold(entry.path))).size !== writes.length) {
       throw new AssetImportAuthorityError('INVALID_REQUEST', '场景保存批次包含重复路径或计划');
     }
-    const normalizedCommit = { requestId, plans, writes };
+    const configRenames = input.configRenames === undefined ? undefined : normalizeConfigRenames(input.configRenames);
+    const normalizedCommit = { requestId, plans, writes, ...(configRenames === undefined ? {} : { configRenames }) };
     const commitFingerprint = crypto.createHash('sha256')
       .update(stableStringify(normalizedCommit), 'utf8').digest('hex');
 
@@ -937,6 +952,52 @@ export class ProjectSceneLifecycleAuthority {
         throw new AssetImportAuthorityError('INVALID_REQUEST', '待删除源路径不能同时写入');
       }
 
+      if (configRenames !== undefined) {
+        const existingScenes = (await (await NodeProjectStorage.open(this.paths.projectRoot)).listFiles())
+          .filter(file => file.startsWith('content/scenario/') && /\.gal$/i.test(file)).sort();
+        const id = (file: string) => path.posix.basename(file).slice(0, -4);
+        for (const [index, rename] of configRenames.entries()) {
+          const original = existingScenes.filter(file => id(file) === rename.from);
+          if (original.length > 1 || (original.length === 1 && !records.some(record => record.request.sourcePath === original[0]
+            && record.request.kind === 'rename' && id(record.request.targetPath!) === rename.to))) {
+            throw new AssetImportAuthorityError('INVALID_REQUEST', '配置改名必须对应本批场景改名，不能替换其他场景的引用');
+          }
+          let finalId = rename.to;
+          for (const later of configRenames.slice(index + 1)) if (later.from === finalId) finalId = later.to;
+          if (!writes.some(write => write.path.startsWith('content/scenario/') && id(write.path) === finalId)) {
+            throw new AssetImportAuthorityError('INVALID_REQUEST', '配置改名的目标必须在同批场景写入中');
+          }
+        }
+        const beforeFiles: Record<string, string> = {};
+        for (const file of sceneConfigPaths) {
+          if (await fileEvidence(this.paths, file)) beforeFiles[file] = await fs.readFile((await safeParent(this.paths, file)).absolutePath, 'utf8');
+        }
+        const expected = { ...beforeFiles };
+        const requestedEntry = writes.find(write => write.path === 'game.config.json');
+        const fallback = existingScenes[0] ? id(existingScenes[0])
+          : String(parseProjectConfigDocument(requestedEntry?.text ?? '{}')['entryScene'] ?? '');
+        for (const rename of configRenames) renameConfigReferences(expected, rename.from, rename.to, fallback);
+        const originalEntry = parseProjectConfigDocument(beforeFiles['game.config.json'] ?? '{}')['entryScene'];
+        if (originalEntry === undefined || originalEntry === '') {
+          const pinnedEntry = parseProjectConfigDocument(expected['game.config.json'] ?? '{}')['entryScene'];
+          const finalScenes = [...existingScenes.filter(file => !sourcePaths.has(portableFold(file))),
+            ...writes.filter(write => write.path.startsWith('content/scenario/')).map(write => write.path)];
+          if (!finalScenes.some(file => id(file) === pinnedEntry)) {
+            throw new AssetImportAuthorityError('INVALID_REQUEST', '缺省入口必须指向本批保存后仍存在的场景');
+          }
+        }
+        for (const file of sceneConfigPaths) {
+          const write = writes.find(entry => entry.path === file);
+          if ((expected[file] !== beforeFiles[file] && !write)
+            || (write && (expected[file] === undefined
+              || stableStringify(parseProjectConfigDocument(write.text, file)) !== stableStringify(parseProjectConfigDocument(expected[file]!, file))))) {
+            throw new AssetImportAuthorityError('INVALID_REQUEST', `配置必须完整提交本次场景引用改写，不能伴随其他修改：${file}`);
+          }
+        }
+      } else if (writes.some(write => sceneConfigPaths.includes(write.path) && write.path !== 'game.config.json')) {
+        throw new AssetImportAuthorityError('INVALID_REQUEST', '场景配置写入缺少改名映射');
+      }
+
       const storedWrites: SceneCommitWriteRecord[] = [];
       for (const write of writes) {
         const baseline = await fileEvidence(this.paths, write.path);
@@ -945,7 +1006,7 @@ export class ProjectSceneLifecycleAuthority {
         } else if (baseline === null || baseline.sha256 !== write.expectedSha256) {
           throw new AssetImportAuthorityError('IMPORT_PLAN_STALE', `场景文件已在编辑器外变化：${write.path}`);
         }
-        if (write.path === 'game.config.json') {
+        if (write.path === 'game.config.json' && configRenames === undefined) {
           try {
             const before = baseline === null ? {} : parseProjectConfigDocument(await fs.readFile((await safeParent(this.paths, write.path)).absolutePath, 'utf8'));
             const after = parseProjectConfigDocument(write.text);
@@ -997,6 +1058,7 @@ export class ProjectSceneLifecycleAuthority {
         requestId,
         commitFingerprint,
         plans,
+        ...(configRenames === undefined ? {} : { configRenames }),
         writes: storedWrites,
         deletes,
         status: 'PREPARING',

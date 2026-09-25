@@ -392,6 +392,14 @@ export class EditorWorkspaceAuthority {
     });
   }
 
+  /** Called only by the in-process scene authority while holding this write lease.
+   * Subsequent ordinary config writes must compare against this batch's receipt. */
+  recordSceneCommit(input: ActiveEditorWriteInput, receipt: { writes: Array<{ path: string; sha256: string }>; deletedPaths: string[] }): void {
+    const active = this.requireActiveWrite(input);
+    for (const file of receipt.writes) active.published.set(file.path, file.sha256);
+    for (const file of receipt.deletedPaths) active.published.delete(file);
+  }
+
   async finishWrite(input: ActiveEditorWriteInput): Promise<{
     diskBaseline: ProjectCoordinationBaseline;
     changedPaths: string[];

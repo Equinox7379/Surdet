@@ -138,6 +138,8 @@ const {
   configHistoryDepth,
   configUndo,
   inspectConfigDraftState,
+  prepareConfigSceneRename,
+  configRedo,
   renderConfig,
   resetConfigSession,
   saveDirtyConfigSections,
@@ -145,6 +147,8 @@ const {
 
 async function renderFixture(): Promise<FakeElement> {
   state.configReadErrors = {};
+  state.pendingSceneConfigWrites = [];
+  state.pendingSceneConfigRenames = [];
   state.dirHandle = null;
   state.gameConfigText = INITIAL_GAME_CONFIG;
   state.configFiles = configFiles() as typeof state.configFiles;
@@ -175,6 +179,22 @@ afterEach(() => {
 });
 
 describe('configuration draft state', () => {
+  it('rebases live scene references and undo/redo without losing unrelated unfinished fields', async () => {
+    const root = await renderFixture();
+    const scene = byAttribute(root, 'aria-label', '场景，第 1 行');
+    scene.value = 'old'; scene.oninput?.();
+    const effects = byAttribute(root, 'aria-label', '执行效果，第 1 行');
+    effects.value = '{'; effects.oninput?.();
+    prepareConfigSceneRename('old', 'new', 'start')();
+    configUndo();
+    const refs = descendants(root).filter(element => element.getAttribute('aria-label') === '场景，第 1 行');
+    expect(refs.every(element => element.value !== 'old')).toBe(true);
+    configRedo();
+    expect(byAttribute(root, 'aria-label', '场景，第 1 行').value).toBe('new');
+    expect(byAttribute(root, 'aria-label', '执行效果，第 1 行').value).toBe('{');
+    expect(inspectConfigDraftState().dirtySections).toEqual(['events']);
+  });
+
   it('shows a read failure instead of silently editing the last successful event table', async () => {
     const root = await renderFixture();
     state.handles.events = { getFile: async () => { throw new Error('fixture read denied'); } } as unknown as FileSystemFileHandle;

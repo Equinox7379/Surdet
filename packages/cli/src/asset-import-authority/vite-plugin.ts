@@ -318,7 +318,11 @@ async function openRuntime(options: Required<Pick<AssetImportAuthorityVitePlugin
           }
           return response;
         })
-        : workspace.withWriteLease(workspaceWrite, lease => mutationContext.runWithLease(lease, () => sceneLifecycle.commit(request))),
+        : workspace.withWriteLease(workspaceWrite, async lease => {
+          const result = await mutationContext.runWithLease(lease, () => sceneLifecycle.commit(request));
+          workspace.recordSceneCommit(workspaceWrite, result);
+          return result;
+        }),
     };
     return { authority: target, workspace, close: async () => { stopChallengeCleanup?.(); await workspace.close(); } };
   } catch (error) {

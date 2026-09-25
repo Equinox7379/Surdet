@@ -13,7 +13,7 @@
 import { state, h, setStatus } from './state.js';
 import { bindEditorWorkspaceHooks, connectEditorWorkspace, disconnectEditorWorkspace, editorWorkspaceStatus,
   publishEditorWorkspaceState, pollEditorWorkspace, readEditorWorkspaceBaseline, currentEditorWorkspaceWrite,
-  editorWorkspaceTextChanges, enqueueEditorAssetRequest } from './editor-workspace.js';
+  editorWorkspaceTextChanges, enqueueEditorAssetRequest, recordEditorSceneCommit } from './editor-workspace.js';
 import type { ProjectDiskBaseline } from './project-disk-baseline.js';
 import { hasReviewDraft, discardReviewDraft, openReviewWorkspace, type ReviewWorkspaceState } from './review-workspace.js';
 import { createReviewPreparationClient, preparationErrorMessage } from './review-preparation-client.js';
@@ -44,6 +44,7 @@ import {
   openProject,
   openProjectFromHandle,
   reloadCurrentProjectFromHandle,
+  prepareSceneConfigRecovery,
   waitForProjectWritesToSettle,
   refreshProjectAssetIntelligence,
   collectProjectAssets,
@@ -74,7 +75,7 @@ import {
   moveSceneAtKey,
 } from './panels/flow.js';
 import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant, resetConfigSession,
-  inspectConfigDraftState, saveDirtyConfigSections } from './panels/config.js';
+  inspectConfigDraftState, prepareConfigSceneRename, saveDirtyConfigSections } from './panels/config.js';
 import { renderPreviewPanel, disposePreviewPanel } from './panels/preview-panel.js';
 import { disposeScriptV4, revealScriptV4Line } from './v4/script-workbench.js';
 import { bindV4Navigation, navigateMode, navigateTimeline } from './v4/ui.js';
@@ -1561,11 +1562,15 @@ bindProjectIoHooks({
     return { operationId: planned.operationId, planFingerprint: planned.planFingerprint };
   },
   onSceneMutationCommit: async (input) => {
-    return assetImportClient.sceneCommit({
+    const write = currentEditorWorkspaceWrite();
+    const result = await assetImportClient.sceneCommit({
       requestId: input.requestId,
+      ...(input.configRenames === undefined ? {} : { configRenames: input.configRenames }),
       plans: input.plans,
       writes: input.writes,
-    }, currentEditorWorkspaceWrite());
+    }, write);
+    recordEditorSceneCommit(write, result);
+    return result;
   },
   onSceneCommitStateChanged: () => persistCurrentAutosave(Date.now()),
   onProjectClosing: closeCurrentProjectRuntime,
@@ -1645,6 +1650,7 @@ bindRightNavigation({
   onJumpScene: (sceneKey) => jumpToScene(sceneKey),
 });
 bindFlowHooks({
+  prepareConfigRename: prepareConfigSceneRename,
   // 流程图导航：切回块编辑标签页并选中场景；双击标签节点时滚动到该 @label 行
   openScene: (sceneKey, line) => jumpToScene(sceneKey, line !== undefined ? Math.max(0, line - 1) : undefined),
   // 流程图结构变更（重命名/删除）后重新调度校验
@@ -2293,6 +2299,8 @@ function persistCurrentAutosave(now: number): void {
     state.autosaveProjectId,
     state.pendingSceneDeletes,
     state.pendingSceneCommit,
+    state.pendingSceneConfigWrites,
+    state.pendingSceneConfigRenames,
   );
   const payload = preserveAutosaveTimelineConflicts(
     fresh,
@@ -2370,6 +2378,7 @@ async function tryAutosaveRecover(
       const pending = payload.pendingSceneCommit;
       const result = await context.client.sceneCommit({
         requestId: pending.requestId,
+        ...(pending.configRenames === undefined ? {} : { configRenames: pending.configRenames }),
         plans: pending.plans,
         writes: pending.writes,
       });
@@ -2386,6 +2395,7 @@ async function tryAutosaveRecover(
       if (!sceneAutosaveRecoveryIsCurrent(context)) return 'stale';
       state.pendingSceneCommit = {
         requestId: original.pendingSceneCommit!.requestId,
+        ...(original.pendingSceneCommit!.configRenames === undefined ? {} : { configRenames: original.pendingSceneCommit!.configRenames!.map(entry => ({ ...entry })) }),
         plans: original.pendingSceneCommit!.plans.map((entry) => ({ ...entry })),
         writes: original.pendingSceneCommit!.writes.map((entry) => ({ ...entry })),
         deletedPaths: [...original.pendingSceneCommit!.deletedPaths],
@@ -2403,6 +2413,18 @@ async function tryAutosaveRecover(
     return 'blocked';
   }
   const recoverable = sceneRecovery.status === 'recoverable' ? sceneRecovery.scenes : [];
+  let restoreSceneConfigs = () => {};
+  if (sceneRecovery.status === 'recoverable' && payload?.sceneTransaction?.configRenames) {
+    try {
+      restoreSceneConfigs = await prepareSceneConfigRecovery(payload.sceneTransaction.configWrites ?? [], payload.sceneTransaction.configRenames);
+      requireCurrentSceneAutosaveRecovery(context);
+    } catch (error) {
+      if (!sceneAutosaveRecoveryIsCurrent(context)) return 'stale';
+      blockedSceneAutosave = payload;
+      setStatus(`场景与配置备份尚未恢复，原备份已保留：${error instanceof Error ? error.message : String(error)}`, false, 12000);
+      return 'blocked';
+    }
+  }
   const recoverableSceneTransaction = sceneRecovery.status === 'recoverable'
     ? sceneRecovery.pendingDeletes
     : [];
@@ -2470,6 +2492,7 @@ async function tryAutosaveRecover(
     ...pending,
     ...(pending.affectedSceneKeys ? { affectedSceneKeys: [...pending.affectedSceneKeys] } : {}),
   }));
+  restoreSceneConfigs();
   state.entryScene ||= [...state.scenes.values()].find(scene => scene.pendingEntryScene)?.pendingEntryScene ?? '';
   blockedSceneAutosave = null;
   if (state.current && !state.scenes.has(state.current)) {

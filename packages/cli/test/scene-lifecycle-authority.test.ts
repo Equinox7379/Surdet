@@ -66,6 +66,72 @@ function uuid(): string {
 }
 
 describe('project scene lifecycle authority', () => {
+  it('does not pin a deleted implicit entry during a different scene config rename', async () => {
+    const value = await fixture();
+    const source = 'content/scenario/a.gal';
+    await fs.writeFile(path.join(value.project, source), '@scene a\n@end\n');
+    await fs.writeFile(path.join(value.project, 'game.config.json'), '{}');
+    const plan = await value.authority.plan({ operationId: uuid(), kind: 'delete', sourcePath: source });
+    await expect(value.authority.commit({ requestId: uuid(), plans: [{ operationId: plan.operationId, planFingerprint: plan.planFingerprint }],
+      configRenames: [{ from: 'draft', to: 'new' }], writes: [
+        { path: 'content/scenario/new.gal', text: '@scene new\n@end\n', expectedSha256: null },
+        { path: 'game.config.json', text: '{"entryScene":"a"}', expectedSha256: sha256('{}') },
+      ] })).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    expect(await fs.readFile(path.join(value.project, source), 'utf8')).toBe('@scene a\n@end\n');
+    expect(await fs.readFile(path.join(value.project, 'game.config.json'), 'utf8')).toBe('{}');
+  });
+  it('renames an unsaved scene with its config references but cannot relabel an unrelated existing scene', async () => {
+    const value = await fixture();
+    const before = '{"entryScene":"draft","note":"draft"}';
+    await fs.writeFile(path.join(value.project, 'game.config.json'), before);
+    await fs.writeFile(path.join(value.project, 'content/scenario/other.gal'), '@scene other\n@end\n');
+    const request = { requestId: uuid(), plans: [], configRenames: [{ from: 'other', to: 'new' }], writes: [
+      { path: 'content/scenario/new.gal', text: '@scene new\n@end\n', expectedSha256: null },
+      { path: 'game.config.json', text: '{"entryScene":"new","note":"draft"}', expectedSha256: sha256(before) },
+    ] };
+    await expect(value.authority.commit(request)).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    request.configRenames = [{ from: 'draft', to: 'new' }];
+    const receipt = await value.authority.commit(request);
+    await expect(value.authority.commit(request)).resolves.toEqual(receipt);
+    await expect(value.authority.commit({ ...request, configRenames: [{ from: 'different', to: 'new' }] })).rejects.toMatchObject({ code: 'IMPORT_OPERATION_CONFLICT' });
+    expect(await fs.readFile(path.join(value.project, 'game.config.json'), 'utf8')).toBe(request.writes[1]!.text);
+  });
+  it.each([undefined, 'after_first_publish', 'after_committed_record'] as const)('saves scene identity and all config references in one recoverable batch: %s', async faultPoint => {
+    const value = await fixture(faultPoint);
+    await fs.mkdir(path.join(value.project, 'content/config'));
+    const old = '@scene old\n@end\n';
+    const config = '{"entryScene":"old","player":{"endScenes":["old"]},"note":"old"}';
+    const events = '{"events":[{"id":"arrival","scene":"old","note":"old"}]}';
+    await fs.writeFile(path.join(value.project, 'content/scenario/chapter/old.gal'), old);
+    await fs.writeFile(path.join(value.project, 'game.config.json'), config);
+    await fs.writeFile(path.join(value.project, 'content/config/events.json'), events);
+    const plan = await value.authority.plan({ operationId: uuid(), kind: 'rename', sourcePath: 'content/scenario/chapter/old.gal', targetPath: 'content/scenario/chapter/new.gal' });
+    const request = { requestId: uuid(), plans: [{ operationId: plan.operationId, planFingerprint: plan.planFingerprint }],
+      configRenames: [{ from: 'old', to: 'new' }], writes: [
+        { path: 'content/scenario/chapter/new.gal', text: '@scene new\n@end\n', expectedSha256: null },
+        { path: 'game.config.json', text: '{"entryScene":"new","player":{"endScenes":["new"]},"note":"old"}', expectedSha256: sha256(config) },
+        { path: 'content/config/events.json', text: '{"events":[{"id":"arrival","scene":"new","note":"old"}]}', expectedSha256: sha256(events) },
+      ] };
+    let authority = value.authority;
+    if (faultPoint) {
+      await expect(authority.commit(request)).rejects.toBeInstanceOf(SceneLifecycleInjectedTermination);
+      authority = new ProjectSceneLifecycleAuthority(value.paths, { assertLeaseHeld: () => undefined });
+      await authority.recoverPending();
+      if (faultPoint === 'after_first_publish') {
+        expect(await fs.readFile(path.join(value.project, 'game.config.json'), 'utf8')).toBe(config);
+        expect(await fs.readFile(path.join(value.project, 'content/config/events.json'), 'utf8')).toBe(events);
+        expect(await fs.readFile(path.join(value.project, 'content/scenario/chapter/old.gal'), 'utf8')).toBe(old);
+      }
+    } else {
+      await expect(authority.commit({ ...request, writes: request.writes.slice(0, 2) })).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+      await expect(authority.commit({ ...request, writes: request.writes.map(write => write.path === 'game.config.json' ? { ...write, text: write.text.replace('"note":"old"', '"note":"changed"') } : write) })).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    }
+    const receipt = await authority.commit(request);
+    await expect(authority.commit(request)).resolves.toEqual(receipt);
+    for (const write of request.writes) expect(await fs.readFile(path.join(value.project, write.path), 'utf8')).toBe(write.text);
+    await expect(fs.stat(path.join(value.project, 'content/scenario/chapter/old.gal'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it.each(['z', 'missing_scene'])('rejects a companion pin that changes the real implicit entry to %s', async entryScene => {
     const value = await fixture();
     await fs.writeFile(path.join(value.project, 'content/scenario/chapter/start.gal'), '@scene start\n@end\n');
