@@ -13,6 +13,7 @@ import { renderFlow } from '../../src/panels/flow.js';
 import { validateProject } from '../../src/validate.js';
 import { openScriptImport } from '../../src/panels/script-import.js';
 import { bindLabelEditingHooks, editSceneLabel } from '../../src/label-editing.js';
+import { sceneTextSha256 } from '../../src/project-io.js';
 
 export const SOURCE = '@scene start\r\n@label opening\r\n@bg hall\r\n@show lynn:uniform normal @ right\r\n凛:你好。\r\n@wait 500\r\n@choice\r\n  继续 -> @goto again\r\n  离开 -> @goto done\r\n@label again\r\n凛：继续。\r\n@label done\r\n@end';
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
@@ -131,6 +132,61 @@ function searchKey(key: string, options: KeyboardEventInit = {}): void {
   control('#search-input').dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options }));
 }
 export const v4WorkbenchCases: BrowserCase[] = [
+  { name: 'unsaved inserted labels reject rename before changing drafts, histories, config rows or pending facts', run: async () => {
+    for (const variant of ['source', 'BOM', 'branch']) {
+      const source = variant === 'BOM' ? '\uFEFF@scene start\r\n正文保持不变。\r\n@end' : '@scene start\n正文保持不变。\n@end';
+      const scene = fixture(source); resetConfigSession();
+      state.dirHandle = { name: 'saved-project' } as FileSystemDirectoryHandle;
+      scene.handle = { getFile: async () => new File([source], 'start.GAL') } as FileSystemFileHandle;
+      scene.persistedSha256 = await sceneTextSha256(source);
+      if (variant === 'branch') {
+        clickText('#script-v4-toolbar', '添加剧情'); input('.v4-insert-dialog > label select', 'choice', 'change');
+        clickText('.v4-insert-dialog footer', '插入到当前步骤之后');
+      } else {
+        scene.text = source.replace('正文', `@label draft${scene.eol}正文`); scene.dirty = true;
+        histories.set('start', { past: [source], future: [], lastPushAt: 0 });
+      }
+      const name = variant === 'branch' ? 'branch_1_a' : 'draft';
+      state.configFiles.gallery = { cgs: [], music: [], texts: [{ id: 'm', scene: 'start', label: name, unlock_text: '' }] };
+      const configView = document.createElement('div'); configView.id = 'config-view'; document.body.append(configView); renderConfig(configView);
+      let rowsPrepared = false;
+      bindLabelEditingHooks({ prepareConfig: (...args) => { rowsPrepared = true; return prepareConfigLabelRename(...args); }, onEdited: () => {} });
+      const snapshot = () => JSON.stringify({ scenes: [...state.scenes], histories: [...histories], config: state.configFiles,
+        rows: inspectConfigDraftState(), renames: state.pendingSceneConfigRenames, writes: state.pendingSceneConfigWrites, commit: state.pendingSceneCommit });
+      const before = snapshot();
+      const line = scene.text.split(/\r\n|\n/).findIndex(value => value === `@label ${name}`);
+      let message = ''; try { await editSceneLabel('start', line, `@label ${name}`, 'arrival'); } catch (error) { message = String(error); }
+      assert(message.includes('先保存') && message.includes('标签'), `new ${variant} label was accepted: ${message}`);
+      assert(snapshot() === before && !rowsPrepared, `rejected ${variant} label changed working state`);
+    }
+  } },
+  { name: 'persisted labels with dirty prose can be renamed twice through the original baseline', run: async () => {
+    const source = '\uFEFF@scene start\r\n@label entry\r\n原稿。\r\n@end';
+    const scene = fixture(source); resetConfigSession();
+    state.dirHandle = { name: 'saved-project' } as FileSystemDirectoryHandle;
+    scene.handle = { getFile: async () => new File([source], 'start.GAL') } as FileSystemFileHandle;
+    scene.persistedSha256 = await sceneTextSha256(source);
+    scene.text = source.replace('原稿', '未保存的新正文'); scene.dirty = true;
+    histories.set('start', { past: [source], future: [], lastPushAt: 0 });
+    bindLabelEditingHooks({ prepareConfig: prepareConfigLabelRename, onEdited: () => {} });
+    await editSceneLabel('start', 1, '@label entry', 'middle');
+    await editSceneLabel('start', 1, '@label middle', 'arrival');
+    assert(scene.text === source.replace('entry', 'arrival').replace('原稿', '未保存的新正文'), 'chain lost label or ordinary prose');
+    assert(state.pendingSceneConfigRenames.length === 2 && histories.get('start')!.past[0]!.includes('@label arrival'), 'chain/history facts lost');
+  } },
+  { name: 'label rename rejects changed disk baseline and a name still occupied on disk without partial edits', run: async () => {
+    for (const changed of [false, true]) {
+      const source = '@scene start\n@label entry\n正文\n@label occupied\n@end';
+      const scene = fixture(source); resetConfigSession();
+      state.dirHandle = { name: 'saved-project' } as FileSystemDirectoryHandle;
+      scene.handle = { getFile: async () => new File([changed ? source + '\n// external' : source], 'start.gal') } as FileSystemFileHandle;
+      scene.persistedSha256 = await sceneTextSha256(source);
+      scene.text = source.replace('@label occupied\n', ''); scene.dirty = true;
+      const before = scene.text;
+      let rejected = false; try { await editSceneLabel('start', 1, '@label entry', changed ? 'arrival' : 'occupied'); } catch { rejected = true; }
+      assert(rejected && scene.text === before && state.pendingSceneConfigRenames.length === 0 && !state.pendingSceneCommit, 'unreplayable baseline mutated draft');
+    }
+  } },
   { name: 'label rename follows cross-scene calls and gallery while rebasing existing undo/redo and preserving source bytes', run: async () => {
     const before = '\uFEFF@scene start\r\n  @label opening\r\n凛：opening 只是正文。\r\n@end';
     const scene = fixture(before); resetConfigSession();

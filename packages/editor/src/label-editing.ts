@@ -2,7 +2,7 @@ import { editProjectLabel, renameLabelDefinition, rewriteLabelReferences } from 
 import { state } from './state.js';
 import { histories, setSceneText } from './history.js';
 import { assertConfigSourcesReadable } from './config-source.js';
-import { prepareSceneLabelConfigRename, runProjectWriteOperation, sceneProjectPath } from './project-io.js';
+import { prepareSceneLabelConfigRename, readProjectSourceText, runProjectWriteOperation, sceneProjectPath, sceneTextSha256 } from './project-io.js';
 import { parseScript } from './model.js';
 
 let prepareRows: (sceneId: string, from: string, to?: string) => () => void = () => () => {};
@@ -26,6 +26,19 @@ export async function editSceneLabel(key: string, index: number, expectedRaw: st
   check();
   await runProjectWriteOperation(async () => {
     const from = check();
+    if (to !== undefined && project !== null) {
+      // The save/recovery authority replays identities from disk, not from the
+      // current dirty text. Prove this rename can join that same chain first.
+      const path = sceneProjectPath(scene!.file);
+      let baseline = await readProjectSourceText(scene!.handle!);
+      if (await sceneTextSha256(baseline) !== scene!.persistedSha256) throw new Error('场景原文件已在外部变化，请先处理来源冲突，再修改标签');
+      check();
+      for (const rename of state.pendingSceneConfigRenames) if (rename.labelScene === scene!.id) {
+        baseline = editProjectLabel({ [path]: baseline }, scene!.id, rename.from, rename.to).workingFiles[path]!;
+      }
+      if (!parseScript(baseline).some(line => line.kind === 'label' && line.name === from)) throw new Error('请先保存当前草稿中的新标签，再同步改名标签');
+      editProjectLabel({ [path]: baseline }, scene!.id, from, to);
+    }
     const applyConfig = to === undefined ? () => {} : await prepareSceneLabelConfigRename(scene!.id, from, to);
     check();
     const applyRows = prepareRows(scene!.id, from, to);
