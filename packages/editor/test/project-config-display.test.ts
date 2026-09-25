@@ -191,6 +191,33 @@ describe('character table editing through shared authoring semantics', () => {
     expect(sceneDisk.read()).not.toContain('保存期间继续输入');
   });
 
+  it('saves and clears portrait rows through the shared operation, preserving unknown declaration fields', async () => {
+    const configured = { ...CHARACTER_FIXTURE_CONFIG, characters: { ...CHARACTER_FIXTURE_CONFIG.characters,
+      lynn: { ...CHARACTER_FIXTURE_CONFIG.characters.lynn, custom: { keep: true } } } };
+    const { configDisk } = installFixture(JSON.stringify(configured));
+    const sourcePath = 'content/assets/portrait/art_coat_smile.svg';
+    state.dirAssets = [{ key: 'art:coat', expr: 'smile', kind: 'portrait', isImage: true, handle: null, sourcePath }];
+    const row: CharacterTableEditRow = { id: 'lynn', name: '凛', avatar: 'lynn', portraits: [{ outfit: 'uniform', expression: 'smile', sourcePath }] };
+    expect((await commitCharacterTable([row])).changed).toBe(1);
+    expect(JSON.parse(configDisk.read()).characters.lynn).toEqual({ ...configured.characters.lynn, portraits: { uniform: { smile: sourcePath } } });
+    expect((await commitCharacterTable([row])).changed).toBe(0);
+    expect((await commitCharacterTable([{ ...row, portraits: [] }])).changed).toBe(1);
+    expect(JSON.parse(configDisk.read()).characters.lynn).toEqual(configured.characters.lynn);
+  });
+
+  it('rejects duplicate, incomplete and missing portrait rows without changing disk or editor configuration', async () => {
+    const { configDisk } = installFixture(characterFixtureText());
+    const before = state.gameConfigText;
+    const sourcePath = 'content/assets/portrait/art_coat_smile.svg';
+    state.dirAssets = [{ key: 'art:coat', expr: 'smile', kind: 'portrait', isImage: true, handle: null, sourcePath }];
+    const mapping = { outfit: 'coat', expression: 'smile', sourcePath };
+    for (const portraits of [[mapping, mapping], [{ ...mapping, expression: '' }], [{ ...mapping, sourcePath: 'content/assets/portrait/missing_coat_smile.svg' }]]) {
+      await expect(commitCharacterTable([{ id: 'lynn', name: '凛', avatar: 'lynn', portraits }])).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+      expect(configDisk.writes).toEqual([]);
+      expect(state.gameConfigText).toBe(before);
+    }
+  });
+
   it('edits display name via shared character.ensure and persists after reload', async () => {
     const { configDisk, sceneDisk } = installFixture(characterFixtureText());
     const rows: CharacterTableEditRow[] = [
