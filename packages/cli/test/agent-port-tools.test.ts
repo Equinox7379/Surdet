@@ -429,7 +429,7 @@ describe('Surdet Agent Port MCP tool projection', () => {
       const patched = await call('surdet_project_player_config_patch', input);
       const after = (await call('surdet_project_inspect', { view: 'working' })).result.playerConfig;
       expect(after).toEqual(patched.result.playerConfig);
-      expect(after.values).toEqual(input.patch);
+      expect(after.values).toEqual({ ...input.patch, font: null, fonts: null });
       expect((await call('surdet_project_inspect', { view: 'project' })).result.playerConfig).toEqual(before);
       const repeated = await call('surdet_project_player_config_patch', input);
       expect(repeated.workingRevision).toBe(patched.workingRevision);
@@ -457,6 +457,59 @@ describe('Surdet Agent Port MCP tool projection', () => {
     } finally {
       await client.close(); await server.close(); await session.close();
     }
+  });
+
+  it('reads and patches exact font paths without source writes or loss of unknown fields', async () => {
+    const { session, client, server } = await connected('stage');
+    const root = session.projectRoot;
+    const paths = ['content/assets/fonts/a/同名.TTF', 'content/assets/fonts/b/同名.TTF'];
+    try {
+      for (const file of paths) { fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true }); fs.writeFileSync(path.join(root, file), 'font catalog fixture, not decoding evidence'); }
+      const source = '\uFEFF' + JSON.stringify({ entryScene: 'start', variables: {}, font: paths[0], fonts: { custom: 'keep' }, custom: true }, null, 2).replace(/\n/g, '\r\n');
+      fs.writeFileSync(path.join(root, 'game.config.json'), source);
+      const call = async (name: string, args: Record<string, unknown> = {}) => {
+        const response = await client.callTool({ name, arguments: args });
+        expect(response.isError, textContent(response)).not.toBe(true);
+        return (response.structuredContent as any).result;
+      };
+      await call('surdet_change_begin', { compositionMode: 'direct' });
+      const before = (await call('surdet_project_inspect', { view: 'working' })).playerConfig;
+      expect(before.values).toMatchObject({ font: paths[0], fonts: { body: null, title: null, ui: null } });
+      const patched = await call('surdet_project_player_config_patch', { operationId: 'fonts', expectedFingerprint: before.fingerprint,
+        patch: { fonts: { body: paths[1], title: '', ui: paths[0] } } });
+      const after = (await call('surdet_project_inspect', { view: 'working' })).playerConfig;
+      expect(after).toEqual(patched.playerConfig);
+      expect(after.values.fonts).toEqual({ body: paths[1], title: '', ui: paths[0] });
+      expect((await call('surdet_project_inspect', { view: 'project' })).playerConfig).toEqual(before);
+      const fonts = (await call('surdet_project_assets', { view: 'working' })).intelligence.items.filter((item: any) => item.kind === 'font');
+      expect(fonts.map((item: any) => item.key).sort()).toEqual(paths);
+      expect(fonts.every((item: any) => item.references.length === 1 && item.issues.length === 0)).toBe(true);
+      const record = (await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record;
+      for (const [operationId, expectedFingerprint, patch, code] of [
+        ['font-stale', before.fingerprint, { fonts: { body: paths[0] } }, 'OBJECT_REF_STALE'],
+        ['font-missing', after.fingerprint, { fonts: { body: '同名.TTF' } }, 'VALIDATION_FAILED'],
+      ] as const) {
+        const failure = await client.callTool({ name: 'surdet_project_player_config_patch', arguments: { operationId, expectedFingerprint, patch } });
+        expect(failure.structuredContent).toMatchObject({ ok: false, error: { code } });
+        expect((await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record).toEqual(record);
+      }
+      const cleared = await call('surdet_project_player_config_patch', { operationId: 'font-role-reset', expectedFingerprint: after.fingerprint, patch: { fonts: { ui: null } } });
+      expect(cleared.playerConfig.values.fonts).toEqual({ body: paths[1], title: '', ui: null });
+      const text = (await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record.workingFiles['game.config.json']!;
+      expect(text.startsWith('\uFEFF')).toBe(true); expect(text).toContain('\r\n');
+      expect(JSON.parse(text.slice(1))).toMatchObject({ custom: true, fonts: { custom: 'keep' } });
+      const reset = await call('surdet_project_player_config_patch', { operationId: 'font-map-reset', expectedFingerprint: cleared.playerConfig.fingerprint, patch: { fonts: null } });
+      expect(reset.playerConfig.values).toMatchObject({ font: paths[0], fonts: null });
+      expect(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8')).toBe(source);
+      const candidate = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
+      try {
+        await candidate.invoke('change.begin', {});
+        const unchanged = (await NodeChangeStore.openByChangeId(candidate.activeChangeId!))!.record;
+        expect(await candidate.invoke('project.player-config.patch', { operationId: 'forbidden-font', expectedFingerprint: before.fingerprint, patch: { fonts: { body: paths[1] } } }))
+          .toMatchObject({ ok: false, error: { code: 'UNSUPPORTED_OPERATION' } });
+        expect((await NodeChangeStore.openByChangeId(candidate.activeChangeId!))!.record).toEqual(unchanged);
+      } finally { await candidate.close(); }
+    } finally { await client.close(); await server.close(); await session.close(); }
   });
 
   it('keeps an active integration summary visible through the MCP session schema', async () => {

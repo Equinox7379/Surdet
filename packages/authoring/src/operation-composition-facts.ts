@@ -27,20 +27,27 @@ export async function buildSceneOperationCompositionDraft(input: {
   beforeText?: string;
   afterText: string;
   characters: Record<string, unknown>;
+  fontPaths: Partial<Record<'body' | 'title' | 'ui', string>>;
   hasher: TextHasher;
 }): Promise<OperationCompositionDraft> {
   const primaryObject = `scene:${input.sceneId}`;
   const objectFingerprintAfter = await input.hasher.sha256(input.afterText);
   return {
     capabilityId: input.capabilityId, primaryObject,
-    rawReferences: analyzeSceneCompositionReferences({
+    rawReferences: [...analyzeSceneCompositionReferences({
       sceneId: input.sceneId, path: input.path,
       text: input.afterText, characters: input.characters,
-    }),
+    }), ...[...new Set(Object.values(input.fontPaths))].map(path => ({
+      kind: 'font-asset' as const, scope: 'candidate-external' as const, token: path,
+      objectRef: `asset:font:${path}`, source: { path: 'game.config.json' },
+    }))],
     producedObjects: [{ objectRef: primaryObject, disposition: input.capabilityId === 'scene.create' ? 'create' : 'update', finalFingerprint: objectFingerprintAfter }],
     ...(input.beforeText === undefined ? {} : { objectFingerprintBefore: await input.hasher.sha256(input.beforeText) }),
     objectFingerprintAfter,
-    ...(input.beforeText === undefined ? {} : { replayStatePreconditions: [{ objectRef: primaryObject, expectedFingerprint: await input.hasher.sha256(input.beforeText) }] }),
+    replayStatePreconditions: [
+      { objectRef: 'config:fonts', expectedFingerprint: await input.hasher.sha256(stableStringify(input.fontPaths)) },
+      ...(input.beforeText === undefined ? [] : [{ objectRef: primaryObject, expectedFingerprint: await input.hasher.sha256(input.beforeText) }]),
+    ],
   };
 }
 

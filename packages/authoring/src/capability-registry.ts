@@ -478,10 +478,13 @@ const emptyAssetIntelligenceExample = {
   issues: [],
 };
 
+const fontRoleFields: SchemaProperties = { body: { type: ['string', 'null'] }, title: { type: ['string', 'null'] }, ui: { type: ['string', 'null'] } };
 const playerConfigFields: SchemaProperties = {
   title: { type: ['string', 'null'] }, subtitle: { type: ['string', 'null'] },
   titleBackground: { type: ['string', 'null'] }, firstRunHint: { type: ['string', 'null'] },
   endScenes: { oneOf: [stringArraySchema, nullSchema] },
+  font: { type: ['string', 'null'] },
+  fonts: { oneOf: [strictObject(fontRoleFields, Object.keys(fontRoleFields)), nullSchema] },
 };
 const playerConfigSchema = strictObject({ values: strictObject(playerConfigFields, Object.keys(playerConfigFields)), fingerprint: stringSchema }, ['values', 'fingerprint']);
 
@@ -1113,10 +1116,10 @@ const definitions = {
   },
   playerConfigPatch: {
     inputSchema: strictObject({ operationId: stringSchema, expectedFingerprint: stringSchema,
-      patch: { ...strictObject(playerConfigFields), minProperties: 1, description: 'Only supplied fields change. Null removes a field; empty strings/arrays explicitly clear it. Read project.inspect.playerConfig in working view for values and fingerprint. Direct only; no candidate or integration writes.' },
+      patch: { ...strictObject({ ...playerConfigFields, fonts: { oneOf: [strictObject(fontRoleFields), nullSchema] } }), minProperties: 1, description: 'Only supplied fields/roles change. Null removes a field/role; empty strings/arrays explicitly clear it. fonts replaces legacy font as a whole; missing roles use defaults. Font paths must be exact project.assets sourcePath. Read project.inspect.playerConfig in working view for values and fingerprint. Direct only; no candidate or integration writes.' },
     }, ['operationId', 'expectedFingerprint', 'patch']),
     outputSchema: strictObject({ playerConfig: playerConfigSchema, diffEntry: diffEntrySchema }, ['playerConfig', 'diffEntry']),
-    example: { input: { operationId: 'op_player', expectedFingerprint: '...', patch: { subtitle: '新章节', firstRunHint: '' } }, expectedResultShape: { playerConfig: { fingerprint: '...', values: { title: null, subtitle: '新章节', titleBackground: null, endScenes: null, firstRunHint: '' } }, diffEntry: {} } },
+    example: { input: { operationId: 'op_player', expectedFingerprint: '...', patch: { subtitle: '新章节', firstRunHint: '' } }, expectedResultShape: { playerConfig: { fingerprint: '...', values: { title: null, subtitle: '新章节', titleBackground: null, endScenes: null, firstRunHint: '', font: null, fonts: null } }, diffEntry: {} } },
   },
   validate: {
     inputSchema: emptyInputSchema,

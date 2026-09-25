@@ -81,9 +81,9 @@ interface LoadPayload {
   /** 编辑器内存中的配置 JSON（轻宿主系统用） */
   configs?: PreviewConfigs;
   /** 旧版单字体协议（保留兼容） */
-  font?: { buffer: ArrayBuffer; mime: string; version?: string };
+  font?: { buffer: ArrayBuffer; mime: string; version?: string; sourcePath?: string };
   /** 项目内嵌字体按角色下发；缺失角色独立回退。 */
-  fonts?: Partial<Record<FontRole, { buffer: ArrayBuffer; mime: string; version?: string }>>;
+  fonts?: Partial<Record<FontRole, { buffer: ArrayBuffer; mime: string; version?: string; sourcePath?: string }>>;
   /** 编辑器从项目目录读取的真实背景/立绘素材 */
   assets?: PreviewAssets;
   /** 编辑器项目的时间轴定义；旧协议缺省为空。 */
@@ -1047,6 +1047,7 @@ async function load(p: LoadPayload): Promise<void> {
           appliedFontKeys[role] = nextKeys[role];
         } else {
           URL.revokeObjectURL(url);
+          throw new Error(`${role} 字体无法解码或加载超时：${font.sourcePath ?? role}`);
         }
       }
     }

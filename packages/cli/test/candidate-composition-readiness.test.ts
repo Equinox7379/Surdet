@@ -38,6 +38,21 @@ async function insertJump(session: AgentPortSession, operationId: string, sceneI
 }
 
 describe('Wave 8 candidate readiness through Agent Port', () => {
+  it('rejects a candidate scene whose configured baseline font is missing without writing its record', async () => {
+    const { root } = fixture();
+    const config = JSON.parse(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8'));
+    fs.writeFileSync(path.join(root, 'game.config.json'), JSON.stringify({ ...config, fonts: { body: 'content/assets/fonts/missing.ttf' } }));
+    const source = fs.readFileSync(path.join(root, 'game.config.json'), 'utf8');
+    const session = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
+    try {
+      result(await session.invoke('change.begin', {}));
+      const before = (await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record;
+      expect(await session.invoke('scene.create', { operationId: 'font-missing', sceneId: 'font_missing', blocks: [{ kind: 'text', value: '正文。' }] }))
+        .toMatchObject({ ok: false, error: { code: 'CANDIDATE_DEPENDENCY_NOT_READY', details: { issues: [expect.objectContaining({ kind: 'font-asset', objectRef: 'asset:font:content/assets/fonts/missing.ttf' })] } } });
+      expect((await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record).toEqual(before);
+      expect(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8')).toBe(source);
+    } finally { await session.close(); }
+  });
   it('copies public media recipes into candidate scenes/timelines with channel-specific sealed dependencies', async () => {
     const { root } = fixture();
     for (const folder of ['MUSIC', 'ambience', 'se', 'voice', 'video']) {
@@ -154,7 +169,7 @@ describe('Wave 8 candidate readiness through Agent Port', () => {
       const opened = (await NodeChangeStore.openByChangeId(session.activeChangeId!))!;
       expect(opened.record).toEqual(beforeCycle);
       const description = await session.describe();
-      expect(description.contractVersion).toBe('2.12.0');
+      expect(description.contractVersion).toBe('2.13.0');
       expect(description.candidateReadiness).toMatchObject({ mode: 'candidate', status: 'ready', operationCount: 5, issueCount: 0, truncated: false });
       result(await session.invoke('project.validate', {}));
       result(await session.invoke('project.simulate', { sceneId: 'entry' }));
@@ -239,7 +254,7 @@ describe('Wave 8 candidate readiness through Agent Port', () => {
   });
 
   it('validates strict mode/status and nested readiness fields under contract 2.5', async () => {
-    expect(AUTHORING_CONTRACT_VERSION).toBe('2.12.0');
+    expect(AUTHORING_CONTRACT_VERSION).toBe('2.13.0');
     const schema = standardSchemaFromJson(CANDIDATE_COMPOSITION_READINESS_SCHEMA);
     const readiness = { mode: 'candidate', status: 'ready', operationFactsVersion: '1.0.0', operationCount: 0, issueCount: 0, issues: [], truncated: false };
     expect((await schema['~standard'].validate(readiness)).issues).toBeUndefined();

@@ -38,3 +38,4 @@ export * from './systems/shop.js';
 export * from './timeline.js';
 export * from './localization.js';
 export * from './project-stats.js';
+export * from './project-fonts.js';

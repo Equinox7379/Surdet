@@ -1,8 +1,14 @@
 import type { AssetCommands, AssetLoadJob, FontRole } from '@surdet/renderer';
+import { resolveProjectFontPaths } from '@surdet/core';
 
-interface FontConfig {
-  font?: unknown;
-  fonts?: unknown;
+/** Asset maps use asset-root paths; older Player callers pass Vite glob paths. Never match a basename. */
+export function resolveBundledFontUrl(path: string, assetFiles: Record<string, string>, fontFiles: Record<string, string> = {}): string | null {
+  const relative = path.replace(/^content\/assets\//, '');
+  if (Object.hasOwn(assetFiles, relative)) return assetFiles[relative]!;
+  for (const [key, url] of Object.entries(fontFiles)) {
+    if (key.replace(/^(?:\.\.?\/)+/, '') === `content/assets/${relative}`) return url;
+  }
+  return null;
 }
 
 export interface ConfiguredFontJobOptions {
@@ -11,23 +17,28 @@ export interface ConfiguredFontJobOptions {
   label: string;
   resolveFontUrl: (fontPath: string) => Promise<string | null>;
   assets: Pick<AssetCommands, 'registerFontRole' | 'registerFont'>;
+  onError?: (message: string) => void;
 }
 
 export function createConfiguredFontJobs(options: ConfiguredFontJobOptions): () => AssetLoadJob[] {
   const { config, fontBlobUrls, label, resolveFontUrl, assets } = options;
 
   async function loadConfiguredFont(role: FontRole, path: string): Promise<void> {
-    const url = await resolveFontUrl(path);
-    if (!url) {
-      console.warn(`[${label}] 未找到 ${role} 字体文件，使用回退字体：`, path);
-      return;
-    }
+    let url: string | null = null;
     let registered = false;
     try {
+      url = await resolveFontUrl(path);
+      if (!url) throw new Error('未找到字体文件');
       registered = await assets.registerFontRole(role, url);
+      if (!registered) throw new Error('字体无法解码或加载超时');
       if (registered) console.info(`[${label}] ${role} 字体已加载：`, path);
+    } catch (error) {
+      const message = `${role} 字体加载失败：${path}（${error instanceof Error ? error.message : String(error)}）；使用默认字体。`;
+      console.error(`[${label}] ${message}`);
+      options.onError?.(message);
+      throw new Error(message, { cause: error });
     } finally {
-      if (url.startsWith('blob:')) {
+      if (url?.startsWith('blob:')) {
         if (registered) fontBlobUrls.add(url);
         else URL.revokeObjectURL(url);
       }
@@ -35,37 +46,8 @@ export function createConfiguredFontJobs(options: ConfiguredFontJobOptions): () 
   }
 
   return function configuredFontJobs(): AssetLoadJob[] {
-    const cfg = config as FontConfig & { fonts?: Partial<Record<FontRole, string>> };
-    const roles: FontRole[] = ['body', 'title', 'ui'];
-    const configured = cfg.fonts && typeof cfg.fonts === 'object' ? cfg.fonts : null;
-    const jobs: AssetLoadJob[] = [];
-    if (configured) {
-      for (const role of roles) {
-        const path = configured[role];
-        if (typeof path !== 'string' || path.length === 0) continue;
-        jobs.push({ id: `fonts/${role}:${path}`, priority: 'critical', load: () => loadConfiguredFont(role, path) });
-      }
-      return jobs;
-    }
-    if (typeof cfg.font === 'string' && cfg.font.length > 0) {
-      jobs.push({ id: `fonts/legacy:${cfg.font}`, priority: 'critical', load: async () => {
-        const url = await resolveFontUrl(cfg.font as string);
-        if (!url) {
-          console.warn(`[${label}] 未找到字体文件，回退系统字体：`, cfg.font);
-          return;
-        }
-        let registered = false;
-        try {
-          registered = await assets.registerFont(url);
-          if (registered) console.info(`[${label}] 兼容单字体已加载：`, cfg.font);
-        } finally {
-          if (url.startsWith('blob:')) {
-            if (registered) fontBlobUrls.add(url);
-            else URL.revokeObjectURL(url);
-          }
-        }
-      } });
-    }
-    return jobs;
+    return Object.entries(resolveProjectFontPaths(config)).map(([role, path]) => ({
+      id: `fonts/${role}:${path}`, priority: 'critical', load: () => loadConfiguredFont(role as FontRole, path),
+    }));
   };
 }

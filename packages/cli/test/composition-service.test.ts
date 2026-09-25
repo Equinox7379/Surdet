@@ -106,6 +106,31 @@ async function planFromComparison(
 }
 
 describe('CompositionService compare/plan/dry-run', () => {
+  it('seals exact baseline font dependencies and detects a changed font configuration', async () => {
+    const fixture = await setup('font-baseline');
+    const fontPath = 'content/assets/fonts/正文 字体.TTF';
+    fs.mkdirSync(path.dirname(path.join(fixture.projectRoot, fontPath)), { recursive: true });
+    fs.writeFileSync(path.join(fixture.projectRoot, fontPath), 'catalog-only font fixture');
+    const config = { entryScene: 'start', variables: {}, fonts: { body: fontPath } };
+    fs.writeFileSync(path.join(fixture.projectRoot, 'game.config.json'), JSON.stringify(config));
+    const sealed = await sealCandidate(fixture.projectRoot, 'font-scene', async session => {
+      expect((await session.invoke('scene.create', { operationId: 'font-scene', sceneId: 'font_scene', blocks: [{ kind: 'text', value: '字体基线。' }] })).ok).toBe(true);
+    });
+    const other = await sealCandidate(fixture.projectRoot, 'font-other', async session => {
+      expect((await session.invoke('scene.create', { operationId: 'other', sceneId: 'other', blocks: [{ kind: 'text', value: '另一个候选。' }] })).ok).toBe(true);
+    });
+    const refs = [sealed.ref, other.ref];
+    const compared = await fixture.service.compare(refs);
+    const operation = Object.values(compared.comparison.candidateManifests!)[0]!.operations[0]!;
+    expect(operation.requiredObjects).toContainEqual({ objectRef: `asset:font:${fontPath}`, source: 'base' });
+    expect(operation.replayStateRequirements).toContainEqual({ objectRef: 'config:fonts', source: 'base', expectedFingerprint: await realHasher.sha256(stableStringify(config.fonts)) });
+    const planned = await planFromComparison(fixture, refs);
+    expect(planned.plan.dryRun.status).toBe('passed');
+    fs.writeFileSync(path.join(fixture.projectRoot, 'game.config.json'), JSON.stringify({ ...config, fonts: {} }));
+    const changed = await fixture.service.compare(refs);
+    expect(changed.comparison.status).toBe('review-only');
+    expect(fs.readFileSync(path.join(fixture.projectRoot, 'game.config.json'), 'utf8')).toBe(JSON.stringify({ ...config, fonts: {} }));
+  });
   it('keeps two sealed versions of one change distinct and reserves one concurrent integration target', async () => {
     const fixture = await setup('sealed-version-identity');
     const session = await openAgentPortSession({ projectRoot: fixture.projectRoot, policy: 'stage' });

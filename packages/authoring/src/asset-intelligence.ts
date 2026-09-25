@@ -1,4 +1,4 @@
-import type { GenericInstr } from '@surdet/core';
+import { resolveProjectFontPaths, type GenericInstr } from '@surdet/core';
 import type {
   ProjectAssetFileFact,
   ProjectAssetIntelligence,
@@ -117,7 +117,7 @@ export function describeProjectAssetPath(input: string): ProjectAssetPathDescrip
       directory: normalizedPath.slice(0, Math.max(0, normalizedPath.lastIndexOf('/'))),
       fileName,
       kind,
-      key: stem,
+      key: kind === 'font' ? normalizedPath : stem,
       format,
       invalidName: invalidPath || !isProjectAssetFileNameSafe(fileName),
     };
@@ -270,6 +270,9 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
   }
 
   const player = asRecord(snapshot.config.player);
+  for (const [role, fontPath] of Object.entries(resolveProjectFontPaths(snapshot.config))) {
+    add('font', fontPath, { referenceId: `config:fonts:${role}`, sourceKind: 'config', sourceLabel: `字体 ${role}`, sourcePath: 'game.config.json' });
+  }
   add('background', typeof player?.titleBackground === 'string' ? player.titleBackground : undefined, {
     referenceId: 'config:player:titleBackground',
     sourceKind: 'config',
