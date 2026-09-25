@@ -4,7 +4,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { Readable } from 'node:stream';
 import {
-  AGENT_IMAGE_EXTENSIONS, AGENT_IMAGE_MAX_BYTES, AGENT_IMAGE_MAX_FILES, AGENT_IMAGE_MAX_TOTAL_BYTES,
+  AGENT_IMAGE_EXTENSIONS, AGENT_MEDIA_EXTENSIONS, AGENT_IMAGE_MAX_BYTES, AGENT_IMAGE_MAX_FILES, AGENT_IMAGE_MAX_TOTAL_BYTES,
   AuthoringOperationError, stableStringify,
   type AgentImageStageRequest, type AgentImageCommitRequest,
 } from '@surdet/authoring';
@@ -23,6 +23,7 @@ import { HumanWorkspaceStore } from './human-workspace-store.js';
 import { assertHumanWorkspaceAllowsAgentCommit } from './human-workspace-gate.js';
 import { ProjectMutationNoticeStore } from './project-mutation-notice-store.js';
 import { loadProjectCoordinationBaseline } from './project-coordination-baseline.js';
+import { validateAssetSourceFormat } from './asset-source-format.js';
 
 export type ImageImportCapability = 'asset.sources' | 'asset.import.stage' | 'asset.import.inspect' | 'asset.import.commit' | 'asset.import.recover';
 export interface AuthorizedImageSource {
@@ -33,7 +34,7 @@ export interface AuthorizedImageSource {
 const hash = (value: string | Uint8Array): string => crypto.createHash('sha256').update(value).digest('hex');
 const identity = (stat: Awaited<ReturnType<typeof fs.lstat>>): string => `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
 const limits = { maxFiles: AGENT_IMAGE_MAX_FILES, maxBytesPerFile: AGENT_IMAGE_MAX_BYTES, maxBytesPerOperation: AGENT_IMAGE_MAX_TOTAL_BYTES };
-const forbidden = (): AuthoringOperationError => new AuthoringOperationError('ASSET_SOURCE_FORBIDDEN', '只能读取启动时授权目录内的普通图片文件；不允许路径跳转、链接或下载。');
+const forbidden = (): AuthoringOperationError => new AuthoringOperationError('ASSET_SOURCE_FORBIDDEN', '只能读取启动时授权目录内的普通素材文件；不允许路径跳转、链接或下载。');
 
 export async function authorizeImageSources(roots: readonly string[]): Promise<AuthorizedImageSource[]> {
   const result: AuthorizedImageSource[] = [];
@@ -65,24 +66,11 @@ async function checkedSourcePath(source: AuthorizedImageSource, relative: string
   return current;
 }
 
-function imageFormat(bytes: Buffer, fileName: string): void {
-  const extension = path.extname(fileName).slice(1).toLowerCase();
-  const png = bytes.length >= 33 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-    && bytes.toString('ascii', 12, 16) === 'IHDR' && bytes.readUInt32BE(16) > 0 && bytes.readUInt32BE(20) > 0;
-  const jpeg = bytes.length >= 4 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255
-    && bytes[bytes.length - 2] === 255 && bytes[bytes.length - 1] === 217;
-  const webp = bytes.length >= 20 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP'
-    && bytes.readUInt32LE(4) + 8 === bytes.length;
-  if (!(extension === 'png' && png || (extension === 'jpg' || extension === 'jpeg') && jpeg || extension === 'webp' && webp)) {
-    throw new AuthoringOperationError('ASSET_IMAGE_INVALID', '图片扩展名或文件头不匹配；首版接受 PNG、JPEG、WebP。');
-  }
-}
-
 async function readSource(source: AuthorizedImageSource, relative: string): Promise<Buffer> {
   const file = await checkedSourcePath(source, relative);
   const before = await fs.lstat(file);
   if (!before.isFile() || before.isSymbolicLink()) throw forbidden();
-  if (before.size > AGENT_IMAGE_MAX_BYTES) throw new AssetImportAuthorityError('IMPORT_LIMIT_EXCEEDED', '图片超过单文件上限');
+  if (before.size > AGENT_IMAGE_MAX_BYTES) throw new AssetImportAuthorityError('IMPORT_LIMIT_EXCEEDED', '素材超过单文件上限');
   const handle = await fs.open(file, constants.O_RDONLY | (process.platform === 'win32' ? 0 : constants.O_NOFOLLOW));
   try {
     const opened = await handle.stat();
@@ -91,17 +79,17 @@ async function readSource(source: AuthorizedImageSource, relative: string): Prom
     let size = 0;
     for await (const chunk of handle.createReadStream({ autoClose: false })) {
       size += chunk.length;
-      if (size > AGENT_IMAGE_MAX_BYTES) throw new AssetImportAuthorityError('IMPORT_LIMIT_EXCEEDED', '图片超过单文件上限');
+      if (size > AGENT_IMAGE_MAX_BYTES) throw new AssetImportAuthorityError('IMPORT_LIMIT_EXCEEDED', '素材超过单文件上限');
       chunks.push(chunk);
     }
     const after = await handle.stat();
     const pathAfter = await fs.lstat(await checkedSourcePath(source, relative));
     if (identity(pathAfter) !== identity(opened) || after.size !== before.size || after.mtimeMs !== before.mtimeMs
       || after.ctimeMs !== before.ctimeMs || pathAfter.mtimeMs !== before.mtimeMs || pathAfter.size !== size) {
-      throw new AuthoringOperationError('ASSET_SOURCE_CHANGED', '图片在读取期间变化，请重新读取来源事实。');
+      throw new AuthoringOperationError('ASSET_SOURCE_CHANGED', '素材在读取期间变化，请重新读取来源事实。');
     }
     const bytes = Buffer.concat(chunks);
-    imageFormat(bytes, relative);
+    validateAssetSourceFormat(bytes, relative);
     return bytes;
   } finally { await handle.close(); }
 }
@@ -114,14 +102,14 @@ function sourceFor(sources: readonly AuthorizedImageSource[], sourceId: unknown)
 
 async function inspectSources(sources: readonly AuthorizedImageSource[], input: Record<string, unknown>) {
   const roots = sources.map(source => ({ sourceId: source.sourceId, name: path.basename(source.root) }));
-  const base = { roots, supportedFormats: [...AGENT_IMAGE_EXTENSIONS], limits };
+  const base = { roots, supportedFormats: [...AGENT_MEDIA_EXTENSIONS], limits, validation: 'container-header' as const };
   if (input['sourceId'] === undefined) return base;
   const source = sourceFor(sources, input['sourceId']);
   const relative = typeof input['path'] === 'string' ? input['path'] : '';
   const file = await checkedSourcePath(source, relative);
   if ((await fs.lstat(file)).isDirectory()) {
     const entries = (await fs.readdir(file, { withFileTypes: true })).filter(entry => !entry.isSymbolicLink()
-      && (entry.isDirectory() || entry.isFile() && (AGENT_IMAGE_EXTENSIONS as readonly string[]).includes(path.extname(entry.name).slice(1).toLowerCase())))
+      && (entry.isDirectory() || entry.isFile() && (AGENT_MEDIA_EXTENSIONS as readonly string[]).includes(path.extname(entry.name).slice(1).toLowerCase())))
       .map(entry => ({ path: relative ? `${relative}/${entry.name}` : entry.name, kind: entry.isDirectory() ? 'directory' : 'file' }));
     return { ...base, sourceId: source.sourceId, entries };
   }
@@ -239,8 +227,10 @@ export class AgentImageImportService {
     for (const item of request.items) {
       const sourceExtension = path.posix.extname(item.sourcePath).toLowerCase().replace('.jpeg', '.jpg');
       const targetExtension = path.extname(item.fileName).toLowerCase().replace('.jpeg', '.jpg');
-      if (!['.png', '.jpg', '.webp'].includes(sourceExtension) || sourceExtension !== targetExtension) {
-        throw new AuthoringOperationError('ASSET_IMAGE_INVALID', '不能通过改扩展名转换图片格式；目标必须保留实际图片格式。');
+      if (!(AGENT_MEDIA_EXTENSIONS as readonly string[]).includes(sourceExtension.slice(1)) || sourceExtension !== targetExtension) {
+        throw new AuthoringOperationError((AGENT_IMAGE_EXTENSIONS as readonly string[]).includes(sourceExtension.slice(1))
+          ? 'ASSET_IMAGE_INVALID' : 'ASSET_MEDIA_INVALID', '不能通过改扩展名转换素材格式；目标必须保留实际格式。',
+        { sourcePath: item.sourcePath, fileName: item.fileName });
       }
     }
     const loaded = new Map<string, Buffer>();
@@ -249,15 +239,16 @@ export class AgentImageImportService {
       const source = sourceFor(sources, item.sourceId);
       const existing = detail?.stagedItems.find(staged => staged.itemId === item.itemId);
       if (existing !== undefined) {
-        if (existing.sha256 !== item.sha256) throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '暂存图片与来源请求不一致');
+        if (existing.sha256 !== item.sha256) throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '暂存素材与来源请求不一致');
         total += existing.bytes;
+        if (total > AGENT_IMAGE_MAX_TOTAL_BYTES) throw new AssetImportAuthorityError('IMPORT_LIMIT_EXCEEDED', '本次素材总大小超过上限');
         continue;
       }
       const bytes = await readSource(source, item.sourcePath);
-      if (hash(bytes) !== item.sha256) throw new AuthoringOperationError('ASSET_SOURCE_CHANGED', '图片与读取到的来源摘要不同，请重新读取来源。');
-      imageFormat(bytes, item.fileName);
+      if (hash(bytes) !== item.sha256) throw new AuthoringOperationError('ASSET_SOURCE_CHANGED', '素材与读取到的来源摘要不同，请重新读取来源。');
+      validateAssetSourceFormat(bytes, item.fileName);
       total += bytes.length;
-      if (total > AGENT_IMAGE_MAX_TOTAL_BYTES) throw new AssetImportAuthorityError('IMPORT_LIMIT_EXCEEDED', '本次图片总大小超过上限');
+      if (total > AGENT_IMAGE_MAX_TOTAL_BYTES) throw new AssetImportAuthorityError('IMPORT_LIMIT_EXCEEDED', '本次素材总大小超过上限');
       loaded.set(item.itemId, bytes);
     }
     if (detail === undefined) {
