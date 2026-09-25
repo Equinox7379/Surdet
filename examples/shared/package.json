@@ -1,0 +1,24 @@
+{
+  "name": "@surdet/player",
+  "version": "0.1.0",
+  "description": "Surdet shared Player for independent game projects",
+  "type": "module",
+  "main": "./dist/player/player.js",
+  "types": "./dist/player/player.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/player/player.d.ts",
+      "import": "./dist/player/player.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@surdet/core": "0.1.0",
+    "@surdet/renderer": "0.1.0",
+    "@surdet/host": "0.1.0"
+  }
+}

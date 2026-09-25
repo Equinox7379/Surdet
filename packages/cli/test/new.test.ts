@@ -22,7 +22,7 @@ function makeFakeEngine(): string {
 
 describe('surdet new', () => {
   it('模板使用公共 Presentation 与标题会话边界', () => {
-    expect(gameTemplateMain).toContain("from '../../../examples/shared/player/player.js'");
+    expect(gameTemplateMain).toContain("from '@surdet/player'");
     expect(gameTemplateMain).toContain('startPlayer({');
     expect(sharedPlayer).toContain('connectInterpreterPresentation');
     expect(sharedPlayer).toContain('enterPlayerTitleSession');
@@ -33,7 +33,7 @@ describe('surdet new', () => {
 
   it('创建脚手架 + 注册 workspace + lint 通过', async () => {
     const engine = makeFakeEngine();
-    const code = await cmdNew('mytest', engine);
+    const code = await cmdNew('mytest', { engineRoot: engine });
     expect(code).toBe(0);
 
     const target = path.join(engine, 'games', 'mytest');
@@ -42,7 +42,7 @@ describe('surdet new', () => {
     expect(fs.existsSync(path.join(target, 'src/main.ts'))).toBe(true);
 
     const generatedEntry = fs.readFileSync(path.join(target, 'src/main.ts'), 'utf8');
-    expect(generatedEntry).toContain("from '../../../examples/shared/player/player.js'");
+    expect(generatedEntry).toContain("from '@surdet/player'");
     expect(generatedEntry).toContain('startPlayer({');
     expect(fs.existsSync(path.join(target, 'README.md'))).toBe(true);
     expect(fs.statSync(path.join(target, 'content/assets/bg/harbor.png')).size).toBeGreaterThan(0);
@@ -74,8 +74,8 @@ describe('surdet new', () => {
 
   it('非法名字拒绝', async () => {
     const engine = makeFakeEngine();
-    expect(await cmdNew('Bad Name!', engine)).toBe(1);
-    expect(await cmdNew('', engine)).toBe(1);
+    expect(await cmdNew('Bad Name!', { engineRoot: engine })).toBe(1);
+    expect(await cmdNew('', { engineRoot: engine })).toBe(1);
   });
 
   it('a failed template copy leaves no partial game and can be retried', async () => {
@@ -88,19 +88,51 @@ describe('surdet new', () => {
       return original(...args);
     });
     try {
-      expect(await cmdNew('retry', engine)).toBe(1);
+      expect(await cmdNew('retry', { engineRoot: engine })).toBe(1);
       expect(fs.readdirSync(path.join(engine, 'games'))).toEqual([]);
       expect(fs.readFileSync(path.join(engine, 'package.json'), 'utf8')).toBe(before);
     } finally {
       copy.mockRestore();
     }
-    expect(await cmdNew('retry', engine)).toBe(0);
+    expect(await cmdNew('retry', { engineRoot: engine })).toBe(0);
     expect(fs.existsSync(path.join(engine, 'games/retry/game.config.json'))).toBe(true);
   });
 
   it('目录已存在拒绝', async () => {
     const engine = makeFakeEngine();
-    await cmdNew('dup', engine);
-    expect(await cmdNew('dup', engine)).toBe(1);
+    await cmdNew('dup', { engineRoot: engine });
+    expect(await cmdNew('dup', { engineRoot: engine })).toBe(1);
+  });
+
+  it.each(['example', 'blank'] as const)('creates an independent %s project without touching an engine workspace', async template => {
+    const engine = makeFakeEngine();
+    const before = fs.readFileSync(path.join(engine, 'package.json'), 'utf8');
+    const directory = path.join(engine, '中文 项目', template);
+    expect(await cmdNew('independent', { engineRoot: engine, directory, template })).toBe(0);
+    expect(fs.readFileSync(path.join(engine, 'package.json'), 'utf8')).toBe(before);
+    expect(fs.existsSync(path.join(engine, 'games'))).toBe(false);
+    const config = JSON.parse(fs.readFileSync(path.join(directory, 'game.config.json'), 'utf8'));
+    expect(config.entryScene).toBe(template === 'blank' ? 'start' : 'ch01_01');
+    const lint = lintProject(directory);
+    expect(lint).toMatchObject({ ok: true, sceneCount: 1 });
+    expect(lint.issues.map(issue => [issue.severity, issue.code]))
+      .toEqual(template === 'blank' ? [['warning', 'EMPTY_VARIABLES']] : []);
+    if (template === 'blank') {
+      expect(config.variables).toEqual({});
+      expect(config.characters).toEqual({});
+      expect(fs.readdirSync(path.join(directory, 'content'))).toEqual(['scenario']);
+    }
+    const tsconfig = JSON.parse(fs.readFileSync(path.join(directory, 'tsconfig.json'), 'utf8'));
+    expect(tsconfig.extends).toBeUndefined();
+    expect(await cmdNew('again', { directory, template })).toBe(1);
+    expect(lintProject(directory).ok).toBe(true);
+  });
+
+  it('rejects invalid template and empty directory before creating files', async () => {
+    const engine = makeFakeEngine();
+    const before = fs.readdirSync(engine);
+    expect(await cmdNew('bad', { engineRoot: engine, template: 'typo' as 'blank' })).toBe(1);
+    expect(await cmdNew('bad', { engineRoot: engine, directory: '' })).toBe(1);
+    expect(fs.readdirSync(engine)).toEqual(before);
   });
 });

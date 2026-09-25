@@ -4,16 +4,25 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_DIR = path.resolve(__dirname, '../templates/game');
+const BLANK_TEMPLATE_DIR = path.resolve(__dirname, '../templates/blank');
 
-/** 从 cli 位置向上查找引擎根（含 workspaces 字段的 package.json 所在目录） */
+export interface NewProjectOptions {
+  /** Explicit project directory; does not register or modify an engine workspace. */
+  directory?: string;
+  template?: 'example' | 'blank';
+  /** Engine workspace override for embedded callers/tests. */
+  engineRoot?: string;
+}
+
+/** Preserve the source repository default without adopting an unrelated npm workspace. */
 function findEngineRoot(start: string): string | null {
   let dir = start;
   for (let i = 0; i < 6; i++) {
     const pkgPath = path.join(dir, 'package.json');
     if (fs.existsSync(pkgPath)) {
       try {
-        const raw = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { workspaces?: unknown };
-        if (Array.isArray(raw.workspaces)) return dir;
+        const raw = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { name?: unknown; workspaces?: unknown };
+        if (raw.name === 'surdet' && Array.isArray(raw.workspaces)) return dir;
       } catch {
         // 继续向上
       }
@@ -23,8 +32,9 @@ function findEngineRoot(start: string): string | null {
   return null;
 }
 
-function copyDir(from: string, to: string): void {
+function copyDir(from: string, to: string, skipContent = false): void {
   for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+    if (skipContent && entry.name === 'content') continue;
     const src = path.join(from, entry.name);
     const dest = path.join(to, entry.name);
     if (entry.isDirectory()) {
@@ -37,33 +47,43 @@ function copyDir(from: string, to: string): void {
 }
 
 /**
- * surdet new <name>：在引擎仓库 games/ 下创建游戏脚手架并注册 workspace。
- * engineRoot 用于测试注入（默认从 cli 位置向上查找）。
+ * New projects consume the packaged shared Player, never repository-relative code.
+ * Explicit directories are independent; the existing repository default stays games/.
  */
-export async function cmdNew(name: string, engineRoot?: string): Promise<number> {
+export async function cmdNew(name: string, options: NewProjectOptions = {}): Promise<number> {
   if (!/^[a-z0-9_-]+$/.test(name)) {
     console.error(`无效的游戏名 '${name}'（仅小写字母/数字/-/_）`);
     return 1;
   }
-  const root = engineRoot ?? findEngineRoot(__dirname);
-  if (!root) {
-    console.error('未找到引擎根目录（须在 Surdet 仓库内运行）');
+  const template = options.template ?? 'example';
+  if (template !== 'example' && template !== 'blank') {
+    console.error(`未知模板 '${String(template)}'（example / blank）`);
     return 1;
   }
-  const target = path.join(root, 'games', name);
+  if (options.directory !== undefined && options.directory.trim() === '') {
+    console.error('项目目录不能为空');
+    return 1;
+  }
+  const root = options.directory === undefined ? (options.engineRoot ?? findEngineRoot(__dirname)) : null;
+  const target = options.directory !== undefined
+    ? path.resolve(options.directory)
+    : root ? path.join(root, 'games', name) : path.resolve(name);
   if (fs.existsSync(target)) {
     console.error(`目录已存在：${target}`);
     return 1;
   }
-  const rootPkgPath = path.join(root, 'package.json');
   let staging: string | undefined;
   let published = false;
   try {
-    const rootPkg = JSON.parse(fs.readFileSync(rootPkgPath, 'utf8')) as { workspaces: string[] };
-    if (!Array.isArray(rootPkg.workspaces)) throw new Error('引擎根缺少 workspaces 数组');
+    const rootPkgPath = root ? path.join(root, 'package.json') : undefined;
+    const rootPkg = rootPkgPath
+      ? JSON.parse(fs.readFileSync(rootPkgPath, 'utf8')) as { workspaces: string[] }
+      : undefined;
+    if (rootPkg && !Array.isArray(rootPkg.workspaces)) throw new Error('引擎根缺少 workspaces 数组');
     fs.mkdirSync(path.dirname(target), { recursive: true });
     staging = fs.mkdtempSync(path.join(path.dirname(target), `.${name}-`));
-    copyDir(TEMPLATE_DIR, staging);
+    copyDir(TEMPLATE_DIR, staging, template === 'blank');
+    if (template === 'blank') copyDir(BLANK_TEMPLATE_DIR, staging);
     const pkgPath = path.join(staging, 'package.json');
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { name: string };
     pkg.name = `surdet-${name}`;
@@ -72,7 +92,7 @@ export async function cmdNew(name: string, engineRoot?: string): Promise<number>
     fs.renameSync(staging, target);
     staging = undefined;
     published = true;
-    if (!rootPkg.workspaces.includes('games/*')) {
+    if (rootPkg && rootPkgPath && !rootPkg.workspaces.includes('games/*')) {
       rootPkg.workspaces.push('games/*');
       fs.writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2) + '\n');
     }
@@ -85,10 +105,10 @@ export async function cmdNew(name: string, engineRoot?: string): Promise<number>
   }
 
   console.log(`✔ 已创建游戏项目：${target}`);
-  console.log('  接下来：');
-  console.log('  1. npm install');
-  console.log(`  2. npm run dev -w surdet-${name}    开发预览`);
-  console.log(`  3. npm run lint -w surdet-${name}   内容校验`);
-  console.log('  4. 编辑 content/scenario/ 下的剧本即可制作游戏');
+  console.log(`  模板：${template}；进入上述项目目录后：`);
+  console.log('  1. 安装 README 所列的 Surdet 包和开发依赖（已有依赖无需重装）');
+  console.log('  2. npm run dev    开发预览');
+  console.log('  3. npm run lint   内容校验');
+  console.log('  4. npm run build 构建独立 Web 产物；编辑 content/scenario/ 下的剧本');
   return 0;
 }

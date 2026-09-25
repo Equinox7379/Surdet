@@ -1,8 +1,10 @@
 /** 项目内容入口。与 Starter 共用同一套玩家菜单、存档、输入和退出实现。 */
-import { startPlayer, showPlayerRecovery, type PlayerProject } from '../../../examples/shared/player/player.js';
+import { startPlayer, showPlayerRecovery, type PlayerProject } from '@surdet/player';
 import gameConfig from '../game.config.json';
 import gamePackage from '../package.json';
 import { sceneFiles } from './scene-hmr-boundary.js';
+
+document.title = (gameConfig as PlayerProject['config']).title ?? gamePackage.name;
 
 const assetFiles = Object.fromEntries(Object.entries(import.meta.glob<string>(
   '../content/assets/**/*.{png,jpg,jpeg,webp,gif,avif,svg,mp3,ogg,wav,m4a,flac}',

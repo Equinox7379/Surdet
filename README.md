@@ -104,7 +104,9 @@ Editor 和 Agent Port 必须绑定同一个项目；若自定义了 `SURDET_AGEN
 | `examples/zero-after-midnight` | 《零点之后》，保留独立玩家入口的正式游戏 |
 | `games/*` | 独立游戏工作区，目前包含 `tide-mark` |
 
-`examples/shared/player` 是 Starter 与新项目模板共用的源码目录，不是独立 npm 工作区。
+`examples/shared` 提供 `@surdet/player` 工作区，直接编译 Starter 与新项目共用的 Player 源码，不复制菜单或存档实现。新项目通过包入口引用，旧作品的源码引用保持可用。
+
+新建时默认保留源码仓库内的 `games/<name>` 路径；`surdet new <name> --directory <独立目录> --template blank` 可创建空白独立项目，省略模板则为短篇示例。独立 CLI 在没有引擎仓库时默认创建当前目录下的 `<name>`，不把其他 npm workspace 当成引擎。项目自带类型配置；共享运行时从声明的包版本读取。当前可使用本地 `npm pack` 归档安装 Core、Renderer、Host、Player、Authoring、CLI，再执行项目自身的检查/构建；这不代表这些包已经公开发布，也不等于 P10 作者发行版完成。构建的 `dist/` 用独立静态 HTTP 服务运行，不要求原开发服务。
 
 ## 验证
 

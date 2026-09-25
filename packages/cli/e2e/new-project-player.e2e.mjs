@@ -214,12 +214,10 @@ async function continueInEditor(game, errors) {
 }
 try {
   // A fresh engine-shaped fixture keeps cmdNew's workspace registration off the user's repository.
-  await fs.mkdir(path.join(engine, 'examples'), { recursive: true });
-  await fs.cp(path.join(repo, 'examples/shared'), path.join(engine, 'examples/shared'), { recursive: true });
-  await fs.copyFile(path.join(repo, 'tsconfig.base.json'), path.join(engine, 'tsconfig.base.json'));
+  await fs.mkdir(engine, { recursive: true });
   await fs.writeFile(path.join(engine, 'package.json'), JSON.stringify({ name: 'surdet-new-player-fixture', private: true, type: 'module', workspaces: ['games/*'] }));
   await fs.symlink(path.join(repo, 'node_modules'), path.join(engine, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
-  assert.equal(await cmdNew('first-letter', engine), 0);
+  assert.equal(await cmdNew('first-letter', { engineRoot: engine }), 0);
   const game = path.join(engine, 'games/first-letter');
   const main = await authorChapter(game);
   execFileSync(process.execPath, [path.join(repo, 'node_modules/typescript/bin/tsc'), '-p', path.join(game, 'tsconfig.json'), '--noEmit'], { cwd: engine, stdio: 'pipe', shell: false });
