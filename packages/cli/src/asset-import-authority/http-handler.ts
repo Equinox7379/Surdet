@@ -50,7 +50,7 @@ const UUID = new RegExp(`^${UUID_SEGMENT}$`);
 const SHA256 = /^[0-9a-f]{64}$/;
 const KINDS = new Set([
   'background', 'portrait', 'avatar', 'music', 'ambience',
-  'sound-effect', 'voice', 'video', 'font', 'other',
+  'sound-effect', 'voice', 'video', 'font', 'license', 'other',
 ]);
 const PUBLIC_CODES = new Set([
   'PREVIEW_OBSERVATION_UNAVAILABLE', 'PREVIEW_OBSERVATION_STALE', 'PREVIEW_OBSERVATION_CORRUPT', 'PREVIEW_OBSERVATION_LIMIT',

@@ -378,7 +378,7 @@ const assetEntrySchema = strictObject({
 }, ['kind', 'key', 'sourcePath', 'format', 'resolved']);
 
 const projectAssetKindSchema = {
-  enum: ['background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'other'],
+  enum: ['background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license', 'other'],
 };
 const projectAssetIssueCodeSchema = {
   enum: ['ASSET_REFERENCE_MISSING', 'ASSET_KEY_DUPLICATE', 'ASSET_NAME_INVALID', 'ASSET_FORMAT_UNSUPPORTED', 'ASSET_UNUSED'],
@@ -427,8 +427,9 @@ const projectAssetByKindSchema = strictObject({
   voice: projectAssetKindSummarySchema,
   video: projectAssetKindSummarySchema,
   font: projectAssetKindSummarySchema,
+  license: projectAssetKindSummarySchema,
   other: projectAssetKindSummarySchema,
-}, ['background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'other']);
+}, ['background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license', 'other']);
 const projectAssetSummarySchema = strictObject({
   fileCount: integerSchema,
   measuredFileCount: integerSchema,
@@ -472,7 +473,7 @@ const emptyAssetIntelligenceExample = {
     unsupportedCount: 0,
     invalidNameCount: 0,
     byKind: Object.fromEntries([
-      'background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'other',
+      'background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license', 'other',
     ].map((kind) => [kind, { files: 0, measuredFiles: 0 }])),
   },
   issues: [],
@@ -1012,11 +1013,11 @@ const definitions = {
   },
   assetSources: {
     inputSchema: strictObject({ sourceId: stringSchema, path: { type: 'string', description: 'Relative path returned here. Omit sourceId to discover startup-authorized roots; inspect a directory to list entries, then inspect a file for its SHA-256.' } }),
-    outputSchema: strictObject({ roots: arrayOf(strictObject({ sourceId: stringSchema, name: stringSchema }, ['sourceId', 'name'])), supportedFormats: stringArraySchema, limits: jsonObjectSchema, validation: { const: 'container-header', description: 'Only container headers are checked. Decoding and playback must be tested in the target browser; no transcoding or license certification.' }, sourceId: stringSchema, entries: arrayOf(strictObject({ path: stringSchema, kind: { enum: ['file', 'directory'] } }, ['path', 'kind'])), file: strictObject({ path: stringSchema, bytes: integerSchema, sha256: importShaSchema }, ['path', 'bytes', 'sha256']) }, ['roots', 'supportedFormats', 'limits', 'validation']),
-    example: { input: {}, expectedResultShape: { roots: [], supportedFormats: [...AGENT_MEDIA_EXTENSIONS], limits: {}, validation: 'container-header' } },
+    outputSchema: strictObject({ roots: arrayOf(strictObject({ sourceId: stringSchema, name: stringSchema }, ['sourceId', 'name'])), supportedFormats: stringArraySchema, limits: jsonObjectSchema, validation: { const: 'container-header-or-utf8-text', description: 'Media container headers or bounded UTF-8 license text are checked. Decoding and playback must be tested in the target browser; no transcoding or legal certification. Extensionless LICENSE/LICENCE/COPYING/NOTICE/OFL names and hyphen/underscore suffixes are also accepted.' }, sourceId: stringSchema, entries: arrayOf(strictObject({ path: stringSchema, kind: { enum: ['file', 'directory'] } }, ['path', 'kind'])), file: strictObject({ path: stringSchema, bytes: integerSchema, sha256: importShaSchema }, ['path', 'bytes', 'sha256']) }, ['roots', 'supportedFormats', 'limits', 'validation']),
+    example: { input: {}, expectedResultShape: { roots: [], supportedFormats: [...AGENT_MEDIA_EXTENSIONS], limits: {}, validation: 'container-header-or-utf8-text' } },
   },
   assetImportStage: {
-    inputSchema: strictObject({ operationId: importUuidSchema, items: { type: 'array', minItems: 1, maxItems: AGENT_IMAGE_MAX_FILES, items: strictObject({ itemId: importUuidSchema, sourceId: stringSchema, sourcePath: stringSchema, sha256: importShaSchema, kind: { enum: ['background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font'] }, fileName: { type: 'string', description: 'Single filename, never a project path. Portrait: rin_uniform_smile.png (role_outfit_expression). Images PNG/JPEG/WebP; audio WAV/OGG/MP3; video MP4/WebM; fonts TTF/OTF/WOFF2. Copy SHA-256 from asset.sources and preserve the real extension. Container checks do not certify decoding or licenses.' } }, ['itemId', 'sourceId', 'sourcePath', 'sha256', 'kind', 'fileName']) } }, ['operationId', 'items']),
+    inputSchema: strictObject({ operationId: importUuidSchema, items: { type: 'array', minItems: 1, maxItems: AGENT_IMAGE_MAX_FILES, items: strictObject({ itemId: importUuidSchema, sourceId: stringSchema, sourcePath: stringSchema, sha256: importShaSchema, kind: { enum: ['background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license'] }, fileName: { type: 'string', description: 'Single filename, never a project path. Portrait: rin_uniform_smile.png (role_outfit_expression). Images PNG/JPEG/WebP; audio WAV/OGG/MP3; video MP4/WebM; fonts TTF/OTF/WOFF2. License: UTF-8 TXT/MD or extensionless LICENSE/LICENCE/COPYING/NOTICE/OFL (optional - or _ suffix), at most 1 MiB. Include the supplied license alongside its font in the same batch, using a distinct filename when needed. Copy SHA-256 from asset.sources and preserve the real extension. No decoding or legal certification.' } }, ['itemId', 'sourceId', 'sourcePath', 'sha256', 'kind', 'fileName']) } }, ['operationId', 'items']),
     outputSchema: importDetailSchema,
     example: { input: { operationId: '22222222-2222-4222-8222-222222222222', items: [{ itemId: '33333333-3333-4333-8333-333333333333', sourceId: 'source_from_asset_sources', sourcePath: 'night.png', sha256: 'a'.repeat(64), kind: 'background', fileName: 'night.png' }] }, expectedResultShape: importDetailExample },
   },

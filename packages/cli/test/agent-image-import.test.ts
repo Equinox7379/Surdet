@@ -111,18 +111,22 @@ it('imports prepared media through the same public policy, retry and real catalo
   // Existing repository font, not a fake header used as decoding evidence.
   const font = await fs.readFile(path.resolve(import.meta.dirname, '../../../examples/starter/content/assets/fonts/MiSans-Regular.otf'));
   await fs.writeFile(path.join(f.source, '雨 夜/字体.otf'), font);
+  const license = Buffer.from('\uFEFFCopyright fixture author\r\n授权说明，非法律认证。\r\n');
+  await fs.writeFile(path.join(f.source, '雨 夜/LICENSE-字体'), license);
   const stage = await f.open('stage');
   let apply: Awaited<ReturnType<typeof f.open>> | undefined;
   try {
     const sources = result(await stage.invoke('asset.sources', {}));
-    expect(sources).toMatchObject({ validation: 'container-header', supportedFormats: expect.arrayContaining(['wav', 'ogg', 'mp3', 'mp4', 'webm', 'ttf', 'otf', 'woff2']) });
+    expect(sources).toMatchObject({ validation: 'container-header-or-utf8-text', supportedFormats: expect.arrayContaining(['wav', 'ogg', 'mp3', 'mp4', 'webm', 'ttf', 'otf', 'woff2']) });
     const sourceId = sources.roots[0].sourceId;
     const listing = result(await stage.invoke('asset.sources', { sourceId, path: '雨 夜' }));
-    expect(listing.entries.map((entry: any) => entry.path).sort()).toEqual(['雨 夜/声 音.WAV', '雨 夜/字体.otf'].sort());
+    expect(listing.entries.map((entry: any) => entry.path).sort()).toEqual(['雨 夜/声 音.WAV', '雨 夜/字体.otf', '雨 夜/LICENSE-字体'].sort());
     const audio = result(await stage.invoke('asset.sources', { sourceId, path: '雨 夜/声 音.WAV' })).file;
     const fontFact = result(await stage.invoke('asset.sources', { sourceId, path: '雨 夜/字体.otf' })).file;
     const items = ['music', 'ambience', 'sound-effect', 'voice'].map(kind => ({ itemId: crypto.randomUUID(), sourceId, sourcePath: audio.path, sha256: audio.sha256, kind, fileName: '雨 夜.wav' }));
     items.push({ itemId: crypto.randomUUID(), sourceId, sourcePath: fontFact.path, sha256: fontFact.sha256, kind: 'font', fileName: '正文.otf' });
+    const licenseFact = result(await stage.invoke('asset.sources', { sourceId, path: '雨 夜/LICENSE-字体' })).file;
+    items.push({ itemId: crypto.randomUUID(), sourceId, sourcePath: licenseFact.path, sha256: licenseFact.sha256, kind: 'license', fileName: 'LICENSE-正文' });
     const request = { operationId: crypto.randomUUID(), items };
     const ready = result(await stage.invoke('asset.import.stage', request));
     expect(ready.operation.status).toBe('READY');
@@ -136,9 +140,11 @@ it('imports prepared media through the same public policy, retry and real catalo
     expect(result(await apply.invoke('asset.import.commit', commit)).receipt.receiptId).toBe(committed.receipt.receiptId);
     for (const directory of ['bgm', 'ambience', 'se', 'voice']) expect(await fs.readFile(path.join(f.projectRoot, `content/assets/${directory}/雨 夜.wav`))).toEqual(wav);
     expect(await fs.readFile(path.join(f.projectRoot, 'content/assets/fonts/正文.otf'))).toEqual(font);
+    expect(await fs.readFile(path.join(f.projectRoot, 'content/assets/licenses/LICENSE-正文'))).toEqual(license);
     const catalog = result(await apply.invoke('project.assets', {}));
     expect(catalog.intelligence.items.filter((item: any) => item.physical).map((item: any) => item.kind).sort())
-      .toEqual(['music', 'ambience', 'sound-effect', 'voice', 'font'].sort());
+      .toEqual(['music', 'ambience', 'sound-effect', 'voice', 'font', 'license'].sort());
+    expect(catalog.intelligence.items.find((item: any) => item.kind === 'license').issues).toEqual([]);
     result(await apply.invoke('change.begin', { compositionMode: 'direct' }));
     result(await apply.invoke('scene.create', { operationId: 'audio-chapter', sceneId: 'audio_chapter', blocks: [
       ...['bgm', 'ambience', 'se', 'voice'].map(name => ({ kind: 'instruction', name, args: ['"雨 夜"'] })),
@@ -168,6 +174,12 @@ it('rejects a corrupt media batch before registration and allows only real forma
     const operationId = crypto.randomUUID();
     const bad = { ...good, itemId: crypto.randomUUID(), sourcePath: 'broken.webm', fileName: 'broken.webm', kind: 'video', sha256: crypto.createHash('sha256').update('not a video').digest('hex') };
     expect(await session.invoke('asset.import.stage', { operationId, items: [good, bad] })).toMatchObject({ ok: false, error: { code: 'ASSET_MEDIA_INVALID' } });
+    expect(await session.invoke('asset.import.inspect', { operationId })).toMatchObject({ ok: false, error: { code: 'IMPORT_OPERATION_NOT_FOUND' } });
+    const badLicenseBytes = Buffer.from('Copyright\u0000binary');
+    await fs.writeFile(path.join(f.source, 'NOTICE.txt'), badLicenseBytes);
+    const badLicense = { ...good, itemId: crypto.randomUUID(), sourcePath: 'NOTICE.txt', fileName: 'NOTICE.txt', kind: 'license', sha256: crypto.createHash('sha256').update(badLicenseBytes).digest('hex') };
+    expect(await session.invoke('asset.import.stage', { operationId, items: [good, badLicense] }))
+      .toMatchObject({ ok: false, error: { code: 'ASSET_MEDIA_INVALID' } });
     expect(await session.invoke('asset.import.inspect', { operationId })).toMatchObject({ ok: false, error: { code: 'IMPORT_OPERATION_NOT_FOUND' } });
     expect(await session.invoke('asset.import.stage', { operationId, items: [{ ...good, fileName: 'voice.mp3' }] }))
       .toMatchObject({ ok: false, error: { code: 'ASSET_MEDIA_INVALID', details: { sourcePath: 'voice.wav', fileName: 'voice.mp3' } } });
@@ -383,7 +395,7 @@ it('authors real catalog examples and the first character using only public read
   } finally { await client.close(); await server.close(); await session.close(); }
 });
 
-it.each(['image', 'audio'])('recovers the same real stdio %s import after the server exits after writing its receipt', async (media) => {
+it.each(['image', 'audio', 'license'])('recovers the same real stdio %s import after the server exits after writing its receipt', async (media) => {
   const f = await fixture();
   const staging = await f.open('stage');
   let request = await requestFor(staging);
@@ -392,6 +404,13 @@ it.each(['image', 'audio'])('recovers the same real stdio %s import after the se
     const item = request.items[0]!;
     const file = result(await staging.invoke('asset.sources', { sourceId: item.sourceId, path: '夜声.wav' })).file;
     request = { ...request, items: [{ ...item, sourcePath: file.path, sha256: file.sha256, kind: 'ambience', fileName: '夜声.wav' }] };
+  }
+  const license = Buffer.from('\uFEFFCopyright fixture author\r\n许可原文保留。\r\n');
+  if (media === 'license') {
+    await fs.writeFile(path.join(f.source, 'LICENSE-字体'), license);
+    const item = request.items[0]!;
+    const file = result(await staging.invoke('asset.sources', { sourceId: item.sourceId, path: 'LICENSE-字体' })).file;
+    request = { ...request, items: [{ ...item, sourcePath: file.path, sha256: file.sha256, kind: 'license', fileName: file.path }] };
   }
   const ready = result(await staging.invoke('asset.import.stage', request));
   await staging.close();
@@ -430,10 +449,10 @@ await import(${JSON.stringify(pathToFileURL(path.join(repo, 'packages/cli/dist/a
   expect(recovered.operation).toMatchObject({ operationId: request.operationId, status: 'COMMITTED' });
   expect(recovered.receipt.receiptId).toBe(interrupted.receipt.receiptId);
   expect(recovered.plan.planId).toBe(ready.plan.planId);
-  const directory = media === 'image' ? 'bg' : 'ambience';
+  const directory = media === 'image' ? 'bg' : media === 'audio' ? 'ambience' : 'licenses';
   const fileName = request.items[0]!.fileName;
   expect(await fs.readdir(path.join(f.projectRoot, 'content/assets', directory))).toEqual([fileName]);
-  expect(await fs.readFile(path.join(f.projectRoot, 'content/assets', directory, fileName))).toEqual(media === 'image' ? png : wav);
+  expect(await fs.readFile(path.join(f.projectRoot, 'content/assets', directory, fileName))).toEqual(media === 'image' ? png : media === 'audio' ? wav : license);
   await resumed.close();
 }, 45_000);
 

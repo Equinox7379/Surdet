@@ -4,7 +4,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { Readable } from 'node:stream';
 import {
-  AGENT_IMAGE_EXTENSIONS, AGENT_MEDIA_EXTENSIONS, AGENT_IMAGE_MAX_BYTES, AGENT_IMAGE_MAX_FILES, AGENT_IMAGE_MAX_TOTAL_BYTES,
+  AGENT_IMAGE_EXTENSIONS, AGENT_MEDIA_EXTENSIONS, AGENT_IMAGE_MAX_BYTES, AGENT_IMAGE_MAX_FILES, AGENT_IMAGE_MAX_TOTAL_BYTES, AGENT_LICENSE_MAX_BYTES, isProjectLicenseFileName,
   AuthoringOperationError, stableStringify,
   type AgentImageStageRequest, type AgentImageCommitRequest,
 } from '@surdet/authoring';
@@ -33,7 +33,7 @@ export interface AuthorizedImageSource {
 }
 const hash = (value: string | Uint8Array): string => crypto.createHash('sha256').update(value).digest('hex');
 const identity = (stat: Awaited<ReturnType<typeof fs.lstat>>): string => `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
-const limits = { maxFiles: AGENT_IMAGE_MAX_FILES, maxBytesPerFile: AGENT_IMAGE_MAX_BYTES, maxBytesPerOperation: AGENT_IMAGE_MAX_TOTAL_BYTES };
+const limits = { maxFiles: AGENT_IMAGE_MAX_FILES, maxBytesPerFile: AGENT_IMAGE_MAX_BYTES, maxBytesPerOperation: AGENT_IMAGE_MAX_TOTAL_BYTES, maxLicenseBytesPerFile: AGENT_LICENSE_MAX_BYTES };
 const forbidden = (): AuthoringOperationError => new AuthoringOperationError('ASSET_SOURCE_FORBIDDEN', '只能读取启动时授权目录内的普通素材文件；不允许路径跳转、链接或下载。');
 
 export async function authorizeImageSources(roots: readonly string[]): Promise<AuthorizedImageSource[]> {
@@ -102,14 +102,14 @@ function sourceFor(sources: readonly AuthorizedImageSource[], sourceId: unknown)
 
 async function inspectSources(sources: readonly AuthorizedImageSource[], input: Record<string, unknown>) {
   const roots = sources.map(source => ({ sourceId: source.sourceId, name: path.basename(source.root) }));
-  const base = { roots, supportedFormats: [...AGENT_MEDIA_EXTENSIONS], limits, validation: 'container-header' as const };
+  const base = { roots, supportedFormats: [...AGENT_MEDIA_EXTENSIONS], limits, validation: 'container-header-or-utf8-text' as const };
   if (input['sourceId'] === undefined) return base;
   const source = sourceFor(sources, input['sourceId']);
   const relative = typeof input['path'] === 'string' ? input['path'] : '';
   const file = await checkedSourcePath(source, relative);
   if ((await fs.lstat(file)).isDirectory()) {
     const entries = (await fs.readdir(file, { withFileTypes: true })).filter(entry => !entry.isSymbolicLink()
-      && (entry.isDirectory() || entry.isFile() && (AGENT_MEDIA_EXTENSIONS as readonly string[]).includes(path.extname(entry.name).slice(1).toLowerCase())))
+      && (entry.isDirectory() || entry.isFile() && ((AGENT_MEDIA_EXTENSIONS as readonly string[]).includes(path.extname(entry.name).slice(1).toLowerCase()) || isProjectLicenseFileName(entry.name))))
       .map(entry => ({ path: relative ? `${relative}/${entry.name}` : entry.name, kind: entry.isDirectory() ? 'directory' : 'file' }));
     return { ...base, sourceId: source.sourceId, entries };
   }
@@ -227,7 +227,9 @@ export class AgentImageImportService {
     for (const item of request.items) {
       const sourceExtension = path.posix.extname(item.sourcePath).toLowerCase().replace('.jpeg', '.jpg');
       const targetExtension = path.extname(item.fileName).toLowerCase().replace('.jpeg', '.jpg');
-      if (!(AGENT_MEDIA_EXTENSIONS as readonly string[]).includes(sourceExtension.slice(1)) || sourceExtension !== targetExtension) {
+      const supported = (AGENT_MEDIA_EXTENSIONS as readonly string[]).includes(sourceExtension.slice(1))
+        || isProjectLicenseFileName(path.posix.basename(item.sourcePath)) && isProjectLicenseFileName(item.fileName);
+      if (!supported || sourceExtension !== targetExtension) {
         throw new AuthoringOperationError((AGENT_IMAGE_EXTENSIONS as readonly string[]).includes(sourceExtension.slice(1))
           ? 'ASSET_IMAGE_INVALID' : 'ASSET_MEDIA_INVALID', '不能通过改扩展名转换素材格式；目标必须保留实际格式。',
         { sourcePath: item.sourcePath, fileName: item.fileName });

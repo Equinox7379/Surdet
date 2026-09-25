@@ -13,6 +13,7 @@ describe('desktop pack asset ownership', () => {
     fs.mkdirSync(path.join(game, 'dist/assets'), { recursive: true });
     fs.mkdirSync(path.join(game, 'content/assets/bg'), { recursive: true });
     const media = Buffer.from('protected image bytes');
+    const license = Buffer.from('\uFEFFCopyright fixture author\r\n许可原文。\r\n');
     fs.copyFileSync(new URL('../prepare-pack.mjs', import.meta.url), path.join(shell, 'prepare-pack.mjs'));
     fs.copyFileSync(new URL('../scripts/pack-policy.mjs', import.meta.url), path.join(shell, 'scripts/pack-policy.mjs'));
     fs.writeFileSync(path.join(game, 'package.json'), JSON.stringify({ name: 'test', version: '1.0.0' }));
@@ -20,6 +21,9 @@ describe('desktop pack asset ownership', () => {
     fs.writeFileSync(path.join(game, 'content/assets/bg/room.png'), media);
     fs.writeFileSync(path.join(game, 'dist/assets/room-HASH.png'), media);
     fs.writeFileSync(path.join(game, 'dist/assets/app.js'), 'desktop uses asset IPC');
+    fs.mkdirSync(path.join(game, 'content/assets/licenses'), { recursive: true });
+    fs.writeFileSync(path.join(game, 'content/assets/licenses/LICENSE-font'), license);
+    fs.writeFileSync(path.join(game, 'dist/assets/LICENSE-font-HASH'), license);
     fs.writeFileSync(path.join(game, 'dist/index.html'), '<script src="assets/app.js"></script>');
     try {
       const result = spawnSync(process.execPath, [path.join(shell, 'prepare-pack.mjs')], {
@@ -30,6 +34,10 @@ describe('desktop pack asset ownership', () => {
       const staged = path.join(shell, '.pack-stage/game');
       expect(fs.readFileSync(path.join(game, 'dist/assets/room-HASH.png'))).toEqual(media);
       expect(fs.readFileSync(path.join(staged, 'assets/app.js'), 'utf8')).toBe('desktop uses asset IPC');
+      // Companion text in the normal Web collection remains readable even
+      // when desktop runtime copies are encrypted under the existing policy.
+      expect(fs.readFileSync(path.join(staged, 'assets/LICENSE-font-HASH'))).toEqual(license);
+      expect(fs.readFileSync(path.join(game, 'dist/assets/LICENSE-font-HASH'))).toEqual(license);
       expect(fs.existsSync(path.join(staged, 'assets/room-HASH.png'))).toBe(mode !== 'release');
       const packaged = fs.readFileSync(path.join(staged, 'content/assets/bg/room.png'));
       if (mode === 'release') {

@@ -27,6 +27,7 @@ const KIND_LABELS: Record<ProjectAssetKind, string> = {
   voice: '语音',
   video: '视频',
   font: '字体',
+  license: '许可证/说明',
   other: '其他',
 };
 
@@ -794,13 +795,13 @@ function renderInspector(host: HTMLElement, item: ProjectAssetItem | null, items
   };
   addFact('类别', KIND_LABELS[item.kind]);
   addFact('文件大小', formatAssetBytes(item.bytes));
-  addFact('文件格式', item.format ? item.format.toUpperCase() : '未识别');
-  addFact('引用情况', item.references.length > 0 ? `${item.references.length} 处` : '未发现引用');
+  addFact('文件格式', item.format ? item.format.toUpperCase() : item.kind === 'license' ? '文本（无扩展名）' : '未识别');
+  addFact('引用情况', item.kind === 'license' ? '随素材保留，无需剧本引用' : item.references.length > 0 ? `${item.references.length} 处` : '未发现引用');
 
   const references = h('section', 'asset-center-references');
   references.appendChild(h('h3', undefined, '引用位置'));
   if (item.references.length === 0) {
-    references.appendChild(h('p', 'asset-center-empty-copy', '当前项目结构中没有发现引用。'));
+    references.appendChild(h('p', 'asset-center-empty-copy', item.kind === 'license' ? '这是随素材交付的许可证或说明文件，无需插入剧本。' : '当前项目结构中没有发现引用。'));
   } else {
     const list = h('div', 'asset-center-reference-list');
     for (const reference of item.references) {
@@ -1264,13 +1265,13 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
       thumbnail.setAttribute('aria-hidden', 'true');
       const name = h('span', 'asset-center-item-name');
       name.append(h('strong', undefined, friendlyAssetName(item)), h('small', undefined, KIND_LABELS[item.kind]));
-      const format = item.format ? `${item.format.toUpperCase()} 文件` : item.physical ? '格式未识别' : '素材文件尚不存在';
+      const format = item.format ? `${item.format.toUpperCase()} 文件` : item.kind === 'license' ? '文本（无扩展名）' : item.physical ? '格式未识别' : '素材文件尚不存在';
       const context = h('span', 'asset-center-item-context');
       context.append(
         h('span', undefined, format),
         h('small', 'asset-center-item-path', item.sourcePath ?? item.assetId),
       );
-      const usage = item.references.length > 0 ? `${item.references.length} 处引用` : item.physical ? '未发现引用' : '引用缺失';
+      const usage = item.kind === 'license' ? '随素材保留' : item.references.length > 0 ? `${item.references.length} 处引用` : item.physical ? '未发现引用' : '引用缺失';
       const meta = h('span', 'asset-center-item-meta');
       meta.append(h('span', undefined, formatAssetBytes(item.bytes)), h('span', undefined, usage));
       if (batchSelecting) {

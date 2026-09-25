@@ -10,7 +10,7 @@ import type {
   ProjectAssetReference,
   ProjectAssetSummary,
 } from './contracts.js';
-import { isProjectAssetFileNameSafe } from './asset-import.js';
+import { isProjectAssetFileNameSafe, isProjectLicenseFileName } from './asset-import.js';
 import { normalizeProjectPath } from './project-storage.js';
 import type { ProjectSnapshot } from './project-snapshot.js';
 
@@ -26,6 +26,7 @@ const KIND_ORDER: readonly ProjectAssetKind[] = [
   'voice',
   'video',
   'font',
+  'license',
   'other',
 ];
 
@@ -49,6 +50,7 @@ const DIRECTORY_KINDS: Readonly<Record<string, ProjectAssetKind>> = {
   video: 'video',
   font: 'font',
   fonts: 'font',
+  licenses: 'license',
 };
 
 const IMAGE_FORMATS = new Set(['svg', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'avif']);
@@ -108,7 +110,8 @@ export function describeProjectAssetPath(input: string): ProjectAssetPathDescrip
   const segments = relative.split('/');
   const fileName = segments.at(-1) ?? '';
   const directory = segments.length > 1 ? segments[0]!.toLowerCase() : '';
-  const kind = DIRECTORY_KINDS[directory] ?? 'other';
+  const directoryKind = DIRECTORY_KINDS[directory] ?? 'other';
+  const kind = directoryKind === 'font' && isProjectLicenseFileName(fileName) ? 'license' : directoryKind;
   const format = extensionOf(fileName);
   const stem = stemOf(fileName);
   if (kind !== 'portrait') {
@@ -117,7 +120,7 @@ export function describeProjectAssetPath(input: string): ProjectAssetPathDescrip
       directory: normalizedPath.slice(0, Math.max(0, normalizedPath.lastIndexOf('/'))),
       fileName,
       kind,
-      key: kind === 'font' ? normalizedPath : stem,
+      key: kind === 'font' || kind === 'license' ? normalizedPath : stem,
       format,
       invalidName: invalidPath || !isProjectAssetFileNameSafe(fileName),
     };
@@ -164,6 +167,7 @@ function classifyFile(fact: ProjectAssetFileFact): ClassifiedFile | null {
 }
 
 export function isProjectAssetFormatSupported(kind: ProjectAssetKind, format: string): boolean {
+  if (kind === 'license') return format === '' || format === 'txt' || format === 'md';
   if (format.length === 0) return false;
   if (kind === 'background' || kind === 'portrait' || kind === 'avatar') return IMAGE_FORMATS.has(format);
   if (kind === 'music' || kind === 'ambience' || kind === 'sound-effect' || kind === 'voice') return AUDIO_FORMATS.has(format);
@@ -475,7 +479,8 @@ export function buildProjectAssetIntelligence(
         [],
       ));
     }
-    if (!isProjectAssetFormatSupported(entry.kind, entry.format)) {
+    if (!isProjectAssetFormatSupported(entry.kind, entry.format)
+      || entry.kind === 'license' && !isProjectLicenseFileName(entry.fact.path.split('/').at(-1)!)) {
       item.issues.push('ASSET_FORMAT_UNSUPPORTED');
       issues.push(createIssue(
         'ASSET_FORMAT_UNSUPPORTED',
@@ -557,7 +562,7 @@ export function buildProjectAssetIntelligence(
           ? { timeline: { kind: 'audio' as const, cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: command, key: item.key }] } } : {}),
       };
     }
-    if (item.physical && item.references.length === 0) {
+    if (item.physical && item.kind !== 'license' && item.references.length === 0) {
       item.issues.push('ASSET_UNUSED');
       issues.push(createIssue(
         'ASSET_UNUSED',

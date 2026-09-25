@@ -1,8 +1,17 @@
 import * as path from 'node:path';
-import { AGENT_IMAGE_EXTENSIONS, AuthoringOperationError } from '@surdet/authoring';
+import { AGENT_IMAGE_EXTENSIONS, AGENT_LICENSE_MAX_BYTES, AuthoringOperationError, isProjectLicenseFileName } from '@surdet/authoring';
 
 /** Bounded container inspection, NOT a decoder or a promise of browser support. */
 export function validateAssetSourceFormat(bytes: Buffer, fileName: string): void {
+  if (isProjectLicenseFileName(path.basename(fileName))) {
+    let text: string;
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+    catch { throw new AuthoringOperationError('ASSET_MEDIA_INVALID', `许可证/说明 ${fileName} 必须是 UTF-8 文本；不转换原文。`, { fileName }); }
+    if (bytes.length > AGENT_LICENSE_MAX_BYTES || text.trim().length === 0 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) {
+      throw new AuthoringOperationError('ASSET_MEDIA_INVALID', `许可证/说明 ${fileName} 必须是非空、无二进制控制字符且不超过 1 MiB 的文本。`, { fileName });
+    }
+    return;
+  }
   const extension = path.extname(fileName).slice(1).toLowerCase();
   const ascii = (start: number, end: number) => bytes.toString('ascii', start, end);
   let valid = false;

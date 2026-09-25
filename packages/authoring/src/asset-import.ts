@@ -17,6 +17,7 @@ const DIRECTORY_BY_KIND: Readonly<Record<ProjectAssetKind, string>> = Object.fre
   voice: 'voice',
   video: 'video',
   font: 'fonts',
+  license: 'licenses',
   other: 'other',
 });
 
@@ -189,14 +190,19 @@ export function isProjectAssetFileNameSafe(fileName: string): boolean {
   if (hasControlCharacter(fileName)) return false;
   if (/[\\/:*?"<>|]/u.test(fileName)) return false;
   if (isWindowsReservedStem(stemOf(fileName))) return false;
-  return stemOf(fileName).length > 0;
+  return stemOf(fileName).length > 0 || !fileName.includes('.') && isProjectLicenseFileName(fileName);
 }
 
 function nameIsInvalid(fileName: string): boolean {
   return !isProjectAssetFileNameSafe(fileName);
 }
 
-function supportedExtension(kind: ProjectAssetKind, extension: string): boolean {
+export function isProjectLicenseFileName(fileName: string): boolean {
+  return /\.(txt|md)$/i.test(fileName) || /^(LICENSE|LICENCE|COPYING|NOTICE|OFL)(?:[-_][^.]+)?$/i.test(fileName);
+}
+
+function supportedExtension(kind: ProjectAssetKind, extension: string, fileName: string): boolean {
+  if (kind === 'license') return isProjectLicenseFileName(fileName);
   if (kind === 'background' || kind === 'portrait' || kind === 'avatar') return IMAGE_EXTENSIONS.has(extension);
   if (kind === 'music' || kind === 'ambience' || kind === 'sound-effect' || kind === 'voice') {
     return AUDIO_EXTENSIONS.has(extension);
@@ -348,7 +354,7 @@ export async function buildProjectAssetImportPlan(
     const targetPath = targetPathByIndex[index]!;
     const issues: ProjectAssetImportIssueCode[] = [];
     if (nameIsInvalid(fileName)) pushIssue(issues, 'IMPORT_NAME_INVALID');
-    if (!supportedExtension(target.kind, extensionOf(fileName))) pushIssue(issues, 'IMPORT_FORMAT_UNSUPPORTED');
+    if (!supportedExtension(target.kind, extensionOf(fileName), fileName)) pushIssue(issues, 'IMPORT_FORMAT_UNSUPPORTED');
     if (target.kind === 'portrait' && portraitNameIsInvalid(fileName)) {
       pushIssue(issues, 'IMPORT_PORTRAIT_NAME_INVALID');
     }

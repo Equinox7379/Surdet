@@ -105,6 +105,15 @@ function asset(result: ReturnType<typeof buildProjectAssetIntelligence>, sourceP
   return item!;
 }
 
+it('discovers companion licenses in fonts and licenses folders without calling them unused media', async () => {
+  const snapshot = await snapshotFor({ 'game.config.json': '{}' });
+  const paths = ['content/assets/fonts/OFL.txt', 'content/assets/fonts/NOTICE.md', 'content/assets/licenses/甲/LICENSE', 'content/assets/licenses/乙/LICENSE'];
+  const result = buildProjectAssetIntelligence(snapshot, paths.map(path => ({ path })));
+  expect(result.items.map(item => item.kind)).toEqual(['license', 'license', 'license', 'license']);
+  expect(result.items.every(item => item.issues.length === 0 && !item.usage)).toBe(true);
+  expect(result.summary).toMatchObject({ unusedCount: 0, duplicateCount: 0, unsupportedCount: 0, byKind: { license: { files: 4 } } });
+});
+
 it('locates each audio timeline cue by its channel, without calling timeline-only media unused', async () => {
   const timeline = { version: 1, id: 'sound', durationMs: 20, tracks: [{ kind: 'audio', cues:
     ['bgm', 'se', 'voice'].map(action => ({ atMs: 0, durationMs: 0, easing: 'linear', action, key: '同名 声音' })) }] };
