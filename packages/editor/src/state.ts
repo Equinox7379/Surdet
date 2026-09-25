@@ -114,6 +114,8 @@ export const state = {
   /** content/config/*.json 原始对象（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；
    *  E2/E3：achievements/gallery 供素材清单与配置编辑器） */
   configFiles: { events: null as unknown, growth: null as unknown, calendar: null as unknown, achievements: null as unknown, gallery: null as unknown, terminology: null as unknown },
+  /** 读取/解析失败不等同于缺失配置；保留路径级错误，阻止旧值或空表覆盖来源。 */
+  configReadErrors: {} as Partial<Record<'gameConfig' | 'events' | 'growth' | 'calendar' | 'achievements' | 'gallery' | 'terminology', string>>,
   /** 配置文件句柄（E3：写盘需要；无 FS API 环境为 null，保存入口置灰） */
   handles: {
     gameConfig: null as FileSystemFileHandle | null,

@@ -5,6 +5,7 @@ vi.mock('../src/v4/surfaces.js', () => ({ enhanceConfigTables: vi.fn() }));
 vi.mock('../src/project-io.js', () => ({
   assertProjectWriteUnlocked: vi.fn(),
   runProjectWriteOperation: (operation: () => Promise<unknown>) => operation(),
+  readProjectSourceText: async (handle: FileSystemFileHandle) => new TextDecoder('utf-8', { ignoreBOM: true }).decode(await (await handle.getFile()).arrayBuffer()),
   writeProjectText: async (_path: string, value: unknown, handle: { createWritable: () => Promise<{ write: (value: unknown) => Promise<void>; close: () => Promise<void> }> }) => {
     const writable = await handle.createWritable();
     await writable.write(value);
@@ -143,6 +144,7 @@ const {
 } = await import('../src/panels/config.js');
 
 async function renderFixture(): Promise<FakeElement> {
+  state.configReadErrors = {};
   state.dirHandle = null;
   state.gameConfigText = INITIAL_GAME_CONFIG;
   state.configFiles = configFiles() as typeof state.configFiles;
@@ -173,6 +175,46 @@ afterEach(() => {
 });
 
 describe('configuration draft state', () => {
+  it('shows a read failure instead of silently editing the last successful event table', async () => {
+    const root = await renderFixture();
+    state.handles.events = { getFile: async () => { throw new Error('fixture read denied'); } } as unknown as FileSystemFileHandle;
+    renderConfig(root as unknown as HTMLElement);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(root.textContent).toContain('fixture read denied');
+    expect(descendants(root).some(element => element.textContent === '保存事件配置')).toBe(false);
+    expect(inspectConfigDraftState().dirty).toBe(false);
+  });
+
+  it.each(['{', 'null', '[]'])('shows malformed root config instead of an empty editable variable table: %s', async (source) => {
+    const root = await renderFixture();
+    state.handles.gameConfig = { getFile: async () => new File([source], 'game.config.json') } as unknown as FileSystemFileHandle;
+    renderConfig(root as unknown as HTMLElement);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(root.textContent).toContain('game.config.json');
+    expect(root.textContent).toMatch(/解析失败|必须是 JSON 对象/);
+    expect(descendants(root).some(element => element.textContent === '保存变量表')).toBe(false);
+  });
+
+  it('retains malformed content config as an error and resumes after a successful fresh read', async () => {
+    const root = await renderFixture();
+    let source = '{';
+    const createWritable = vi.fn();
+    state.handles.events = { getFile: async () => new File([source], 'events.json'), createWritable } as unknown as FileSystemFileHandle;
+    const previousSave = byText(root, '保存事件配置');
+    renderConfig(root as unknown as HTMLElement);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(root.textContent).toContain('events.json 解析失败');
+    previousSave.click();
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(createWritable).not.toHaveBeenCalled();
+    source = '\uFEFF' + JSON.stringify(configFiles().events);
+    renderConfig(root as unknown as HTMLElement);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(root.textContent).not.toContain('events.json 解析失败');
+    expect(byText(root, '保存事件配置')).toBeDefined();
+    expect(inspectConfigDraftState().dirty).toBe(false);
+  });
+
   it('tracks all eight loaded sections and starts clean', async () => {
     await renderFixture();
     expect(inspectConfigDraftState()).toEqual({ dirty: false, dirtySections: [] });

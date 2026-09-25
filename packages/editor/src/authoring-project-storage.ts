@@ -20,6 +20,7 @@ import {
   type TextHasher,
 } from '@surdet/authoring';
 import { state, type SceneEntry, type TimelineEntry } from './state.js';
+import { assertConfigSourcesReadable } from './config-source.js';
 import { assetPathForHandle, readProjectSourceText, workingGameConfigText, writeFileHandle } from './project-io.js';
 
 export interface EditorProjectStorage extends ProjectStorage, TextHasher {}
@@ -50,6 +51,7 @@ function configText(value: unknown): string {
  */
 export function createEditorProjectStorage(source = state): EditorProjectStorage {
   const files = (): Map<string, string> => {
+    assertConfigSourcesReadable(undefined, source);
     const result = new Map<string, string>();
     result.set('game.config.json', workingGameConfigText(source));
     for (const scene of source.scenes.values()) result.set(scenarioPath(scene), scene.text);

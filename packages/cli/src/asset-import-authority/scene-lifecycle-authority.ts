@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { isValidSceneId } from '@surdet/core';
 import { parseProjectConfigDocument, sceneDirectorySegments, stableStringify } from '@surdet/authoring';
+import { NodeProjectStorage } from '../authoring/node-project-storage.js';
 import { createJsonRecord, readJsonRecord, replaceJsonRecord } from '../authoring/node-json-record.js';
 import { syncFileAndParent, syncParentDirectories } from '../authoring/node-durable-file.js';
 import { assertAssetImportDataNamespace, assertAssetImportProjectRootIdentity } from './filesystem.js';
@@ -948,9 +949,18 @@ export class ProjectSceneLifecycleAuthority {
           try {
             const before = baseline === null ? {} : parseProjectConfigDocument(await fs.readFile((await safeParent(this.paths, write.path)).absolutePath, 'utf8'));
             const after = parseProjectConfigDocument(write.text);
+            const existingScenes = (await (await NodeProjectStorage.open(this.paths.projectRoot)).listFiles())
+              .filter(file => file.startsWith('content/scenario/') && /\.gal$/i.test(file)).sort();
+            const first = existingScenes[0];
+            const entryRelocation = records.find(record => record.request.sourcePath === first);
+            const entryPath = entryRelocation ? entryRelocation.request.targetPath : first;
+            const finalScenes = [...existingScenes.filter(file => !sourcePaths.has(portableFold(file))),
+              ...writes.filter(entry => entry.path.startsWith('content/scenario/')).map(entry => entry.path)];
             if ((before['entryScene'] !== undefined && before['entryScene'] !== '')
               || typeof after['entryScene'] !== 'string' || !isValidSceneId(after['entryScene'])
               || !writes.some(entry => entry.path.startsWith('content/scenario/'))
+              || (first !== undefined && (!entryPath || after['entryScene'] !== path.posix.basename(entryPath).slice(0, -4)))
+              || !finalScenes.some(file => path.posix.basename(file).slice(0, -4) === after['entryScene'])
               || stableStringify({ ...before, entryScene: after['entryScene'] }) !== stableStringify(after)) throw new Error('not an entry pin');
           } catch {
             throw new AssetImportAuthorityError('INVALID_REQUEST', '场景保存只允许同时固定原缺省入口，不能修改其他配置');

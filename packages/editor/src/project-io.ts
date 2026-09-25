@@ -4,6 +4,7 @@
  * UI 联动（renderAll/runValidate/renderSidebar）经钩子注入，保持模块无环。
  */
 import { state, setStatus } from './state.js';
+import { parseConfigSource } from './config-source.js';
 import { beginEditorWorkspaceWrite, finishEditorWorkspaceWrite, publishEditorWorkspaceFile,
   editorWorkspaceStatus } from './editor-workspace.js';
 import { histories } from './history.js';
@@ -200,6 +201,7 @@ interface LoadedProjectData {
   entryScene: string;
   handles: typeof state.handles;
   configFiles: typeof state.configFiles;
+  configReadErrors: typeof state.configReadErrors;
   dirAssets: DirAsset[];
   autosaveProjectId: string | null;
 }
@@ -306,19 +308,22 @@ async function readProjectFromHandle(
   const timelines: import('./state.js').TimelineEntry[] = [];
   const handles = { gameConfig: null, achievements: null, calendar: null, events: null, growth: null, gallery: null, terminology: null } as typeof state.handles;
   const configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null } as typeof state.configFiles;
+  const configReadErrors: typeof state.configReadErrors = {};
   let gameConfigText = '';
   let entryScene = '';
   // content/config/*.json（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；
-  // E2/E3：achievements/gallery 供素材清单与配置编辑器；解析失败按无配置）
+  // E2/E3：achievements/gallery 供素材清单与配置编辑器；解析失败保留句柄和错误）
   for (const name of ['events', 'growth', 'calendar', 'achievements', 'gallery', 'terminology'] as const) {
     try {
       const contentDir = await dir.getDirectoryHandle('content');
       const configDir = await contentDir.getDirectoryHandle('config');
       const fh = await configDir.getFileHandle(`${name}.json`);
-      configFiles[name] = JSON.parse(await (await fh.getFile()).text()) as unknown;
       handles[name] = fh;
+      const text = await readProjectSourceText(fh);
+      try { configFiles[name] = parseConfigSource(name, text); }
+      catch (error) { configReadErrors[name] = error instanceof Error ? error.message : String(error); }
     } catch (error) {
-      if (!isMissingDirectoryError(error) && !(error instanceof SyntaxError)) throw error;
+      if (handles[name] !== null || !isMissingDirectoryError(error)) throw error;
       configFiles[name] = null;
     }
   }
@@ -334,6 +339,7 @@ async function readProjectFromHandle(
       && !(typeof error === 'object' && error !== null && 'code' in error && error.code === 'PROJECT_INVALID')) throw error;
     // Keep malformed source visible to validation and scene-reference guards;
     // a parse failure must not erase the difference from a missing config.
+    if (handles.gameConfig) configReadErrors.gameConfig = error instanceof Error ? error.message : String(error);
     entryScene = '';
   }
   // 素材目录扫描（E2）：content/assets 与 public/，目录约定类型，无目录静默跳过
@@ -354,6 +360,7 @@ async function readProjectFromHandle(
     entryScene,
     handles,
     configFiles,
+    configReadErrors,
     dirAssets,
     autosaveProjectId: await resolveAutosaveProjectIdentity(dir),
   };
@@ -399,8 +406,9 @@ function commitLoadedProject(
   state.assetCenterStatus = 'all';
   state.assetCenterFolder = 'all';
   // content/config/*.json（E1a：流程图宿主入口与 CLI collectConfigSceneRoots 同源；
-  // E2/E3：achievements/gallery 供素材清单与配置编辑器；解析失败按无配置）
+  // E2/E3：achievements/gallery 供素材清单与配置编辑器；错误投影与当前项目一并切换）
   state.configFiles = loaded.configFiles;
+  state.configReadErrors = loaded.configReadErrors;
   state.gameConfigText = loaded.gameConfigText;
   state.entryScene = loaded.entryScene;
   const first = state.scenes.keys().next().value as string | undefined;
@@ -1375,6 +1383,7 @@ export function loadDemoProject(): void {
   state.assetCenterStatus = 'all';
   state.assetCenterFolder = 'all';
   state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null };
+  state.configReadErrors = {};
   state.scenes.set('demo', {
     id: 'demo',
     file: 'demo.gal',

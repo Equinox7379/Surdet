@@ -8,6 +8,7 @@
  *  - 名词表导入/导出；审计面板一键加变体入口（addTerminologyVariant）
  */
 import { state, h, setStatus } from '../state.js';
+import { assertConfigSourcesReadable, configSourceError, configSourcePath, parseConfigSource, type ConfigSourceName } from '../config-source.js';
 import { assertProjectWriteUnlocked, readProjectSourceText, runProjectWriteOperation, writeProjectText } from '../project-io.js';
 import { editorWorkspaceStatus } from '../editor-workspace.js';
 import { AuthoringOperationError, parseProjectConfigDocument } from '@surdet/authoring';
@@ -78,6 +79,10 @@ function configDescriptor(id: ConfigSectionId): ConfigSectionDescriptor {
   return CONFIG_SECTIONS.find((descriptor) => descriptor.id === id)!;
 }
 
+function sectionSource(id: ConfigSectionId): ConfigSourceName {
+  return id === 'characters' || id === 'variables' ? 'gameConfig' : id;
+}
+
 function renderConfigWorkspace(root: HTMLElement): void {
   root.innerHTML = '';
   root.setAttribute('data-editor-panel', 'config');
@@ -123,7 +128,13 @@ function renderConfigWorkspace(root: HTMLElement): void {
     buttons.set(descriptor.id, button);
     indexItems.appendChild(button);
 
-    const panel = descriptor.render();
+    const error = configSourceError(sectionSource(descriptor.id));
+    const panel = error ? sectionShell(descriptor.id).sec : descriptor.render();
+    if (error) {
+      const message = h('p', 'err', `无法读取 ${descriptor.file}：${error}`);
+      message.setAttribute('role', 'alert');
+      panel.append(message, h('p', 'dim', '原文件未被修改。请修正文件或恢复读取权限后重新打开项目；此区块暂不能编辑或保存。'));
+    }
     panel.hidden = descriptor.id !== activeConfigSectionId;
     panels.set(descriptor.id, panel);
     ledger.appendChild(panel);
@@ -188,6 +199,10 @@ function serializeConfigSection(sectionId: ConfigSectionId): string {
 }
 
 function captureConfigBaseline(sectionId: ConfigSectionId): void {
+  if (configSourceError(sectionSource(sectionId))) {
+    delete configBaselines[sectionId];
+    return;
+  }
   configBaselines[sectionId] = serializeConfigSection(sectionId);
 }
 
@@ -217,35 +232,43 @@ export function inspectConfigDraftState(): ConfigDraftInspection {
   return { dirty: dirtySections.length > 0, dirtySections };
 }
 
-/** 打开配置页时从盘上重读源文件（外部改动即时可见；失败沿用内存态） */
+/** 打开配置页时从盘上重读源文件；失败保持显式错误，不冒充旧值仍有效。 */
 async function refreshConfigSources(revision: number): Promise<boolean> {
   const gameConfigHandle = state.handles.gameConfig;
   const handles = { ...state.handles };
   let gameConfigText = state.gameConfigText;
   const configFiles = { ...state.configFiles };
+  const errors = { ...state.configReadErrors };
   try {
     if (gameConfigHandle) {
       gameConfigText = await readProjectSourceText(gameConfigHandle);
     }
-  } catch { /* 读取失败沿用内存态 */ }
+    if (gameConfigHandle || gameConfigText !== '') parseConfigSource('gameConfig', gameConfigText);
+    delete errors.gameConfig;
+  } catch (error) { errors.gameConfig = error instanceof Error ? error.message : String(error); }
   for (const name of ['achievements', 'calendar', 'events', 'growth', 'gallery', 'terminology'] as const) {
     try {
       const handle = handles[name];
-      if (handle) configFiles[name] = JSON.parse(await (await handle.getFile()).text()) as unknown;
-    } catch { /* 同上 */ }
+      if (handle) {
+        configFiles[name] = parseConfigSource(name, await readProjectSourceText(handle));
+        delete errors[name];
+      }
+    } catch (error) {
+      configFiles[name] = null;
+      errors[name] = `${configSourcePath(name)}：${error instanceof Error ? error.message : String(error)}`;
+    }
   }
   if (revision !== configSessionRevision) return false;
   state.gameConfigText = gameConfigText;
   state.configFiles = configFiles;
+  state.configReadErrors = errors;
+  requestValidateHook();
   return true;
 }
 
 function parseConfigObj(): Record<string, unknown> {
-  try {
-    return state.gameConfigText.trim() ? parseProjectConfigDocument(state.gameConfigText) : {};
-  } catch {
-    return {};
-  }
+  assertConfigSourcesReadable(['gameConfig']);
+  return state.gameConfigText === '' && state.handles.gameConfig === null ? {} : parseProjectConfigDocument(state.gameConfigText);
 }
 
 function ensureCharRows(): CharacterTableEditRow[] {
@@ -498,6 +521,7 @@ async function saveConfigFileUnlocked(
   sessionRevision: number,
 ): Promise<boolean> {
   assertProjectWriteUnlocked();
+  assertConfigSourcesReadable([name]);
   if (errors.length > 0) {
     setStatus(`${label}未保存：${errors[0]}${errors.length > 1 ? `（另有 ${errors.length - 1} 条）` : ''}`, false, 6000);
     return false;
@@ -560,6 +584,7 @@ function sectionShell(sectionId: ConfigSectionId): { sec: HTMLElement; ops: HTML
 
 async function saveVariablesUnlocked(): Promise<boolean> {
   assertProjectWriteUnlocked();
+  assertConfigSourcesReadable(['gameConfig']);
   const sessionRevision = configSessionRevision;
   const rows = ensureVarRows();
   const submittedRows = clone(rows);
@@ -661,6 +686,7 @@ function renderCharactersSection(): HTMLElement {
 /** 保存角色表：edit local draft → 保存按钮 → 共享 authoring 事务 commit（与其它配置区块保存模型一致）。 */
 async function saveCharactersUnlocked(): Promise<boolean> {
   assertProjectWriteUnlocked();
+  assertConfigSourcesReadable(['gameConfig']);
   const sessionRevision = configSessionRevision;
   const rows = ensureCharRows();
   const submittedRows = clone(rows);
@@ -804,7 +830,8 @@ function renderAchievementsSection(): HTMLElement {
   // when 表达式的变量名下拉提示（来自变量表）
   const dl = h('datalist');
   dl.id = 'cfg-var-names';
-  for (const row of ensureVarRows()) {
+  if (configSourceError('gameConfig')) sec.appendChild(h('p', 'dim', '项目配置无法读取，解锁条件的变量提示暂不可用。'));
+  for (const row of configSourceError('gameConfig') ? [] : ensureVarRows()) {
     if (row.name.trim()) dl.appendChild(h('option', undefined, row.name.trim()));
   }
   sec.appendChild(dl);

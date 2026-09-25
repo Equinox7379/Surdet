@@ -66,6 +66,29 @@ function uuid(): string {
 }
 
 describe('project scene lifecycle authority', () => {
+  it.each(['z', 'missing_scene'])('rejects a companion pin that changes the real implicit entry to %s', async entryScene => {
+    const value = await fixture();
+    await fs.writeFile(path.join(value.project, 'content/scenario/chapter/start.gal'), '@scene start\n@end\n');
+    await fs.writeFile(path.join(value.project, 'game.config.json'), '{}');
+    await expect(value.authority.commit({ requestId: uuid(), plans: [], writes: [
+      { path: 'content/scenario/z.gal', text: '@scene z\n@end\n', expectedSha256: null },
+      { path: 'game.config.json', text: JSON.stringify({ entryScene }), expectedSha256: sha256('{}') },
+    ] })).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    expect(await fs.readFile(path.join(value.project, 'game.config.json'), 'utf8')).toBe('{}');
+    await expect(fs.stat(path.join(value.project, 'content/scenario/z.gal'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('pins an unsaved first project scene but never a nonexistent scene', async () => {
+    const value = await fixture();
+    const request = { requestId: uuid(), plans: [], writes: [
+      { path: 'content/scenario/chapter/new.gal', text: '@scene new\n@end\n', expectedSha256: null },
+      { path: 'game.config.json', text: '{"entryScene":"missing"}', expectedSha256: null },
+    ] };
+    await expect(value.authority.commit(request)).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    request.writes[1]!.text = '{"entryScene":"new"}';
+    await expect(value.authority.commit(request)).resolves.toMatchObject({ status: 'COMMITTED' });
+  });
+
   it.each([undefined, 'after_first_stage_before_record', 'after_first_publish', 'after_committed_record'] as const)('moves to a new chapter with the implicit entry in one recoverable batch: %s', async faultPoint => {
     const value = await fixture(faultPoint);
     const sourcePath = 'content/scenario/chapter/start.GAL';
