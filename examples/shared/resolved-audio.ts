@@ -16,6 +16,7 @@ export class ResolvedAudio implements AudioHandle {
   }
 
   #r(channel: 'bgm' | 'ambience' | 'se' | 'voice', src: string): string { return this.#urls.get(`${channel}:${src}`) ?? src; }
+  onError(listener: Parameters<AudioManager['onError']>[0]): () => void { return this.#inner.onError(listener); }
   playBgm(src: string | null, options?: BgmPlaybackOptions): void {
     this.#inner.playBgm(src === null ? null : this.#r('bgm', src), options);
   }

@@ -11,6 +11,7 @@ import type { PostProcessSettings } from './post-process.js';
 import type { LoadingProgress } from './loading-progress.js';
 import type { AudioPlaybackSnapshot } from './rollback-buffer.js';
 import type { ShakeDirection, TransitionName } from './world-effects-controller.js';
+import type { RendererError } from './api/renderer-errors.js';
 
 /** 帧调度器在引擎状态变化时收到的唤醒回调。 */
 export type FrameRequestHandler = () => void;
@@ -197,6 +198,8 @@ export interface BgmPlaybackOptions {
 }
 
 export interface AudioHandle {
+  /** Loading/playback failures from active sources; unsubscribe when the consumer is destroyed. */
+  onError?(listener: (error: RendererError) => void): () => void;
   playBgm(src: string | null, options?: BgmPlaybackOptions): void;
   /** 环境音循环声道（最多一个活动实例；可选以兼容轻量 fake） */
   playAmbience?(src: string | null, fadeMs?: number): void;

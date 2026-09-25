@@ -3,6 +3,11 @@ import type { AudioManager } from '@surdet/renderer';
 import { ResolvedAudio } from '../../shared/resolved-audio.js';
 
 describe('Gallery music playback wiring', () => {
+  it('keeps the original source error and its unsubscribe through the resolver', () => {
+    const off = vi.fn(), listener = vi.fn(), onError = vi.fn(() => off);
+    const audio = new ResolvedAudio({ onError } as unknown as AudioManager, new Map());
+    expect(audio.onError(listener)).toBe(off); expect(onError).toHaveBeenCalledWith(listener);
+  });
   it('resolves the logical music key and forwards the explicit preview restart', () => {
     const playBgm = vi.fn();
     const inner = { playBgm } as unknown as AudioManager;

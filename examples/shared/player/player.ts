@@ -576,7 +576,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         return true;
       } else if ((kind === 'bgm' || kind === 'music' || kind === 'ambience' || kind === 'se' || kind === 'voice') && AUD.test(fname)) {
         audioUrls.set(`${kind === 'music' ? 'bgm' : kind}:${fname.replace(AUD, '')}`, url);
-        audioManager.setSourceFormat(url, fname.split('.').pop() ?? '');
+        audioManager.setSourceFormat(url, fname.split('.').pop() ?? '', `content/assets/${rel}`);
         return true;
       }
       return false;

@@ -12,6 +12,8 @@ import { RenderPerformanceMonitor } from '../../src/performance.js';
 import { PixiStage } from '../../src/pixi-stage.js';
 import { createPresentationPorts } from '../../src/adv-renderer.js';
 import type { AdvStage } from '../../src/types.js';
+import { NULL_AUDIO } from '../../src/types.js';
+import { RendererError } from '../../src/api/renderer-errors.js';
 
 function stageHarness(): AdvStage & {
   texts: string[];
@@ -122,6 +124,17 @@ function controllerFor(
 }
 
 describe('PresentationController', () => {
+  it('projects audio failures through the runtime error callback and detaches on disposal', () => {
+    const stage = stageHarness(); stage.showBanner = vi.fn();
+    const ports = createPresentationPorts(stage), onError = vi.fn(), detach = vi.fn();
+    let report!: (error: RendererError) => void;
+    const controller = new PresentationController(ports.commands, ports.queries, { ...NULL_AUDIO,
+      onError: listener => { report = listener; return detach; } }, { ...ports, onError });
+    const error = new RendererError('音频 content/assets/voice/损坏.WAV 加载失败', { code: 'MEDIA_PLAYBACK_FAILED', domain: 'audio' });
+    report(error);
+    expect(stage.showBanner).toHaveBeenCalledWith(error.message, 'tip'); expect(onError).toHaveBeenCalledWith(error);
+    controller.dispose(); expect(detach).toHaveBeenCalledOnce(); report(error); expect(onError).toHaveBeenCalledOnce();
+  });
   it('does not report an unsupported video host as successful playback', () => {
     const stage = stageHarness();
     const onError = vi.fn();

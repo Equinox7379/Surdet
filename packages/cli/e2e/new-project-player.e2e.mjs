@@ -43,6 +43,9 @@ async function prepareTestAudio() {
     for (let sample = 0; sample < samples; sample++) bytes.writeInt16LE(Math.round(Math.sin(sample * Math.PI / 20) * 500), 44 + sample * 2);
     await fs.mkdir(path.join(mediaSource, channel), { recursive: true });
     await fs.writeFile(path.join(mediaSource, channel, '同名 声音.WAV'), bytes);
+    // The container is intact, but the deliberately unsupported codec cannot decode.
+    bytes.writeUInt16LE(0xffff, 20);
+    await fs.writeFile(path.join(mediaSource, channel, '损坏 声音.WAV'), bytes);
   }
 }
 
@@ -148,9 +151,11 @@ async function authorChapter(game) {
   }
   const mediaSourceId = roots.find(root => root.name === 'prepared-media').sourceId;
   for (const [channel, kind] of [['bgm', 'music'], ['ambience', 'ambience'], ['se', 'sound-effect'], ['voice', 'voice']]) {
-    const sourcePath = `${channel}/同名 声音.WAV`;
-    const { file } = await call('surdet_asset_sources', { sourceId: mediaSourceId, path: sourcePath });
-    items.push({ itemId: randomUUID(), sourceId: mediaSourceId, sourcePath, sha256: file.sha256, kind, fileName: '同名 声音.WAV' });
+    for (const fileName of ['同名 声音.WAV', '损坏 声音.WAV']) {
+      const sourcePath = `${channel}/${fileName}`;
+      const { file } = await call('surdet_asset_sources', { sourceId: mediaSourceId, path: sourcePath });
+      items.push({ itemId: randomUUID(), sourceId: mediaSourceId, sourcePath, sha256: file.sha256, kind, fileName });
+    }
   }
   for (const sourcePath of ['片头 WEBM.webm', '片头 MP4.mp4', '损坏片段.webm']) {
     const { file } = await call('surdet_asset_sources', { sourceId: mediaSourceId, path: sourcePath });
@@ -210,6 +215,11 @@ async function authorChapter(game) {
   await call('surdet_scene_create', { operationId: 'video-error', sceneId: 'video_error', blocks: [
     { kind: 'instruction', name: 'video', args: ['损坏片段'] }, { kind: 'text', value: '错误已报告，剧情可以继续。' },
   ] });
+  for (const channel of ['bgm', 'ambience', 'se', 'voice']) {
+    await call('surdet_scene_create', { operationId: `audio-error-${channel}`, sceneId: `audio_error_${channel}`, blocks: [
+      { kind: 'instruction', name: channel, args: ['"损坏 声音"'] }, { kind: 'text', value: '音频错误应明确报告。' },
+    ] });
+  }
   const scene = await call('surdet_object_inspect', { view: 'working', objectRef: 'scene:hub_scene', fragment: {} });
   const children = await Promise.all(scene.childRefs.map(objectRef => call('surdet_object_inspect', { view: 'working', objectRef })));
   const text = children.find(object => object.kind === 'text' && object.source.raw === '旁白：待续写的句子。');
@@ -529,6 +539,17 @@ async function continueInEditor(game, errors) {
   await page.waitForFunction(() => window.__previewCompletions.some(result => result.status === 'failed' && result.firstError?.includes('损坏片段.webm')));
   await page.screenshot({ path: path.join(output, '04c-video-failure.png') });
   console.log('PASS Editor video: real WebM/MP4 frames, explicit corrupt-file error and failed trace');
+  for (const channel of ['bgm', 'ambience', 'se', 'voice']) {
+    await page.locator('[data-editor-mode="editor"]').click();
+    await page.locator(`[data-scene-id="audio_error_${channel}"]`).click();
+    await page.keyboard.press('Control+p');
+    await page.getByRole('button', { name: '重新播放', exact: true }).click();
+    const file = `content/assets/${channel}/损坏 声音.WAV`;
+    await page.frameLocator('iframe.preview-frame').locator('#preview-error').filter({ hasText: file }).waitFor();
+    await page.waitForFunction(file => window.__previewCompletions.some(result => result.status === 'failed' && result.firstError?.includes(file)), file);
+  }
+  await page.screenshot({ path: path.join(output, '04d-audio-failure.png') });
+  console.log('PASS Editor audio: each channel reports original file and failed preview trace');
 }
 
 async function resumePublicAuthoring(game) {
@@ -633,7 +654,9 @@ try {
   // A separate entry proves existing explicit consumers still override the new config.
   // The generated src/main.ts remains untouched throughout the authoring path.
   await fs.writeFile(path.join(game, 'explicit.html'), (await fs.readFile(path.join(game, 'index.html'), 'utf8')).replace('/src/main.ts', '/src/explicit.ts'));
-  await fs.writeFile(path.join(game, 'src/explicit.ts'), main.replace('config: gameConfig,', "config: gameConfig,\n  subtitle: '显式副标题', titleBackground: '', firstRunHint: '显式提示', endScenes: [],\n  additionalEntrypoints: [{id:'video-test', label:'视频故障测试', scene:'video_error'}],"));
+  const errorEntrypoints = [{ id: 'video-test', label: '视频故障测试', scene: 'video_error' },
+    ...['bgm', 'ambience', 'se', 'voice'].map(channel => ({ id: `audio-${channel}`, label: `音频故障${channel}`, scene: `audio_error_${channel}` }))];
+  await fs.writeFile(path.join(game, 'src/explicit.ts'), main.replace('config: gameConfig,', `config: gameConfig,\n  subtitle: '显式副标题', titleBackground: '', firstRunHint: '显式提示', endScenes: [],\n  additionalEntrypoints: ${JSON.stringify(errorEntrypoints)},`));
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/explicit.html`); await waitTitle(page);
   await page.getByRole('button', { name: '开始游戏', exact: true }).waitFor();
   assert.ok((await canvasTexts(page)).includes('显式副标题'));
@@ -670,6 +693,30 @@ try {
     assert.equal(await errorPage.locator('video').count(), 0);
     await errorPage.screenshot({ path: path.join(output, '03-video-failure.png') });
   } finally { await errorPage.close(); }
+  const audioErrors = [];
+  for (const channel of ['bgm', 'ambience', 'se', 'voice']) {
+    const audioPage = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    try {
+      const reported = [];
+      audioPage.on('console', message => { if (message.type() === 'error') reported.push(message.text()); });
+      audioPage.on('pageerror', error => errors.push(error.message));
+      await audioPage.goto(`http://127.0.0.1:${server.httpServer.address().port}/explicit.html`); await waitTitle(audioPage);
+      await audioPage.evaluate(() => {
+        let root = [...document.querySelectorAll('button')].find(button => button.container?.parent)?.container;
+        while (root?.parent) root = root.parent;
+        window.__audioErrorRenderRoot = root;
+      });
+      await activate(audioPage, `音频故障${channel}`);
+      const file = `content/assets/${channel}/损坏 声音.WAV`;
+      await audioPage.waitForFunction(file => {
+        const visible = node => node && node.visible && !node.destroyed && (String(node.text ?? '').includes(file) || (node.children ?? []).some(visible));
+        return visible(window.__audioErrorRenderRoot);
+      }, file);
+      assert.ok(reported.some(error => error.includes(file)), JSON.stringify(reported));
+      assert.ok(reported.every(error => error.includes(file)), JSON.stringify(reported)); audioErrors.push(...reported);
+      if (channel === 'voice') await audioPage.screenshot({ path: path.join(output, '03-audio-failure.png') });
+    } finally { await audioPage.close(); }
+  }
   await page.close();
   await continueInEditor(game, errors);
   await page.close();
@@ -683,7 +730,7 @@ try {
   await page.screenshot({ path: path.join(output, '05-ending-after-editor-save.png') });
   await resumePublicAuthoring(game);
   assert.deepEqual(errors, []);
-  await fs.writeFile(path.join(output, 'evidence.json'), JSON.stringify({ generatedBy: 'cmdNew + public MCP', typecheck: true, build: true, unchangedMain: true, explicitOptions: true, editorContinued: true, endingSceneProtected: true, endingAfterEditorSave: true, branches: 2, savedPosition: saved, reloadedPosition: saved, returnedToTitle: true, playedAudioDurations: playedAudio, audioRestoredAfterLoad: true, editorAudioChannels: true, videoFormats: ['webm/vp8', 'mp4/avc1'], videoErrorReported: true, videoPreviewTraceFailed: true, expectedVideoErrors: videoErrors, errors }, null, 2));
+  await fs.writeFile(path.join(output, 'evidence.json'), JSON.stringify({ generatedBy: 'cmdNew + public MCP', typecheck: true, build: true, unchangedMain: true, explicitOptions: true, editorContinued: true, endingSceneProtected: true, endingAfterEditorSave: true, branches: 2, savedPosition: saved, reloadedPosition: saved, returnedToTitle: true, playedAudioDurations: playedAudio, audioRestoredAfterLoad: true, editorAudioChannels: true, audioErrorChannels: ['bgm', 'ambience', 'se', 'voice'], audioPreviewTraceFailed: true, expectedAudioErrors: audioErrors, videoFormats: ['webm/vp8', 'mp4/avc1'], videoErrorReported: true, videoPreviewTraceFailed: true, expectedVideoErrors: videoErrors, errors }, null, 2));
   console.log(`PASS actual surdet new project: typecheck/build, two branches, menu save, reload/title load and both endings / ${output}`);
 } catch (error) {
   if (page) {
