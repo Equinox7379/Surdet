@@ -25,7 +25,7 @@ async function seal(change: ChangeSession) {
       operationId, capabilityId: operation.compositionFacts!.capabilityId, inputSha256: sha(operation.requestHash), ok: true,
     })),
     objectFacts: {
-      baseObjects: [{ objectRef: 'scene:A', references: [] }, { objectRef: 'config:entryScene', references: ['scene:A'] }],
+      baseObjects: [{ objectRef: 'scene:A', references: [], fingerprint: change.record.baseFiles['content/scenario/A.gal']!.sha256 }, { objectRef: 'config:entryScene', references: ['scene:A'] }],
       baseReplayStates: [
         { objectRef: 'config:characters', expectedFingerprint: sha('{}') },
         { objectRef: 'scene:A', expectedFingerprint: sha('@scene A\n旁白：开场。\n@end\n') },
@@ -127,6 +127,33 @@ describe('candidate operation-time facts', () => {
     await applySceneCreate(change, { operationId: 'ending', sceneId: 'ending' }, hasher);
     await applySceneCreate(change, entry, hasher);
     expect(change.record.operations['entry']!.sequence).toBe(1);
+  });
+
+  it('keeps dependencies after quoted choice arrows through rejection, retry and sealing', async () => {
+    const change = await candidate();
+    const before = structuredClone(change.record);
+    const input = { operationId: 'quoted-choice', sceneId: 'entry', blocks: [{ kind: 'choice' as const, options: [{
+      label: 'Continue', when: 'flag && " -> " == " -> "', target: { kind: 'jump' as const, value: 'ending' },
+    }] }] };
+    await expect(applySceneCreate(change, input, hasher)).rejects.toMatchObject({
+      code: 'CANDIDATE_DEPENDENCY_NOT_READY', details: { issues: expect.arrayContaining([
+        expect.objectContaining({ objectRef: 'variable:flag' }), expect.objectContaining({ objectRef: 'scene:ending' }),
+      ]) },
+    });
+    expect(change.record).toEqual(before);
+    expect(await change.repository.read(before.changeId)).toEqual(before);
+    await ensureVariable(change, { operationId: 'flag', name: 'flag', type: 'flag', initial: true }, hasher);
+    await applySceneCreate(change, { operationId: 'ending', sceneId: 'ending' }, hasher);
+    await applySceneCreate(change, input, hasher);
+    const dependencies = facts(change, input.operationId).requiredObjects;
+    expect(dependencies).toEqual(expect.arrayContaining([
+      expect.objectContaining({ objectRef: 'variable:flag', source: 'candidate', candidateOperationSequence: 0 }),
+      expect.objectContaining({ objectRef: 'scene:ending', source: 'candidate', candidateOperationSequence: 1 }),
+    ]));
+    const sealed = await seal(change);
+    expect(sealed.eligibility).toBe('ready');
+    if (sealed.eligibility !== 'ready') throw new Error(JSON.stringify(sealed.reasons));
+    expect(sealed.manifest.operations.find(operation => operation.sourceOperationId === input.operationId)!.requiredObjects).toEqual(dependencies);
   });
 
   it('rejects the second edge between newly created primary units before persistence', async () => {
