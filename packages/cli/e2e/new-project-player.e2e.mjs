@@ -114,6 +114,11 @@ async function authorChapter(game) {
   const shop = await call('surdet_object_inspect', { view: 'working', objectRef: 'scene:shop_scene' });
   const relocated = await call('surdet_scene_rename', { operationId: 'rename-shop-scene', sceneId: 'shop_scene', newSceneId: 'post_office_visit', expectedFingerprint: shop.fingerprint });
   assert.equal(relocated.continuation.sceneRef, 'scene:post_office_visit');
+  const visit = await call('surdet_object_inspect', { view: 'working', objectRef: relocated.continuation.sceneRef });
+  const moved = await call('surdet_scene_move', { operationId: 'move-visit-to-chapter', sceneId: 'post_office_visit', directory: '第一章/邮局', expectedPath: visit.source.path, expectedFingerprint: visit.fingerprint });
+  assert.equal(moved.continuation.sceneRef, 'scene:post_office_visit');
+  assert.equal(moved.path, 'content/scenario/第一章/邮局/post_office_visit.gal');
+  assert.equal((await call('surdet_object_inspect', { view: 'working', objectRef: 'scene:post_office_visit' })).fingerprint, visit.fingerprint);
   const entry = await call('surdet_object_inspect', { view: 'working', objectRef: 'config:entryScene' });
   await call('surdet_project_entry_scene_set', { operationId: 'entry', sceneId: 'hub_scene', expectedFingerprint: entry.fingerprint });
   const { playerConfig } = await call('surdet_project_inspect', { view: 'working' });
@@ -134,6 +139,8 @@ async function authorChapter(game) {
   assert.equal(await fs.readFile(path.join(game, 'src/main.ts'), 'utf8'), main, 'authoring altered the player entrypoint');
   assert.match(await fs.readFile(path.join(game, 'content/scenario/hub_scene.gal'), 'utf8'), /@call post_office_visit\.arrival/);
   await assert.rejects(fs.access(path.join(game, 'content/scenario/shop_scene.gal')), { code: 'ENOENT' });
+  await assert.rejects(fs.access(path.join(game, 'content/scenario/post_office_visit.gal')), { code: 'ENOENT' });
+  assert.match(await fs.readFile(path.join(game, 'content/scenario/第一章/邮局/post_office_visit.gal'), 'utf8'), /@label arrival/);
   return main;
 }
 
@@ -178,6 +185,7 @@ async function continueInEditor(game, errors) {
   };
   const configBefore = JSON.parse(await fs.readFile(path.join(game, 'game.config.json'), 'utf8'));
   await open();
+  assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('第一章/邮局/post_office_visit')?.id), 'post_office_visit');
   await page.locator('[data-editor-mode="editor"]').click();
   const workingBefore = await page.evaluate(() => {
     const s = window.surdetEditorDebug.state;

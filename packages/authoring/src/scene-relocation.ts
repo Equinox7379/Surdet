@@ -1,7 +1,7 @@
 import { compileScene, findChoiceArrow, isValidSceneId, parseInlineInstructions, splitOutsideQuotes } from '@surdet/core';
 import { AuthoringOperationError, runOperation, type ChangeSession } from './change-session.js';
 import { parseProjectConfigDocument, serializeProjectConfigDocument } from './config-document.js';
-import type { SceneRenameInput, TextHasher } from './contracts.js';
+import type { SceneMoveInput, SceneRenameInput, TextHasher } from './contracts.js';
 import { compositionTextHasher } from './operation-composition-facts.js';
 import { decodeInstructionArgument, instructionArgumentSpans, parseSceneDocument, serializeSceneDocument, splitInstruction } from './scene-document.js';
 import { resolveUniqueScenarioPath, sceneIdFromScenarioPath } from './scenario-identity.js';
@@ -159,6 +159,62 @@ export async function applySceneRename(change: ChangeSession, input: SceneRename
     return { workingFiles, result: {
       previousSceneId: input.sceneId, sceneId: input.newSceneId, previousPath, path, affectedPaths,
       diffEntry: { kind: 'scene.rename', operationId: input.operationId, objectBefore: `scene:${input.sceneId}`, objectAfter: `scene:${input.newSceneId}`,
+        directChange: { previousPath, path, affectedPaths }, potentialImpact: [], observedImpact: [] },
+    } };
+  });
+}
+
+/** Chapter folders are organization only: neither script bytes nor scene IDs change. */
+export async function applySceneMove(change: ChangeSession, input: SceneMoveInput, hasher: TextHasher = compositionTextHasher) {
+  if (change.record.composition?.mode !== 'direct' || change.record.integration !== undefined) {
+    throw new AuthoringOperationError('UNSUPPORTED_OPERATION', '章节移动只支持普通 direct 草稿', { operationApplied: false, operationId: input.operationId });
+  }
+  return runOperation(change, input, async record => {
+    if (!isValidSceneId(input.sceneId)) throw new AuthoringOperationError('INVALID_REQUEST', '无效的场景 ID');
+    const directory = input.directory;
+    const segments = directory === '' ? [] : directory.split('/');
+    if (directory.length > 1024 || segments.some(segment => !segment || segment === '.' || segment === '..'
+      || /[\\<>:"|?*\u0000-\u001f]/.test(segment) || /[. ]$/.test(segment)
+      || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(segment)
+      || /^(?:node_modules|dist|\.git)$/i.test(segment) || /^\.surdet-/i.test(segment))) {
+      throw new AuthoringOperationError('INVALID_REQUEST', '章节目录必须是 content/scenario 内可用的相对目录；返回根目录请传空字符串');
+    }
+    const previousPath = resolveUniqueScenarioPath(record.workingFiles, input.sceneId);
+    if (previousPath === undefined) throw new AuthoringOperationError('OBJECT_NOT_FOUND', `场景不存在：${input.sceneId}`);
+    const source = record.workingFiles[previousPath]!;
+    if (previousPath !== input.expectedPath || await hasher.sha256(source) !== input.expectedFingerprint) {
+      throw new AuthoringOperationError('OBJECT_REF_STALE', '场景位置或正文已变化，请重新读取 object.inspect');
+    }
+    const path = ['content', 'scenario', ...segments, previousPath.slice(previousPath.lastIndexOf('/') + 1)].join('/');
+    const fold = (value: string) => value.normalize('NFC').toUpperCase().toLowerCase();
+    if (fold(path) === fold(previousPath)) throw new AuthoringOperationError('INVALID_REQUEST', '目标目录必须不同，不能仅改变大小写或 Unicode 表示');
+    const targetParts = path.split('/');
+    for (const existing of Object.keys(record.workingFiles)) {
+      const existingParts = existing.split('/');
+      for (let index = 0; index < Math.min(existingParts.length, targetParts.length); index++) {
+        if (fold(existingParts[index]!) !== fold(targetParts[index]!)) break;
+        if (existingParts[index] !== targetParts[index] || index === existingParts.length - 1 || index === targetParts.length - 1) {
+          throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '目标位置已占用或目录名称存在别名冲突', { path, existing });
+        }
+      }
+    }
+    const workingFiles = { ...record.workingFiles, [path]: source };
+    delete workingFiles[previousPath];
+    const configSource = workingFiles['game.config.json'];
+    const config = parseProjectConfigDocument(configSource ?? '{}');
+    if (config['entryScene'] !== undefined && typeof config['entryScene'] !== 'string') {
+      throw new AuthoringOperationError('PROJECT_INVALID', 'game.config.json: entryScene 必须是场景字符串');
+    }
+    if (config['entryScene'] === undefined || config['entryScene'] === '') {
+      const previousFirst = Object.keys(record.workingFiles).filter(file => file.startsWith('content/scenario/') && file.toLowerCase().endsWith('.gal')).sort()[0]!;
+      config['entryScene'] = sceneIdFromScenarioPath(previousFirst);
+      workingFiles['game.config.json'] = serializeProjectConfigDocument(config, configSource ?? '');
+    }
+    const affectedPaths = [...new Set([...Object.keys(record.workingFiles), ...Object.keys(workingFiles)])]
+      .filter(file => record.workingFiles[file] !== workingFiles[file]).sort();
+    return { workingFiles, result: {
+      sceneId: input.sceneId, previousPath, path, affectedPaths,
+      diffEntry: { kind: 'scene.move', operationId: input.operationId, objectBefore: `scene:${input.sceneId}`, objectAfter: `scene:${input.sceneId}`,
         directChange: { previousPath, path, affectedPaths }, potentialImpact: [], observedImpact: [] },
     } };
   });

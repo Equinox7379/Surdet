@@ -273,6 +273,16 @@ export interface SceneRenameInput {
   expectedFingerprint: string;
 }
 
+export interface SceneMoveInput {
+  operationId: string;
+  sceneId: string;
+  /** Copy source.path and fingerprint from the same working object.inspect. */
+  expectedPath: string;
+  expectedFingerprint: string;
+  /** Relative to content/scenario; empty string moves back to the root. */
+  directory: string;
+}
+
 export interface ScenePatchInput {
   operationId: string;
   sceneId?: string;

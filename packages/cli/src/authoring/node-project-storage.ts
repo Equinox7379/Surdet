@@ -98,6 +98,16 @@ export class NodeProjectStorage implements ProjectWriteStorage {
     let current = this.rootRealPath;
 
     for (const segment of segments) {
+      if (options.createMissing) {
+        // Empty/non-source chapter folders are absent from the authoring snapshot.
+        // Do not publish a path whose spelling differs from the physical parent,
+        // or create a portable alias on case-sensitive filesystems.
+        const folded = segment.normalize('NFC').toUpperCase().toLowerCase();
+        const aliases = (await fs.readdir(current)).filter(entry => entry.normalize('NFC').toUpperCase().toLowerCase() === folded);
+        if (aliases.length > 1 || (aliases.length === 1 && aliases[0] !== segment)) {
+          throw new AuthoringOperationError('PATH_OUTSIDE_PROJECT', `目录名称与磁盘不一致，请使用实际目录名：${original}`, { requestedSegment: segment, actualSegments: aliases });
+        }
+      }
       current = path.join(current, segment);
       let stat: Awaited<ReturnType<typeof fs.lstat>>;
       try {
