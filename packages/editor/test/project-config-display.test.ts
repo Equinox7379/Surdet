@@ -97,7 +97,7 @@ function memoryFileHandle(name: string, initial: string): {
   const handle = {
     kind: 'file',
     name,
-    getFile: async () => ({ text: async () => content }),
+    getFile: async () => new File([content], name),
     createWritable: async () => ({
       write: async (data: unknown) => {
         const text = String(data);

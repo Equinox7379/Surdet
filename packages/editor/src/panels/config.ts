@@ -8,9 +8,9 @@
  *  - 名词表导入/导出；审计面板一键加变体入口（addTerminologyVariant）
  */
 import { state, h, setStatus } from '../state.js';
-import { assertProjectWriteUnlocked, runProjectWriteOperation, writeProjectText } from '../project-io.js';
+import { assertProjectWriteUnlocked, readProjectSourceText, runProjectWriteOperation, writeProjectText } from '../project-io.js';
 import { editorWorkspaceStatus } from '../editor-workspace.js';
-import { AuthoringOperationError } from '@surdet/authoring';
+import { AuthoringOperationError, parseProjectConfigDocument } from '@surdet/authoring';
 import { commitCharacterTable, type CharacterTableEditRow } from '../authoring-project-storage.js';
 import {
   VAR_TYPES, parseVariablesToRows, rowsToVariables, applyVariablesToConfig,
@@ -225,7 +225,7 @@ async function refreshConfigSources(revision: number): Promise<boolean> {
   const configFiles = { ...state.configFiles };
   try {
     if (gameConfigHandle) {
-      gameConfigText = await (await gameConfigHandle.getFile()).text();
+      gameConfigText = await readProjectSourceText(gameConfigHandle);
     }
   } catch { /* 读取失败沿用内存态 */ }
   for (const name of ['achievements', 'calendar', 'events', 'growth', 'gallery', 'terminology'] as const) {
@@ -242,7 +242,7 @@ async function refreshConfigSources(revision: number): Promise<boolean> {
 
 function parseConfigObj(): Record<string, unknown> {
   try {
-    return state.gameConfigText.trim() ? JSON.parse(state.gameConfigText) as Record<string, unknown> : {};
+    return state.gameConfigText.trim() ? parseProjectConfigDocument(state.gameConfigText) : {};
   } catch {
     return {};
   }

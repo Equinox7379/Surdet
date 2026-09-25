@@ -20,7 +20,7 @@ import {
   type TextHasher,
 } from '@surdet/authoring';
 import { state, type SceneEntry, type TimelineEntry } from './state.js';
-import { assetPathForHandle, writeFileHandle } from './project-io.js';
+import { assetPathForHandle, readProjectSourceText, workingGameConfigText, writeFileHandle } from './project-io.js';
 
 export interface EditorProjectStorage extends ProjectStorage, TextHasher {}
 
@@ -51,7 +51,7 @@ function configText(value: unknown): string {
 export function createEditorProjectStorage(source = state): EditorProjectStorage {
   const files = (): Map<string, string> => {
     const result = new Map<string, string>();
-    result.set('game.config.json', source.gameConfigText);
+    result.set('game.config.json', workingGameConfigText(source));
     for (const scene of source.scenes.values()) result.set(scenarioPath(scene), scene.text);
     for (const timeline of source.timelines) result.set(timelinePath(timeline), timeline.text);
     for (const [name, value] of Object.entries(source.configFiles)) {
@@ -165,7 +165,7 @@ class EditorWriteStorage implements ProjectWriteStorage {
   async readText(filePath: string): Promise<ProjectFile> {
     const handle = this.handleFor(filePath);
     if (handle === undefined) return this.base.readText(filePath);
-    const text = await (await handle.getFile()).text();
+    const text = await readProjectSourceText(handle);
     return { path: filePath, text, bytes: bytesOf(text), sha256: await this.base.sha256(text) };
   }
 

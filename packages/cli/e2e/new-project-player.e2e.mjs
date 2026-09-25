@@ -183,9 +183,33 @@ async function continueInEditor(game, errors) {
     await page.getByRole('button', { name: '角色', exact: true }).click();
     await page.getByRole('textbox', { name: 'narrator 的显示名称', exact: true }).waitFor();
   };
-  const configBefore = JSON.parse(await fs.readFile(path.join(game, 'game.config.json'), 'utf8'));
+  const configBefore = JSON.parse((await fs.readFile(path.join(game, 'game.config.json'), 'utf8')).replace(/^\uFEFF/, ''));
   await open();
   assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('第一章/邮局/post_office_visit')?.id), 'post_office_visit');
+  await page.locator('[data-editor-mode="editor"]').click();
+  const visitBefore = await fs.readFile(path.join(game, 'content/scenario/第一章/邮局/post_office_visit.gal'), 'utf8');
+  const handleMove = async dialog => { assert.match(dialog.message(), /移动到章节/); await dialog.accept('第二章/邮局 归来'); };
+  page.once('dialog', handleMove);
+  await page.locator('.scene-row').filter({ has: page.locator('[data-scene-id="第一章/邮局/post_office_visit"]') }).hover();
+  const moveSettled = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/workspace/finish'));
+  await page.getByRole('button', { name: '移动场景 第一章/邮局/post_office_visit.gal', exact: true }).click();
+  await moveSettled;
+  assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.has('第二章/邮局 归来/post_office_visit')), true,
+    await page.locator('#status').textContent());
+  await page.waitForFunction(() => window.surdetEditorDebug.state.scenes.has('第二章/邮局 归来/post_office_visit'));
+  assert.equal(await fs.readFile(path.join(game, 'content/scenario/第一章/邮局/post_office_visit.gal'), 'utf8'), visitBefore);
+  await assert.rejects(fs.access(path.join(game, 'content/scenario/第二章')), { code: 'ENOENT' });
+  await page.screenshot({ path: path.join(output, '04a-chapter-move-draft.png') });
+  await page.keyboard.press('Control+S');
+  await page.waitForFunction(() => window.surdetEditorDebug.state.pendingSceneCommit === null
+    && window.surdetEditorDebug.state.pendingSceneDeletes.length === 0
+    && window.surdetEditorDebug.state.scenes.get('第二章/邮局 归来/post_office_visit')?.dirty === false
+    && document.querySelector('[data-action="save-project"]')?.disabled === false);
+  assert.equal(await fs.readFile(path.join(game, 'content/scenario/第二章/邮局 归来/post_office_visit.gal'), 'utf8'), visitBefore);
+  await assert.rejects(fs.access(path.join(game, 'content/scenario/第一章/邮局/post_office_visit.gal')), { code: 'ENOENT' });
+  await page.close();
+  await open();
+  assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('第二章/邮局 归来/post_office_visit')?.text), visitBefore);
   await page.locator('[data-editor-mode="editor"]').click();
   const workingBefore = await page.evaluate(() => {
     const s = window.surdetEditorDebug.state;
@@ -216,7 +240,9 @@ async function continueInEditor(game, errors) {
     && document.querySelector('[data-save-state]')?.textContent === '已保存'
     && document.querySelector('[data-action="save-project"]')?.disabled === false
     && document.getElementById('status')?.textContent?.includes('全部成功'));
-  const configAfter = JSON.parse(await fs.readFile(path.join(game, 'game.config.json'), 'utf8'));
+  const savedConfigText = await fs.readFile(path.join(game, 'game.config.json'), 'utf8');
+  assert.ok(savedConfigText.startsWith('\uFEFF'), 'Editor stripped the source configuration BOM');
+  const configAfter = JSON.parse(savedConfigText.replace(/^\uFEFF/, ''));
   assert.deepEqual(configAfter.player, configBefore.player, 'Editor dropped player settings');
   assert.equal(configAfter.characters.narrator.name, '引路人');
   assert.match(await fs.readFile(path.join(game, 'content/scenario/hub_scene.gal'), 'utf8'), /引路人：你回到码头/);
@@ -233,6 +259,11 @@ try {
   assert.equal(await cmdNew('first-letter', { engineRoot: engine }), 0);
   const game = path.join(engine, 'games/first-letter');
   const main = await authorChapter(game);
+  // Exercise native File reads and byte fingerprints, not a text-only mock.
+  for (const file of ['game.config.json', 'content/scenario/第一章/邮局/post_office_visit.gal']) {
+    const filePath = path.join(game, file);
+    await fs.writeFile(filePath, '\uFEFF' + await fs.readFile(filePath, 'utf8'));
+  }
   execFileSync(process.execPath, [path.join(repo, 'node_modules/typescript/bin/tsc'), '-p', path.join(game, 'tsconfig.json'), '--noEmit'], { cwd: engine, stdio: 'pipe', shell: false });
   await build({ root: game, configFile: path.join(game, 'vite.config.ts'), logLevel: 'error' });
   server = await createServer({ root: game, configFile: path.join(game, 'vite.config.ts'), cacheDir: path.join(output, '.vite'), logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });

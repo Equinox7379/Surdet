@@ -66,6 +66,63 @@ function uuid(): string {
 }
 
 describe('project scene lifecycle authority', () => {
+  it.each([undefined, 'after_first_stage_before_record', 'after_first_publish', 'after_committed_record'] as const)('moves to a new chapter with the implicit entry in one recoverable batch: %s', async faultPoint => {
+    const value = await fixture(faultPoint);
+    const sourcePath = 'content/scenario/chapter/start.GAL';
+    const targetPath = 'content/scenario/第一章/雨夜/start.GAL';
+    const source = '@scene start\r\n旁白：正文不改。\r\n@end\r\n';
+    const config = '{"variables":{},"unknown":{"keep":true}}';
+    await fs.writeFile(path.join(value.project, sourcePath), source);
+    await fs.writeFile(path.join(value.project, 'game.config.json'), config);
+    const plan = await value.authority.plan({ operationId: uuid(), kind: 'rename', sourcePath, targetPath });
+    await expect(fs.stat(path.join(value.project, 'content/scenario/第一章'))).rejects.toMatchObject({ code: 'ENOENT' });
+    const request = { requestId: uuid(), plans: [{ operationId: plan.operationId, planFingerprint: plan.planFingerprint }], writes: [
+      { path: targetPath, text: source, expectedSha256: null },
+      { path: 'content/scenario/第二章/extra.gal', text: '@scene extra\n@end\n', expectedSha256: null },
+      { path: 'game.config.json', text: '{"variables":{},"unknown":{"keep":true},"entryScene":"start"}', expectedSha256: sha256(config) },
+    ] };
+    let authority = value.authority;
+    if (faultPoint) {
+      await expect(authority.commit(request)).rejects.toBeInstanceOf(SceneLifecycleInjectedTermination);
+      authority = new ProjectSceneLifecycleAuthority(value.paths, { assertLeaseHeld: () => undefined });
+      await authority.recoverPending();
+      if (faultPoint !== 'after_committed_record') {
+        expect(await fs.readFile(path.join(value.project, sourcePath), 'utf8')).toBe(source);
+        expect(await fs.readFile(path.join(value.project, 'game.config.json'), 'utf8')).toBe(config);
+        await expect(fs.stat(path.join(value.project, targetPath))).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+    }
+    const result = await authority.commit(request);
+    expect(result.status).toBe('COMMITTED');
+    expect(await authority.commit(request)).toEqual(result);
+    expect(await fs.readFile(path.join(value.project, targetPath), 'utf8')).toBe(source);
+    expect(JSON.parse(await fs.readFile(path.join(value.project, 'game.config.json'), 'utf8'))).toEqual({ variables: {}, unknown: { keep: true }, entryScene: 'start' });
+    await expect(fs.stat(path.join(value.project, sourcePath))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('keeps config and scene files intact on invalid companion config or occupied chapter target', async () => {
+    const value = await fixture();
+    const sourcePath = 'content/scenario/chapter/start.gal';
+    const targetPath = 'content/scenario/目标/start.gal';
+    const source = '@scene start\n@end\n';
+    await fs.writeFile(path.join(value.project, sourcePath), source);
+    await fs.writeFile(path.join(value.project, 'game.config.json'), '{}');
+    const plan = await value.authority.plan({ operationId: uuid(), kind: 'rename', sourcePath, targetPath });
+    const request = { requestId: uuid(), plans: [{ operationId: plan.operationId, planFingerprint: plan.planFingerprint }], writes: [
+      { path: targetPath, text: source, expectedSha256: null },
+      { path: 'game.config.json', text: '{"entryScene":"start","extra":true}', expectedSha256: sha256('{}') },
+    ] };
+    await expect(value.authority.commit(request)).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    expect(await fs.readFile(path.join(value.project, 'game.config.json'), 'utf8')).toBe('{}');
+    await fs.mkdir(path.join(value.project, 'content/scenario/目标'));
+    await fs.writeFile(path.join(value.project, targetPath), '用户内容');
+    await expect(value.authority.commit({ ...request, writes: request.writes.slice(0, 1) })).rejects.toMatchObject({ code: 'IMPORT_TARGET_EXISTS' });
+    expect(await fs.readFile(path.join(value.project, sourcePath), 'utf8')).toBe(source);
+    expect(await fs.readFile(path.join(value.project, targetPath), 'utf8')).toBe('用户内容');
+    await expect(value.authority.plan({ operationId: uuid(), kind: 'rename', sourcePath, targetPath: 'content/scenario/目标/different.gal' })).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    await expect(value.authority.commit({ requestId: uuid(), plans: [], writes: [{ path: 'content/scenario/../outside.gal', text: source, expectedSha256: null }] })).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+  });
+
   it('creates a new scene through the same no-overwrite commit boundary', async () => {
     const value = await fixture();
     const request = {

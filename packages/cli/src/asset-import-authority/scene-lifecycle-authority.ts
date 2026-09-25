@@ -1,7 +1,8 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { stableStringify } from '@surdet/authoring';
+import { isValidSceneId } from '@surdet/core';
+import { parseProjectConfigDocument, sceneDirectorySegments, stableStringify } from '@surdet/authoring';
 import { createJsonRecord, readJsonRecord, replaceJsonRecord } from '../authoring/node-json-record.js';
 import { syncFileAndParent, syncParentDirectories } from '../authoring/node-durable-file.js';
 import { assertAssetImportDataNamespace, assertAssetImportProjectRootIdentity } from './filesystem.js';
@@ -135,10 +136,22 @@ function normalizePlanRequest(input: SceneLifecyclePlanRequest): ScenePlanRecord
       throw new AssetImportAuthorityError('INVALID_REQUEST', '场景重命名目标必须使用不同路径');
     }
     if (portableFold(path.posix.dirname(sourcePath)) !== portableFold(path.posix.dirname(targetPath))) {
-      throw new AssetImportAuthorityError('INVALID_REQUEST', '场景重命名不能跨目录');
+      if (path.posix.basename(sourcePath) !== path.posix.basename(targetPath)) {
+        throw new AssetImportAuthorityError('INVALID_REQUEST', '章节移动不能同时改文件名');
+      }
+      try { sceneDirectorySegments(path.posix.dirname(targetPath).replace(/^content\/scenario\/?/, '')); }
+      catch { throw new AssetImportAuthorityError('INVALID_REQUEST', '章节目标目录无效'); }
     }
   }
   return { operationId, kind: input.kind, sourcePath, targetPath };
+}
+
+function normalizeWritePath(value: unknown, field: string): string {
+  if (value === 'game.config.json') return value;
+  const normalized = normalizeScenePath(value, field);
+  try { sceneDirectorySegments(path.posix.dirname(normalized).replace(/^content\/scenario\/?/, '')); }
+  catch { throw new AssetImportAuthorityError('INVALID_REQUEST', '章节目标目录无效', { field }); }
+  return normalized;
 }
 
 function sameNodeIdentity(
@@ -167,14 +180,25 @@ function privateEvidence(evidence: AssetRelocationFileEvidence): FileEvidence {
 async function safeParent(
   paths: AssetImportAuthorityPaths,
   relativePath: string,
-): Promise<{ parent: string; fileName: string; absolutePath: string }> {
+  options: { allowMissing?: boolean; createMissing?: boolean } = {},
+): Promise<{ parent: string; fileName: string; absolutePath: string; missing?: boolean }> {
   await assertAssetImportProjectRootIdentity(paths);
   const segments = relativePath.split('/');
   const fileName = segments.pop()!;
   let current = paths.projectRoot;
-  for (const segment of segments) {
-    const entries = await fs.readdir(current, { withFileTypes: true });
-    const matches = entries.filter((entry) => portableFold(entry.name) === portableFold(segment));
+  for (const [index, segment] of segments.entries()) {
+    let entries = await fs.readdir(current, { withFileTypes: true });
+    let matches = entries.filter((entry) => portableFold(entry.name) === portableFold(segment));
+    if (matches.length === 0 && options.createMissing) {
+      try { await fs.mkdir(path.join(current, segment)); await syncParentDirectories(current); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+      entries = await fs.readdir(current, { withFileTypes: true });
+      matches = entries.filter((entry) => portableFold(entry.name) === portableFold(segment));
+    }
+    if (matches.length === 0 && options.allowMissing) {
+      const parent = path.join(current, ...segments.slice(index));
+      return { parent, fileName, absolutePath: path.join(parent, fileName), missing: true };
+    }
     if (matches.length !== 1 || matches[0]!.name !== segment
       || !matches[0]!.isDirectory() || matches[0]!.isSymbolicLink()) {
       throw new AssetImportAuthorityError('IMPORT_TARGET_UNSAFE', `场景目录身份不安全：${relativePath}`);
@@ -234,7 +258,8 @@ async function fileEvidence(
   paths: AssetImportAuthorityPaths,
   relativePath: string,
 ): Promise<FileEvidence | null> {
-  const target = await safeParent(paths, relativePath);
+  const target = await safeParent(paths, relativePath, { allowMissing: true });
+  if (target.missing) return null;
   const entries = await fs.readdir(target.parent, { withFileTypes: true });
   const matches = entries.filter((entry) => portableFold(entry.name) === portableFold(target.fileName));
   if (matches.length === 0) return null;
@@ -523,7 +548,7 @@ export class ProjectSceneLifecycleAuthority {
       }
       const writePaths = new Set<string>();
       for (const [index, write] of record.writes.entries()) {
-        const normalizedPath = normalizeScenePath(write.path, 'writes.path');
+        const normalizedPath = normalizeWritePath(write.path, 'writes.path');
         const folded = portableFold(normalizedPath);
         const stagePrefix = `.surdet-scene-${requestId}-${String(index).padStart(4, '0')}-`;
         const stageUuid = typeof write.stageFileName === 'string'
@@ -641,7 +666,8 @@ export class ProjectSceneLifecycleAuthority {
 
       for (let index = record.writes.length - 1; index >= 0; index -= 1) {
         const write = record.writes[index]!;
-        const target = await safeParent(this.paths, write.path);
+        const target = await safeParent(this.paths, write.path, { allowMissing: true });
+        if (target.missing && write.baseline === null) continue;
         const stage = write.stageFileName === null ? null : this.stagePath(target.parent, write.stageFileName);
         const displaced = this.displacedPath(record.requestId, index, target.parent);
         const stageEvidence = write.stageIdentity === null ? null : privateEvidence(write.stageIdentity);
@@ -836,7 +862,7 @@ export class ProjectSceneLifecycleAuthority {
         : (() => { throw new AssetImportAuthorityError('INVALID_REQUEST', '场景计划指纹无效'); })(),
     }));
     const writes = input.writes.map((entry, index) => ({
-      path: normalizeScenePath(entry?.path, `writes[${index}].path`),
+      path: normalizeWritePath(entry?.path, `writes[${index}].path`),
       text: typeof entry?.text === 'string' ? entry.text
         : (() => { throw new AssetImportAuthorityError('INVALID_REQUEST', '场景正文格式无效'); })(),
       expectedSha256: entry?.expectedSha256 === null ? null
@@ -918,6 +944,18 @@ export class ProjectSceneLifecycleAuthority {
         } else if (baseline === null || baseline.sha256 !== write.expectedSha256) {
           throw new AssetImportAuthorityError('IMPORT_PLAN_STALE', `场景文件已在编辑器外变化：${write.path}`);
         }
+        if (write.path === 'game.config.json') {
+          try {
+            const before = baseline === null ? {} : parseProjectConfigDocument(await fs.readFile((await safeParent(this.paths, write.path)).absolutePath, 'utf8'));
+            const after = parseProjectConfigDocument(write.text);
+            if ((before['entryScene'] !== undefined && before['entryScene'] !== '')
+              || typeof after['entryScene'] !== 'string' || !isValidSceneId(after['entryScene'])
+              || !writes.some(entry => entry.path.startsWith('content/scenario/'))
+              || stableStringify({ ...before, entryScene: after['entryScene'] }) !== stableStringify(after)) throw new Error('not an entry pin');
+          } catch {
+            throw new AssetImportAuthorityError('INVALID_REQUEST', '场景保存只允许同时固定原缺省入口，不能修改其他配置');
+          }
+        }
         storedWrites.push({
           ...write,
           targetSha256: crypto.createHash('sha256').update(write.text, 'utf8').digest('hex'),
@@ -963,7 +1001,7 @@ export class ProjectSceneLifecycleAuthority {
       try {
         for (let index = 0; index < commitRecord.writes.length; index += 1) {
           const write = commitRecord.writes[index]!;
-          const target = await safeParent(this.paths, write.path);
+          const target = await safeParent(this.paths, write.path, { createMissing: true });
           const displaced = this.displacedPath(requestId, index, target.parent);
           if (await pathExists(displaced)) {
             throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '场景保存保留路径已被占用');

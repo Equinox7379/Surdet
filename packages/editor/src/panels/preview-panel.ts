@@ -6,7 +6,7 @@
  */
 import { state, h, setStatus } from '../state.js';
 import { parseScript } from '../model.js';
-import { isPreviewSourcePath, normalizePreviewTraceMessage, previewSourceText,
+import { isPreviewSourcePath, normalizePreviewTraceMessage, parseProjectConfigDocument, previewSourceText,
   type RuntimeTraceEvent, type PreviewTraceMessage, type PreviewTraceEventMessage,
   type PreviewSourceFacts, type PreviewPublishInput, type PreviewContent, type PreviewContentOption, type PreviewContentTarget } from '@surdet/authoring';
 export { normalizePreviewTraceMessage, type PreviewTraceMessage, type PreviewTraceStartMessage,
@@ -167,7 +167,7 @@ export function collectPreviewScenes(scenes: Map<string, { id: string; text: str
 export function parsePreviewVariables(configText: string): Record<string, unknown>[] {
   let obj: Record<string, unknown>;
   try {
-    obj = configText.trim() ? JSON.parse(configText) as Record<string, unknown> : {};
+    obj = configText.trim() ? parseProjectConfigDocument(configText) : {};
   } catch {
     return [];
   }
@@ -224,7 +224,7 @@ interface SpeakerProfile {
 
 function parsePreviewSpeakerProfiles(configText: string): SpeakerProfile[] {
   try {
-    const cfg = JSON.parse(configText) as Record<string, unknown>;
+    const cfg = parseProjectConfigDocument(configText);
     const chars = cfg.characters;
     if (!chars || typeof chars !== 'object' || Array.isArray(chars)) return [];
     return Object.entries(chars as Record<string, unknown>).flatMap(([id, raw]) => {
@@ -250,7 +250,7 @@ const previewFontsCache = new WeakMap<FileSystemDirectoryHandle, {
 async function readProjectFonts(): Promise<Partial<Record<FontRole, PreviewFont>>> {
   let cfg: Record<string, unknown>;
   try {
-    cfg = state.gameConfigText.trim() ? JSON.parse(state.gameConfigText) as Record<string, unknown> : {};
+    cfg = state.gameConfigText.trim() ? parseProjectConfigDocument(state.gameConfigText) : {};
   } catch {
     return {};
   }

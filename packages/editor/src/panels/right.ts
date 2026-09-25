@@ -10,7 +10,7 @@ import {
   selectAuthoringObject,
   type CausalTraceEvent,
 } from '../causal-selection.js';
-import type { HumanReviewProjection } from '@surdet/authoring';
+import { parseProjectConfigDocument, type HumanReviewProjection } from '@surdet/authoring';
 import { labelForObjectKind } from '../review-model.js';
 
 let onSceneJumpHook: (sceneKey: string) => void = () => {};
@@ -110,7 +110,7 @@ export function renderRightExtras(): void {
   const chips = h('div');
   try {
     if (state.gameConfigText) {
-      const cfg = JSON.parse(state.gameConfigText) as { variables?: Record<string, { type?: string }> };
+      const cfg = parseProjectConfigDocument(state.gameConfigText) as { variables?: Record<string, { type?: string }> };
       const vars = Object.entries(cfg.variables ?? {});
       if (vars.length === 0) chips.appendChild(h('span', 'empty', '无变量声明'));
       for (const [name, decl] of vars) {

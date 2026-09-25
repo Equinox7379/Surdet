@@ -648,7 +648,7 @@ describe('Editor 素材导入 authority client', () => {
     expect(header(planRequest.init, 'x-surdet-asset-import-authority')).toBe(AUTHORITY_TOKEN);
   });
 
-  it('sends scenePlan to the exact endpoint with binding auth and no operation token', async () => {
+  it('sends scenePlan with binding auth and carries the current Editor lease when present', async () => {
     const { fetcher, root } = makeBindingFetcher();
     const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);
     await bindClient(client, root);
@@ -680,6 +680,12 @@ describe('Editor 素材导入 authority client', () => {
     expect(header(request.init, 'x-surdet-asset-import-authority')).toBe(AUTHORITY_TOKEN);
     expect(header(request.init, 'x-surdet-project-binding')).toBe(FIRST_BINDING_TOKEN);
     expect(header(request.init, 'x-surdet-import-operation')).toBeNull();
+    const workspaceWrite = { workspaceSessionId: OPERATION_ID, workspaceGeneration: 1, availability: 'busy' as const,
+      dirtyScopes: [], busyReasons: ['saving' as const], blockedReasons: [], writeLeaseId: ITEM_ID };
+    fetcher.mockResolvedValueOnce(success(expected));
+    await client.scenePlan({ operationId: SCENE_OPERATION_ID, kind: 'rename', sourcePath: SCENE_SOURCE_PATH, targetPath: SCENE_TARGET_PATH }, workspaceWrite);
+    expect(jsonBody(requestRecords(fetcher).at(-1)!.init)).toEqual({ operationId: SCENE_OPERATION_ID, kind: 'rename', sourcePath: SCENE_SOURCE_PATH, targetPath: SCENE_TARGET_PATH,
+      workspaceWrite: { ...workspaceWrite, browserSessionId: expect.any(String) } });
   });
 
   it('sends sceneCommit with the exact batch body and rejects malformed scene responses', async () => {
