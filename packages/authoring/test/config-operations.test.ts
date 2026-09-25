@@ -5,6 +5,7 @@ import {
   commitChange,
   recordValidation,
   buildObjectIndex,
+  buildAssetCatalog,
   loadProjectSnapshot,
   validateSnapshot,
   type ChangeSession,
@@ -64,6 +65,37 @@ async function open(): Promise<{ change: ChangeSession; repo: InMemoryChangeRepo
 }
 
 describe('character.ensure', () => {
+  it('replaces only explicit portraits in direct mode, preserves unknown data and rejects stale/missing inputs atomically', async () => {
+    const { change } = await open();
+    change.record.composition = { ...change.record.composition!, mode: 'direct' };
+    const config = JSON.parse(baseConfig);
+    config.characters.lynn.custom = { keep: true };
+    change.record.workingFiles['game.config.json'] = JSON.stringify(config);
+    const image = 'content/assets/portrait/art_coat_smile.svg';
+    const assets = buildAssetCatalog([image]);
+    const input = { operationId: 'portraits', id: 'lynn', name: '凛', portraits: { 制服: { 微笑: image } }, expectedFingerprint: await charactersFingerprint(config, hasher) };
+    const result = await applyCharacterEnsure(change, input, hasher, undefined, assets);
+    expect(JSON.parse(change.record.workingFiles['game.config.json']!).characters.lynn).toEqual({ name: '凛', avatar: 'lynn', custom: { keep: true }, portraits: input.portraits });
+    const before = structuredClone(change.record);
+    await expect(applyCharacterEnsure(change, { ...input, operationId: 'stale' }, hasher, undefined, assets)).rejects.toMatchObject({ code: 'OBJECT_REF_STALE' });
+    await expect(applyCharacterEnsure(change, { ...input, operationId: 'missing', expectedFingerprint: result.fingerprint, portraits: { a: { b: 'content/assets/portrait/no_a_b.png' } } }, hasher, undefined, assets)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(change.record).toEqual(before);
+    await applyCharacterEnsure(change, { ...input, operationId: 'reset', expectedFingerprint: result.fingerprint, portraits: null }, hasher);
+    expect(JSON.parse(change.record.workingFiles['game.config.json']!).characters.lynn).not.toHaveProperty('portraits');
+  });
+
+  it('rejects candidate portrait writes/removal before records change', async () => {
+    const { change } = await open();
+    change.record.composition = { ...change.record.composition!, mode: 'candidate' };
+    const config = JSON.parse(baseConfig);
+    config.characters.lynn.portraits = { normal: { normal: 'content/assets/portrait/lynn_uniform_normal.svg' } };
+    change.record.workingFiles['game.config.json'] = JSON.stringify(config);
+    const input = { operationId: 'forbidden', id: 'lynn', name: '凛', expectedFingerprint: await charactersFingerprint(config, hasher) };
+    const before = structuredClone(change.record);
+    await expect(applyCharacterEnsure(change, { ...input, portraits: null }, hasher)).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
+    await expect(applyCharacterRemove(change, input, hasher)).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
+    expect(change.record).toEqual(before);
+  });
   it('rejects a new ID that would shadow an existing display-name speaker', async () => {
     const { change } = await open();
     const config = JSON.parse(change.record.workingFiles['game.config.json']!);

@@ -29,6 +29,7 @@ async function seal(change: ChangeSession) {
       baseReplayStates: [
         { objectRef: 'config:characters', expectedFingerprint: sha('{}') },
         { objectRef: 'config:fonts', expectedFingerprint: sha('{}') },
+        { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
         { objectRef: 'scene:A', expectedFingerprint: sha('@scene A\n旁白：开场。\n@end\n') },
       ],
       workingObjects: [], baseAssetRefs: change.record.composition!.baseAssetRefs, workingAssetRefs: change.record.composition!.baseAssetRefs,
@@ -332,14 +333,18 @@ describe('candidate operation-time facts', () => {
 
     expect(facts(change, 'timeline-duration').replayStatePreconditions).toEqual([
       { objectRef: 'timeline:authoring_timeline', expectedFingerprint: created.fingerprint },
+      { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
     ]);
     expect(facts(change, 'timeline-duration').replayStateRequirements).toEqual([
+      { objectRef: 'config:portraits', source: 'base', expectedFingerprint: sha('[]') },
       { objectRef: 'timeline:authoring_timeline', source: 'candidate', candidateOperationSequence: 0, expectedFingerprint: created.fingerprint },
     ]);
     expect(facts(change, 'timeline-target').replayStatePreconditions).toEqual([
       { objectRef: 'timeline:authoring_timeline', expectedFingerprint: durationPatch.fingerprint },
+      { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
     ]);
     expect(facts(change, 'timeline-target').replayStateRequirements).toEqual([
+      { objectRef: 'config:portraits', source: 'base', expectedFingerprint: sha('[]') },
       { objectRef: 'timeline:authoring_timeline', source: 'candidate', candidateOperationSequence: 1, expectedFingerprint: durationPatch.fingerprint },
     ]);
     expect(JSON.parse(change.record.workingFiles['content/timelines/authoring_timeline.json']!)).toMatchObject({

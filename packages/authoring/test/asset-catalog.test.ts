@@ -8,6 +8,23 @@ import {
 import { resolvedCompositionAssetRefs } from '../src/composition-object-facts.js';
 
 describe('shared asset catalog', () => {
+  it('projects configured slots, override conflicts, physical references and missing bindings consistently', () => {
+    const old = 'content/assets/portrait/rin_uniform_normal.svg';
+    const replacement = 'content/assets/portrait/art_coat_smile.svg';
+    const config = { characters: { rin: { name: '凛', portraits: { uniform: { normal: replacement, absent: 'content/assets/portrait/missing_a_b.png' } } } } };
+    const snapshot = { rootIdentity: 'fixture', revision: 'r', files: [], configFile: null, config, scenes: [], timelines: [], variables: {} };
+    const catalog = buildAssetCatalog([old, replacement], snapshot);
+    expect(catalog.portraits.find(p => p.role === 'rin' && p.expression === 'normal')).toMatchObject({
+      sourcePath: replacement, configured: true, overriddenSourcePaths: [old], resolved: true,
+      usage: { scene: { args: ['"rin:uniform"', '"normal"'] } },
+    });
+    expect(catalog.portraits.find(p => p.expression === 'absent')).toMatchObject({ resolved: false });
+    expect(catalog.intelligence.items.find(p => p.sourcePath === replacement)?.references[0]).toMatchObject({ sourceKind: 'character', sourcePath: 'game.config.json' });
+    expect(catalog.intelligence.items.find(p => p.sourcePath === old)?.issues).toContain('ASSET_UNUSED');
+    expect(catalog.intelligence.summary.fileCount).toBe(2);
+    expect(resolvedCompositionAssetRefs([old, replacement], snapshot)).toContain('asset:portrait:rin:uniform:normal');
+    expect(resolvedCompositionAssetRefs([old], snapshot)).not.toContain('asset:portrait:rin:uniform:normal');
+  });
   it('provides channel-specific media examples and resolved identities without inventing unsupported timeline actions', () => {
     const paths = ['bgm', 'ambience', 'se', 'voice'].map(channel => `content/assets/${channel}/同名 声音.WAV`);
     paths.push('content/assets/video/片头 WEBM.webm', 'content/assets/MUSIC/另曲.mp3');

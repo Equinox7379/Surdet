@@ -1,4 +1,4 @@
-import { splitOutsideQuotes } from '@surdet/core';
+import { projectPortraitOverrides, splitOutsideQuotes } from '@surdet/core';
 import type {
   ProjectAssetFileFact,
   ProjectAssetKind,
@@ -667,6 +667,14 @@ function configRewrite(
   const replacements: JsonReplacement[] = [];
   const knownPaths = new Set<string>();
   const characters = isRecord(root.characters) ? root.characters : {};
+  for (const portrait of projectPortraitOverrides(root)) {
+    const path: JsonPath = ['characters', portrait.role, 'portraits', portrait.outfit, portrait.expression];
+    knownPaths.add(pathKey(path));
+    if (source.kind === 'portrait' && portrait.sourcePath === source.path && target.path !== source.path) {
+      replacements.push({ path, before: source.path, after: target.path,
+        reference: reference('character', file.path, `角色 ${portrait.role}`, 'portraits', `character:${portrait.role}:${portrait.outfit}:${portrait.expression}`) });
+    }
+  }
   const player = isRecord(root.player) ? root.player : {};
   if (typeof player.titleBackground === 'string') {
     const path: JsonPath = ['player', 'titleBackground'];
@@ -828,6 +836,16 @@ export async function planProjectAssetRelocation(
     }
     if (source.kind === 'portrait' && source.invalidName) {
       addBlocker(blockers, 'ASSET_RELOCATION_PORTRAIT_NAME_INVALID', '源立绘名称不符合“角色_服装_表情”结构，不能推断其引用。', source.path);
+    }
+    if (source.kind === 'portrait' && target !== null && (source.key !== target.key || source.variant !== target.variant)) {
+      const mappings = projectPortraitOverrides(input.snapshot.config);
+      const sourceRole = source.key.split(':')[0];
+      const targetRole = target.key.split(':')[0];
+      if (mappings.some(p => source.key !== target.key
+        ? p.role === sourceRole || p.role === targetRole
+        : `${p.role}:${p.outfit}` === source.key && (p.expression === source.variant || p.expression === target.variant))) {
+        addBlocker(blockers, 'ASSET_RELOCATION_OPAQUE_REFERENCE', '此改名涉及显式角色立绘槽；请先调整角色资料，避免重写仍由配置绑定的服装或表情。目录移动和未映射的素材键不受影响。', source.path);
+      }
     }
     if (descriptorDuplicate(input.assetFiles, source, source.path) && target !== null
       && (source.key !== target.key || source.variant !== target.variant)) {
@@ -1424,7 +1442,7 @@ export async function planProjectAssetRelocationBatch(
     let text = file.text;
     const known = new Set<string>();
     for (const move of moves) {
-      const target = descriptorSemanticEqual(move.source, move.target) ? move.source : move.placeholder;
+      const target = rewriter === configRewrite || !descriptorSemanticEqual(move.source, move.target) ? move.placeholder : move.source;
       const rewritten = rewriter === timelineRewrite
         ? timelineRewrite(stableTextFile(file, text), move.source, target, blockers, {
           allowBareRoleChange: move.roleGroupComplete,
@@ -1435,7 +1453,7 @@ export async function planProjectAssetRelocationBatch(
       for (const path of rewritten.knownPaths) known.add(path);
       text = rewritten.text;
     }
-    for (const move of semanticMoves) {
+    for (const move of rewriter === configRewrite ? moves : semanticMoves) {
       const rewritten = rewriter === timelineRewrite
         ? timelineRewrite(stableTextFile(file, text), move.placeholder, move.target, blockers, {
           allowBareRoleChange: move.roleGroupComplete,

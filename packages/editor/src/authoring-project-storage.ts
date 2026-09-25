@@ -261,7 +261,7 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
   // 共享校验门（与 CLI project.validate 同构）：对象索引 + 资产目录 + 快照校验，error 必须 = 0。
   const workingSnapshot = await loadProjectSnapshot(workingFilesStorage(session.record, base), base);
   const index = buildObjectIndex(workingSnapshot);
-  const assetCatalog = buildAssetCatalog(assetPathsFromFiles(await base.listFiles()));
+  const assetCatalog = buildAssetCatalog(assetPathsFromFiles(await base.listFiles()), workingSnapshot);
   const validation = validateSnapshot(workingSnapshot, index, { assetCatalog, timelineReferenceScope: 'complete' });
   const errors = validation.issues.filter((issue) => issue.severity === 'error');
   await recordValidation(session, {

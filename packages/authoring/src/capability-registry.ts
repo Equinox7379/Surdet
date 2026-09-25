@@ -368,6 +368,8 @@ const assetEntrySchema = strictObject({
   role: stringSchema,
   outfit: stringSchema,
   expression: stringSchema,
+  configured: { const: true },
+  overriddenSourcePaths: arrayOf(stringSchema),
   sourcePath: stringSchema,
   format: stringSchema,
   resolved: booleanSchema,
@@ -1091,7 +1093,7 @@ const definitions = {
     example: { input: { operationId: 'op_variable_initial', name: 'agent.route', expectedFingerprint: '...', initial: 'alternate' }, expectedResultShape: { name: 'agent.route', objectRef: 'variable:agent.route', fingerprint: '...', diffEntry: {} } },
   },
   characterEnsure: {
-    inputSchema: strictObject({ operationId: stringSchema, id: stringSchema, name: stringSchema, avatar: { oneOf: [stringSchema, nullSchema] }, expectedFingerprint: stringSchema }, ['operationId', 'id', 'name', 'expectedFingerprint']),
+    inputSchema: strictObject({ operationId: stringSchema, id: stringSchema, name: stringSchema, avatar: { oneOf: [stringSchema, nullSchema] }, portraits: { oneOf: [{ type: 'object', additionalProperties: { type: 'object', additionalProperties: stringSchema } }, nullSchema], description: 'Direct only. Replace outfit -> expression -> exact project.assets portrait sourcePath. Omitted preserves, null removes mappings. Explicit slots override filename discovery; other slots retain discovery.' }, expectedFingerprint: stringSchema }, ['operationId', 'id', 'name', 'expectedFingerprint']),
     outputSchema: strictObject({ id: stringSchema, created: booleanSchema, objectRef: stringSchema, fingerprint: stringSchema, diffEntry: diffEntrySchema, speakerMigrations: arrayOf(strictObject({ path: stringSchema, line: integerSchema, from: stringSchema, to: stringSchema }, ['path', 'line', 'from', 'to'])) }, ['id', 'objectRef', 'fingerprint', 'diffEntry']),
     example: { input: { operationId: 'op_character', id: 'agent_guide', name: '引路人', expectedFingerprint: '...' }, expectedResultShape: { id: 'agent_guide', objectRef: 'character:agent_guide', fingerprint: '...', diffEntry: {} } },
   },

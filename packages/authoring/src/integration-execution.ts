@@ -87,10 +87,11 @@ export async function replayCompositionOperation(
   };
   // Older sealed capsules did not claim font state. Check an explicitly sealed
   // dependency before new replay work; successful operation receipts stay idempotent.
-  const fonts = operation.replayStateRequirements?.find(item => item.objectRef === 'config:fonts');
-  if (fonts && change.record.operations[operation.integrationOperationId] === undefined
-    && await fingerprintWorkingObjectValue(change.record.workingFiles, 'config:fonts', hasher) !== fonts.expectedFingerprint) {
-    throw new AuthoringOperationError('COMPOSITION_REPLAY_FAILED', '封存场景依赖的字体配置已变化：config:fonts');
+  for (const dependency of operation.replayStateRequirements?.filter(item => item.objectRef === 'config:fonts' || item.objectRef === 'config:portraits') ?? []) {
+    if (change.record.operations[operation.integrationOperationId] === undefined
+      && await fingerprintWorkingObjectValue(change.record.workingFiles, dependency.objectRef, hasher) !== dependency.expectedFingerprint) {
+      throw new AuthoringOperationError('COMPOSITION_REPLAY_FAILED', `封存内容依赖的显示配置已变化：${dependency.objectRef}`);
+    }
   }
   switch (operation.capabilityId) {
     case 'scene.create':

@@ -10,7 +10,7 @@ import { GALLERY_PATH, readGalleryDocument } from './gallery-operations.js';
 import { timelineIdFromPath } from './timeline-identity.js';
 import { parseTimelineDefinition, timelineFingerprint } from './timeline-operations.js';
 import { mediaAssetCommand } from './asset-intelligence.js';
-import { resolveProjectFontPaths } from '@surdet/core';
+import { projectPortraitOverrides, resolveProjectFontPaths } from '@surdet/core';
 
 export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, hasher: TextHasher): Promise<ReplayStatePrecondition[]> {
   const { cgs } = readGalleryDocument(snapshot.files.find((file) => file.path === GALLERY_PATH)?.text);
@@ -27,6 +27,7 @@ export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, has
   return [
     { objectRef: 'config:characters', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.config['characters'] ?? {})) },
     { objectRef: 'config:fonts', expectedFingerprint: await hasher.sha256(stableStringify(resolveProjectFontPaths(snapshot.config))) },
+    { objectRef: 'config:portraits', expectedFingerprint: await hasher.sha256(stableStringify(projectPortraitOverrides(snapshot.config))) },
     ...snapshot.scenes.map((scene) => ({ objectRef: `scene:${scene.id}`, expectedFingerprint: scene.file.sha256 })),
     ...timelineObjects,
     ...await Promise.all(Object.entries(snapshot.variables).sort(([left], [right]) => compareCanonicalText(left, right)).map(async ([name, declaration]) => ({
@@ -37,8 +38,8 @@ export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, has
   ];
 }
 
-export function resolvedCompositionAssetRefs(assetPaths: readonly string[]): string[] {
-  const catalog = buildAssetCatalog(assetPaths);
+export function resolvedCompositionAssetRefs(assetPaths: readonly string[], snapshot?: ProjectSnapshot): string[] {
+  const catalog = buildAssetCatalog(assetPaths, snapshot);
   const usable = catalog.intelligence.items.filter(item => item.physical && item.issues.every(issue => issue === 'ASSET_UNUSED'));
   const usablePaths = new Set(usable.map(item => item.sourcePath));
   return [...new Set([
@@ -57,8 +58,8 @@ export function resolvedCompositionAssetRefs(assetPaths: readonly string[]): str
 export function projectCompositionObjectFacts(
   baseSnapshot: ProjectSnapshot, workingSnapshot: ProjectSnapshot, assetPaths: readonly string[], frozenBaseAssetRefs?: readonly string[],
 ): ManifestObjectFacts {
-  const workingAssetRefs = resolvedCompositionAssetRefs(assetPaths);
-  const baseAssetRefs = frozenBaseAssetRefs === undefined ? workingAssetRefs : [...frozenBaseAssetRefs];
+  const workingAssetRefs = resolvedCompositionAssetRefs(assetPaths, workingSnapshot);
+  const baseAssetRefs = frozenBaseAssetRefs === undefined ? resolvedCompositionAssetRefs(assetPaths, baseSnapshot) : [...frozenBaseAssetRefs];
   const objectsWithAssets = (snapshot: ProjectSnapshot, assets: readonly string[]): ManifestObjectFact[] => [
     ...buildObjectIndex(snapshot).objects.filter((object) => !object.objectRef.startsWith('asset:')).map((object) => ({
       objectRef: object.objectRef, references: [...object.references],

@@ -18,7 +18,7 @@ import { editorPreviewPublisher, editorWorkspaceStatus } from '../editor-workspa
 import { previewTextHash, projectPreviewContent } from '../preview-content.js';
 import { previewCheckpointKey, readPreviewCheckpoint, writePreviewCheckpoint } from '../preview-checkpoints.js';
 import type { FontRole } from '@surdet/renderer';
-import { resolveProjectFontPaths } from '@surdet/core';
+import { resolveProjectPortraits, resolveProjectFontPaths } from '@surdet/core';
 import { normalizePreviewDiagnostic, type PreviewDiagnostic } from '../preview-diagnostics.js';
 import {
   dispatchPreviewTraceSelection,
@@ -216,7 +216,7 @@ interface PreviewImage {
 interface PreviewAssets {
   videos: { key: string; file: PreviewImage }[];
   backgrounds: { key: string; image: PreviewImage }[];
-  portraits: { charId: string; costume: string; expression: string; image: PreviewImage }[];
+  portraits: { charId: string; costume: string; expression: string; image: PreviewImage; configured?: true }[];
   avatars: { key: string; image: PreviewImage }[];
   audio: { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }[];
 }
@@ -328,12 +328,17 @@ const AUDIO_MIME: Record<string, string> = {
 };
 
 /** 读取项目目录中的背景和立绘字节。文件句柄不能跨 iframe 传递，只下发可结构化克隆的二进制数据。 */
-async function readProjectImages(): Promise<PreviewAssets> {
+async function readProjectImages(configText: string): Promise<PreviewAssets> {
   const backgrounds = new Map<string, { key: string; image: PreviewImage }>();
-  const portraits = new Map<string, { charId: string; costume: string; expression: string; image: PreviewImage }>();
+  const portraits = new Map<string, { charId: string; costume: string; expression: string; image: PreviewImage; configured?: true }>();
   const avatars = new Map<string, { key: string; image: PreviewImage }>();
   const videos = new Map<string, { key: string; file: PreviewImage }>();
   const audio = new Map<string, { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }>();
+  const config = JSON.parse(configText.replace(/^\uFEFF/, '') || '{}');
+  const bindings = resolveProjectPortraits(config, state.dirAssets.flatMap(asset => {
+    const path = asset.sourcePath ?? (asset.handle ? assetPathForHandle(asset.handle) : undefined);
+    return path === undefined ? [] : [path];
+  }));
   for (const asset of state.dirAssets) {
     if (!asset.handle) continue;
     try {
@@ -363,11 +368,17 @@ async function readProjectImages(): Promise<PreviewAssets> {
         avatars.set(asset.key, { key: asset.key, image });
         continue;
       }
-      const [charId, costume = 'normal'] = asset.key.split(':');
-      const expression = asset.expr ?? 'normal';
-      if (charId) portraits.set(`${asset.key}:${expression}`, { charId, costume, expression, image });
+      for (const binding of bindings.filter(value => value.sourcePath === sourcePath)) {
+        portraits.set(`${binding.role}:${binding.outfit}:${binding.expression}`, { charId: binding.role, costume: binding.outfit, expression: binding.expression, image,
+          ...(binding.configured ? { configured: true } : {}) });
+      }
     } catch {
       // 单个损坏/失权素材不应阻断整个剧情预览；舞台会为缺失项保留占位回退。
+    }
+  }
+  for (const binding of bindings) {
+    if (binding.configured && !portraits.has(`${binding.role}:${binding.outfit}:${binding.expression}`)) {
+      throw new Error(`角色立绘文件不存在或不可读取：${binding.sourcePath}`);
     }
   }
   return { backgrounds: [...backgrounds.values()], portraits: [...portraits.values()], avatars: [...avatars.values()], audio: [...audio.values()], videos: [...videos.values()] };
@@ -757,7 +768,11 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     const requestSource = requestKey();
     // 使用本次选择的内容版本，不从编辑器原配置借用字体。
     let cachedFonts: Partial<Record<FontRole, PreviewFont>>;
-    try { cachedFonts = await readProjectFonts(projected?.configText ?? state.gameConfigText); }
+    let assets: PreviewAssets;
+    try {
+      cachedFonts = await readProjectFonts(projected?.configText ?? state.gameConfigText);
+      assets = await readProjectImages(projected?.configText ?? state.gameConfigText);
+    }
     catch (error) {
       if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !container.isConnected) return;
       sourceState.dataset.previewSourceState = 'stale';
@@ -765,7 +780,6 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       return;
     }
     const fonts = clonePreviewFontsForTransfer(cachedFonts);
-    const assets = await readProjectImages();
     const timelineContent = projected === undefined ? undefined : parsePreviewTimelines(projected.timelines);
     if (timelineContent?.issues.length) { sourceState.textContent = `所选版本的演出无法加载：${timelineContent.issues.join('；')}`; sourceState.dataset.previewSourceState = 'stale'; return; }
     const timelines = timelineContent?.definitions ?? await readProjectTimelines();
@@ -851,7 +865,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     if (!target) return;
     expectedTraceId = traceId;
     activeCheckpointKey = key;
-    target.postMessage(message, '*', transfer);
+    target.postMessage(message, '*', [...new Set(transfer)]);
     // A rejected or superseded read has not begun a new run. Only a published
     // payload replaces the previous observations and their source selection.
     currentTraceId = null;

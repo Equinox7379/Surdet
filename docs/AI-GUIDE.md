@@ -205,6 +205,10 @@ Editor 会阻止改名或删除仍被 `player.endScenes` 引用的场景，并�
 
 一个简单顺序是：**背景 → 正常表情登场 → 一句台词 → 微笑表情 → 一句台词 → 隐藏角色**。使用读取返回的两个 usage.scene 对象，并将台词写为 `{ "kind": "text", "speaker": "实际角色 ID 或显示名", "value": "正文" }`。隐藏用 `{ "kind": "instruction", "name": "hide", "args": ["实际 role"] }`，不是 timelineTarget。普通表情切换直接用场景指令即可，不必为了两句台词建立时间轴。
 
+角色资料沿用 `character.ensure`：`name` 是默认显示名，`avatar` 是 avatars 中的实际键。需要让某个服装／表情使用另一张立绘时，direct 草稿可传 `portraits: { "coat": { "smile": "content/assets/portrait/实际角色_实际服装_实际表情.png" } }`；路径必须复制当前目录返回的完整 sourcePath。这会替换该角色的整份显式映射，省略 portraits 保留原值，传 null 清除映射并恢复文件名发现。未配置的槽仍按“角色_服装_表情”发现；配置了却缺文件或解码失败会明确报错，不静默改用旧图。`project.inspect` 的 characters[].declaration 与 charactersFingerprint 提供当前值和修改指纹；修改后重新读取 `project.assets(view:working)`，configured 和 overriddenSourcePaths 会标出显式绑定及其覆盖的原文件，usage 使用最终逻辑键。未知角色字段保留。
+
+Player、Editor 的工作稿试玩读取对应版本的角色资料。候选可以使用基线映射并核对 config:portraits 状态，但禁止修改 portraits 或删除带映射的角色；原 name/avatar 候选操作仍可用。映射与物理素材分别保留各自依赖，先导入再建候选。原安全素材移动会同步更新映射的完整路径；涉及显式槽本身的服装／表情语义改名会要求先调整资料，不以全文替换猜测。
+
 需要背景/人物/镜头同时变化时，再创建时间轴：从 usage.timeline 复制背景和立绘轨道，按需要改位置与时长，也可增加镜头轨道。下例只有镜头，不依赖某个示例素材：
 
 ```json
