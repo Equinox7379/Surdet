@@ -465,13 +465,22 @@ function parseScenePlan(value: unknown): SceneLifecyclePlanRequest {
 }
 
 function parseSceneCommit(value: unknown): SceneLifecycleCommitRequest {
-  const object = exactObject(value, ['plans', 'requestId', 'writes']);
+  const hasConfigRenames = typeof value === 'object' && value !== null && 'configRenames' in value;
+  const object = exactObject(value, ['plans', 'requestId', 'writes', ...(hasConfigRenames ? ['configRenames'] : [])]);
   if (!Array.isArray(object.plans) || object.plans.length > 100
     || !Array.isArray(object.writes) || object.writes.length > 512) {
     throw new AssetImportAuthorityError('INVALID_REQUEST', '场景保存批次格式无效');
   }
   return {
     requestId: requireUuid(object.requestId, 'requestId'),
+    ...(object.configRenames === undefined ? {} : { configRenames: (() => {
+      if (!Array.isArray(object.configRenames) || object.configRenames.length > 100) throw new AssetImportAuthorityError('INVALID_REQUEST', '配置改名映射格式无效');
+      return object.configRenames.map(value => {
+        const rename = exactObject(value, ['from', 'to']);
+        if (typeof rename.from !== 'string' || typeof rename.to !== 'string') throw new AssetImportAuthorityError('INVALID_REQUEST', '配置改名映射格式无效');
+        return { from: rename.from, to: rename.to };
+      });
+    })() }),
     plans: object.plans.map((value, index) => {
       const plan = exactObject(value, ['operationId', 'planFingerprint']);
       return {

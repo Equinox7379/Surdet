@@ -942,6 +942,17 @@ describe('project asset import authority HTTP boundary', () => {
       deletedPaths: [],
     } });
     expect(fixture.target.calls).toContainEqual(['scene-commit', commitBody]);
+    const linkedBody = { ...commitBody, configRenames: [{ from: 'start', to: 'intro' }] };
+    const linked = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/commit`, {
+      method: 'POST', headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken }), body: JSON.stringify(linkedBody),
+    });
+    expect(linked.response.status).toBe(200);
+    expect(fixture.target.calls).toContainEqual(['scene-commit', linkedBody]);
+    const malformed = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/commit`, {
+      method: 'POST', headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken }),
+      body: JSON.stringify({ ...linkedBody, configRenames: [{ from: 'start', to: 'intro', other: true }] }),
+    });
+    expect(malformed.response.status).toBe(400);
 
     const createOnlyBody = {
       requestId: relocationReceiptId,

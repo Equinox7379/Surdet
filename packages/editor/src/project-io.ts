@@ -4,7 +4,7 @@
  * UI 联动（renderAll/runValidate/renderSidebar）经钩子注入，保持模块无环。
  */
 import { state, setStatus } from './state.js';
-import { parseConfigSource } from './config-source.js';
+import { parseConfigSource, assertConfigSourcesReadable, type ConfigSourceName } from './config-source.js';
 import { beginEditorWorkspaceWrite, finishEditorWorkspaceWrite, publishEditorWorkspaceFile,
   editorWorkspaceStatus } from './editor-workspace.js';
 import { histories } from './history.js';
@@ -17,7 +17,7 @@ import {
   type TimelineAutosaveDocument,
   type TimelineAutosaveIdentity,
 } from './timeline-autosave-identity.js';
-import { parseProjectConfigDocument, serializeProjectConfigDocument, timelinePathFor } from '@surdet/authoring';
+import { parseProjectConfigDocument, renameConfigReferences, sceneReferenceConfigPaths, serializeProjectConfigDocument, stableStringify, timelinePathFor } from '@surdet/authoring';
 import { kindOfDir, parsePortraitFileName } from './assets.js';
 import type { AssetKind, DirAsset } from './assets.js';
 
@@ -130,6 +130,7 @@ export interface SceneMutationPlanReference {
 
 export interface SceneMutationCommitInput {
   requestId: string;
+  configRenames?: Array<{ from: string; to: string }>;
   plans: SceneMutationPlanReference[];
   writes: Array<{ path: string; text: string; expectedSha256: string | null }>;
 }
@@ -386,6 +387,8 @@ function commitLoadedProject(
   for (const [key, scene] of loaded.scenes) state.scenes.set(key, scene);
   state.pendingSceneDeletes = [];
   state.pendingSceneCommit = null;
+  state.pendingSceneConfigWrites = [];
+  state.pendingSceneConfigRenames = [];
   state.lastValidation = null;
   state.lastEdges = [];
   state.timelines = loaded.timelines;
@@ -698,7 +701,94 @@ export function workingGameConfigText(source = state): string {
 }
 
 function sceneWriteIdentity(file: string): string {
-  return file === 'game.config.json' ? file : sceneFileIdentity(file);
+  return sceneReferenceConfigPaths.includes(file) ? file : sceneFileIdentity(file);
+}
+
+function configNameForPath(path: string): ConfigSourceName {
+  return path === 'game.config.json' ? 'gameConfig' : path.slice('content/config/'.length, -5) as ConfigSourceName;
+}
+
+/** Prepare all disk baselines and working projections before changing any scene identity. */
+export async function prepareSceneConfigRename(from: string, to: string, fallbackEntry: string): Promise<() => void> {
+  assertConfigSourcesReadable(['gameConfig', 'events', 'growth', 'calendar', 'gallery']);
+  const before: Record<string, string> = {};
+  const baselines = new Map<string, string | null>();
+  for (const path of sceneReferenceConfigPaths) {
+    const pending = state.pendingSceneConfigWrites.find(write => write.path === path);
+    const name = configNameForPath(path);
+    const handle = state.handles[name];
+    if (pending) { before[path] = pending.text; baselines.set(path, pending.expectedSha256); }
+    else if (handle) {
+      before[path] = await readProjectSourceText(handle);
+      baselines.set(path, await sceneTextSha256(before[path]!));
+    }
+  }
+  const after = { ...before };
+  renameConfigReferences(after, from, to, fallbackEntry);
+  const writes = new Map(state.pendingSceneConfigWrites.map(write => [write.path, { ...write }]));
+  for (const path of sceneReferenceConfigPaths) if (after[path] !== before[path]) {
+    writes.set(path, { path, text: after[path]!, expectedSha256: baselines.get(path) ?? null });
+  }
+  // Row drafts have their own history. Only their backing source references are
+  // changed here; unrelated row edits are saved by the normal config save later.
+  const memory: Record<string, string> = { 'game.config.json': workingGameConfigText() || '{}' };
+  for (const name of ['events', 'growth', 'calendar', 'gallery'] as const) {
+    if (state.configFiles[name] !== null) memory[`content/config/${name}.json`] = JSON.stringify(state.configFiles[name]);
+  }
+  renameConfigReferences(memory, from, to, fallbackEntry);
+  return () => {
+    state.gameConfigText = memory['game.config.json']!;
+    state.entryScene = String(parseProjectConfigDocument(state.gameConfigText)['entryScene'] ?? '');
+    for (const name of ['events', 'growth', 'calendar', 'gallery'] as const) {
+      const text = memory[`content/config/${name}.json`];
+      if (text !== undefined) state.configFiles[name] = parseConfigSource(name, text);
+    }
+    state.pendingSceneConfigWrites = [...writes.values()];
+    state.pendingSceneConfigRenames.push({ from, to });
+  };
+}
+
+/** A path transaction may only restore its config draft onto the original disk baseline. */
+export async function prepareSceneConfigRecovery(
+  writes: typeof state.pendingSceneConfigWrites,
+  renames: typeof state.pendingSceneConfigRenames,
+): Promise<() => void> {
+  const parsed = new Map<ConfigSourceName, unknown>();
+  const before: Record<string, string> = {};
+  for (const path of sceneReferenceConfigPaths) {
+    const handle = state.handles[configNameForPath(path)];
+    if (handle) before[path] = await readProjectSourceText(handle);
+  }
+  const expected = { ...before };
+  const first = [...state.scenes.values()].sort((a, b) => sceneProjectPath(a.file) < sceneProjectPath(b.file) ? -1 : 1)[0];
+  const rootWrite = writes.find(write => write.path === 'game.config.json');
+  const fallback = first?.id ?? String(parseProjectConfigDocument(rootWrite?.text ?? '{}')['entryScene'] ?? '');
+  for (const rename of renames) renameConfigReferences(expected, rename.from, rename.to, fallback);
+  for (const path of sceneReferenceConfigPaths) {
+    const write = writes.find(entry => entry.path === path);
+    if ((expected[path] !== before[path] && !write) || (write && (expected[path] === undefined
+      || stableStringify(parseProjectConfigDocument(write.text, path)) !== stableStringify(parseProjectConfigDocument(expected[path]!, path))))) {
+      throw new Error(`${path} 的改名备份不完整或不再对应当前来源，不能部分恢复`);
+    }
+  }
+  for (const write of writes) {
+    if (!sceneReferenceConfigPaths.includes(write.path)) throw new Error('自动备份中的场景配置路径无效');
+    const name = configNameForPath(write.path);
+    const fingerprint = before[write.path] === undefined ? null : await sceneTextSha256(before[write.path]!);
+    if (fingerprint !== write.expectedSha256) throw new Error(`${write.path} 已在备份后变化，不能部分恢复场景改名`);
+    parsed.set(name, parseConfigSource(name, write.text));
+  }
+  return () => {
+    for (const write of writes) {
+      const name = configNameForPath(write.path);
+      if (name === 'gameConfig') {
+        state.gameConfigText = write.text;
+        state.entryScene = String((parsed.get(name) as Record<string, unknown>)['entryScene'] ?? '');
+      } else state.configFiles[name] = parsed.get(name);
+    }
+    state.pendingSceneConfigWrites = writes.map(entry => ({ ...entry }));
+    state.pendingSceneConfigRenames = renames.map(entry => ({ ...entry }));
+  };
 }
 
 export function isSceneFilePathReserved(file: string, ignoredSceneKey?: string): boolean {
@@ -1113,8 +1203,9 @@ async function saveAllUnlocked(): Promise<void> {
             expectedSha256: renameTarget || !scene.persistedSha256 ? null : scene.persistedSha256,
           };
         }));
+        writes.push(...state.pendingSceneConfigWrites.map(write => ({ ...write })));
         const configText = workingGameConfigText();
-        if (configText !== state.gameConfigText) {
+        if (configText !== state.gameConfigText && !writes.some(write => write.path === 'game.config.json')) {
           writes.push({ path: 'game.config.json', text: configText,
             expectedSha256: state.handles.gameConfig === null ? null : await sceneTextSha256(state.gameConfigText) });
         }
@@ -1125,6 +1216,7 @@ async function saveAllUnlocked(): Promise<void> {
         if (!requestId) throw new Error('场景保存缺少可重试的请求身份');
         pendingCommit = {
           requestId,
+          ...(state.pendingSceneConfigRenames.length === 0 ? {} : { configRenames: state.pendingSceneConfigRenames.map(rename => ({ ...rename })) }),
           plans: plans.map((entry) => ({ ...entry })),
           writes: writes.map((entry) => ({ ...entry })),
           deletedPaths: state.pendingSceneDeletes.map((pending) => sceneProjectPath(pending.file)),
@@ -1133,7 +1225,7 @@ async function saveAllUnlocked(): Promise<void> {
         onSceneCommitStateChanged();
       } else {
         for (const write of pendingCommit.writes) {
-          if (write.path === 'game.config.json') continue;
+          if (sceneReferenceConfigPaths.includes(write.path)) continue;
           const matching = [...state.scenes].find(([, scene]) => (
             sceneFileIdentity(sceneProjectPath(scene.file)) === sceneFileIdentity(write.path)
           ));
@@ -1143,6 +1235,7 @@ async function saveAllUnlocked(): Promise<void> {
       }
       const result = await onSceneMutationCommit({
         requestId: pendingCommit.requestId,
+        ...(pendingCommit.configRenames === undefined ? {} : { configRenames: pendingCommit.configRenames }),
         plans: pendingCommit.plans,
         writes: pendingCommit.writes,
       });
@@ -1170,13 +1263,17 @@ async function saveAllUnlocked(): Promise<void> {
       if (actualDeletedPaths.size !== expectedDeletedPaths.size) {
         throw new Error('安全保存回执缺少场景删除结果');
       }
-      let refreshedConfig: { text: string; handle: FileSystemFileHandle } | null = null;
-      const configWrite = resultByPath.get('game.config.json');
-      if (configWrite) {
-        const handle = await state.dirHandle.getFileHandle('game.config.json');
+      const refreshedConfigs = new Map<ConfigSourceName, { text: string; handle: FileSystemFileHandle }>();
+      for (const file of sceneReferenceConfigPaths) {
+        const configWrite = resultByPath.get(file);
+        if (!configWrite) continue;
+        const name = configNameForPath(file);
+        const parent = name === 'gameConfig' ? state.dirHandle : await (await state.dirHandle.getDirectoryHandle('content')).getDirectoryHandle('config');
+        const handle = await parent.getFileHandle(name === 'gameConfig' ? 'game.config.json' : `${name}.json`);
         const text = await readProjectSourceText(handle);
-        if (await sceneTextSha256(text) !== configWrite.sha256) throw new Error('开场配置回读与保存回执不一致');
-        refreshedConfig = { text, handle };
+        if (await sceneTextSha256(text) !== configWrite.sha256) throw new Error(`${file} 回读与保存回执不一致`);
+        parseConfigSource(name, text);
+        refreshedConfigs.set(name, { text, handle });
       }
       const refreshed = new Map<string, { handle: FileSystemFileHandle; file: string; sha256: string }>();
       for (const key of authoritySceneKeys) {
@@ -1203,15 +1300,19 @@ async function saveAllUnlocked(): Promise<void> {
         delete scene.pendingCreateOperationId;
         delete scene.pendingEntryScene;
       }
-      if (refreshedConfig) {
-        state.gameConfigText = refreshedConfig.text;
-        state.handles.gameConfig = refreshedConfig.handle;
-        state.entryScene = String(parseProjectConfigDocument(refreshedConfig.text)['entryScene']);
+      for (const [name, config] of refreshedConfigs) {
+        state.handles[name] = config.handle;
+        if (name === 'gameConfig') {
+          state.gameConfigText = config.text;
+          state.entryScene = String(parseProjectConfigDocument(config.text)['entryScene'] ?? '');
+        } else state.configFiles[name] = parseConfigSource(name, config.text);
       }
       saved += result.writes.length;
       removed += result.deletedPaths.length;
       state.pendingSceneDeletes = [];
       state.pendingSceneCommit = null;
+      state.pendingSceneConfigWrites = [];
+      state.pendingSceneConfigRenames = [];
       onSceneCommitStateChanged();
     } catch (err) {
       recordFailure('场景改名、移动或删除安全保存', err);
@@ -1361,6 +1462,8 @@ export function loadDemoProject(): void {
   state.scenes.clear();
   state.pendingSceneDeletes = [];
   state.pendingSceneCommit = null;
+  state.pendingSceneConfigWrites = [];
+  state.pendingSceneConfigRenames = [];
   state.lastValidation = null;
   state.lastEdges = [];
   state.timelines = [];

@@ -11,7 +11,7 @@ import { state, h, setStatus } from '../state.js';
 import { assertConfigSourcesReadable, configSourceError, configSourcePath, parseConfigSource, type ConfigSourceName } from '../config-source.js';
 import { assertProjectWriteUnlocked, readProjectSourceText, runProjectWriteOperation, writeProjectText } from '../project-io.js';
 import { editorWorkspaceStatus } from '../editor-workspace.js';
-import { AuthoringOperationError, parseProjectConfigDocument } from '@surdet/authoring';
+import { AuthoringOperationError, parseProjectConfigDocument, renameConfigReferences } from '@surdet/authoring';
 import { commitCharacterTable, type CharacterTableEditRow } from '../authoring-project-storage.js';
 import {
   VAR_TYPES, parseVariablesToRows, rowsToVariables, applyVariablesToConfig,
@@ -344,6 +344,60 @@ function takeConfigSnapshot(): ConfigSnapshot {
   return { ...clone({ charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows }), gameConfigText: state.gameConfigText };
 }
 
+/** Rebase live rows, clean baselines and undo/redo together; never save unrelated edits. */
+export function prepareConfigSceneRename(from: string, to: string, fallbackEntry: string): () => void {
+  const rewrite = (snapshot: ConfigSnapshot): ConfigSnapshot => {
+    const next = clone(snapshot);
+    const files: Record<string, string> = { 'game.config.json': next.gameConfigText || '{}' };
+    if (next.calRows) files['content/config/calendar.json'] = JSON.stringify(next.calRows);
+    if (next.evRows) files['content/config/events.json'] = JSON.stringify(next.evRows);
+    if (next.gaRows) files['content/config/gallery.json'] = JSON.stringify(next.gaRows);
+    if (next.grRows) files['content/config/growth.json'] = JSON.stringify({ profiles: next.grRows.profiles.map(row => {
+      const text = String(row.levelEvents ?? '');
+      try { return { ...row, levelEvents: text.trim() ? JSON.parse(text) as unknown : undefined }; }
+      catch { throw new Error('成长配置的等级事件草稿或撤销历史不是有效 JSON，请先修正后再改名'); }
+    }) });
+    renameConfigReferences(files, from, to, fallbackEntry);
+    next.gameConfigText = files['game.config.json']!;
+    if (next.calRows) next.calRows = JSON.parse(files['content/config/calendar.json']!) as CalendarRows;
+    if (next.evRows) next.evRows = JSON.parse(files['content/config/events.json']!) as EventsRows;
+    if (next.gaRows) next.gaRows = JSON.parse(files['content/config/gallery.json']!) as GalleryRows;
+    if (next.grRows) {
+      const profiles = (JSON.parse(files['content/config/growth.json']!) as { profiles: Array<{ levelEvents?: unknown }> }).profiles;
+      next.grRows.profiles.forEach((row, index) => {
+        const original = String(row.levelEvents ?? '');
+        if (original.trim() && JSON.stringify(JSON.parse(original)) !== JSON.stringify(profiles[index]!.levelEvents)) {
+          row.levelEvents = JSON.stringify(profiles[index]!.levelEvents);
+        }
+      });
+    }
+    return next;
+  };
+  const current = rewrite(takeConfigSnapshot());
+  const past = configHist.past.map(rewrite);
+  const future = configHist.future.map(rewrite);
+  const baselines = { ...configBaselines };
+  for (const [section, field] of [['calendar', 'calRows'], ['events', 'evRows'], ['gallery', 'gaRows'], ['growth', 'grRows']] as const) {
+    const baseline = baselines[section];
+    if (baseline !== undefined) {
+      const snap = { ...takeConfigSnapshot(), [field]: JSON.parse(baseline) as unknown } as ConfigSnapshot;
+      baselines[section] = JSON.stringify(rewrite(snap)[field]);
+    }
+  }
+  return () => {
+    ({ charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows } = current);
+    configHist.past = past;
+    configHist.future = future;
+    Object.assign(configBaselines, baselines);
+    notifyConfigDraftStateChanged();
+  };
+}
+
+function assertConfigSaveReady(name: ConfigSourceName): void {
+  assertConfigSourcesReadable([name]);
+  if (state.pendingSceneConfigRenames.length > 0) throw new Error('场景改名尚未写盘，请使用“保存全部”一起保存场景和配置引用');
+}
+
 /** 变更前拍快照。coalesce=true：连续打字合并（同一撤销点）；结构操作（增删行/拖拽/导入）传 false */
 function pushConfigHistory(coalesce: boolean, notify = true): void {
   snapshotPush(configHist, takeConfigSnapshot(), Date.now(), coalesce);
@@ -521,7 +575,7 @@ async function saveConfigFileUnlocked(
   sessionRevision: number,
 ): Promise<boolean> {
   assertProjectWriteUnlocked();
-  assertConfigSourcesReadable([name]);
+  assertConfigSaveReady(name);
   if (errors.length > 0) {
     setStatus(`${label}未保存：${errors[0]}${errors.length > 1 ? `（另有 ${errors.length - 1} 条）` : ''}`, false, 6000);
     return false;
@@ -584,7 +638,7 @@ function sectionShell(sectionId: ConfigSectionId): { sec: HTMLElement; ops: HTML
 
 async function saveVariablesUnlocked(): Promise<boolean> {
   assertProjectWriteUnlocked();
-  assertConfigSourcesReadable(['gameConfig']);
+  assertConfigSaveReady('gameConfig');
   const sessionRevision = configSessionRevision;
   const rows = ensureVarRows();
   const submittedRows = clone(rows);
@@ -686,7 +740,7 @@ function renderCharactersSection(): HTMLElement {
 /** 保存角色表：edit local draft → 保存按钮 → 共享 authoring 事务 commit（与其它配置区块保存模型一致）。 */
 async function saveCharactersUnlocked(): Promise<boolean> {
   assertProjectWriteUnlocked();
-  assertConfigSourcesReadable(['gameConfig']);
+  assertConfigSaveReady('gameConfig');
   const sessionRevision = configSessionRevision;
   const rows = ensureCharRows();
   const submittedRows = clone(rows);
@@ -1288,7 +1342,7 @@ export async function saveDirtyConfigSections(): Promise<ConfigSaveOutcome> {
 
 /** 渲染配置标签页；同一项目已有草稿/历史时复用内存态，避免重进工作面丢失编辑。 */
 export function renderConfig(container: HTMLElement): void {
-  if (editorWorkspaceStatus().protection !== 'unavailable') {
+  if (state.pendingSceneConfigRenames.length > 0 || editorWorkspaceStatus().protection !== 'unavailable') {
     renderConfigWorkspace(container);
     if (!configSessionLoaded) {
       captureAllConfigBaselines();

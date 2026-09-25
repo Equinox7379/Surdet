@@ -29,6 +29,28 @@ afterEach(async () => {
 });
 
 describe('bound Editor write settlement', () => {
+  it('continues ordinary writes from a scene batch receipt and still rejects a real external edit', async () => {
+    const { project, dataRoot } = await fixture();
+    const authority = new EditorWorkspaceAuthority(project, { leaseManager: new NodeLocalLeaseManager(dataRoot) });
+    authorities.push(authority);
+    const { diskBaseline } = await authority.snapshot();
+    const state = { ...identity, workspaceGeneration: 1, availability: 'dirty' as const, dirtyScopes: ['scene' as const] };
+    await authority.heartbeat(state);
+    const begun = await authority.beginWrite({ ...state, purpose: 'save-all', expectedProjectRevision: diskBaseline.projectRevision, expectedCoordinationRevision: diskBaseline.coordinationRevision });
+    const input = { ...state, writeLeaseId: begun.writeLeaseId };
+    const file = 'game.config.json';
+    await authority.withWriteLease(input, async () => {
+      await fs.writeFile(path.join(project, file), '{"entryScene":"new"}');
+      const written = await (await NodeProjectStorage.open(project)).readText(file);
+      authority.recordSceneCommit(input, { writes: [{ path: file, sha256: written.sha256 }], deletedPaths: [] });
+    });
+    const before = await (await NodeProjectStorage.open(project)).readText(file);
+    const saved = await authority.publishFile({ ...input, path: file, expectedSha256: before.sha256, text: '{"entryScene":"new","variables":{}}' });
+    await fs.writeFile(path.join(project, file), '{"external":true}');
+    await expect(authority.publishFile({ ...input, path: file, expectedSha256: saved.sha256, text: '{}' })).rejects.toMatchObject({ code: 'EDITOR_PROJECT_BASELINE_CHANGED' });
+    expect(await fs.readFile(path.join(project, file), 'utf8')).toBe('{"external":true}');
+    await authority.finishWrite({ ...input, availability: 'clean', dirtyScopes: [] });
+  });
   it('keeps baseline inspection and a completed save usable when optional notice storage fails', async () => {
     const { project, dataRoot } = await fixture();
     const noticeStore = new ProjectMutationNoticeStore({ dataRoot });

@@ -31,6 +31,28 @@ function timelineText(definitionId: string, eol: Eol = '\n', durationMs = 1200):
 afterEach(() => vi.unstubAllGlobals());
 
 describe('buildAutosave（快照构建）', () => {
+  it('场景配置改名和正文一起备份/重放；缺少配置、映射或回执时不部分收束', () => {
+    const operationId = '123e4567-e89b-42d3-a456-426614174000';
+    const scene = { id: 'new', file: 'new.gal', text: '@scene new\n后续编辑\n', dirty: true, eol: '\n', persistedSha256: 'a'.repeat(64) };
+    const pending = [{ kind: 'rename' as const, id: 'old', file: 'old.gal', replacementKey: 'new', affectedSceneKeys: ['new'], operationId, planFingerprint: 'b'.repeat(64) }];
+    const configRenames = [{ from: 'old', to: 'new' }];
+    const configWrites = [{ path: 'content/config/events.json', text: '{"events":[{"scene":"new"}]}', expectedSha256: 'c'.repeat(64) }];
+    const writes = [{ path: 'content/scenario/new.gal', text: '@scene new\n', expectedSha256: null }, ...configWrites];
+    const payload = buildAutosave('proj', new Map([['new', scene]]), [], 1, 'project', pending,
+      { requestId: operationId, plans: [{ operationId, planFingerprint: 'b'.repeat(64) }], writes, deletedPaths: ['content/scenario/old.gal'], configRenames }, configWrites, configRenames)!;
+    expect(parseAutosave(JSON.stringify(payload))).toEqual(payload);
+    const broken = structuredClone(payload);
+    delete broken.sceneTransaction!.configWrites;
+    expect(parseAutosave(JSON.stringify(broken))).toBeNull();
+    broken.sceneTransaction!.configWrites = [];
+    expect(parseAutosave(JSON.stringify(broken))).toBeNull();
+    const receipt = { requestId: operationId, status: 'COMMITTED' as const, writes: writes.map(write => ({ path: write.path, sha256: 'd'.repeat(64) })), deletedPaths: ['content/scenario/old.gal'] };
+    expect(settlePendingSceneCommit(payload, { ...receipt, writes: receipt.writes.slice(0, 1) })).toBeNull();
+    const settled = settlePendingSceneCommit(payload, receipt)!;
+    expect(settled.sceneTransaction).toBeUndefined();
+    expect(settled.pendingSceneCommit).toBeUndefined();
+    expect(settled.scenes[0]!.text).toBe(scene.text);
+  });
   it('仅收 dirty 场景；全干净返回 null', () => {
     const scenes = new Map([
       ['a', { text: 'A改过', dirty: true }],

@@ -40,6 +40,9 @@ describe('场景路径安全生命周期', () => {
     histories.clear();
     state.pendingSceneDeletes = [];
     state.pendingSceneCommit = null;
+    state.pendingSceneConfigWrites = [];
+    state.pendingSceneConfigRenames = [];
+    state.configReadErrors = {};
     state.current = null;
     state.dirHandle = {} as FileSystemDirectoryHandle;
     state.entryScene = '';
@@ -76,6 +79,76 @@ describe('场景路径安全生命周期', () => {
     state.scenes.set('chapter-b/shared', scene('shared', 'chapter-b/shared.gal', diskHandle));
     expect(resolveSceneKeyForOperation('shared')).toBeNull();
     expect(resolveSceneKeyForOperation('missing')).toBeNull();
+  });
+
+  it('尚未保存的新场景改名不抢走既有项目的隐式入口，并保留 BOM 声明', async () => {
+    state.scenes.set('a_draft', { ...scene('a_draft', 'a_draft.gal', null), text: '\uFEFF@scene a_draft\r\n正文。\r\n', eol: '\r\n', pendingCreateOperationId: '11111111-1111-4111-8111-111111111111' });
+    state.scenes.set('reader', scene('reader', 'reader.gal', diskHandle));
+    vi.mocked(window.prompt).mockReturnValue('z_draft');
+    await renameSceneAtKey('a_draft');
+    expect(JSON.parse(state.gameConfigText).entryScene).toBe('reader');
+    expect(state.scenes.get('z_draft')?.text).toBe('\uFEFF@scene z_draft\r\n正文。\r\n');
+  });
+
+  it.each(['old.GAL', 'chapter/old.GaL', 'old.gal'].flatMap(file => ['', '\uFEFF'].map(bom => ({ file, bom }))))(
+    '场景声明改名同步当前与双向历史，保留字节风格：$file / BOM=$bom', async ({ file, bom }) => {
+      const key = file.replace(/\.gal$/i, '');
+      const nextKey = key.replace(/old$/, 'new');
+      const text = (id: string, body: string) => `${bom}\t@scene ${id}\r\n// old 不应改变\r\n旁白：${body}\r\n`;
+      state.scenes.set(key, { ...scene('old', file, diskHandle), text: text('old', '当前'), eol: '\r\n' });
+      histories.set(key, { past: [text('old', '过去')], future: [text('old', '未来')], lastPushAt: 0 });
+      state.current = key;
+      bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onSceneMutationPlan: async () => ({ operationId: 'rename', planFingerprint: 'a'.repeat(64) }) });
+      vi.mocked(window.prompt).mockReturnValue(null);
+      await renameSceneAtKey(key);
+      expect(state.scenes.get(key)?.text).toBe(text('old', '当前'));
+      expect(histories.get(key)?.past).toEqual([text('old', '过去')]);
+      vi.mocked(window.prompt).mockReturnValue('new');
+      await renameSceneAtKey(key);
+      expect(state.scenes.get(nextKey)?.text).toBe(text('new', '当前'));
+      expect(histories.get(nextKey)?.future).toEqual([text('new', '未来')]);
+      undo(); expect(state.scenes.get(nextKey)?.text).toBe(text('new', '过去'));
+      redo(); expect(state.scenes.get(nextKey)?.text).toBe(text('new', '当前'));
+      redo(); expect(state.scenes.get(nextKey)?.text).toBe(text('new', '未来'));
+    },
+  );
+
+  it('新场景移动也保留既有磁盘入口；待删除的原入口不被静默替换', async () => {
+    state.scenes.set('a_draft', scene('a_draft', 'a_draft.gal', null));
+    state.scenes.set('reader', scene('reader', 'reader.gal', diskHandle));
+    vi.mocked(window.prompt).mockReturnValue('chapter');
+    await moveSceneAtKey('a_draft');
+    expect(state.scenes.get('chapter/a_draft')?.pendingEntryScene).toBe('reader');
+    delete state.scenes.get('chapter/a_draft')!.pendingEntryScene;
+    state.scenes.delete('reader');
+    state.pendingSceneDeletes.push({ kind: 'delete', id: 'reader', file: 'reader.gal' });
+    vi.mocked(window.prompt).mockReturnValue('new');
+    await expect(renameSceneAtKey('chapter/a_draft')).rejects.toThrow('原缺省开场场景');
+    expect(state.scenes.get('chapter/a_draft')?.id).toBe('a_draft');
+  });
+
+  it.each(['past', 'future'] as const)('历史 %s 的声明失配时，场景、配置和其他历史都保持原样', async branch => {
+    state.scenes.set('old', { ...scene('old', 'old.gal', null), text: '\uFEFF@scene old\r\n正文\r\n' });
+    state.gameConfigText = '{"entryScene":"old"}';
+    const history = { past: [] as string[], future: [] as string[], lastPushAt: 0 };
+    history[branch] = ['\uFEFF@scene unexpected\r\n历史\r\n'];
+    histories.set('old', history);
+    const before = structuredClone([...state.scenes]);
+    vi.mocked(window.prompt).mockReturnValue('new');
+    await expect(renameSceneAtKey('old')).rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED' });
+    expect([...state.scenes]).toEqual(before);
+    expect(state.gameConfigText).toBe('{"entryScene":"old"}');
+    expect(state.pendingSceneConfigRenames).toEqual([]);
+    expect(histories.get('old')).toEqual(history);
+  });
+
+  it('写入保护拒绝 BOM 场景改名前不弹窗、不改变正文', async () => {
+    const text = '\uFEFF@scene old\r\n';
+    state.scenes.set('old', { ...scene('old', 'old.gal', null), text });
+    state.projectWriteLock = 'asset-relocation';
+    await expect(renameSceneAtKey('old')).rejects.toThrow('素材整理进行中');
+    expect(window.prompt).not.toHaveBeenCalled();
+    expect(state.scenes.get('old')?.text).toBe(text);
   });
 
   it('移动章节只改目录和历史 key，保留正文、引用、后缀与缺省入口投影', async () => {
@@ -144,7 +217,7 @@ describe('场景路径安全生命周期', () => {
     expect(state.pendingSceneDeletes).toEqual([]);
   });
 
-  it('改名迁移正文历史并同步历史中的引用，删除后同名新建不继承旧正文', async () => {
+  it('改名迁移正文和引用历史；新场景与既有场景一样须先保存再删除', async () => {
     state.scenes.set('old', scene('old', 'old.gal', null));
     state.scenes.set('reader', { ...scene('reader', 'reader.gal', null), text: '@scene reader\n@jump old\n' });
     state.current = 'old';
@@ -164,6 +237,19 @@ describe('场景路径安全生命周期', () => {
     state.current = 'new';
     vi.mocked(window.confirm).mockReturnValue(true);
     await deleteSceneAtKey('new');
+    expect(state.scenes.has('new')).toBe(true);
+    expect(status.textContent).toContain('请先保存全部再删除');
+    expect(window.confirm).not.toHaveBeenCalled();
+    expect(histories.has('old')).toBe(false);
+  });
+
+  it('删除后同名新建不继承旧正文历史', async () => {
+    state.scenes.set('new', scene('new', 'new.gal', null));
+    state.current = 'new';
+    setCurrentText('@scene new\n修改正文\n');
+    vi.mocked(window.confirm).mockReturnValue(true);
+    await deleteSceneAtKey('new');
+    expect(state.scenes.has('new')).toBe(false);
     vi.mocked(window.prompt).mockReturnValueOnce('new').mockReturnValueOnce('0');
     await newScene();
     state.current = 'new';
@@ -389,13 +475,12 @@ describe('场景路径安全生命周期', () => {
     expect(requestValidate).not.toHaveBeenCalled();
   });
 
-  it('项目入口或宿主配置仍引用场景时拒绝改名和删除', async () => {
+  it('项目入口或宿主配置仍引用场景时拒绝删除', async () => {
     const prompt = vi.mocked(window.prompt);
     const confirm = vi.mocked(window.confirm);
     state.scenes.set('chapter/entry', scene('entry', 'chapter/entry.gal', diskHandle));
     state.entryScene = 'entry';
 
-    await renameSceneAtKey('chapter/entry');
     await deleteSceneAtKey('chapter/entry');
 
     expect(prompt).not.toHaveBeenCalled();
@@ -406,15 +491,14 @@ describe('场景路径安全生命周期', () => {
 
     state.entryScene = '';
     state.configFiles.events = { events: [{ id: 'host', scene: 'entry' }] };
-    await renameSceneAtKey('chapter/entry');
+    await deleteSceneAtKey('chapter/entry');
     expect(prompt).not.toHaveBeenCalled();
     expect(state.scenes.has('chapter/entry')).toBe(true);
   });
 
-  it('文本回想引用保护场景，不能仅因为没有普通跳转就改名或删除', async () => {
+  it('文本回想引用保护场景，不能仅因为没有普通跳转就删除', async () => {
     state.scenes.set('old', scene('old', 'old.gal', null));
     state.configFiles.gallery = { texts: [{ id: 'memory', scene: 'old', label: 'entry' }] };
-    await renameSceneAtKey('old');
     await deleteSceneAtKey('old');
     expect(window.prompt).not.toHaveBeenCalled();
     expect(window.confirm).not.toHaveBeenCalled();
@@ -422,38 +506,37 @@ describe('场景路径安全生命周期', () => {
     expect(status.textContent).toContain('文本回想配置');
   });
 
-  it.each(['end_a', 'chapter/end_a'])('结束配置保护语义 ID，拒绝 %s 改名或删除且不触碰正文、配置、历史与保存计划', async (key) => {
+  it.each(['end_a', 'chapter/end_a'])('结束配置拒绝删除 %s；改名联动正文、结束配置和历史但不提前写盘', async (key) => {
     state.scenes.set(key, scene('end_a', `${key}.gal`, diskHandle));
     state.scenes.set('start', { ...scene('start', 'start.gal', null), text: '@scene start\n@jump end_a\n' });
     state.entryScene = 'start';
     state.current = key;
     setCurrentText('@scene end_a\n还未保存的结局。\n@end\n');
-    const readDisk = vi.fn(async () => ({ text: async () => '{"player":{"endScenes":[]}}' }));
-    state.handles.gameConfig = { getFile: readDisk } as unknown as FileSystemFileHandle;
     state.gameConfigText = '\uFEFF{\r\n "entryScene":"start", "player":{"endScenes":["end_a","end_b"],"custom":42}, "custom":"保留"\r\n}';
     const config = state.gameConfigText;
+    const readDisk = vi.fn(async () => new File([config], 'game.config.json'));
+    state.handles.gameConfig = { getFile: readDisk } as unknown as FileSystemFileHandle;
     const before = structuredClone([...state.scenes]);
-    const history = structuredClone([...histories]);
     const plan = vi.fn(async () => ({ operationId: '11111111-1111-4111-8111-111111111111', planFingerprint: 'a'.repeat(64) }));
     bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onSceneMutationPlan: plan });
     vi.mocked(window.prompt).mockReturnValue('final_a');
     vi.mocked(window.confirm).mockReturnValue(true);
-    await renameSceneAtKey(key);
+    await deleteSceneAtKey(key);
     expect(status.textContent).toContain('game.config.json 的 player.endScenes');
     expect([...state.scenes]).toEqual(before);
-    // 删除病例没有任何剧情引用，只剩结束配置。
-    state.scenes.delete('start');
-    const beforeDelete = structuredClone([...state.scenes]);
-    await deleteSceneAtKey(key);
-    expect([...state.scenes]).toEqual(beforeDelete);
-    expect(state.gameConfigText).toBe(config);
-    expect([...histories]).toEqual(history);
-    expect(state.pendingSceneDeletes).toEqual([]);
-    expect(state.current).toBe(key);
-    expect(plan).not.toHaveBeenCalled();
-    expect(readDisk).not.toHaveBeenCalled();
-    expect(window.prompt).not.toHaveBeenCalled();
     expect(window.confirm).not.toHaveBeenCalled();
+    await renameSceneAtKey(key);
+    const nextKey = key.replace('end_a', 'final_a');
+    expect(state.current).toBe(nextKey);
+    expect(state.scenes.get(nextKey)?.text).toContain('@scene final_a\n还未保存的结局');
+    expect(state.scenes.get('start')?.text).toContain('@jump final_a');
+    expect(JSON.parse(state.gameConfigText.replace(/^\uFEFF/, ''))).toMatchObject({ entryScene: 'start', player: { endScenes: ['final_a', 'end_b'], custom: 42 }, custom: '保留' });
+    expect(state.gameConfigText.startsWith('\uFEFF')).toBe(true);
+    expect(state.pendingSceneConfigWrites).toHaveLength(1);
+    expect(state.pendingSceneConfigWrites[0]?.text).toBe(state.gameConfigText);
+    expect(plan).toHaveBeenCalledOnce();
+    undo();
+    expect(state.scenes.get(nextKey)?.text).toBe('@scene final_a\n');
   });
 
   it.each(['{', '[]', '{"player":null}', '{"player":{"endScenes":"end_a"}}', '{"player":{"endScenes":[42]}}'])('配置不可安全读取时不把它当作无引用：%s', async (config) => {
@@ -467,7 +550,7 @@ describe('场景路径安全生命周期', () => {
     expect(window.confirm).not.toHaveBeenCalled();
   });
 
-  it.each(['{}', '{"player":{}}', '{"player":{"endScenes":[]}}', '{"player":{"endScenes":["other"]}}'])('无关结束配置不妨碍正常改名与删除：%s', async (config) => {
+  it.each(['{}', '{"player":{}}', '{"player":{"endScenes":[]}}', '{"player":{"endScenes":["other"]}}'])('无关结束配置不妨碍正常改名，原隐式入口固定为新 ID：%s', async (config) => {
     state.gameConfigText = config;
     state.scenes.set('old', scene('old', 'old.gal', null));
     state.scenes.set('reader', { ...scene('reader', 'reader.gal', null), text: '@scene reader\n@jump old\n' });
@@ -475,10 +558,7 @@ describe('场景路径安全生命周期', () => {
     await renameSceneAtKey('old');
     expect(state.scenes.has('new')).toBe(true);
     expect(state.scenes.get('reader')?.text).toContain('@jump new');
-    vi.mocked(window.confirm).mockReturnValue(true);
-    await deleteSceneAtKey('new');
-    expect(state.scenes.has('new')).toBe(false);
-    expect(state.gameConfigText).toBe(config);
+    expect(JSON.parse(state.gameConfigText)).toEqual({ ...JSON.parse(config), entryScene: 'new' });
   });
 
   it('拒绝重复 ID 重命名与仅大小写改名', async () => {

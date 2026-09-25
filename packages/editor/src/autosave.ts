@@ -10,12 +10,25 @@ import {
   inspectTimelineAutosaveIdentity,
   type TimelineAutosaveDocument,
 } from './timeline-autosave-identity.js';
+import { sceneReferenceConfigPaths } from '@surdet/authoring';
+import { isValidSceneId } from '@surdet/core';
 
 export const AUTOSAVE_KEY = 'surdet-editor:autosave';
 /** 快照周期（30 秒：崩溃最多丢半分钟编辑，写入成本可忽略） */
 export const AUTOSAVE_INTERVAL_MS = 30_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
+
+function parseConfigRenames(value: unknown): Array<{ from: string; to: string }> | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 100) return null;
+  const result: Array<{ from: string; to: string }> = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object' || !isValidSceneId(entry.from) || !isValidSceneId(entry.to)
+      || entry.from.toLowerCase() === entry.to.toLowerCase()) return null;
+    result.push({ from: entry.from as string, to: entry.to as string });
+  }
+  return result;
+}
 
 export interface AutosaveEntry {
   /** 场景 Map key（含子目录前缀） */
@@ -43,11 +56,14 @@ export interface AutosavePendingSceneMutation {
 export interface AutosaveSceneTransaction {
   pendingDeletes: AutosavePendingSceneMutation[];
   pendingCreates?: Array<{ key: string; operationId: string }>;
+  configWrites?: Array<{ path: string; text: string; expectedSha256: string | null }>;
+  configRenames?: Array<{ from: string; to: string }>;
 }
 
 export interface AutosavePendingSceneCommit {
   requestId: string;
   plans: Array<{ operationId: string; planFingerprint: string }>;
+  configRenames?: Array<{ from: string; to: string }>;
   writes: Array<{ path: string; text: string; expectedSha256: string | null }>;
   deletedPaths: string[];
 }
@@ -181,6 +197,8 @@ export function buildAutosave(
     affectedSceneKeys?: string[];
   }[] = [],
   pendingSceneCommit: AutosavePendingSceneCommit | null = null,
+  configWrites: NonNullable<AutosaveSceneTransaction['configWrites']> = [],
+  configRenames: NonNullable<AutosaveSceneTransaction['configRenames']> = [],
 ): AutosavePayload | null {
   const transactionKeys = new Set<string>();
   for (const pending of pendingSceneDeletes) {
@@ -227,6 +245,7 @@ export function buildAutosave(
   if (timelineEntries.length > 0) payload.timelines = timelineEntries;
   if (pendingSceneDeletes.length > 0 || pendingCreates.length > 0) {
     payload.sceneTransaction = {
+      ...(configRenames.length === 0 ? {} : { configRenames: configRenames.map(entry => ({ ...entry })), configWrites: configWrites.map(entry => ({ ...entry })) }),
       pendingDeletes: pendingSceneDeletes.map((pending) => ({
         kind: pending.kind,
         id: pending.id,
@@ -242,6 +261,7 @@ export function buildAutosave(
   if (pendingSceneCommit !== null) {
     payload.pendingSceneCommit = {
       requestId: pendingSceneCommit.requestId,
+      ...(pendingSceneCommit.configRenames === undefined ? {} : { configRenames: pendingSceneCommit.configRenames.map(entry => ({ ...entry })) }),
       plans: pendingSceneCommit.plans.map((entry) => ({ ...entry })),
       writes: pendingSceneCommit.writes.map((entry) => ({ ...entry })),
       deletedPaths: [...pendingSceneCommit.deletedPaths],
@@ -349,8 +369,22 @@ export function parseAutosave(raw: string | null): AutosavePayload | null {
       }
     }
     if (pendingDeletes.length === 0 && pendingCreates.length === 0) return null;
+    const configRenames = transaction.configRenames === undefined ? undefined : parseConfigRenames(transaction.configRenames);
+    if (configRenames === null) return null;
+    if (configRenames !== undefined && transaction.configWrites === undefined) return null;
+    const configWrites: NonNullable<AutosaveSceneTransaction['configWrites']> = [];
+    if (transaction.configWrites !== undefined) {
+      if (configRenames === undefined || !Array.isArray(transaction.configWrites) || transaction.configWrites.length > sceneReferenceConfigPaths.length) return null;
+      for (const entry of transaction.configWrites) {
+        if (!entry || typeof entry !== 'object' || !sceneReferenceConfigPaths.includes(entry.path)
+          || typeof entry.text !== 'string' || (entry.expectedSha256 !== null && (typeof entry.expectedSha256 !== 'string' || !SHA256.test(entry.expectedSha256)))) return null;
+        configWrites.push({ path: entry.path as string, text: entry.text as string, expectedSha256: entry.expectedSha256 as string | null });
+      }
+      if (new Set(configWrites.map(entry => entry.path)).size !== configWrites.length) return null;
+    }
     sceneTransaction = {
       pendingDeletes,
+      ...(configRenames === undefined ? {} : { configRenames, configWrites }),
       ...(pendingCreates.length > 0 ? { pendingCreates } : {}),
     };
   }
@@ -376,7 +410,7 @@ export function parseAutosave(raw: string | null): AutosavePayload | null {
     for (const value of pending.writes) {
       if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
       const write = value as Record<string, unknown>;
-      if (typeof write.path !== 'string' || (write.path !== 'game.config.json' && (!write.path.startsWith('content/scenario/')
+      if (typeof write.path !== 'string' || (!sceneReferenceConfigPaths.includes(write.path) && (!write.path.startsWith('content/scenario/')
         || normalizedSceneKeyFromFile(write.path) === null)) || typeof write.text !== 'string'
         || (write.expectedSha256 !== null
           && (typeof write.expectedSha256 !== 'string' || !SHA256.test(write.expectedSha256)))) return null;
@@ -393,9 +427,13 @@ export function parseAutosave(raw: string | null): AutosavePayload | null {
     if (new Set(plans.map((entry) => entry.operationId)).size !== plans.length
       || new Set(writes.map((entry) => fold(entry.path))).size !== writes.length
       || new Set(deletedPaths.map((entry) => fold(String(entry)))).size !== deletedPaths.length) return null;
+    const configRenames = pending.configRenames === undefined ? undefined : parseConfigRenames(pending.configRenames);
+    if (configRenames === null || JSON.stringify(configRenames) !== JSON.stringify(sceneTransaction?.configRenames)) return null;
+    if (configRenames !== undefined && JSON.stringify(writes.filter(write => sceneReferenceConfigPaths.includes(write.path))) !== JSON.stringify(sceneTransaction?.configWrites)) return null;
     pendingSceneCommit = {
       requestId: pending.requestId,
       plans,
+      ...(configRenames === undefined ? {} : { configRenames }),
       writes,
       deletedPaths: [...deletedPaths] as string[],
     };
@@ -454,7 +492,7 @@ export function settlePendingSceneCommit(
   if (receivedDeletes.size !== result.deletedPaths.length || receivedDeletes.size !== expectedDeletes.size
     || [...receivedDeletes].some((entry) => !expectedDeletes.has(entry))) return null;
   const matchedWrites = new Set<string>();
-  if (receivedWrites.has('game.config.json')) matchedWrites.add('game.config.json');
+  for (const path of sceneReferenceConfigPaths) if (receivedWrites.has(path)) matchedWrites.add(path);
   const scenes = payload.scenes.map((entry) => {
     if (!entry.file) return { ...entry };
     const projectPath = entry.file.startsWith('content/scenario/') ? entry.file : `content/scenario/${entry.file}`;

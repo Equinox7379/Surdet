@@ -16,13 +16,14 @@ import {
   assertProjectWriteUnlocked,
   isSceneFilePathReserved,
   prepareSceneMutation,
+  prepareSceneConfigRename,
   runProjectWriteOperation,
   sceneFileIdentity,
   sceneProjectPath,
   workingGameConfigText,
 } from '../project-io.js';
 import { collectConfigSceneRoots } from '@surdet/core';
-import { parseProjectConfigDocument, sceneMoveTargetPath, visitSceneReferences } from '@surdet/authoring';
+import { parseProjectConfigDocument, renameSceneDefinition, sceneMoveTargetPath, visitSceneReferences } from '@surdet/authoring';
 import { buildFlowGraph } from '../graph/build.js';
 import type { FlowGraph, FlowNode, FlowEdge } from '../graph/build.js';
 import { histories, setSceneText } from '../history.js';
@@ -49,6 +50,7 @@ import type {
 /** 导航钩子（main.ts 注入）：切回块编辑标签页并可滚动到指定行；requestValidate 触发重校验 */
 let openSceneHook: (sceneKey: string, line?: number) => void = () => {};
 let requestValidateHook: () => void = () => {};
+let prepareConfigRenameHook: (from: string, to: string, fallbackEntry: string) => () => void = () => () => {};
 let renameSceneHook: (sceneId: string) => void = (sceneId) => {
   void renameScene(sceneId).then(() => refreshFlowIfVisible()).catch((error: unknown) => {
     setStatus(error instanceof Error ? error.message : '当前无法重命名场景', false, 5000);
@@ -62,11 +64,13 @@ let deleteSceneHook: (sceneId: string) => void = (sceneId) => {
 export function bindFlowHooks(opts: {
   openScene: (sceneKey: string, line?: number) => void;
   requestValidate: () => void;
+  prepareConfigRename?: (from: string, to: string, fallbackEntry: string) => () => void;
   onRenameScene?: (sceneId: string) => void;
   onDeleteScene?: (sceneId: string) => void;
 }): void {
   openSceneHook = opts.openScene;
   requestValidateHook = opts.requestValidate;
+  prepareConfigRenameHook = opts.prepareConfigRename ?? (() => () => {});
   renameSceneHook = opts.onRenameScene ?? renameSceneHook;
   deleteSceneHook = opts.onDeleteScene ?? deleteSceneHook;
 }
@@ -135,7 +139,7 @@ export function layoutFlowGraph(
 function sceneIssueStats(): Map<string, { errors: number; warnings: number }> {
   const stats = new Map<string, { errors: number; warnings: number }>();
   for (const issue of state.lastValidation?.issues ?? []) {
-    const base = (issue.file.replace(/\.gal$/, '').split('/').pop() ?? issue.file) || issue.file;
+    const base = (issue.file.replace(/\.gal$/i, '').split('/').pop() ?? issue.file) || issue.file;
     const s = stats.get(base) ?? { errors: 0, warnings: 0 };
     if (issue.severity === 'error') s.errors++; else s.warnings++;
     stats.set(base, s);
@@ -154,7 +158,25 @@ export function resolveSceneKeyForOperation(sceneId: string): string | null {
 function pendingRenameFor(sceneKey: string): boolean {
   return state.pendingSceneDeletes.some((pending) => (
     pending.kind === 'rename' && pending.replacementKey === sceneKey
-  ));
+  )) || state.pendingSceneConfigRenames.some(rename => rename.to === state.scenes.get(sceneKey)?.id);
+}
+
+/** Preserve the disk project's implicit entry; unsaved drafts do not precede it. */
+function implicitSceneEntry(): string {
+  const pinned = [...state.scenes.values()].find(scene => scene.pendingEntryScene)?.pendingEntryScene;
+  if (pinned) return pinned;
+  const originals = [...state.scenes.entries()]
+    .filter(([key, scene]) => (scene.handle || scene.persistedSha256)
+      && !state.pendingSceneDeletes.some(pending => pending.replacementKey === key))
+    .map(([, scene]) => ({ id: scene.id, file: scene.file }));
+  originals.push(...state.pendingSceneDeletes.map(pending => ({ id: pending.id, file: pending.file })));
+  const candidates = originals.length ? originals : [...state.scenes.values()];
+  let entry = candidates.sort((a, b) => sceneProjectPath(a.file) < sceneProjectPath(b.file) ? -1 : 1)[0]!.id;
+  for (const rename of state.pendingSceneConfigRenames) if (entry === rename.from) entry = rename.to;
+  if (![...state.scenes.values()].some(scene => scene.id === entry)) {
+    throw new Error('原缺省开场场景已待删除，请先明确设置新的开场场景');
+  }
+  return entry;
 }
 
 function remapPendingSceneKey(previousKey: string, nextKey: string | null): void {
@@ -238,7 +260,7 @@ async function renameSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
     return;
   }
   const sceneId = current.id;
-  if (blockConfiguredSceneOperation(sceneId)) return;
+  sceneConfigReferences(sceneId); // Validate known config shapes without blocking valid references.
   if ([...state.scenes.values()].filter((scene) => scene.id === sceneId).length !== 1) {
     setStatus(`场景 ID“${sceneId}”对应多个文件，请先删除重复场景再重命名`, false, 6000);
     return;
@@ -272,6 +294,9 @@ async function renameSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
       targetPath: sceneProjectPath(targetFile),
     })
     : null;
+  const fallbackEntry = String(parseProjectConfigDocument(workingGameConfigText() || '{}')['entryScene'] || implicitSceneEntry());
+  const applyConfigRename = await prepareSceneConfigRename(sceneId, newId, fallbackEntry);
+  const applyConfigRows = prepareConfigRenameHook(sceneId, newId, fallbackEntry);
   // 计划请求期间正文仍可继续输入；必须基于返回时的最新文本重算，不能写回旧快照。
   const rewrites = new Map<string, string>();
   for (const [key, candidate] of state.scenes) {
@@ -285,11 +310,15 @@ async function renameSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
     const rewrite = (text: string): string => {
       const next = rewriteSceneRefs(text, sceneId, newId);
       return key === sceneKey
-        ? next.replace(new RegExp(`^([ \\t]*)@scene[ \\t]+${escapeRe(sceneId)}(?=\\s|$)`, 'gm'), `$1@scene ${newId}`)
+        ? renameSceneDefinition(next, sceneId, newId, current.file)
         : next;
     };
     historyRewrites.set(key, { past: history.past.map(rewrite), future: history.future.map(rewrite) });
   }
+  const renamedText = renameSceneDefinition(rewrites.get(sceneKey) ?? current.text, sceneId, newId, current.file);
+  applyConfigRename();
+  applyConfigRows();
+  for (const candidate of state.scenes.values()) if (candidate.pendingEntryScene === sceneId) candidate.pendingEntryScene = newId;
   for (const [key, next] of rewrites) {
     const candidate = state.scenes.get(key)!;
     candidate.text = next;
@@ -297,10 +326,7 @@ async function renameSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
   }
   const refCount = rewrites.size;
   const scene = state.scenes.get(sceneKey)!;
-  scene.text = scene.text.replace(
-    new RegExp(`^([ \\t]*)@scene[ \\t]+${escapeRe(sceneId)}(?=\\s|$)`, 'gm'),
-    `$1@scene ${newId}`,
-  );
+  scene.text = renamedText;
   scene.dirty = true;
   scene.id = newId;
   const oldFile = scene.file;
@@ -373,8 +399,7 @@ export async function moveSceneAtKey(sceneKey: string): Promise<void> {
     assertConfigSourcesReadable(['gameConfig']);
     const config = parseProjectConfigDocument(workingGameConfigText() || '{}');
     if (config['entryScene'] !== undefined && typeof config['entryScene'] !== 'string') throw new Error('请先修正配置中的开场场景');
-    const implicitEntry = config['entryScene'] ? undefined
-      : [...state.scenes.values()].sort((a, b) => sceneProjectPath(a.file) < sceneProjectPath(b.file) ? -1 : sceneProjectPath(a.file) > sceneProjectPath(b.file) ? 1 : 0)[0]!.id;
+    const implicitEntry = config['entryScene'] ? undefined : implicitSceneEntry();
     const pinnedEntry = [...state.scenes.values()].find(scene => scene.pendingEntryScene)?.pendingEntryScene ?? implicitEntry;
     const plan = current.handle && state.dirHandle
       ? await prepareSceneMutation({ kind: 'rename', sourcePath: previousPath, targetPath: target }) : null;
