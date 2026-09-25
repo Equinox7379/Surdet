@@ -60,6 +60,7 @@ import {
   openChange,
   applySceneCreate,
   applySceneRemove,
+  applySceneRename,
   applyScenePatch,
   queryTrace,
   recordValidation,
@@ -90,6 +91,7 @@ import {
   type RecoveryInspection,
   type SceneCreateInput,
   type SceneRemoveInput,
+  type SceneRenameInput,
   type ScenePatchInput,
   type TimelineCreateInput,
   type TimelinePatchInput,
@@ -1022,6 +1024,17 @@ export class AuthoringService {
     return this.withOpenChange(changeId, async (context) => {
       const result = await applySceneRemove(context.session, input);
       return { ...metadataForChange(context.session), result };
+    });
+  }
+
+  async sceneRename(changeId: string, input: SceneRenameInput): Promise<ServiceResult<unknown>> {
+    return this.withOpenChange(changeId, async (context) => {
+      const result = await applySceneRename(context.session, input);
+      const current = await loadSnapshot(new ChangeRecordProjectStorage(context.session.record));
+      const stillPresent = current.scenes.some(scene => scene.id === result.sceneId && scene.path === result.path);
+      return { ...metadataForChange(context.session), result: { ...result, ...(stillPresent ? { continuation: {
+        sceneRef: `scene:${result.sceneId}`, revision: current.revision, workingRevision: context.session.record.workingRevision,
+      } } : {}) } };
     });
   }
 

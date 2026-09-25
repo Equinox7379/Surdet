@@ -1041,6 +1041,11 @@ const definitions = {
     outputSchema: strictObject({ sceneId: stringSchema, path: stringSchema, removed: booleanSchema }, ['sceneId', 'path', 'removed']),
     example: { input: { operationId: 'remove-unused', sceneId: 'unused', expectedFingerprint: 'copy from object.inspect scene:unused, view:working' }, expectedResultShape: { sceneId: 'unused', path: 'content/scenario/unused.gal', removed: true } },
   },
+  sceneRename: {
+    inputSchema: strictObject({ operationId: stringSchema, sceneId: stringSchema, newSceneId: stringSchema, expectedFingerprint: stringSchema }, ['operationId', 'sceneId', 'newSceneId', 'expectedFingerprint']),
+    outputSchema: strictObject({ previousSceneId: stringSchema, sceneId: stringSchema, previousPath: stringSchema, path: stringSchema, affectedPaths: stringArraySchema, continuation: sceneContinuationSchema, diffEntry: diffEntrySchema }, ['previousSceneId', 'sceneId', 'previousPath', 'path', 'affectedPaths', 'diffEntry']),
+    example: { input: { operationId: 'rename-chapter', sceneId: 'draft', newSceneId: 'arrival', expectedFingerprint: 'copy from object.inspect scene:draft, view:working' }, expectedResultShape: { previousSceneId: 'draft', sceneId: 'arrival', previousPath: 'content/scenario/draft.gal', path: 'content/scenario/arrival.gal', affectedPaths: [], diffEntry: {} } },
+  },
   scenePatch: {
     inputSchema: { ...strictObject({ operationId: stringSchema, sceneId: stringSchema, patch: scenePatchSchema }, ['operationId', 'patch']),
       $defs: sceneSchemaDefinitions,
@@ -1211,6 +1216,7 @@ export const AUTHORING_CAPABILITY_IDS = [
   'change.begin',
   'scene.create',
   'scene.remove',
+  'scene.rename',
   'scene.patch',
   'variable.ensure',
   'variable.patch-initial',
@@ -1279,6 +1285,7 @@ const mutateRepair = [
 const imageImportErrors = ["IMPORT_OPERATION_NOT_FOUND","IMPORT_OPERATION_CONFLICT","IMPORT_PLAN_BLOCKED","IMPORT_PLAN_STALE","IMPORT_PROJECT_STALE","IMPORT_TARGET_UNSAFE","IMPORT_TARGET_EXISTS","IMPORT_RECOVERY_REQUIRED","IMPORT_LIMIT_EXCEEDED","IMPORT_UPLOAD_BUSY","IMPORT_UPLOAD_TIMEOUT","IMPORT_UPLOAD_MISMATCH","IMPORT_AUTHORITY_NOT_READY","IMPORT_FILESYSTEM_UNSUPPORTED","IMPORT_PUBLICATION_FAILED","IMPORT_IO_FAILED","ASSET_SOURCE_FORBIDDEN","ASSET_SOURCE_CHANGED","ASSET_IMAGE_INVALID","PROJECT_BUSY","HUMAN_WORKSPACE_DIRTY","HUMAN_WORKSPACE_BUSY","HUMAN_WORKSPACE_STATE_CORRUPT","SESSION_STATE_INVALID","POLICY_BLOCKED"] as const;
 
 const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
+  'scene.rename': { title: 'Rename scene', purpose: 'Rename one unique scene inside a direct working change. Preserve its directory and source layout; rewrite actual jump/call/choice targets plus existing entry, endings, gallery replay, events, growth and calendar scene fields atomically. Return every affected path and the new continuation identity. Not a source write, candidate operation or old-save migration.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['active change is OPEN and direct, not candidate/integration', 'copy full scene fingerprint from object.inspect view:working', 'new ID is distinct and unoccupied, including case-insensitive filenames'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS', 'OBJECT_REF_STALE', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Read the new sceneRef from continuation after renaming; old object refs must be refreshed.', 'Inspect affectedPaths/change.diff and play the working change before separately authorized apply.', 'Ambiguous quoted targets or malformed host configurations must be corrected before retry; no partial rewrite is persisted.', ...mutateRepair] },
   'scene.remove': { title: 'Remove scene', purpose: 'Remove one unreferenced scene from an isolated direct draft, never the source project immediately. Read scene:<id> with view:working for its full-file fingerprint. Refuse entry/end scenes, incoming jump/call/choice targets, gallery text replays and event/growth/calendar roots; no cascading edits. The normal diff, validation, capsule and authorized commit record and publish the deletion.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['active change is OPEN and direct, not candidate/integration', 'scene identity is unique and full-file fingerprint is current', 'no incoming references remain'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS', 'OBJECT_REF_STALE', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Read object.inspect scene:<id> with view:working and copy fingerprint; do not compute or guess it.', 'Inspect error details.references and explicitly update callers/config first. Deletion never removes references for you.', ...mutateRepair] },
   'project.player-config.patch': { title: 'Patch player configuration', purpose: 'Patch finite display settings in game.config.json using project.inspect.playerConfig fingerprint. Explicit PlayerProject options override config, which overrides content-independent defaults. Ordinary direct drafts only; no arbitrary JSON or source editing.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['active change is OPEN and direct', 'working playerConfig fingerprint is current', 'background and ending scene references exist'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['read project.inspect with view=working and copy playerConfig.fingerprint; null restores absence, empty values explicitly clear', ...mutateRepair] },
   'project.gallery': { title: 'Inspect CG gallery', purpose: 'Read CG id/name/src and per-entry fingerprints from the active working change, or the bound project when no change is active. src is a project.assets background key; omitted src uses id.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['bound project or active change is readable'], possibleErrors: [...commonErrors, 'CHANGE_NOT_FOUND', 'OBJECT_AMBIGUOUS'], repairRecipes: readRepair },
@@ -1350,6 +1357,8 @@ function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition
               ? 'sceneCreate'
               : id === 'scene.remove'
                 ? 'sceneRemove'
+              : id === 'scene.rename'
+                ? 'sceneRename'
               : id === 'scene.patch'
                 ? 'scenePatch'
                 : id === 'variable.ensure'

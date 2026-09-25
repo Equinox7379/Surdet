@@ -33,7 +33,7 @@ void startPlayer({
   titleBackground: 'harbor',
   titleLogo: 'title_logo',
   additionalEntrypoints: [{ id: 'explore', label: '自由探索', scene: 'playground' }],
-  endScenes: Object.keys(sceneFiles).map((path) => path.split('/').pop()!.replace(/\.gal$/, ''))
+  endScenes: Object.keys(sceneFiles).map((path) => path.split('/').pop()!.replace(/\.gal$/i, ''))
     .filter((id) => id.startsWith('ending_') || id === 'playground'),
   firstRunHint: '点击或空格继续 · Esc 打开菜单 · ↑ 回看上一句',
   gallery: gallery as PlayerProject['gallery'],

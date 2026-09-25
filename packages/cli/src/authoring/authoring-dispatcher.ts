@@ -111,6 +111,8 @@ export async function dispatchAuthoringCapability(
       return { value: await service.sceneRemove(requireChange(context), payload as unknown as Parameters<AuthoringService['sceneRemove']>[1]), operationId: operationIdFrom(payload) };
     case 'scene.patch':
       return { value: await service.scenePatch(requireChange(context), payload as unknown as Parameters<AuthoringService['scenePatch']>[1]), operationId: operationIdFrom(payload) };
+    case 'scene.rename':
+      return { value: await service.sceneRename(requireChange(context), payload as unknown as Parameters<AuthoringService['sceneRename']>[1]), operationId: operationIdFrom(payload) };
     case 'variable.ensure':
       return { value: await service.variableEnsure(requireChange(context), payload as unknown as Parameters<AuthoringService['variableEnsure']>[1]), operationId: operationIdFrom(payload) };
     case 'variable.patch-initial':

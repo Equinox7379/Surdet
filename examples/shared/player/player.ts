@@ -169,7 +169,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   const registry = new SceneRegistry();
   for (const [path, load] of Object.entries(sceneFiles)) {
     const src = (await load()) as string;
-    const id = path.split('/').pop()!.replace(/\.gal$/, '');
+    const id = path.split('/').pop()!.replace(/\.gal$/i, '');
     registry.register(compileScene(src, path, id));
   }
   const timelines = new TimelineRegistry();

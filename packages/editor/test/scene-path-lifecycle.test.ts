@@ -76,6 +76,19 @@ describe('场景路径安全生命周期', () => {
     expect(resolveSceneKeyForOperation('missing')).toBeNull();
   });
 
+  it('历史中无法安全改写的引用在改动当前场景之前拒绝，保留所有内存内容', async () => {
+    state.scenes.set('old', scene('old', 'old.gal', null));
+    state.scenes.set('reader', { ...scene('reader', 'reader.gal', null), text: '@scene reader\n@call old\n' });
+    histories.set('reader', { past: ['@scene reader\n@call "old"\n'], future: [], lastPushAt: 0 });
+    vi.mocked(window.prompt).mockReturnValue('new');
+    const beforeScenes = structuredClone([...state.scenes]);
+    const beforeHistories = structuredClone([...histories]);
+    await expect(renameSceneAtKey('old')).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
+    expect([...state.scenes]).toEqual(beforeScenes);
+    expect([...histories]).toEqual(beforeHistories);
+    expect(state.pendingSceneDeletes).toEqual([]);
+  });
+
   it('改名迁移正文历史并同步历史中的引用，删除后同名新建不继承旧正文', async () => {
     state.scenes.set('old', scene('old', 'old.gal', null));
     state.scenes.set('reader', { ...scene('reader', 'reader.gal', null), text: '@scene reader\n@jump old\n' });
@@ -341,6 +354,17 @@ describe('场景路径安全生命周期', () => {
     await renameSceneAtKey('chapter/entry');
     expect(prompt).not.toHaveBeenCalled();
     expect(state.scenes.has('chapter/entry')).toBe(true);
+  });
+
+  it('文本回想引用保护场景，不能仅因为没有普通跳转就改名或删除', async () => {
+    state.scenes.set('old', scene('old', 'old.gal', null));
+    state.configFiles.gallery = { texts: [{ id: 'memory', scene: 'old', label: 'entry' }] };
+    await renameSceneAtKey('old');
+    await deleteSceneAtKey('old');
+    expect(window.prompt).not.toHaveBeenCalled();
+    expect(window.confirm).not.toHaveBeenCalled();
+    expect(state.scenes.get('old')?.text).toBe('@scene old\n');
+    expect(status.textContent).toContain('文本回想配置');
   });
 
   it.each(['end_a', 'chapter/end_a'])('结束配置保护语义 ID，拒绝 %s 改名或删除且不触碰正文、配置、历史与保存计划', async (key) => {

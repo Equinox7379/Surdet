@@ -266,6 +266,13 @@ export interface SceneRemoveInput {
   expectedFingerprint: string;
 }
 
+export interface SceneRenameInput {
+  operationId: string;
+  sceneId: string;
+  newSceneId: string;
+  expectedFingerprint: string;
+}
+
 export interface ScenePatchInput {
   operationId: string;
   sceneId?: string;

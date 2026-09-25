@@ -92,6 +92,18 @@ scene.create/scene.patch 的 `continuation` 是当前工作版本的父场景入
 
 标签先读取 `label:场景.标签` 的指纹，再用 scene.patch 的 `renameLabel`（含 name）或 `removeLabel`。这两个变体仅限 direct：改名同时更新实际本地/跨场景引用，返回 affectedScenes；删除仍被引用的标签会拒绝并列出调用位置。普通胶囊不可组合或进入正式候选/结果审批；审读使用 change.diff、working-change 试玩及原草稿续接，不把新工作版本当作旧胶囊画面。
 
+### 改名场景并续接原草稿
+
+在 OPEN 的 direct 草稿中，先读取 `object.inspect({ "objectRef": "scene:draft", "view": "working" })` 的完整场景指纹，再调用 `scene.rename`（MCP：`surdet_scene_rename`）：
+
+```json
+{ "operationId": "rename-draft", "sceneId": "draft", "newSceneId": "arrival", "expectedFingerprint": "复制刚读到的场景 fingerprint" }
+```
+
+它保留场景所在目录及行尾，更新真正的 jump/call/选择目标、入口/结束场景、文本回想、事件/成长/日历的既有场景字段；正文里的同名字串和其他未知配置字段不替换。返回 `affectedPaths` 和 `continuation.sceneRef`，用新入口重新读取对象再返修。缺省入口会明确固定为改名前的语义入口，避免文件排序改变开场。新 ID 不得与已有场景重名或仅改变大小写；无法安全判定的引用先报错，业务记录和正文不半写。
+
+candidate/integration 明确拒绝该跨文件操作，既有候选创建/修改能力保留。stage 不写回来源，继续按差异、校验、模拟、真实试玩及获授权 apply 提交。相同 operationId 的重试返回原改名回执；若该目标随后再次改名或删除，回执不伪造当前 continuation，应重新读取项目事实。场景改名不是旧玩家存档的迁移，不据此承诺内容升级后旧档仍能定位。
+
 ### 删除不再使用的场景
 
 先读取 `object.inspect({ "objectRef": "scene:unused", "view": "working" })` 的完整场景 `fingerprint`，再调用 `scene.remove`（MCP：`surdet_scene_remove`）：
