@@ -183,7 +183,7 @@ describe('Surdet Agent Port invocation ledger and delivery capsule', () => {
     expect(capsule.runtime.status).toBe('stale');
     expect((capsule.objectDiff as any).freshness?.status ?? capsule.warnings).toBeDefined();
     expect(capsule.capsuleVersion).toBe('2.0.0');
-    expect(capsule.contractVersion).toBe('2.9.0');
+    expect(capsule.contractVersion).toBe('2.10.0');
     expect(capsule.composition.eligibility).toBe('ready');
     const manifest = capsule.composition.manifest as { operations: unknown[] } | undefined;
     expect(manifest?.operations.length).toBeGreaterThan(0);

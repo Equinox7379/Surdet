@@ -11,6 +11,7 @@ import { renderTimelinePanel, bindTimelineHooks, clearTimelineViewStates } from 
 import { clearTimelineHistories, timelineHistoryDepth } from '../../src/timeline-history.js';
 import { renderFlow } from '../../src/panels/flow.js';
 import { validateProject } from '../../src/validate.js';
+import { openScriptImport } from '../../src/panels/script-import.js';
 
 export const SOURCE = '@scene start\r\n@label opening\r\n@bg hall\r\n@show lynn:uniform normal @ right\r\n凛:你好。\r\n@wait 500\r\n@choice\r\n  继续 -> @goto again\r\n  离开 -> @goto done\r\n@label again\r\n凛：继续。\r\n@label done\r\n@end';
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
@@ -128,6 +129,62 @@ function searchKey(key: string, options: KeyboardEventInit = {}): void {
   control('#search-input').dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options }));
 }
 export const v4WorkbenchCases: BrowserCase[] = [
+  { name: 'CSV import previews explicit column/role mapping, creates only a new draft and keeps normal undo', run: async () => {
+    const original = fixture(); state.configReadErrors = {}; state.pendingSceneCommit = null; state.pendingSceneDeletes = [];
+    state.gameConfigText = '{"entryScene":"start","characters":{"rin":{"name":"凛"}}}';
+    openScriptImport(control('#sidebar'), key => { state.current = key; renderEditor(); });
+    input('[aria-label="新场景 ID"]', 'imported');
+    input('[aria-label="格式"]', 'csv', 'change');
+    input('[aria-label="原始文字"]', '备注,text,text,speaker\r\n不导入,错列,"你好,雨停了。",rin');
+    clickText('.script-import-dialog', '预览导入');
+    assert(control<HTMLButtonElement>('.script-import-dialog footer button:last-child').disabled && state.scenes.size === 1, 'ambiguous CSV imported without mapping');
+    input('[aria-label="台词列"]', '2', 'change'); input('[aria-label="说话人列"]', '3', 'change');
+    clickText('.script-import-dialog', '预览导入');
+    input('[aria-label="映射“rin”"]', '凛', 'change');
+    clickText('.script-import-dialog', '预览导入');
+    assert(control('.script-import-dialog').textContent?.includes('凛：你好,雨停了。'), 'mapped preview missing');
+    assert(state.scenes.size === 1 && !original.dirty && histories.size === 0, 'preview changed original scene/history');
+    clickText('.script-import-dialog', '确认导入新草稿'); await nextTask();
+    const created = state.scenes.get('imported');
+    assert(created?.text === '@scene imported\n凛：你好,雨停了。\n@end\n' && created.dirty && created.handle === null && created.pendingCreateOperationId, 'import did not become an ordinary unsaved scene');
+    input('.block[data-line="1"] .v4-dialogue-input', '导入后继续编辑。'); await tick(); undo();
+    assert(created.text.includes('你好,雨停了。') && !original.dirty, 'import draft did not use ordinary undo');
+  } },
+  { name: 'import refuses duplicate scenes, changed role configuration, readonly and failed sources without partial edits', run: async () => {
+    for (const mutate of [
+      () => { state.scenes.set('imported', { ...state.scenes.get('start')!, id: 'imported', file: 'imported.gal' }); },
+      () => { state.gameConfigText = '{"characters":{"new":{"name":"新名字"}}}'; },
+      () => { state.reviewPreviewReadOnly = true; },
+      () => { state.projectWriteLock = 'asset-relocation'; },
+      () => { state.configReadErrors.gameConfig = 'unreadable'; },
+    ]) {
+      const original = fixture(); state.configReadErrors = {}; state.pendingSceneCommit = null; state.pendingSceneDeletes = [];
+      openScriptImport(control('#sidebar'), () => {});
+      input('[aria-label="新场景 ID"]', 'imported'); input('[aria-label="原始文字"]', '旁白：保留的文本。');
+      clickText('.script-import-dialog', '预览导入'); mutate();
+      const before = [...state.scenes].map(([key, scene]) => [key, scene.text]);
+      clickText('.script-import-dialog', '确认导入新草稿'); await nextTask();
+      assert(JSON.stringify([...state.scenes].map(([key, scene]) => [key, scene.text])) === JSON.stringify(before) && !original.dirty && histories.size === 0, 'rejected import modified drafts');
+    }
+    state.configReadErrors = {};
+  } },
+  { name: 'import uses fatal UTF-8 decoding and ignores late file reads after dialog/project replacement', run: async () => {
+    fixture(); state.configReadErrors = {};
+    openScriptImport(control('#sidebar'), () => {});
+    const upload = control<HTMLInputElement>('[aria-label="选择 UTF-8 文件"]');
+    Object.defineProperty(upload, 'files', { configurable: true, value: [new File([new Uint8Array([0xff, 0xfe, 0x00])], 'bad.txt')] });
+    upload.dispatchEvent(new Event('change')); await nextTask();
+    assert(control('.script-import-dialog [role="alert"]').textContent?.includes('文件读取失败') && state.scenes.size === 1, 'invalid UTF-8 became a partial import');
+    let finish!: (value: ArrayBuffer) => void;
+    const pending = new Promise<ArrayBuffer>(resolve => { finish = resolve; });
+    Object.defineProperty(upload, 'files', { value: [{ name: 'late.txt', arrayBuffer: () => pending }] });
+    upload.dispatchEvent(new Event('change'));
+    clickText('.script-import-dialog', '取消');
+    openScriptImport(control('#sidebar'), () => {});
+    input('[aria-label="原始文字"]', '新窗口的文字。');
+    finish(new TextEncoder().encode('过时文件').buffer); await nextTask();
+    assert(control<HTMLTextAreaElement>('[aria-label="原始文字"]').value === '新窗口的文字。', 'late old read overwrote new input');
+  } },
   { name: '流程图按混合大小写 GAL 扩展名显示真实校验错误和警告', run: () => {
     const scene = fixture('@scene start\n@jump broken\n');
     state.entryScene = 'start';

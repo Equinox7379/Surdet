@@ -540,30 +540,30 @@ function rewriteLabelReferences(source: string, path: string, currentScene: stri
   return serializeSceneDocument(document, defaultEol(document));
 }
 
+/** Shared source generation for typed creation and confirmed Editor imports. */
+export function createSceneText(sceneId: string, blocks: readonly SceneBlockInput[] = []): string {
+  scenePath(sceneId);
+  const bodyLines: SceneDocumentLine[] = renderBlocks(blocks).map(line => line.kind === 'text'
+    ? { ...line, sep: line.sep ?? '：', eol: '\n' as const } : { ...line, eol: '\n' as const });
+  const lines: SceneDocumentLine[] = [{ kind: 'instr', name: 'scene', raw: `@scene ${sceneId}`, eol: '\n' }, ...bodyLines];
+  const last = bodyLines.at(-1);
+  if (last?.kind !== 'instr' || last.name !== 'end') lines.push({ kind: 'instr', name: 'end', raw: '@end', eol: '\n' });
+  return serializeSceneDocument(lines);
+}
+
 export async function applySceneCreate(change: ChangeSession, input: SceneCreateInput, hasher: TextHasher = compositionTextHasher, sealedFingerprint?: string): Promise<{ sceneId: string; path: string }> {
   const path = scenePath(input.sceneId);
   return runOperation(change, input, async (record) => {
     if (resolveUniqueScenarioPath(record.workingFiles, input.sceneId) !== undefined) {
       throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `场景已存在：${input.sceneId}`);
     }
-    const body = renderBlocks(input.blocks ?? []);
-    const bodyLines: SceneDocumentLine[] = body.map((line) => line.kind === 'text'
-      ? { ...line, sep: line.sep ?? '：', eol: '\n' as const }
-      : { ...line, eol: '\n' as const });
-    const lines: SceneDocumentLine[] = [
-      { kind: 'instr', name: 'scene', raw: `@scene ${input.sceneId}`, eol: '\n' as const },
-      ...bodyLines,
-    ];
-    const last = bodyLines.at(-1);
-    if (last?.kind !== 'instr' || last.name !== 'end') {
-      lines.push({ kind: 'instr', name: 'end', raw: '@end', eol: '\n' as const });
-    }
-    let text = serializeSceneDocument(lines);
+    let text = createSceneText(input.sceneId, input.blocks);
+    const last = input.blocks?.at(-1);
     if (sealedFingerprint !== undefined && await hasher.sha256(text) !== sealedFingerprint) {
       // Older sealed creates always appended @end, including after an explicit one.
       // Preserve only that exact historical output; never rewrite a capsule or guess other repairs.
       const previousText = text + '@end\n';
-      if (last?.kind !== 'instr' || last.name !== 'end' || await hasher.sha256(previousText) !== sealedFingerprint) {
+      if (last?.kind !== 'instruction' || last.name !== 'end' || await hasher.sha256(previousText) !== sealedFingerprint) {
         throw new AuthoringOperationError('COMPOSITION_REPLAY_FAILED', `场景创建结果与封存指纹不匹配：${input.sceneId}`);
       }
       text = previousText;

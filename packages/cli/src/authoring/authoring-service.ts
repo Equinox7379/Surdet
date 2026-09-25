@@ -55,6 +55,8 @@ import {
   resolveUniqueTimelinePath,
   timelineSelectionFingerprint,
   inspectProject,
+  previewScriptImport,
+  type ScriptImportInput,
   normalizeTrace,
   nativeCapabilityToMcpTool,
   openChange,
@@ -633,6 +635,12 @@ export class AuthoringService {
       ...metadata,
       result: { view, ...gallery },
     };
+  }
+
+  async scriptImportPreview(projectRoot: string, input: ScriptImportInput, changeId?: string): Promise<ServiceResult<ReturnType<typeof previewScriptImport> & { view: 'project' | 'working' }>> {
+    const { snapshot, metadata, view } = await this.readProjectView(projectRoot, changeId);
+    const characters = inspectProject(snapshot, buildObjectIndex(snapshot)).characters;
+    return { ...metadata, result: { view, ...previewScriptImport(input, characters) } };
   }
 
   async invokeImageImport(projectRoot: string, capability: ImageImportCapability, input: Record<string, unknown>,

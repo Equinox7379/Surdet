@@ -7,6 +7,7 @@ export * from './transaction-recovery.js';
 export * from './operations.js';
 export * from './variable-operations.js';
 export * from './scene-document.js';
+export * from './script-import.js';
 export * from './scene-relocation.js';
 export * from './validation.js';
 export * from './simulation.js';

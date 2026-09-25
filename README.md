@@ -87,7 +87,9 @@ Editor 和 Agent Port 必须绑定同一个项目；若自定义了 `SURDET_AGEN
 
 播放后通过公开 `runtime.read-preview` 能力读取实际观察，先核对返回的内容身份、版本和 `status`，再定位返修对象。观察中的运行和表现事实不能替代截图。页面的“回到上次位置”沿已记录的真实选择重新播放；选择或目标不再匹配时会停下，需正常重选。试玩不批准、不写回，也不会保存或丢弃来源草稿。
 
-当前 Authoring 合同为 `2.9.0`，direct 草稿支持 `scene.rename` 同步改名引用，以及 `scene.move` 按章节整理目录而不改变场景身份、正文和跳转；完整差异与获授权写回仍走原事务。新 stage 候选会在操作写入前检查缺失依赖和对象单元互引环：按错误中的 `issues` 先建立被引用对象或选择基线已解析素材，再重试；互相创建空场景不能解除互引环。`session.describe.candidateReadiness` 与 `change.diff.compositionReadiness` 只说明已记录的组合事实是否完整，不替代最终 validation、simulation、runtime 和 delivery capsule 检查。旧变更缺少操作时点事实时须新建候选，已封存的 v2 capsule 继续可读。
+当前 Authoring 合同为 `2.10.0`，direct 草稿支持 `scene.rename` 同步改名引用，以及 `scene.move` 按章节整理目录而不改变场景身份、正文和跳转；完整差异与获授权写回仍走原事务。新 stage 候选会在操作写入前检查缺失依赖和对象单元互引环：按错误中的 `issues` 先建立被引用对象或选择基线已解析素材，再重试；互相创建空场景不能解除互引环。`session.describe.candidateReadiness` 与 `change.diff.compositionReadiness` 只说明已记录的组合事实是否完整，不替代最终 validation、simulation、runtime 和 delivery capsule 检查。旧变更缺少操作时点事实时须新建候选，已封存的 v2 capsule 继续可读。
+
+已有纯文本/CSV 稿件可先通过只读 `script.import.preview` 映射列与角色、核对逐行问题，再用原 `scene.create` 创建新草稿；Editor 的“导入剧本”与其共享同一转换，不覆盖原场景、不执行导入文字中的指令。批量搜索替换先预览全部差异，确认后仍走原撤销与保存。
 
 ## 工作区
 
