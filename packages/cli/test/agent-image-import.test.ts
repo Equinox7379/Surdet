@@ -20,6 +20,7 @@ import { ProjectMutationLeaseContext } from '../src/editor-workspace-authority/p
 vi.setConfig({ testTimeout: 30_000 });
 const roots: string[] = [];
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/Y9sAAAAASUVORK5CYII=', 'base64');
+const wav = Buffer.from('524946462600000057415645666d74201000000001000100401f0000803e00000200100064617461020000000000', 'hex');
 afterEach(async () => {
   vi.restoreAllMocks();
   delete process.env['SURDET_AGENT_DATA_DIR'];
@@ -101,6 +102,81 @@ it('rejects source traversal and ungranted source identifiers through structured
     expect(await session.invoke('asset.sources', input)).toMatchObject({ ok: false, error: { code: 'ASSET_SOURCE_FORBIDDEN' } });
   }
   await session.close();
+});
+
+it('imports prepared media through the same public policy, retry and real catalog path', async () => {
+  const f = await fixture();
+  await fs.mkdir(path.join(f.source, '雨 夜'));
+  await fs.writeFile(path.join(f.source, '雨 夜/声 音.WAV'), wav);
+  // Existing repository font, not a fake header used as decoding evidence.
+  const font = await fs.readFile(path.resolve(import.meta.dirname, '../../../examples/starter/content/assets/fonts/MiSans-Regular.otf'));
+  await fs.writeFile(path.join(f.source, '雨 夜/字体.otf'), font);
+  const stage = await f.open('stage');
+  let apply: Awaited<ReturnType<typeof f.open>> | undefined;
+  try {
+    const sources = result(await stage.invoke('asset.sources', {}));
+    expect(sources).toMatchObject({ validation: 'container-header', supportedFormats: expect.arrayContaining(['wav', 'ogg', 'mp3', 'mp4', 'webm', 'ttf', 'otf', 'woff2']) });
+    const sourceId = sources.roots[0].sourceId;
+    const listing = result(await stage.invoke('asset.sources', { sourceId, path: '雨 夜' }));
+    expect(listing.entries.map((entry: any) => entry.path).sort()).toEqual(['雨 夜/声 音.WAV', '雨 夜/字体.otf'].sort());
+    const audio = result(await stage.invoke('asset.sources', { sourceId, path: '雨 夜/声 音.WAV' })).file;
+    const fontFact = result(await stage.invoke('asset.sources', { sourceId, path: '雨 夜/字体.otf' })).file;
+    const items = ['music', 'ambience', 'sound-effect', 'voice'].map(kind => ({ itemId: crypto.randomUUID(), sourceId, sourcePath: audio.path, sha256: audio.sha256, kind, fileName: '雨 夜.wav' }));
+    items.push({ itemId: crypto.randomUUID(), sourceId, sourcePath: fontFact.path, sha256: fontFact.sha256, kind: 'font', fileName: '正文.otf' });
+    const request = { operationId: crypto.randomUUID(), items };
+    const ready = result(await stage.invoke('asset.import.stage', request));
+    expect(ready.operation.status).toBe('READY');
+    expect(await fs.stat(path.join(f.projectRoot, 'content/assets')).catch(() => null)).toBeNull();
+    const commit = { operationId: request.operationId, planFingerprint: ready.plan.planFingerprint };
+    expect(await stage.invoke('asset.import.commit', commit)).toMatchObject({ ok: false, error: { code: 'POLICY_BLOCKED' } });
+    await stage.close();
+    apply = await f.open('apply');
+    expect(result(await apply.invoke('asset.import.stage', request)).plan.planId).toBe(ready.plan.planId);
+    const committed = result(await apply.invoke('asset.import.commit', commit));
+    expect(result(await apply.invoke('asset.import.commit', commit)).receipt.receiptId).toBe(committed.receipt.receiptId);
+    for (const directory of ['bgm', 'ambience', 'se', 'voice']) expect(await fs.readFile(path.join(f.projectRoot, `content/assets/${directory}/雨 夜.wav`))).toEqual(wav);
+    expect(await fs.readFile(path.join(f.projectRoot, 'content/assets/fonts/正文.otf'))).toEqual(font);
+    const catalog = result(await apply.invoke('project.assets', {}));
+    expect(catalog.intelligence.items.filter((item: any) => item.physical).map((item: any) => item.kind).sort())
+      .toEqual(['music', 'ambience', 'sound-effect', 'voice', 'font'].sort());
+    result(await apply.invoke('change.begin', { compositionMode: 'direct' }));
+    result(await apply.invoke('scene.create', { operationId: 'audio-chapter', sceneId: 'audio_chapter', blocks: [
+      ...['bgm', 'ambience', 'se', 'voice'].map(name => ({ kind: 'instruction', name, args: ['"雨 夜"'] })),
+      { kind: 'text', value: '已经导入的声音。' },
+    ] }));
+    const working = result(await apply.invoke('project.assets', { view: 'working' }));
+    for (const kind of ['music', 'ambience', 'sound-effect', 'voice']) {
+      expect(working.intelligence.items.find((item: any) => item.kind === kind).references)
+        .toContainEqual(expect.objectContaining({ sourcePath: 'content/scenario/audio_chapter.gal' }));
+    }
+    expect(await fs.stat(path.join(f.projectRoot, 'content/scenario/audio_chapter.gal')).catch(() => null)).toBeNull();
+    result(await apply.invoke('change.rollback', {}));
+  } finally { await stage.close(); await apply?.close(); }
+}, 30_000);
+
+it('rejects a corrupt media batch before registration and allows only real format/kind combinations', async () => {
+  const f = await fixture();
+  await fs.writeFile(path.join(f.source, 'voice.wav'), wav);
+  await fs.writeFile(path.join(f.source, 'broken.webm'), 'not a video');
+  const session = await f.open('apply');
+  try {
+    const sourceId = result(await session.invoke('asset.sources', {})).roots[0].sourceId;
+    expect(await session.invoke('asset.sources', { sourceId, path: 'broken.webm' })).toMatchObject({ ok: false,
+      error: { code: 'ASSET_MEDIA_INVALID', details: { fileName: 'broken.webm' } } });
+    const file = result(await session.invoke('asset.sources', { sourceId, path: 'voice.wav' })).file;
+    const good = { itemId: crypto.randomUUID(), sourceId, sourcePath: 'voice.wav', sha256: file.sha256, kind: 'voice', fileName: 'voice.wav' };
+    const operationId = crypto.randomUUID();
+    const bad = { ...good, itemId: crypto.randomUUID(), sourcePath: 'broken.webm', fileName: 'broken.webm', kind: 'video', sha256: crypto.createHash('sha256').update('not a video').digest('hex') };
+    expect(await session.invoke('asset.import.stage', { operationId, items: [good, bad] })).toMatchObject({ ok: false, error: { code: 'ASSET_MEDIA_INVALID' } });
+    expect(await session.invoke('asset.import.inspect', { operationId })).toMatchObject({ ok: false, error: { code: 'IMPORT_OPERATION_NOT_FOUND' } });
+    expect(await session.invoke('asset.import.stage', { operationId, items: [{ ...good, fileName: 'voice.mp3' }] }))
+      .toMatchObject({ ok: false, error: { code: 'ASSET_MEDIA_INVALID', details: { sourcePath: 'voice.wav', fileName: 'voice.mp3' } } });
+    expect(await session.invoke('asset.import.stage', { operationId, items: [{ ...good, kind: 'background' }] }))
+      .toMatchObject({ ok: false, error: { code: 'IMPORT_PLAN_BLOCKED', details: { plan: { issues: expect.arrayContaining(['IMPORT_FORMAT_UNSUPPORTED']) } } } });
+    // Same-source target repair remains possible before sealing; no new operation.
+    expect(result(await session.invoke('asset.import.stage', { operationId, items: [good] })).operation.status).toBe('READY');
+    expect(await fs.stat(path.join(f.projectRoot, 'content/assets')).catch(() => null)).toBeNull();
+  } finally { await session.close(); }
 });
 
 it('reports real name collisions, allows target repair before sealing, and never changes sealed sources or targets', async () => {
@@ -307,10 +383,16 @@ it('authors real catalog examples and the first character using only public read
   } finally { await client.close(); await server.close(); await session.close(); }
 });
 
-it('recovers the same real stdio import after the server process exits after writing its receipt', async () => {
+it.each(['image', 'audio'])('recovers the same real stdio %s import after the server exits after writing its receipt', async (media) => {
   const f = await fixture();
   const staging = await f.open('stage');
-  const request = await requestFor(staging);
+  let request = await requestFor(staging);
+  if (media === 'audio') {
+    await fs.writeFile(path.join(f.source, '夜声.wav'), wav);
+    const item = request.items[0]!;
+    const file = result(await staging.invoke('asset.sources', { sourceId: item.sourceId, path: '夜声.wav' })).file;
+    request = { ...request, items: [{ ...item, sourcePath: file.path, sha256: file.sha256, kind: 'ambience', fileName: '夜声.wav' }] };
+  }
   const ready = result(await staging.invoke('asset.import.stage', request));
   await staging.close();
   const repo = path.resolve(import.meta.dirname, '../../..');
@@ -348,8 +430,10 @@ await import(${JSON.stringify(pathToFileURL(path.join(repo, 'packages/cli/dist/a
   expect(recovered.operation).toMatchObject({ operationId: request.operationId, status: 'COMMITTED' });
   expect(recovered.receipt.receiptId).toBe(interrupted.receipt.receiptId);
   expect(recovered.plan.planId).toBe(ready.plan.planId);
-  expect(await fs.readdir(path.join(f.projectRoot, 'content/assets/bg'))).toEqual(['night.png']);
-  expect(await fs.readFile(path.join(f.projectRoot, 'content/assets/bg/night.png'))).toEqual(png);
+  const directory = media === 'image' ? 'bg' : 'ambience';
+  const fileName = request.items[0]!.fileName;
+  expect(await fs.readdir(path.join(f.projectRoot, 'content/assets', directory))).toEqual([fileName]);
+  expect(await fs.readFile(path.join(f.projectRoot, 'content/assets', directory, fileName))).toEqual(media === 'image' ? png : wav);
   await resumed.close();
 }, 45_000);
 

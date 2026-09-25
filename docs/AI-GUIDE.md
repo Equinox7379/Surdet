@@ -217,12 +217,12 @@ Editor 会阻止改名或删除仍被 `player.endScenes` 引用的场景，并�
 
 验证不仅是 simulate passed：在 working-change 真正看到背景、人物、至少一次表情切换和预期演出后，再检查返修后的版本、保存重开和结局。runtime.run-from 只提供运行事件，不证明图像可见或演出好看。保留默认 UI，不改 src/main.ts 来绕过内容工具。
 
-### 项目缺少图片时：先导入，再开剧情草稿
+### 项目缺少素材时：先导入，再开剧情草稿
 
-没有足够素材时明确说明缺什么，不把“只用一个背景”说成用户默认要求，也不凭空写出素材键。复用已有图片或新增美术由实际授权决定；本流程不下载、生成图片或新增音频。
+没有足够素材时明确说明缺什么，不把“只用一个背景”说成用户默认要求，也不凭空写出素材键。复用或制作素材由实际授权决定；本流程只导入已经准备好的文件，不下载、生成美术或制作音频。
 
-1. 获授权的执行者启动 Agent Port 时追加 `--asset-source <图片目录绝对路径>`；可多次指定。stage 可以暂存，但发布图片需要明确的 apply 会话。已开剧情草稿时先完成/处理原草稿，不擅自丢弃它来导入。
-2. `asset.sources({})` 取得 roots 的 sourceId，再用 `{ "sourceId": "返回的 ID", "path": "目录内相对图片路径" }` 取得 file.sha256。当前导入支持 PNG/JPEG/WebP；摘要从公开读取复制，不自己猜，也不传任意本机路径。
+1. 获授权的执行者启动 Agent Port 时追加 `--asset-source <素材目录绝对路径>`；可多次指定。stage 可以暂存，但发布素材需要明确的 apply 会话。已开剧情草稿时先完成/处理原草稿，不擅自丢弃它来导入。
+2. `asset.sources({})` 取得 roots 的 sourceId，再用 `{ "sourceId": "返回的 ID", "path": "目录内相对素材路径" }` 取得 file.sha256。导入接收 PNG/JPEG/WebP、WAV/OGG/MP3、MP4/WebM、TTF/OTF/WOFF2；摘要从公开读取复制，不自己猜，也不传任意本机路径。返回 `validation: "container-header"` 只代表容器头检查，不证明目标浏览器解码、播放或字体加载成功，不自动转码，也不认证素材许可。
 3. 调用 `asset.import.stage`，例如下方结构。operationId 和 itemId 使用本次新建的 UUID；对同一请求重试保持原编号与内容。
 
 ```json
@@ -238,6 +238,8 @@ Editor 会阻止改名或删除仍被 `player.endScenes` 引用的场景，并�
 
 4. 在 apply 会话用原 operationId 和返回的 plan.planFingerprint 调用 `asset.import.commit`；不覆盖同名文件。portrait 文件名遵守 role_outfit_expression 三段规则，背景 kind 用 background。不同表情各导入一张，不能将一张图改名冒充多个表情。
 5. 重新读取 project.assets/project.inspect，确认发布后能找到新素材，再 change.begin。后续仍走普通草稿、验证与获授权写回。响应丢失先 asset.import.inspect 原 operationId，需要恢复时按回执使用 asset.import.recover，不换号重复发布。
+
+声音分别使用 `music`（bgm）、`ambience`、`sound-effect`（se）、`voice`，视频使用 `video`，字体使用 `font`；`fileName` 只填保留原格式的单个文件名，不填目录。每文件最多 32 MiB、每批 32 项且总计 128 MiB。新媒体发布后可在 `project.assets.intelligence.items` 查看物理路径、用途和引用；导入回执不是运行验收。P2 仍在接通播放器/Editor 的全部媒体消费与字体许可随附，当前不得仅凭媒体已列出就承诺完整可播或可分发。
 
 ## 2. DSL 速查
 
