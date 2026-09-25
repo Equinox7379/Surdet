@@ -19,8 +19,8 @@ import {
   sceneFileIdentity,
   sceneProjectPath,
 } from '../project-io.js';
-import { collectConfigSceneRoots, splitOutsideQuotes } from '@surdet/core';
-import { parseProjectConfigDocument, parseSceneDocument, serializeSceneDocument } from '@surdet/authoring';
+import { collectConfigSceneRoots } from '@surdet/core';
+import { parseProjectConfigDocument, visitSceneReferences } from '@surdet/authoring';
 import { buildFlowGraph } from '../graph/build.js';
 import type { FlowGraph, FlowNode, FlowEdge } from '../graph/build.js';
 import { histories, setSceneText } from '../history.js';
@@ -75,34 +75,14 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function visitSceneRefs(text: string, sceneId: string, replacement?: string): { text: string; count: number } {
-  let count = 0;
-  const pattern = new RegExp(`^([ \\t]*@(?:jump|call)[ \\t]+)${escapeRe(sceneId)}(?=[.\\s]|$)`);
-  const rewrite = (raw: string) => raw.replace(pattern, (match, prefix: string) => {
-    count++;
-    return replacement === undefined ? match : prefix + replacement;
-  });
-  const lines = parseSceneDocument(text);
-  for (const line of lines) {
-    if (line.kind === 'instr') line.raw = rewrite(line.raw);
-    if (line.kind !== 'choice-option') continue;
-    const arrow = /\s->(?:\s|$)/.exec(line.raw);
-    if (!arrow) continue;
-    const end = arrow.index + arrow[0].length;
-    const parts = splitOutsideQuotes(line.raw.slice(end), '@');
-    line.raw = line.raw.slice(0, end) + parts.map((part, index) => index === 0 ? part : rewrite(`@${part}`).slice(1)).join('@');
-  }
-  return { text: serializeSceneDocument(lines), count };
-}
-
 /** 同步改写普通指令和选择项内联指令，不匹配对白中的指令文字。 */
 export function rewriteSceneRefs(text: string, oldId: string, newId: string): string {
-  return visitSceneRefs(text, oldId, newId).text;
+  return visitSceneReferences(text, oldId, newId).text;
 }
 
 /** 统计场景被 @jump/@call 引用次数（删除前检查用） */
 export function countSceneRefs(text: string, sceneId: string): number {
-  return visitSceneRefs(text, sceneId).count;
+  return visitSceneReferences(text, sceneId).count;
 }
 
 /** 构造拖拽建链的插入行：同场景 → @goto 标签（场景开头 → @jump 本场景）；跨场景 → @jump 场景[.标签] */
@@ -220,6 +200,13 @@ function sceneConfigReferences(sceneId: string): string[] {
   }
   if (state.entryScene === sceneId) references.push('项目入口');
   if (collectConfigSceneRoots(state.configFiles).includes(sceneId)) references.push('事件、成长或日历配置');
+  const gallery = state.configFiles.gallery as { texts?: unknown } | null;
+  if (gallery?.texts !== undefined) {
+    if (!Array.isArray(gallery.texts)) throw new Error('gallery.json 的 texts 必须是数组；修正配置后再改名或删除场景');
+    if (gallery.texts.some((item: unknown) => typeof item === 'object' && item !== null && (item as { scene?: unknown }).scene === sceneId)) {
+      references.push('文本回想配置');
+    }
+  }
   return references;
 }
 
@@ -288,6 +275,18 @@ async function renameSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
     const next = rewriteSceneRefs(candidate.text, sceneId, newId);
     if (next !== candidate.text) rewrites.set(key, next);
   }
+  // History may contain unfinished/ambiguous targets no longer present in the
+  // current text. Compute every rewrite before changing any current identity.
+  const historyRewrites = new Map<string, { past: string[]; future: string[] }>();
+  for (const [key, history] of histories) {
+    const rewrite = (text: string): string => {
+      const next = rewriteSceneRefs(text, sceneId, newId);
+      return key === sceneKey
+        ? next.replace(new RegExp(`^([ \\t]*)@scene[ \\t]+${escapeRe(sceneId)}(?=\\s|$)`, 'gm'), `$1@scene ${newId}`)
+        : next;
+    };
+    historyRewrites.set(key, { past: history.past.map(rewrite), future: history.future.map(rewrite) });
+  }
   for (const [key, next] of rewrites) {
     const candidate = state.scenes.get(key)!;
     candidate.text = next;
@@ -306,16 +305,7 @@ async function renameSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
 
   const newKey = renamedSceneKey(sceneKey, newId);
   // 场景身份改变后，撤销正文仍必须属于新身份；同步历史内的跳转，不能撤回到失效文件。
-  for (const [key, history] of histories) {
-    const rewrite = (text: string): string => {
-      const next = rewriteSceneRefs(text, sceneId, newId);
-      return key === sceneKey
-        ? next.replace(new RegExp(`^([ \\t]*)@scene[ \\t]+${escapeRe(sceneId)}(?=\\s|$)`, 'gm'), `$1@scene ${newId}`)
-        : next;
-    };
-    history.past = history.past.map(rewrite);
-    history.future = history.future.map(rewrite);
-  }
+  for (const [key, revised] of historyRewrites) Object.assign(histories.get(key)!, revised);
   const history = histories.get(sceneKey);
   histories.delete(sceneKey);
   histories.delete(newKey);

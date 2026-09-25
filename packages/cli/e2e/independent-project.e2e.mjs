@@ -11,7 +11,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { cmdNew } from '../dist/new.js';
 import { activate, advanceToChoice, finishToTitle, state, waitTitle, canvasTexts } from '../../renderer/e2e/player-browser-helpers.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -33,7 +32,12 @@ const packed = JSON.parse(npm(repo, ['pack', '--ignore-scripts', '--json', '--pa
 const tarballs = packed.map(item => path.join(archives, item.filename));
 assert.equal(tarballs.length, packages.length);
 const example = path.join(root, '中文 示例');
-assert.equal(await cmdNew('independent-example', { directory: example }), 0);
+await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'independent-cli-fixture', private: true, type: 'module' }));
+// Bootstrap only the declared authoring packages. Both template trees must now
+// come from the installed CLI archive, not the development checkout.
+npm(root, ['install', '--prefer-offline', '--ignore-scripts', '--no-audit', '--no-fund',
+  ...packed.filter(item => ['@surdet/cli', '@surdet/authoring', '@surdet/core'].includes(item.name)).map(item => path.join(archives, item.filename))]);
+const installedCli = path.join(root, 'node_modules/@surdet/cli/dist/index.js');
 
 let browser;
 let server;
@@ -42,7 +46,13 @@ try {
   for (const [template, game] of [['example', example], ['blank', path.join(root, 'blank')]]) {
     if (template === 'blank') {
       // The installed CLI must default to the caller's directory, not any engine root.
-      node(root, path.join(example, 'node_modules/@surdet/cli/dist/index.js'), ['new', 'blank', '--template', 'blank']);
+      node(root, installedCli, ['new', 'blank', '--template', 'blank']);
+    } else node(root, installedCli, ['new', 'independent-example', '--directory', game]);
+    if (template === 'example') {
+      // Scenario storage accepts nested paths and case-insensitive GAL suffixes.
+      // The normal Player must consume that same supported project layout.
+      await fs.mkdir(path.join(game, 'content/scenario/第一章'));
+      await fs.rename(path.join(game, 'content/scenario/ch01_01.gal'), path.join(game, 'content/scenario/第一章/ch01_01.GaL'));
     }
     npm(game, ['install', '--prefer-offline', '--ignore-scripts', '--no-audit', '--no-fund', ...tarballs]);
     const installed = path.join(game, 'node_modules');

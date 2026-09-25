@@ -34,6 +34,12 @@ describe('rewriteSceneRefs（重命名引用同步改写）', () => {
     const src = '@jump old\r\n  @call old.label\r\n';
     expect(rewriteSceneRefs(src, 'old', 'new')).toBe('@jump new\r\n  @call new.label\r\n');
   });
+
+  it('使用条件引号外的真实箭头，不改写条件字串或被 Core 忽略的额外跳转', () => {
+    const src = '@choice\n  前往 [if:" -> @jump old " == " -> @jump old "] -> @call old.entry @jump newer @jump old\n';
+    expect(countSceneRefs(src, 'old')).toBe(1);
+    expect(rewriteSceneRefs(src, 'old', 'new')).toBe(src.replace('@call old.entry', '@call new.entry'));
+  });
 });
 
 describe('countSceneRefs（删除前引用检查）', () => {

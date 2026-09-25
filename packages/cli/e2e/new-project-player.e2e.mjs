@@ -111,6 +111,9 @@ async function authorChapter(game) {
   await call('surdet_scene_patch', { operationId: 'rewrite', patch: { kind: 'replaceText', target: text.objectRef, expectedFingerprint: text.fingerprint, value: '你回到码头，手中多了一封没有署名的信。' } });
   const label = await call('surdet_object_inspect', { view: 'working', objectRef: 'label:shop_scene.greeting' });
   await call('surdet_scene_patch', { operationId: 'rename', patch: { kind: 'renameLabel', target: label.objectRef, expectedFingerprint: label.fingerprint, name: 'arrival' } });
+  const shop = await call('surdet_object_inspect', { view: 'working', objectRef: 'scene:shop_scene' });
+  const relocated = await call('surdet_scene_rename', { operationId: 'rename-shop-scene', sceneId: 'shop_scene', newSceneId: 'post_office_visit', expectedFingerprint: shop.fingerprint });
+  assert.equal(relocated.continuation.sceneRef, 'scene:post_office_visit');
   const entry = await call('surdet_object_inspect', { view: 'working', objectRef: 'config:entryScene' });
   await call('surdet_project_entry_scene_set', { operationId: 'entry', sceneId: 'hub_scene', expectedFingerprint: entry.fingerprint });
   const { playerConfig } = await call('surdet_project_inspect', { view: 'working' });
@@ -129,6 +132,8 @@ async function authorChapter(game) {
   await call('surdet_change_diff'); await call('surdet_change_commit');
   await agent.close(); agent = null;
   assert.equal(await fs.readFile(path.join(game, 'src/main.ts'), 'utf8'), main, 'authoring altered the player entrypoint');
+  assert.match(await fs.readFile(path.join(game, 'content/scenario/hub_scene.gal'), 'utf8'), /@call post_office_visit\.arrival/);
+  await assert.rejects(fs.access(path.join(game, 'content/scenario/shop_scene.gal')), { code: 'ENOENT' });
   return main;
 }
 
