@@ -604,8 +604,8 @@ export async function readScenarioDir(
   for await (const ent of entries) {
     if (ent.kind === 'directory') {
       await readScenarioDir(ent, prefix + ent.name + '/', target);
-    } else if (ent.kind === 'file' && ent.name.endsWith('.gal')) {
-      const id = ent.name.replace(/\.gal$/, '');
+    } else if (ent.kind === 'file' && /\.gal$/i.test(ent.name)) {
+      const id = ent.name.replace(/\.gal$/i, '');
       const text = await (await ent.getFile()).text();
       // key = 相对路径：子目录同名 .gal 各占一条，同名冲突由校验 LINT_DUP 显式报错（M4）
       const key = prefix + id;

@@ -5,6 +5,7 @@ import {
   openProjectFromHandle,
   quarantineTimelineAutosaveEntries,
   readTimelineDir,
+  readScenarioDir,
   refreshProjectAssetIntelligence,
   repairTimelineAutosaveConflict,
   reloadCurrentProjectFromHandle,
@@ -152,6 +153,20 @@ function directoryHandle(
     },
   } as unknown as FileSystemDirectoryHandle;
 }
+
+describe('chapter scene loading', () => {
+  it('reads nested scenes with mixed-case suffixes without changing identity or source bytes', async () => {
+    const text = '@scene start\r\n// 保持空白\r\n旁白：章节中的对白。\r\n@end\r\n';
+    const handle = fileHandle(null, [], 'start.GaL', text);
+    const root = directoryHandle('scenario', { '第一章': directoryHandle('第一章', {}, {
+      'start.GaL': handle, 'notes.txt': fileHandle(null, [], 'notes.txt', '不要导入'),
+    }) });
+    const scenes = new Map<string, SceneEntry>();
+    await readScenarioDir(root, '', scenes);
+    expect([...scenes.keys()]).toEqual(['第一章/start']);
+    expect(scenes.get('第一章/start')).toMatchObject({ id: 'start', file: '第一章/start.GaL', text, eol: '\r\n', dirty: false, handle, persistedSha256: await sceneTextSha256(text) });
+  });
+});
 
 describe('project-io saveAll 失败隔离与恢复备份语义', () => {
   const status = { textContent: '', className: '', title: '' };

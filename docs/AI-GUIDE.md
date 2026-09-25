@@ -104,6 +104,20 @@ scene.create/scene.patch 的 `continuation` 是当前工作版本的父场景入
 
 candidate/integration 明确拒绝该跨文件操作，既有候选创建/修改能力保留。stage 不写回来源，继续按差异、校验、模拟、真实试玩及获授权 apply 提交。相同 operationId 的重试返回原改名回执；若该目标随后再次改名或删除，回执不伪造当前 continuation，应重新读取项目事实。场景改名不是旧玩家存档的迁移，不据此承诺内容升级后旧档仍能定位。
 
+### 按章节整理场景目录
+
+只整理位置、不改剧情身份时，在 OPEN direct 草稿使用 `scene.move`（MCP：`surdet_scene_move`）。先从同一次 `object.inspect({ "objectRef": "scene:arrival", "view": "working" })` 复制 `source.path` 与完整 `fingerprint`：
+
+```json
+{ "operationId": "move-arrival", "sceneId": "arrival", "directory": "第一章/港口", "expectedPath": "content/scenario/arrival.gal", "expectedFingerprint": "复制刚读到的场景 fingerprint" }
+```
+
+`directory` 相对 `content/scenario`；空字符串表示回到根目录，允许中文、空格与多级目录，不允许绝对路径、`..`、系统保留名称、被项目扫描忽略的目录或已有路径别名冲突。移动保留文件名（含后缀大小写）、场景 ID、正文、行尾及所有跳转/配置引用；没有明确入口时，同次操作把移动前的隐式入口写入配置，避免章节排序改变开场。
+
+结果列出 `previousPath/path/affectedPaths`，进入原 `change.diff`、working-change 试玩与获授权的 apply 提交，不立即改来源文件。候选/integration 在业务写入前拒绝，不能混进候选合成。位置已变化时，即使正文指纹相同也必须重读；相同 operationId 重试只返回原回执，后来又移动或删除的旧目标不伪造 continuation。移动后的匿名子引用也应重新读取。该入口不提供跨版本玩家存档迁移保证。
+
+磁盘上的空目录或仅含说明文件的目录不在剧情快照中，提交时仍检查实际目录名；例如磁盘 `Chapter` 与请求 `chapter` 不一致时拒绝并保留原文件。使用真实大小写修正草稿位置后重新验证再提交，不绕过检查或删除用户目录；同稿可先移回根目录，再移入实际章节。
+
 ### 删除不再使用的场景
 
 先读取 `object.inspect({ "objectRef": "scene:unused", "view": "working" })` 的完整场景 `fingerprint`，再调用 `scene.remove`（MCP：`surdet_scene_remove`）：

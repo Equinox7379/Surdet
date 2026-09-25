@@ -61,6 +61,7 @@ import {
   applySceneCreate,
   applySceneRemove,
   applySceneRename,
+  applySceneMove,
   applyScenePatch,
   queryTrace,
   recordValidation,
@@ -92,6 +93,7 @@ import {
   type SceneCreateInput,
   type SceneRemoveInput,
   type SceneRenameInput,
+  type SceneMoveInput,
   type ScenePatchInput,
   type TimelineCreateInput,
   type TimelinePatchInput,
@@ -1030,6 +1032,17 @@ export class AuthoringService {
   async sceneRename(changeId: string, input: SceneRenameInput): Promise<ServiceResult<unknown>> {
     return this.withOpenChange(changeId, async (context) => {
       const result = await applySceneRename(context.session, input);
+      const current = await loadSnapshot(new ChangeRecordProjectStorage(context.session.record));
+      const stillPresent = current.scenes.some(scene => scene.id === result.sceneId && scene.path === result.path);
+      return { ...metadataForChange(context.session), result: { ...result, ...(stillPresent ? { continuation: {
+        sceneRef: `scene:${result.sceneId}`, revision: current.revision, workingRevision: context.session.record.workingRevision,
+      } } : {}) } };
+    });
+  }
+
+  async sceneMove(changeId: string, input: SceneMoveInput): Promise<ServiceResult<unknown>> {
+    return this.withOpenChange(changeId, async (context) => {
+      const result = await applySceneMove(context.session, input);
       const current = await loadSnapshot(new ChangeRecordProjectStorage(context.session.record));
       const stillPresent = current.scenes.some(scene => scene.id === result.sceneId && scene.path === result.path);
       return { ...metadataForChange(context.session), result: { ...result, ...(stillPresent ? { continuation: {

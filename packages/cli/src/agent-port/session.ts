@@ -117,6 +117,7 @@ const ACTIVE_CHANGE_CAPABILITIES = new Set<AuthoringCapabilityId>([
   'scene.create',
   'scene.remove',
   'scene.rename',
+  'scene.move',
   'scene.patch',
   'variable.ensure',
   'variable.patch-initial',
