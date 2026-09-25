@@ -245,12 +245,6 @@ function parsePreviewSpeakerProfiles(configText: string): SpeakerProfile[] {
   }
 }
 
-/** 按实际项目根隔离字体缓存；同名目录不能共享字体字节。 */
-const previewFontsCache = new WeakMap<FileSystemDirectoryHandle, {
-  key: string;
-  fonts: Partial<Record<FontRole, PreviewFont>>;
-}>();
-
 /** 从项目目录读取 game.config.json 的字体角色文件；旧版 font 自动作为三个角色的来源。 */
 async function readProjectFonts(configText: string): Promise<Partial<Record<FontRole, PreviewFont>>> {
   const cfg = configText.trim() ? parseProjectConfigDocument(configText) : {};
@@ -259,45 +253,27 @@ async function readProjectFonts(configText: string): Promise<Partial<Record<Font
   const paths = resolveProjectFontPaths(cfg);
   if (Object.keys(paths).length === 0) return {};
   const MIME: Record<string, string> = { woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', otf: 'font/otf' };
-  const files = new Map<FontRole, File>();
-  const versions: string[] = [];
-  try {
-    for (const role of ['body', 'title', 'ui'] as FontRole[]) {
-      const fontPath = paths[role];
-      if (!fontPath) continue;
-      const segs = fontPath.split('/').filter((s) => s.length > 0);
-      const fname = segs.pop()!;
-      let dir: FileSystemDirectoryHandle = root;
-      let file: File;
-      try {
-        for (const s of segs) dir = await dir.getDirectoryHandle(s);
-        file = await (await dir.getFileHandle(fname)).getFile();
-      }
-      catch (error) { throw new Error(`字体读取失败：${fontPath}（${error instanceof Error ? error.message : String(error)}）`); }
-      files.set(role, file);
-      versions.push(`${role}:${fontPath}:${file.lastModified}:${file.size}`);
-    }
-    const key = versions.join('|');
-    const cached = previewFontsCache.get(root);
-    if (cached?.key === key) return cached.fonts;
-    const result: Partial<Record<FontRole, PreviewFont>> = {};
-    for (const [role, file] of files) {
-      const ext = (file.name.split('.').pop() ?? '').toLowerCase();
+  const result: Partial<Record<FontRole, PreviewFont>> = {};
+  for (const role of ['body', 'title', 'ui'] as FontRole[]) {
+    const fontPath = paths[role];
+    if (!fontPath) continue;
+    const segs = fontPath.split('/').filter((s) => s.length > 0);
+    const fname = segs.pop()!;
+    let dir: FileSystemDirectoryHandle = root;
+    try {
+      for (const s of segs) dir = await dir.getDirectoryHandle(s);
+      const file = await (await dir.getFileHandle(fname)).getFile();
+      // Metadata can survive replacement. Hash the bytes from this read before
+      // the iframe decides whether its existing FontFace can be reused.
       const buffer = await file.arrayBuffer();
       const digest = await crypto.subtle.digest('SHA-256', buffer);
-      result[role] = {
-        buffer,
-        mime: MIME[ext] ?? 'font/ttf',
-        sourcePath: paths[role],
-        version: [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join(''),
-      };
+      const ext = (file.name.split('.').pop() ?? '').toLowerCase();
+      result[role] = { buffer, mime: MIME[ext] ?? 'font/ttf', sourcePath: fontPath,
+        version: [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('') };
     }
-    previewFontsCache.set(root, { key, fonts: result });
-    return result;
-  } catch (error) {
-    previewFontsCache.delete(root);
-    throw error;
+    catch (error) { throw new Error(`字体读取失败：${fontPath}（${error instanceof Error ? error.message : String(error)}）`); }
   }
+  return result;
 }
 
 /** 解析时间轴文本；单个坏文件隔离为 issue，合法定义继续进入预览。 */

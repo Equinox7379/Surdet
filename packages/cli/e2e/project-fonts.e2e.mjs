@@ -4,6 +4,7 @@ import os from 'node:os';
 import net from 'node:net';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { build, preview } from 'vite';
 import { chromium } from 'playwright';
@@ -18,6 +19,7 @@ const tempRoot = path.resolve(os.tmpdir());
 const engine = await fs.mkdtemp(path.join(tempRoot, 'surdet-project-fonts-'));
 const output = path.resolve(process.env.SURDET_FONT_OUTPUT ?? path.join(engine, 'review'));
 const oldData = process.env.SURDET_AGENT_DATA_DIR;
+const refreshOnly = process.argv.includes('--font-refresh-only');
 const fontA = 'content/assets/fonts/甲/同名 字体.TTF';
 const fontB = 'content/assets/fonts/乙/同名 字体.TTF';
 const badFont = 'content/assets/fonts/损坏.TTF';
@@ -93,11 +95,41 @@ try {
   assert.equal(await cmdNew('font-story', { engineRoot: engine }), 0);
   const game = path.join(engine, 'games/font-story');
   const mainBefore = await fs.readFile(path.join(game, 'src/main.ts'), 'utf8');
-  const bytesA = await fs.readFile(path.join(repo, 'examples/zero-after-midnight/content/assets/fonts/NotoSerifSC-Variable.ttf'));
-  const bytesB = await fs.readFile(path.join(repo, 'examples/zero-after-midnight/content/assets/fonts/NotoSansSC-Variable.ttf'));
-  for (const [relative, bytes] of [[fontA, bytesA], [fontB, bytesB], [badFont, bytesB.subarray(0, 64)]]) {
+  let bytesA = await fs.readFile(path.join(repo, 'examples/zero-after-midnight/content/assets/fonts/NotoSerifSC-Variable.ttf'));
+  const sans = await fs.readFile(path.join(repo, 'examples/zero-after-midnight/content/assets/fonts/NotoSansSC-Variable.ttf'));
+  let bytesB = sans;
+  if (refreshOnly) {
+    // Focused mode uses locally installed fontTools, without adding a production
+    // dependency. Small real glyphs keep filesystem-bridge transport out of this test.
+    const encoded = JSON.parse(execFileSync('python', ['-c', `
+import base64, io, json
+from fontTools.fontBuilder import FontBuilder
+from fontTools.pens.ttGlyphPen import TTGlyphPen
+result = []
+for width in (400, 600):
+    fb = FontBuilder(1000, isTTF=True)
+    fb.setupGlyphOrder(['.notdef', 'M'])
+    fb.setupCharacterMap({77: 'M'})
+    pen = TTGlyphPen(None)
+    pen.moveTo((0, 0)); pen.lineTo((width, 0)); pen.lineTo((width, 700)); pen.lineTo((0, 700)); pen.closePath()
+    fb.setupGlyf({'.notdef': TTGlyphPen(None).glyph(), 'M': pen.glyph()})
+    fb.setupHorizontalMetrics({'.notdef': (700, 0), 'M': (700, 0)})
+    fb.setupHorizontalHeader(ascent=800, descent=-200)
+    fb.setupNameTable({'familyName': 'Surdet Refresh Test', 'styleName': 'Regular', 'uniqueFontIdentifier': 'SurdetRefreshTest', 'fullName': 'Surdet Refresh Test', 'psName': 'SurdetRefreshTest'})
+    fb.setupOS2(sTypoAscender=800, sTypoDescender=-200, usWinAscent=800, usWinDescent=200)
+    fb.setupPost(); fb.setupMaxp()
+    buffer = io.BytesIO(); fb.save(buffer)
+    result.append(base64.b64encode(buffer.getvalue()).decode())
+print(json.dumps(result))
+`], { encoding: 'utf8' }));
+    [bytesA, bytesB] = encoded.map(value => Buffer.from(value, 'base64'));
+    assert.equal(bytesA.length, bytesB.length);
+    assert.notEqual(hash(bytesA), hash(bytesB));
+  }
+  for (const [relative, bytes] of [[fontA, bytesA], [fontB, refreshOnly ? bytesA : bytesB], [badFont, bytesB.subarray(0, 64)]]) {
     await fs.mkdir(path.dirname(path.join(game, relative)), { recursive: true }); await fs.writeFile(path.join(game, relative), bytes);
   }
+  if (refreshOnly) await fs.utimes(path.join(game, fontB), new Date('2025-01-01T00:00:00Z'), new Date('2025-01-01T00:00:00Z'));
   // Fixture setup only. All subsequent config changes go through public authoring.
   const configPath = path.join(game, 'game.config.json');
   const sourceConfig = JSON.parse(await fs.readFile(configPath, 'utf8'));
@@ -162,7 +194,7 @@ try {
   await context.addInitScript(() => {
     window.__fontLoads = [];
     const Font = window.FontFace;
-    window.FontFace = class extends Font { constructor(family, source, descriptors) { super(family, source, descriptors); window.__fontLoads.push({ family, source }); } };
+    window.FontFace = class extends Font { constructor(family, source, descriptors) { super(family, source, descriptors); window.__fontLoads.push({ family, source, face: this }); } };
     window.__previewMessages = [];
     window.addEventListener('message', event => { if (event.data?.type?.startsWith('surdet-preview')) window.__previewMessages.push(event.data); });
   });
@@ -195,12 +227,44 @@ try {
   await selectWorking();
   const frame = page.frames().find(frame => frame.url().includes('/preview.html'));
   assert.ok(frame);
-  await verifyLoadedBody(frame, hash(bytesB));
+  await verifyLoadedBody(frame, hash(refreshOnly ? bytesA : bytesB));
   await waitForVisibleStory(frame);
   await verifyMappedPortrait(frame);
   assert.equal(await fs.readFile(configPath, 'utf8'), sourceBefore);
   assert.equal(JSON.parse(await page.evaluate(() => window.surdetEditorDebug.state.gameConfigText)).fonts.body, fontA);
   await page.screenshot({ path: path.join(output, 'working-font.png') });
+  if (refreshOnly) {
+    const filePath = path.join(game, fontB);
+    const before = await fs.stat(filePath);
+    await page.evaluate(() => { window.__fontRootBefore = window.surdetEditorDebug.state.dirHandle; });
+    const loadCount = await frame.evaluate(() => window.__fontLoads.length);
+    await fs.writeFile(filePath, bytesB);
+    await fs.utimes(filePath, before.atime, before.mtime);
+    const after = await fs.stat(filePath);
+    assert.equal(after.size, before.size); assert.equal(after.mtimeMs, before.mtimeMs);
+    await page.locator('[data-action="reload-preview"]').click();
+    await frame.waitForFunction(count => {
+      const next = window.__fontLoads.filter(font => font.family === 'SurdetGameBodyFont').at(-1);
+      return window.__fontLoads.length > count && next?.face.status === 'loaded' && document.fonts.has(next.face);
+    }, loadCount);
+    await verifyLoadedBody(frame, hash(bytesB)); await waitForVisibleStory(frame);
+    assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.dirHandle === window.__fontRootBefore), true);
+    assert.match(await page.locator('.preview-source-state').textContent(), /Agent 可读取本次实际播放记录/);
+    assert.equal(await page.locator('.preview-source-state').getAttribute('data-preview-source-state'), 'fresh');
+    const payload = await frame.evaluate(() => {
+      const message = window.__previewMessages.filter(message => message.type === 'surdet-preview-load').at(-1);
+      return { path: message.payload.fonts.body.sourcePath, version: message.payload.fonts.body.version };
+    });
+    assert.deepEqual(payload, { path: fontB, version: hash(bytesB) });
+    assert.equal(await fs.readFile(configPath, 'utf8'), sourceBefore);
+    assert.equal(await fs.readFile(path.join(game, 'src/main.ts'), 'utf8'), mainBefore);
+    assert.deepEqual(errors, []);
+    await page.screenshot({ path: path.join(output, 'same-metadata-font-refreshed.png') });
+    await fs.writeFile(path.join(output, 'evidence.json'), JSON.stringify({ samePath: fontB, bytes: after.size, mtimeMs: after.mtimeMs,
+      hashBefore: hash(bytesA), hashAfter: hash(bytesB), sameRoot: true, sameWorkingChange: changeId,
+      formalSourceCheckAccepted: true, payload, loads, errors }, null, 2));
+    console.log(`PASS same-path same-metadata font refresh through bound working preview / ${output}`);
+  } else {
   await patchFont(badFont);
   await selectWorking();
   await page.waitForFunction(bad => window.__previewMessages.some(message => message.type === 'surdet-preview-trace-complete' && message.status === 'failed' && JSON.stringify(message).includes(bad)), badFont);
@@ -247,6 +311,7 @@ try {
     badFontReportedAsFailed: true, badConfiguredPortraitReportedAsFailed: true, workingAndBuiltPortraitRendered: true, retainedUnusedBrokenPortraitFailures: 1,
     recoveredSameChange: true, unchangedMain: true, builtPlayerLoadedExactFont: true, licenseBatchImported: true, builtLicenses, loads, errors }, null, 2));
   console.log(`PASS project fonts: working preview, bad font recovery, authorized commit, built Player / ${output}`);
+  }
 } catch (error) {
   if (page && !page.isClosed()) {
     await page.screenshot({ path: path.join(output, `failure-${Date.now()}.png`) }).catch(() => {});

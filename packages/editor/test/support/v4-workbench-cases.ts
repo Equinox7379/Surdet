@@ -863,6 +863,35 @@ export const v4WorkbenchCases: BrowserCase[] = [
     assert(JSON.stringify([...new Uint8Array(secondLoad.payload.fonts.body.buffer)]) === JSON.stringify([31, 32, 33]), 'same-name project reused prior font bytes');
     disposePreviewPanel();
   } },
+  { name: 'same-path font bytes refresh with unchanged size and modification time', run: async () => {
+    fixture();
+    const makeFile = (bytes: number[]) => new File([new Uint8Array(bytes)], 'font.ttf', { type: 'font/ttf', lastModified: 1_700_000_000_000 });
+    let file = makeFile([41, 42, 43]);
+    const handle = { getFile: async () => file } as unknown as FileSystemFileHandle;
+    const root = { name: 'same-project', getFileHandle: async () => handle } as unknown as FileSystemDirectoryHandle;
+    state.dirHandle = root;
+    state.gameConfigText = JSON.stringify({ fonts: { body: 'font.ttf' } });
+    const host = document.createElement('section'); document.body.append(host); renderPreviewPanel(host);
+    const read = async () => {
+      const sent = await startPreviewLoad(host); await waitForPublishedPreviewLoad(sent);
+      return (sent.loads.find(value => (value as { type?: string })?.type === 'surdet-preview-load') as {
+        payload: { fonts: { body: { buffer: ArrayBuffer; version: string } } };
+      }).payload.fonts.body;
+    };
+    const first = await read();
+    const replacement = makeFile([51, 52, 53]);
+    assert(file.size === replacement.size && file.lastModified === replacement.lastModified, 'fixture metadata differs');
+    file = replacement;
+    const second = await read();
+    assert(state.dirHandle === root, 'fixture replaced the root identity');
+    assert(JSON.stringify([...new Uint8Array(second.buffer)]) === '[51,52,53]', 'same metadata returned stale font bytes');
+    const digest = await crypto.subtle.digest('SHA-256', second.buffer);
+    assert(second.version === [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join(''), 'font identity does not match sent bytes');
+    assert(second.version !== first.version, 'changed font retained old registration version');
+    const third = await read();
+    assert(third.version === second.version && third.buffer.byteLength === 3, 'repeat transfer reused detached or stale bytes');
+    disposePreviewPanel();
+  } },
   { name: 'timeline fields reject invalid payloads and retain unrelated timing', run: () => {
     fixture(); clearTimelineHistories(); clearTimelineViewStates();
     bindTimelineHooks({ onPreview: () => {} });

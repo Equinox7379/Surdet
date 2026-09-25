@@ -23,22 +23,26 @@ try {
   await page.route('http://127.0.0.1/preview.html', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><body></body>' }));
   await page.goto(fixtureUrl);
   await page.addScriptTag({ content: chunks[0].code });
-  const results = await page.evaluate(async () => {
+  const filter = process.argv[2];
+  const results = await page.evaluate(async filter => {
     const results = [];
-    for (const test of window.SurdetV4Checks.v4WorkbenchCases) {
+    for (const test of window.SurdetV4Checks.v4WorkbenchCases.filter(test => !filter || new RegExp(filter).test(test.name))) {
       try { await test.run(); results.push({ name: test.name, ok: true }); }
       catch (error) { results.push({ name: test.name, ok: false, error: String(error) }); }
     }
+    if (results.length === 0) throw new Error('No matching workbench cases');
     return results;
-  });
+  }, filter);
   results.forEach((result) => console.log(`${result.ok ? 'PASS' : 'FAIL'} ${result.name}${result.error ? ': ' + result.error : ''}`));
   if (results.some((result) => !result.ok) || errors.length) throw new Error(JSON.stringify({ results: results.filter((result) => !result.ok), errors }));
-  await page.evaluate(() => window.SurdetV4Checks.mountV4Fixture());
-  const dialogue = page.locator('.block[data-line="4"] .v4-dialogue-input');
-  await dialogue.fill('实际浏览器输入，保留焦点。');
-  if (!await dialogue.evaluate((node) => node === document.activeElement)) throw new Error('Input focus lost');
-  const text = await page.evaluate(() => window.SurdetV4Checks.currentFixtureText());
-  if (!text.includes('凛:实际浏览器输入，保留焦点。\r\n')) throw new Error('Real input did not reach source');
-  if (errors.length) throw new Error(errors.join('\n'));
-  console.log(`V4 workbench: ${results.length}/${results.length} module cases plus real input/focus passed.`);
+  if (!filter) {
+    await page.evaluate(() => window.SurdetV4Checks.mountV4Fixture());
+    const dialogue = page.locator('.block[data-line="4"] .v4-dialogue-input');
+    await dialogue.fill('实际浏览器输入，保留焦点。');
+    if (!await dialogue.evaluate((node) => node === document.activeElement)) throw new Error('Input focus lost');
+    const text = await page.evaluate(() => window.SurdetV4Checks.currentFixtureText());
+    if (!text.includes('凛:实际浏览器输入，保留焦点。\r\n')) throw new Error('Real input did not reach source');
+    if (errors.length) throw new Error(errors.join('\n'));
+  }
+  console.log(`V4 workbench: ${results.length}/${results.length} module cases${filter ? '' : ' plus real input/focus'} passed.`);
 } finally { await browser?.close(); }
