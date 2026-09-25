@@ -715,7 +715,7 @@ async function main(): Promise<void> {
     };
     const register = async (rel: string, url: string): Promise<boolean> => {
       const parts = rel.split('/');
-      const kind = parts[0] ?? '';
+      const kind = (parts[0] ?? '').toLowerCase();
       const fname = parts[parts.length - 1] ?? '';
       if (kind === 'bg' && IMG.test(fname)) {
         await assets.registerBackground(fname.replace(IMG, ''), url, fname.split('.').pop());

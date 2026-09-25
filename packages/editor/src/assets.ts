@@ -74,7 +74,7 @@ const DIR_KIND_MAP: Record<string, AssetKind> = {
 
 /** 目录名 → 素材类型（未知目录返回 null，调用方跳过） */
 export function kindOfDir(name: string): AssetKind | null {
-  return DIR_KIND_MAP[name] ?? null;
+  return DIR_KIND_MAP[name.toLowerCase()] ?? null;
 }
 
 const IMG_EXT = /\.(png|jpe?g|webp|gif|avif|svg)$/i;

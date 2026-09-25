@@ -116,6 +116,13 @@ function addSceneObjects(
     const targets = referencesByLine.get(reference.source.line) ?? [];
     if (!targets.includes(reference.objectRef)) targets.push(reference.objectRef);
     referencesByLine.set(reference.source.line, targets);
+    // Like timeline assets, these are referenced identities, not proof that a
+    // physical file is resolved. The catalog and candidate guard own that fact.
+    if (reference.kind.endsWith('-asset') && !objects.some(object => object.objectRef === reference.objectRef)) {
+      addObject(objects, { kind: 'asset', semanticId: reference.objectRef, objectRef: reference.objectRef,
+        source: sourceOf(scene.path, reference.source.line, scene.document[reference.source.line - 1]?.raw ?? ''),
+        references: [], referencedBy: [] }, candidates);
+    }
   }
   const addLineReferences = (objectRef: string, lineNumber: number): void => {
     for (const target of referencesByLine.get(lineNumber) ?? []) addReferenceCandidate(candidates, objectRef, target);

@@ -19,15 +19,15 @@ import type { TextHasher } from './project-storage.js';
 import { buildTimelineOperationCompositionDraft } from './operation-composition-facts.js';
 import { resolveUniqueTimelinePath, timelineIdentityConflict, timelineIdentityMismatchMessage } from './timeline-identity.js';
 
-const WAVE2_TRACK_KINDS: ReadonlySet<string> = new Set(['background', 'portrait', 'camera', 'screen', 'particle']);
+const WAVE2_TRACK_KINDS: ReadonlySet<string> = new Set(['background', 'portrait', 'camera', 'screen', 'particle', 'audio']);
 const WAVE2_ACTIONS: Record<string, ReadonlySet<string>> = {
   background: new Set(['set']),
   portrait: new Set(['show', 'hide', 'move', 'expression']),
   camera: new Set(['zoom', 'pan', 'shake']),
   screen: new Set(['fade', 'tint', 'flash', 'wipe']),
   particle: new Set(['start', 'stop']),
+  audio: new Set(['bgm', 'se', 'voice']),
 };
-const RETAINED_AUDIO_TRACK_KIND = 'audio';
 
 export function timelinePathFor(timelineId: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(timelineId)) {
@@ -70,7 +70,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Wave 2 非音频白名单校验：audio 轨道作为既有 opaque 数据保留，返回第一条违规描述。 */
+/** Check supported authoring tracks/actions before the shared Core shape validation. */
 export function checkWave2Definition(definition: unknown): string | null {
   if (!isRecord(definition) || !Array.isArray(definition['tracks'])) {
     return 'timeline tracks 必须是数组';
@@ -81,10 +81,6 @@ export function checkWave2Definition(definition: unknown): string | null {
       return 'track 形状非法';
     }
     const kind = rawTrack['kind'];
-    // Existing audio tracks are opaque to this authoring surface. Core still
-    // validates their shape, while the authoring whitelist leaves them in the
-    // definition so a non-audio edit cannot silently drop them.
-    if (kind === RETAINED_AUDIO_TRACK_KIND) continue;
     if (!WAVE2_TRACK_KINDS.has(kind)) {
       return `track kind 不在 Wave 2 白名单内：${kind}`;
     }
@@ -101,22 +97,6 @@ export function checkWave2Definition(definition: unknown): string | null {
 function cueAllowedOn(kind: string, cue: TimelineCueInput): boolean {
   const allowed = WAVE2_ACTIONS[kind];
   return allowed !== undefined && allowed.has(cue.action);
-}
-
-function assertEditableTrack(track: { kind: string }, trackRef: string): void {
-  if (track.kind === RETAINED_AUDIO_TRACK_KIND) {
-    throw new AuthoringOperationError(
-      'UNSUPPORTED_OPERATION',
-      `authoring 时间轴入口不能修改 audio track：${trackRef}`,
-    );
-  }
-}
-
-function hasAudioTrack(definition: unknown): boolean {
-  if (!isRecord(definition) || !Array.isArray(definition['tracks'])) return false;
-  return (definition['tracks'] as unknown[]).some((rawTrack) => (
-    isRecord(rawTrack) && rawTrack['kind'] === RETAINED_AUDIO_TRACK_KIND
-  ));
 }
 
 export interface TimelineCreateResult {
@@ -171,9 +151,6 @@ export async function applyTimelineCreate(
     const whitelistViolation = checkWave2Definition(definition);
     if (whitelistViolation !== null) {
       throw new AuthoringOperationError('UNSUPPORTED_OPERATION', whitelistViolation);
-    }
-    if (hasAudioTrack(definition)) {
-      throw new AuthoringOperationError('UNSUPPORTED_OPERATION', 'timeline.create 不能通过新入口新增 audio track');
     }
     const diagnostics = validateTimeline(definition);
     if (diagnostics.length > 0) {
@@ -270,7 +247,6 @@ export async function applyTimelinePatch(
       if (!await matchesSelection(patch.trackRef, tracks[index])) {
         throw new AuthoringOperationError('OBJECT_REF_STALE', `track fingerprint 不匹配：${patch.trackRef}`);
       }
-      assertEditableTrack(tracks[index]!, patch.trackRef);
       changedRef = patch.trackRef;
       tracks.splice(index, 1);
     } else if (patch.kind === 'setTrackTarget') {
@@ -286,7 +262,6 @@ export async function applyTimelinePatch(
       if (!await matchesSelection(patch.trackRef, tracks[index])) {
         throw new AuthoringOperationError('OBJECT_REF_STALE', `track fingerprint 不匹配：${patch.trackRef}`);
       }
-      assertEditableTrack(tracks[index]!, patch.trackRef);
       if (patch.target === null) delete tracks[index]!.target;
       else tracks[index]!.target = patch.target;
       changedRef = patch.trackRef;
@@ -303,7 +278,6 @@ export async function applyTimelinePatch(
       if (!await matchesSelection(patch.trackRef, tracks[index])) {
         throw new AuthoringOperationError('OBJECT_REF_STALE', `track fingerprint 不匹配：${patch.trackRef}`);
       }
-      assertEditableTrack(tracks[index]!, patch.trackRef);
       if (!cueAllowedOn(tracks[index]!.kind, patch.cue)) {
         throw new AuthoringOperationError('UNSUPPORTED_OPERATION', `cue action 不在该 track 白名单内：${patch.cue.action}`);
       }
@@ -324,7 +298,6 @@ export async function applyTimelinePatch(
       if (!await matchesSelection(patch.cueRef, cue)) {
         throw new AuthoringOperationError('OBJECT_REF_STALE', `cue fingerprint 不匹配：${patch.kind === 'replaceCue' ? patch.cueRef : patch.cueRef}`);
       }
-      assertEditableTrack(track!, patch.cueRef.split('/cue:')[0]!);
       changedRef = patch.kind === 'replaceCue' ? patch.cueRef : patch.cueRef;
       if (patch.kind === 'replaceCue') {
         if (!cueAllowedOn(track!.kind, patch.cue)) {

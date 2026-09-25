@@ -5,8 +5,32 @@ import {
   buildAssetCatalog,
   portraitAssetRef,
 } from '../src/asset-catalog.js';
+import { resolvedCompositionAssetRefs } from '../src/composition-object-facts.js';
 
 describe('shared asset catalog', () => {
+  it('provides channel-specific media examples and resolved identities without inventing unsupported timeline actions', () => {
+    const paths = ['bgm', 'ambience', 'se', 'voice'].map(channel => `content/assets/${channel}/同名 声音.WAV`);
+    paths.push('content/assets/video/片头 WEBM.webm', 'content/assets/MUSIC/另曲.mp3');
+    const catalog = buildAssetCatalog(paths);
+    for (const [kind, name] of [['music', 'bgm'], ['ambience', 'ambience'], ['sound-effect', 'se'], ['voice', 'voice'], ['video', 'video']]) {
+      const item = catalog.intelligence.items.find(item => item.kind === kind && item.key !== '另曲')!;
+      expect(item.usage?.scene).toEqual({ kind: 'instruction', name, args: [`"${item.key}"`] });
+      if (name === 'video' || name === 'ambience') expect(item.usage?.timeline).toBeUndefined();
+      else expect(item.usage?.timeline).toEqual({ kind: 'audio', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: name, key: item.key }] });
+    }
+    expect(resolvedCompositionAssetRefs(paths)).toEqual(expect.arrayContaining([
+      'asset:bgm:同名 声音', 'asset:ambience:同名 声音', 'asset:se:同名 声音', 'asset:voice:同名 声音', 'asset:video:片头 WEBM', 'asset:bgm:另曲',
+    ]));
+  });
+
+  it('does not offer missing, ambiguous, invalid or unsupported media and the ambience off sentinel as playable examples', () => {
+    const paths = ['content/assets/bgm/same.wav', 'content/assets/music/same.mp3', 'content/assets/voice/bad?.wav',
+      'content/assets/voice/unregistered.aac', 'content/assets/voice/unregistered.opus', 'content/assets/video/raw.mov', 'content/assets/ambience/off.wav'];
+    expect(buildAssetCatalog(paths).intelligence.items.every(item => item.usage === undefined)).toBe(true);
+    expect(resolvedCompositionAssetRefs(paths)).toEqual([]);
+    expect(resolvedCompositionAssetRefs(['content/assets/bg/same.png', 'content/assets/bg/sub/same.webp',
+      'content/assets/portrait/rin_coat_calm.png', 'content/assets/portrait/rin_coat_calm.webp', 'content/assets/avatar/bad?.png'])).toEqual([]);
+  });
   it('parses background and portrait names with the project convention', () => {
     const catalog = buildAssetCatalog([
       'content/assets/bg/castle_hall.svg',

@@ -105,6 +105,19 @@ function asset(result: ReturnType<typeof buildProjectAssetIntelligence>, sourceP
   return item!;
 }
 
+it('locates each audio timeline cue by its channel, without calling timeline-only media unused', async () => {
+  const timeline = { version: 1, id: 'sound', durationMs: 20, tracks: [{ kind: 'audio', cues:
+    ['bgm', 'se', 'voice'].map(action => ({ atMs: 0, durationMs: 0, easing: 'linear', action, key: '同名 声音' })) }] };
+  const snapshot = await snapshotFor({ 'game.config.json': '{}', 'content/timelines/sound.json': JSON.stringify(timeline) });
+  const facts = ['bgm', 'se', 'voice'].map(channel => ({ path: `content/assets/${channel}/同名 声音.WAV` }));
+  const result = buildProjectAssetIntelligence(snapshot, facts);
+  for (const [index, file] of facts.entries()) {
+    const item = asset(result, file.path);
+    expect(item.references).toEqual([expect.objectContaining({ sourceKind: 'timeline', sourcePath: 'content/timelines/sound.json', objectRef: `timeline:sound/track:0/cue:${index}` })]);
+    expect(item.issues).not.toContain('ASSET_UNUSED');
+  }
+});
+
 describe('shared asset intelligence projection', () => {
   it('diagnoses literal backslashes in asset names without preventing source snapshot loading', async () => {
     const invalid = 'content/assets/bg/foo\\bar.png';

@@ -172,13 +172,18 @@ async function authorChapter(game) {
   const normal = assets.portraits.find(asset => asset.expression === 'normal');
   const smile = assets.portraits.find(asset => asset.expression === 'smile');
   assert.ok(harbor.usage && office.usage && normal.usage && smile.usage);
+  const audioRecipes = assets.intelligence.items.filter(item => item.key === '同名 声音' && item.usage);
+  const videoRecipes = ['片头 WEBM', '片头 MP4'].map(key => assets.intelligence.items.find(item => item.kind === 'video' && item.key === key)?.usage);
+  assert.equal(audioRecipes.length, 4); assert.ok(videoRecipes.every(usage => usage?.scene));
+  const audioTracks = audioRecipes.flatMap(item => item.usage.timeline ? [item.usage.timeline] : []);
+  assert.equal(audioTracks.length, 3);
   const { changeId } = await call('surdet_change_begin', { compositionMode: 'direct' });
   const { charactersFingerprint } = await call('surdet_project_inspect', { view: 'working' });
   await call('surdet_character_ensure', { operationId: 'speaker', id: normal.role, name: '凛', expectedFingerprint: charactersFingerprint });
   await call('surdet_variable_ensure', { operationId: 'visited', name: 'visited', type: 'flag', initial: false });
   await call('surdet_timeline_create', { operationId: 'intro', timelineId: 'intro', definition: {
     version: 1, id: 'intro', durationMs: 600,
-    tracks: [office.usage.timeline, normal.usage.timeline,
+    tracks: [office.usage.timeline, normal.usage.timeline, ...audioTracks,
       { kind: 'camera', cues: [{ atMs: 0, durationMs: 600, easing: 'inOutSine', action: 'pan', x: -8, y: 0 }] }],
   } });
   const timeline = await call('surdet_object_inspect', { view: 'working', objectRef: 'timeline:intro' });
@@ -199,8 +204,8 @@ async function authorChapter(game) {
   ] });
   await call('surdet_scene_create', { operationId: 'hub', sceneId: 'hub_scene', blocks: [
     harbor.usage.scene, normal.usage.scene,
-    ...['片头 WEBM', '片头 MP4'].map(key => ({ kind: 'instruction', name: 'video', args: [`"${key}"`] })),
-    ...['bgm', 'ambience', 'se', 'voice'].map(name => ({ kind: 'instruction', name, args: ['"同名 声音"'] })),
+    ...videoRecipes.map(usage => usage.scene),
+    ...audioRecipes.map(item => item.usage.scene),
     { kind: 'text', speaker: '凛', value: '港口的风停了，去邮局看看吧。' },
     { kind: 'instruction', name: 'timeline', args: ['intro'], modifiers: { blocking: '' } },
     { kind: 'text', speaker: '凛', value: '邮局到了，你的信就在里面。' },
@@ -624,6 +629,8 @@ try {
   await page.waitForFunction(() => window.__surdetDebug.presentationSnapshot.stage.cameraPan.x === -24
     && window.__surdetDebug.rendererStatus === 'awaiting');
   assert.equal(await page.evaluate(() => window.__surdetDebug.presentationSnapshot.stage.backgroundKey), 'post_office');
+  await page.waitForFunction(() => window.__playedAudioDurations.filter(duration => duration === 0.75).length >= 2
+    && window.__playedAudioDurations.filter(duration => duration === 1).length >= 2);
   await page.screenshot({ path: path.join(output, '01b-authored-timeline.png') });
   await advanceToChoice(page);
   assert.equal(await page.evaluate(() => window.__surdetDebug.presentationSnapshot.stage.portraits.find(p => p.key === 'lynn:coat')?.view.expression), 'smile');

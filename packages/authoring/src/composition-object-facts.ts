@@ -9,6 +9,7 @@ import type { ReplayStatePrecondition } from './composition-contracts.js';
 import { GALLERY_PATH, readGalleryDocument } from './gallery-operations.js';
 import { timelineIdFromPath } from './timeline-identity.js';
 import { parseTimelineDefinition, timelineFingerprint } from './timeline-operations.js';
+import { mediaAssetCommand } from './asset-intelligence.js';
 
 export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, hasher: TextHasher): Promise<ReplayStatePrecondition[]> {
   const { cgs } = readGalleryDocument(snapshot.files.find((file) => file.path === GALLERY_PATH)?.text);
@@ -36,10 +37,17 @@ export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, has
 
 export function resolvedCompositionAssetRefs(assetPaths: readonly string[]): string[] {
   const catalog = buildAssetCatalog(assetPaths);
+  const usable = catalog.intelligence.items.filter(item => item.physical && item.issues.every(issue => issue === 'ASSET_UNUSED'));
+  const usablePaths = new Set(usable.map(item => item.sourcePath));
   return [...new Set([
-    ...catalog.backgrounds.filter((asset) => asset.resolved).map((asset) => backgroundAssetRef(asset.key)),
-    ...catalog.portraits.filter((asset) => asset.resolved).map((asset) => portraitAssetRef(asset.role!, asset.outfit!, asset.expression!)),
-    ...catalog.avatars.filter((asset) => asset.resolved).map((asset) => avatarAssetRef(asset.key)),
+    ...catalog.backgrounds.filter((asset) => asset.resolved && usablePaths.has(asset.sourcePath)).map((asset) => backgroundAssetRef(asset.key)),
+    ...catalog.portraits.filter((asset) => asset.resolved && usablePaths.has(asset.sourcePath)).map((asset) => portraitAssetRef(asset.role!, asset.outfit!, asset.expression!)),
+    ...catalog.avatars.filter((asset) => asset.resolved && usablePaths.has(asset.sourcePath)).map((asset) => avatarAssetRef(asset.key)),
+    ...usable.flatMap(item => {
+      const channel = mediaAssetCommand(item.kind);
+      return channel && !(channel === 'ambience' && item.key === 'off')
+        ? [`asset:${channel}:${item.key}`] : [];
+    }),
   ])].sort();
 }
 

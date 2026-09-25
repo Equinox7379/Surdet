@@ -52,9 +52,21 @@ const DIRECTORY_KINDS: Readonly<Record<string, ProjectAssetKind>> = {
 };
 
 const IMAGE_FORMATS = new Set(['svg', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'avif']);
-const AUDIO_FORMATS = new Set(['mp3', 'ogg', 'wav', 'm4a', 'aac', 'flac', 'opus']);
+const AUDIO_FORMATS = new Set(['mp3', 'ogg', 'wav', 'm4a', 'flac']);
 const VIDEO_FORMATS = new Set(['mp4', 'webm', 'ogv']);
 const FONT_FORMATS = new Set(['woff2', 'woff', 'ttf', 'otf']);
+
+/** Media instruction channels used by the existing Player and preview. */
+export function mediaAssetCommand(kind: ProjectAssetKind): 'bgm' | 'ambience' | 'se' | 'voice' | 'video' | undefined {
+  switch (kind) {
+    case 'music': return 'bgm';
+    case 'ambience': return 'ambience';
+    case 'sound-effect': return 'se';
+    case 'voice': return 'voice';
+    case 'video': return 'video';
+    default: return undefined;
+  }
+}
 
 interface ClassifiedFile {
   fact: ProjectAssetFileFact;
@@ -358,6 +370,8 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
         };
         if (track.kind === 'background' && cue.action === 'set') {
           add('background', typeof cue.key === 'string' ? cue.key : undefined, base);
+        } else if (track.kind === 'audio' && (cue.action === 'bgm' || cue.action === 'se' || cue.action === 'voice')) {
+          add(cue.action === 'bgm' ? 'music' : cue.action === 'se' ? 'sound-effect' : 'voice', typeof cue.key === 'string' ? cue.key : undefined, base);
         } else if (track.kind === 'portrait') {
           const rawTarget = typeof track.target === 'string' ? track.target : undefined;
           if (cue.action === 'show' || cue.action === 'expression') {
@@ -532,6 +546,14 @@ export function buildProjectAssetIntelligence(
   for (const item of items) {
     item.references.sort(referenceOrder);
     item.issues.sort(issueOrder);
+    const command = mediaAssetCommand(item.kind);
+    if (command && item.physical && item.issues.length === 0 && !(command === 'ambience' && item.key === 'off')) {
+      item.usage = {
+        scene: { kind: 'instruction', name: command, args: [`"${item.key}"`] },
+        ...(command === 'bgm' || command === 'se' || command === 'voice'
+          ? { timeline: { kind: 'audio' as const, cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: command, key: item.key }] } } : {}),
+      };
+    }
     if (item.physical && item.references.length === 0) {
       item.issues.push('ASSET_UNUSED');
       issues.push(createIssue(
