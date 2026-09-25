@@ -158,10 +158,25 @@ async function continueInEditor(game, errors) {
   editorServer = await startDevProject(['--project', game, '--data-root', path.join(engine, 'editor-data'), '--port', String(port)], {
     registerSignals: false, cacheDir: path.join(output, '.editor-vite'),
   });
+  const reopenProject = async () => {
+    await page.locator('[data-action="open-project"]').click();
+    await page.waitForFunction(() => window.surdetEditorDebug?.state?.projectLoading === false
+      && window.surdetEditorDebug.state.scenes.has('hub_scene')
+      && window.surdetEditorDebug.state.assetImportWorkspace?.entryState === 'ready'
+      && document.querySelector('[data-action="save-project"]')?.disabled === false);
+    await page.locator('[data-editor-mode="config"]').click();
+    await page.getByRole('button', { name: '角色', exact: true }).click();
+    await page.getByRole('textbox', { name: 'narrator 的显示名称', exact: true }).waitFor();
+  };
   const open = async () => {
     page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     page.on('console', message => { if (message.type() === 'error') errors.push(`Editor: ${message.text()}`); });
     page.on('pageerror', error => errors.push(`Editor: ${error.message}`));
+    page.on('response', response => {
+      if (response.status() >= 400 && new URL(response.url()).pathname.includes('/workspace/')) {
+        void response.text().then(body => errors.push(`Workspace ${response.status()} ${new URL(response.url()).pathname}: ${body}`));
+      }
+    });
     await page.exposeFunction('__surdetNodeFs', createNodeFsBridge({ project: game }));
     await page.addInitScript(nodeBackedFileSystemInit, { initialRootKey: 'project' });
     await page.addInitScript(() => {
@@ -175,13 +190,7 @@ async function continueInEditor(game, errors) {
       };
     });
     await page.goto(`http://127.0.0.1:${port}/index.html`);
-    await page.locator('[data-action="open-project"]').click();
-    await page.waitForFunction(() => window.surdetEditorDebug?.state?.projectLoading === false
-      && window.surdetEditorDebug.state.scenes.has('hub_scene')
-      && window.surdetEditorDebug.state.assetImportWorkspace?.entryState === 'ready');
-    await page.locator('[data-editor-mode="config"]').click();
-    await page.getByRole('button', { name: '角色', exact: true }).click();
-    await page.getByRole('textbox', { name: 'narrator 的显示名称', exact: true }).waitFor();
+    await reopenProject();
   };
   const configBefore = JSON.parse((await fs.readFile(path.join(game, 'game.config.json'), 'utf8')).replace(/^\uFEFF/, ''));
   const eventsPath = path.join(game, 'content/config/events.json');
@@ -203,8 +212,7 @@ async function continueInEditor(game, errors) {
     && document.querySelector('[data-action="save-project"]')?.disabled === false);
   assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.pendingSceneDeletes.length), 0);
   await fs.writeFile(eventsPath, eventsBefore);
-  await page.close();
-  await open();
+  await reopenProject();
   assert.deepEqual(await page.evaluate(() => window.surdetEditorDebug.state.configReadErrors), {});
   assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('第一章/邮局/post_office_visit')?.id), 'post_office_visit');
   await page.locator('[data-editor-mode="editor"]').click();
@@ -228,8 +236,7 @@ async function continueInEditor(game, errors) {
     && document.querySelector('[data-action="save-project"]')?.disabled === false);
   assert.equal(await fs.readFile(path.join(game, 'content/scenario/第二章/邮局 归来/post_office_visit.gal'), 'utf8'), visitBefore);
   await assert.rejects(fs.access(path.join(game, 'content/scenario/第一章/邮局/post_office_visit.gal')), { code: 'ENOENT' });
-  await page.close();
-  await open();
+  await reopenProject();
   assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('第二章/邮局 归来/post_office_visit')?.text), visitBefore);
   await page.locator('[data-editor-mode="editor"]').click();
   const workingBefore = await page.evaluate(() => {
@@ -303,17 +310,18 @@ async function continueInEditor(game, errors) {
   assert.equal(eventAfter.note, 'end_a');
   await assert.rejects(fs.access(path.join(game, 'content/scenario/end_a.gal')), { code: 'ENOENT' });
   assert.equal(await fs.readFile(path.join(game, 'content/scenario/final_a.gal'), 'utf8'), renamedEnding);
-  await page.close();
-  await open();
+  await reopenProject();
   assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('final_a').text), renamedEnding);
   await page.waitForFunction(() => window.surdetEditorDebug.state.lastValidation !== null);
   assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.lastValidation.issues.some(issue => issue.code === 'SCENE_ID')), false);
   await page.locator('[data-editor-mode="config"]').click();
   await page.getByRole('button', { name: '角色', exact: true }).click();
   await page.getByRole('textbox', { name: 'narrator 的显示名称', exact: true }).fill('引路人');
-  const roleSaveFinished = page.waitForResponse(response => response.ok() && new URL(response.url()).pathname.endsWith('/workspace/finish'));
+  await page.waitForFunction(() => document.querySelector('[data-action="save-project"]')?.disabled === false);
+  const roleSaveFinished = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/workspace/finish'));
   await page.keyboard.press('Control+S');
-  await roleSaveFinished;
+  const roleSaveResponse = await roleSaveFinished;
+  assert.ok(roleSaveResponse.ok(), await roleSaveResponse.text());
   await page.waitForFunction(() => document.querySelector('[data-save-state]')?.getAttribute('data-save-state') === 'saved'
     && document.querySelector('[data-save-state]')?.textContent === '已保存'
     && document.querySelector('[data-action="save-project"]')?.disabled === false);
@@ -323,10 +331,45 @@ async function continueInEditor(game, errors) {
   assert.deepEqual(configAfter.player, { ...configBefore.player, endScenes: ['final_a', 'end_b'] }, 'Editor dropped player settings');
   assert.equal(configAfter.characters.narrator.name, '引路人');
   assert.match(await fs.readFile(path.join(game, 'content/scenario/hub_scene.gal'), 'utf8'), /引路人：你回到码头/);
-  await page.close();
-  await open();
+  await reopenProject();
   assert.equal(await page.getByRole('textbox', { name: 'narrator 的显示名称', exact: true }).inputValue(), '引路人');
   await page.screenshot({ path: path.join(output, '04-editor-continued.png') });
+  await page.locator('[data-editor-mode="editor"]').click();
+  await page.locator('.scene-item[data-scene-id="hub_scene"]').click();
+  for (const dialogue of await page.locator('.v4-dialogue-input').all()) {
+    if ((await dialogue.inputValue()) === '港口的风停了，去邮局看看吧。') { await dialogue.click(); break; }
+  }
+  await page.locator('.v4-edit-stage img').evaluateAll(async images => { for (const image of images) await image.decode(); });
+  await page.screenshot({ path: path.join(output, '04e-editor-script.png') });
+  const priorSceneNames = await fs.readdir(path.join(game, 'content/scenario'));
+  await page.getByRole('button', { name: '导入剧本', exact: true }).click();
+  const importDialog = page.getByRole('dialog', { name: '导入剧本', exact: true });
+  await importDialog.getByLabel('新场景 ID', { exact: true }).fill('imported_dialogue');
+  await importDialog.getByLabel('选择 UTF-8 文件', { exact: true }).setInputFiles({
+    name: '中文 稿件.csv', mimeType: 'text/csv', buffer: Buffer.from('\uFEFFspeaker,text\r\n引路人,"这封信,终于送到了。"\r\n引路人,"@jump secret 只是印在信上的字。"\r\n', 'utf8'),
+  });
+  await page.waitForFunction(() => document.querySelector('.script-import-dialog textarea')?.value.includes('这封信'));
+  await importDialog.getByRole('button', { name: '预览导入', exact: true }).click();
+  assert.match(await importDialog.innerText(), /2 条台词/);
+  assert.deepEqual(await fs.readdir(path.join(game, 'content/scenario')), priorSceneNames, 'import preview wrote a source file');
+  await importDialog.getByRole('button', { name: '确认导入新草稿', exact: true }).click();
+  await page.waitForFunction(() => window.surdetEditorDebug.state.scenes.has('imported_dialogue'));
+  assert.equal(await fs.access(path.join(game, 'content/scenario/imported_dialogue.gal')).then(() => true, () => false), false, 'import confirmation saved implicitly');
+  const importedBeforeEdit = await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('imported_dialogue').text);
+  const firstImportedLine = page.locator('.block[data-line="1"] .v4-dialogue-input');
+  await firstImportedLine.fill('导入后的一次返修。');
+  await page.locator('[data-action="undo"]').click();
+  assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('imported_dialogue').text), importedBeforeEdit);
+  const importSaveFinished = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/workspace/finish'));
+  await page.locator('[data-action="save-project"]').click();
+  const importSaved = await importSaveFinished; assert.ok(importSaved.ok(), await importSaved.text());
+  await page.waitForFunction(() => document.querySelector('[data-save-state]')?.getAttribute('data-save-state') === 'saved'
+    && document.querySelector('[data-action="save-project"]')?.disabled === false);
+  assert.equal(await fs.readFile(path.join(game, 'content/scenario/imported_dialogue.gal'), 'utf8'), importedBeforeEdit);
+  await reopenProject();
+  assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('imported_dialogue').text), importedBeforeEdit);
+  assert.match(importedBeforeEdit, /引路人：@jump secret 只是印在信上的字。/);
+  console.log('PASS CSV: UTF-8 file -> mapped preview -> new unsaved scene -> edit/undo -> normal save -> project reopen; literal instructions remain dialogue');
 }
 
 async function resumePublicAuthoring(game) {

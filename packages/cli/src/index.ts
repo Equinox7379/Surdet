@@ -78,7 +78,7 @@ const HELP = `Surdet Engine CLI v${VERSION}
   surdet manifest [dir]    生成版本补丁清单 release/update-manifest.json
   surdet pack <dir>        打包指定游戏的 Windows exe（M7）
   surdet capabilities describe --json
-  surdet project|object|change|scene|variable|character|timeline|gallery|runtime|composition|review|asset ... --json
+  surdet project|object|change|scene|script|variable|character|timeline|gallery|runtime|composition|review|asset ... --json
       --input <file|->      按 capabilities describe 返回的 schema 传入完整 JSON
       --asset-source <dir>  本次 CLI 调用授权读取的绝对图片目录（可重复）
       --asset-import-data-root <dir>  与 Editor/MCP 共用的素材操作数据目录

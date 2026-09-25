@@ -4,6 +4,7 @@
 import { state, h, setStatus, type SceneEntry } from '../state.js';
 import { isSceneFilePathReserved, runProjectWriteOperation } from '../project-io.js';
 import { renderAssetsPanel } from './assets.js';
+import { openScriptImport } from './script-import.js';
 
 export function renderSidebar(): void {
   const sidebar = document.getElementById('sidebar');
@@ -57,6 +58,9 @@ export function renderSidebar(): void {
   newBtn.setAttribute('data-action', 'create-scene');
   newBtn.onclick = () => { void newScene(); };
   sidebar.appendChild(newBtn);
+  const importBtn = h('button', 'outline-new-scene', '导入剧本'); importBtn.type = 'button';
+  importBtn.onclick = () => openScriptImport(sidebar, onSelectSceneHook);
+  sidebar.append(importBtn);
   const list = h('div', 'scene-list');
   list.id = 'scene-outline-list';
   list.setAttribute('role', 'tabpanel');

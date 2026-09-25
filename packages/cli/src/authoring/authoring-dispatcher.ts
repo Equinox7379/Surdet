@@ -80,6 +80,8 @@ export async function dispatchAuthoringCapability(
       return { value: await service.projectAssets(requireProject(context), readChange(context, payload, false)) };
     case 'project.gallery':
       return { value: await service.projectGallery(requireProject(context), readChange(context, payload, true)) };
+    case 'script.import.preview':
+      return { value: await service.scriptImportPreview(requireProject(context), payload as unknown as Parameters<AuthoringService['scriptImportPreview']>[1], readChange(context, payload, true)) };
     case 'asset.sources':
     case 'asset.import.stage':
     case 'asset.import.inspect':
