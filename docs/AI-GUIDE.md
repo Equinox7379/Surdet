@@ -103,6 +103,8 @@ scene.create/scene.patch 的 `continuation` 是当前工作版本的父场景入
 
 标签先读取 `label:场景.标签` 的指纹，再用 scene.patch 的 `renameLabel`（含 name）或 `removeLabel`。这两个变体仅限 direct：改名同时更新实际本地/跨场景引用，返回 affectedScenes；删除仍被引用的标签会拒绝并列出调用位置。普通胶囊不可组合或进入正式候选/结果审批；审读使用 change.diff、working-change 试玩及原草稿续接，不把新工作版本当作旧胶囊画面。
 
+Editor 选中标签后使用“改名并更新引用”，会同步正文调用、回想入口和已有撤销历史中的身份；引用仍存在时，行删除和步骤菜单删除都会拒绝。改名只改草稿，“保存全部”才同批写入关联场景与回想配置。新场景先保存再改名标签；标签改名与场景移动/改名分别保存。身份改名不作为普通台词撤销点，后续撤销正文不会带回旧标签名；无引用标签的删除仍可正常撤销。直接改源码属于手工编辑，不自动执行引用迁移。
+
 ### 改名场景并续接原草稿
 
 在 OPEN 的 direct 草稿中，先读取 `object.inspect({ "objectRef": "scene:draft", "view": "working" })` 的完整场景指纹，再调用 `scene.rename`（MCP：`surdet_scene_rename`）：

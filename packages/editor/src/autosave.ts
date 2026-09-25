@@ -10,7 +10,7 @@ import {
   inspectTimelineAutosaveIdentity,
   type TimelineAutosaveDocument,
 } from './timeline-autosave-identity.js';
-import { sceneReferenceConfigPaths } from '@surdet/authoring';
+import { sceneReferenceConfigPaths, isValidLabelName, validateLabelRenameBatch } from '@surdet/authoring';
 import { isValidSceneId } from '@surdet/core';
 
 export const AUTOSAVE_KEY = 'surdet-editor:autosave';
@@ -19,13 +19,14 @@ export const AUTOSAVE_INTERVAL_MS = 30_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 
-function parseConfigRenames(value: unknown): Array<{ from: string; to: string }> | null {
+function parseConfigRenames(value: unknown): Array<{ from: string; to: string; labelScene?: string }> | null {
   if (!Array.isArray(value) || value.length === 0 || value.length > 100) return null;
-  const result: Array<{ from: string; to: string }> = [];
+  const result: Array<{ from: string; to: string; labelScene?: string }> = [];
   for (const entry of value) {
-    if (!entry || typeof entry !== 'object' || !isValidSceneId(entry.from) || !isValidSceneId(entry.to)
-      || entry.from.toLowerCase() === entry.to.toLowerCase()) return null;
-    result.push({ from: entry.from as string, to: entry.to as string });
+    if (!entry || typeof entry !== 'object') return null;
+    if (entry.labelScene === undefined ? !isValidSceneId(entry.from) || !isValidSceneId(entry.to) || entry.from.toLowerCase() === entry.to.toLowerCase()
+      : !isValidSceneId(entry.labelScene) || !isValidLabelName(entry.from) || !isValidLabelName(entry.to) || entry.from === entry.to) return null;
+    result.push({ from: entry.from as string, to: entry.to as string, ...(entry.labelScene === undefined ? {} : { labelScene: entry.labelScene as string }) });
   }
   return result;
 }
@@ -57,13 +58,13 @@ export interface AutosaveSceneTransaction {
   pendingDeletes: AutosavePendingSceneMutation[];
   pendingCreates?: Array<{ key: string; operationId: string }>;
   configWrites?: Array<{ path: string; text: string; expectedSha256: string | null }>;
-  configRenames?: Array<{ from: string; to: string }>;
+  configRenames?: Array<{ from: string; to: string; labelScene?: string }>;
 }
 
 export interface AutosavePendingSceneCommit {
   requestId: string;
   plans: Array<{ operationId: string; planFingerprint: string }>;
-  configRenames?: Array<{ from: string; to: string }>;
+  configRenames?: Array<{ from: string; to: string; labelScene?: string }>;
   writes: Array<{ path: string; text: string; expectedSha256: string | null }>;
   deletedPaths: string[];
 }
@@ -243,7 +244,7 @@ export function buildAutosave(
     && pendingSceneCommit === null) return null;
   const payload: AutosavePayload = { dirName, ...(projectId ? { projectId } : {}), savedAt: now, scenes: entries };
   if (timelineEntries.length > 0) payload.timelines = timelineEntries;
-  if (pendingSceneDeletes.length > 0 || pendingCreates.length > 0) {
+  if (pendingSceneDeletes.length > 0 || pendingCreates.length > 0 || configRenames.length > 0) {
     payload.sceneTransaction = {
       ...(configRenames.length === 0 ? {} : { configRenames: configRenames.map(entry => ({ ...entry })), configWrites: configWrites.map(entry => ({ ...entry })) }),
       pendingDeletes: pendingSceneDeletes.map((pending) => ({
@@ -368,7 +369,7 @@ export function parseAutosave(raw: string | null): AutosavePayload | null {
         pendingCreates.push({ key: pending.key, operationId: pending.operationId });
       }
     }
-    if (pendingDeletes.length === 0 && pendingCreates.length === 0) return null;
+    if (pendingDeletes.length === 0 && pendingCreates.length === 0 && transaction.configRenames === undefined) return null;
     const configRenames = transaction.configRenames === undefined ? undefined : parseConfigRenames(transaction.configRenames);
     if (configRenames === null) return null;
     if (configRenames !== undefined && transaction.configWrites === undefined) return null;
@@ -580,6 +581,14 @@ export function inspectSceneAutosaveRecovery(
     .filter((pending) => pending.kind === 'rename' && pending.replacementKey)
     .map((pending) => pending.replacementKey!));
   const createKeys = new Set(payload.sceneTransaction.pendingCreates?.map((pending) => pending.key) ?? []);
+  const labelRenames = payload.sceneTransaction.configRenames?.filter(rename => rename.labelScene !== undefined) ?? [];
+  if (labelRenames.length > 0) {
+    if (labelRenames.length !== payload.sceneTransaction.configRenames!.length || payload.sceneTransaction.pendingDeletes.length > 0) return { status: 'blocked', scenes: [], pendingDeletes: [] };
+    const base = Object.fromEntries([...scenes.values()].map(scene => [`content/scenario/${scene.file}`, scene.text]));
+    const writes = Object.fromEntries(entries.map(entry => [`content/scenario/${entry.file}`, entry.text]));
+    try { validateLabelRenameBatch(base, writes, labelRenames); }
+    catch { return { status: 'blocked', scenes: [], pendingDeletes: [] }; }
+  }
   for (const entry of entries) {
     if (replacementKeys.has(entry.key) || createKeys.has(entry.key)) continue;
     const current = scenes.get(entry.key);

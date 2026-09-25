@@ -65,6 +65,45 @@ function uuid(): string {
   return crypto.randomUUID();
 }
 
+describe('label companion commits', () => {
+  it.each([undefined, 'after_first_publish'] as const)('updates all callers/gallery together and retries exact requests (%s)', async fault => {
+    const value = await fixture(fault);
+    const a = '\uFEFF@scene a\r\n  @label entry\r\n旁白：entry 保留。\r\n@end\r\n';
+    const b = '@scene b\n@label entry\n@call a.entry\n旁白：a.entry 保留。\n@end\n';
+    const gallery = '\uFEFF{"texts":[{"id":"m","scene":"a","label":"entry","note":"entry"}],"custom":true}\r\n';
+    const sources = { 'content/scenario/a.GAL': a, 'content/scenario/chapter/b.gal': b, 'content/config/gallery.json': gallery };
+    await fs.mkdir(path.join(value.project, 'content/config'), { recursive: true });
+    await fs.writeFile(path.join(value.project, 'game.config.json'), '{"entryScene":"a","variables":{}}');
+    for (const [file, text] of Object.entries(sources)) await fs.writeFile(path.join(value.project, file), text);
+    const after = { 'content/scenario/a.GAL': a.replace('@label entry', '@label 抵达'), 'content/scenario/chapter/b.gal': b.replace('@call a.entry', '@call a.抵达'),
+      'content/config/gallery.json': gallery.replace('"label":"entry"', '"label":"抵达"') };
+    const request = { requestId: uuid(), plans: [], configRenames: [{ labelScene: 'a', from: 'entry', to: '抵达' }],
+      writes: Object.entries(after).map(([file, text]) => ({ path: file, text, expectedSha256: sha256(sources[file as keyof typeof sources]) })) };
+    const probes = [
+      { ...request, requestId: uuid(), writes: request.writes.filter(write => !write.path.endsWith('b.gal')) },
+      { ...request, requestId: uuid(), writes: request.writes.filter(write => !write.path.endsWith('gallery.json')) },
+      { ...request, requestId: uuid(), writes: request.writes.map(write => write.path.endsWith('b.gal') ? { ...write, text: b } : write) },
+      { ...request, requestId: uuid(), writes: request.writes.map(write => write.path.endsWith('gallery.json') ? { ...write, text: write.text.replace('"custom":true', '"custom":false') } : write) },
+      { ...request, requestId: uuid(), configRenames: [{ labelScene: 'b', from: 'entry', to: '抵达' }] },
+    ];
+    for (const bad of probes) {
+      await expect(value.authority.commit(bad)).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+      for (const [file, text] of Object.entries(sources)) expect(await fs.readFile(path.join(value.project, file), 'utf8')).toBe(text);
+    }
+    let authority = value.authority;
+    if (fault) {
+      await expect(authority.commit(request)).rejects.toBeInstanceOf(SceneLifecycleInjectedTermination);
+      authority = new ProjectSceneLifecycleAuthority(value.paths, { assertLeaseHeld: () => undefined });
+      await authority.recoverPending();
+      for (const [file, text] of Object.entries(sources)) expect(await fs.readFile(path.join(value.project, file), 'utf8')).toBe(text);
+    }
+    const first = await authority.commit(request);
+    expect(first).toMatchObject({ status: 'COMMITTED', deletedPaths: [] });
+    expect(await authority.commit(request)).toEqual(first);
+    for (const [file, text] of Object.entries(after)) expect(await fs.readFile(path.join(value.project, file), 'utf8')).toBe(text);
+  });
+});
+
 describe('project scene lifecycle authority', () => {
   it('does not pin a deleted implicit entry during a different scene config rename', async () => {
     const value = await fixture();

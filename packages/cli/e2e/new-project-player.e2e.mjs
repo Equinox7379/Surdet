@@ -145,6 +145,14 @@ async function authorChapter(game) {
 }
 
 async function continueInEditor(game, errors) {
+  const galleryPath = path.join(game, 'content/config/gallery.json');
+  const galleryText = await fs.readFile(galleryPath, 'utf8').catch(error => { if (error.code === 'ENOENT') return '{}'; throw error; });
+  const gallery = JSON.parse(galleryText.replace(/^\uFEFF/, ''));
+  await fs.mkdir(path.dirname(galleryPath), { recursive: true });
+  await fs.writeFile(galleryPath, JSON.stringify({ cgs: [], music: [], ...gallery, texts: [...(gallery.texts ?? []), { id: 'visit-memory', name: '邮局回想', scene: 'post_office_visit', label: 'arrival', note: 'arrival stays literal' }] }));
+  const visitSourcePath = path.join(game, 'content/scenario/第一章/邮局/post_office_visit.gal');
+  const visitSource = await fs.readFile(visitSourcePath, 'utf8');
+  await fs.writeFile(visitSourcePath, visitSource.replace('@label arrival', '@label arrival\n@unlock_text visit-memory'));
   let port;
   for (let candidate = 4431; candidate <= 4470; candidate++) {
     const probe = net.createServer();
@@ -238,6 +246,31 @@ async function continueInEditor(game, errors) {
   await assert.rejects(fs.access(path.join(game, 'content/scenario/第一章/邮局/post_office_visit.gal')), { code: 'ENOENT' });
   await reopenProject();
   assert.equal(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('第二章/邮局 归来/post_office_visit')?.text), visitBefore);
+  await page.locator('[data-editor-mode="editor"]').click();
+  await page.locator('.scene-item[data-scene-id="第二章/邮局 归来/post_office_visit"]').click();
+  // Select by source identity, not the first label or a position remembered before the move.
+  const labelIndex = await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('第二章/邮局 归来/post_office_visit').text.split(/\r\n|\n|\r/).findIndex(line => line.trim() === '@label arrival'));
+  assert.ok(labelIndex >= 0);
+  await page.locator(`.block[data-line="${labelIndex}"] .v4-step-summary`).click();
+  page.once('dialog', dialog => dialog.accept('arrival_editor'));
+  const labelRenameFinished = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/workspace/finish'));
+  await page.getByRole('button', { name: '改名并更新引用', exact: true }).click();
+  const renamedLabel = await labelRenameFinished; assert.ok(renamedLabel.ok(), await renamedLabel.text());
+  await page.waitForFunction(() => window.surdetEditorDebug.state.scenes.get('第二章/邮局 归来/post_office_visit').text.includes('@label arrival_editor')
+    && document.querySelector('[data-action="save-project"]')?.disabled === false);
+  assert.match(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('hub_scene').text), /@call post_office_visit\.arrival_editor/);
+  assert.equal(await fs.readFile(path.join(game, 'content/scenario/第二章/邮局 归来/post_office_visit.gal'), 'utf8'), visitBefore, 'label rename saved before confirmation');
+  const labelSaveFinished = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/workspace/finish'));
+  await page.locator('[data-action="save-project"]').click();
+  const labelSaved = await labelSaveFinished; assert.ok(labelSaved.ok(), await labelSaved.text());
+  await page.waitForFunction(() => window.surdetEditorDebug.state.pendingSceneConfigRenames.length === 0 && window.surdetEditorDebug.state.pendingSceneCommit === null
+    && document.querySelector('[data-action="save-project"]')?.disabled === false);
+  assert.match(await fs.readFile(path.join(game, 'content/scenario/hub_scene.gal'), 'utf8'), /@call post_office_visit\.arrival_editor/);
+  const savedGallery = JSON.parse((await fs.readFile(galleryPath, 'utf8')).replace(/^\uFEFF/, ''));
+  assert.deepEqual(savedGallery.texts.find(item => item.id === 'visit-memory'), { id: 'visit-memory', name: '邮局回想', scene: 'post_office_visit', label: 'arrival_editor', note: 'arrival stays literal' });
+  await reopenProject();
+  assert.match(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('第二章/邮局 归来/post_office_visit').text), /@label arrival_editor/);
+  console.log('PASS label rename: real Editor field -> cross-scene call and gallery -> grouped save -> project reopen');
   await page.locator('[data-editor-mode="editor"]').click();
   const workingBefore = await page.evaluate(() => {
     const s = window.surdetEditorDebug.state;

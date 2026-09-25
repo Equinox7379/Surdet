@@ -948,6 +948,12 @@ describe('project asset import authority HTTP boundary', () => {
     });
     expect(linked.response.status).toBe(200);
     expect(fixture.target.calls).toContainEqual(['scene-commit', linkedBody]);
+    const labelBody = { ...commitBody, configRenames: [{ from: 'arrival', to: '抵达', labelScene: 'start' }] };
+    const labelCommit = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/commit`, {
+      method: 'POST', headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken }), body: JSON.stringify(labelBody),
+    });
+    expect(labelCommit.response.status).toBe(200);
+    expect(fixture.target.calls).toContainEqual(['scene-commit', labelBody]);
     const malformed = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/commit`, {
       method: 'POST', headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: bindingToken }),
       body: JSON.stringify({ ...linkedBody, configRenames: [{ from: 'start', to: 'intro', other: true }] }),

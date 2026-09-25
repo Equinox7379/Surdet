@@ -75,7 +75,8 @@ import {
   moveSceneAtKey,
 } from './panels/flow.js';
 import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant, resetConfigSession,
-  inspectConfigDraftState, prepareConfigSceneRename, saveDirtyConfigSections } from './panels/config.js';
+  inspectConfigDraftState, prepareConfigSceneRename, prepareConfigLabelRename, saveDirtyConfigSections } from './panels/config.js';
+import { bindLabelEditingHooks } from './label-editing.js';
 import { renderPreviewPanel, disposePreviewPanel } from './panels/preview-panel.js';
 import { disposeScriptV4, revealScriptV4Line } from './v4/script-workbench.js';
 import { bindV4Navigation, navigateMode, navigateTimeline } from './v4/ui.js';
@@ -1667,6 +1668,10 @@ bindConfigHooks({
   requestValidate: () => { scheduleValidate(); scheduleAuthoringIndexRebuild(); },
   onDraftStateChanged: refreshProjectBarProjection,
 });
+bindLabelEditingHooks({ prepareConfig: prepareConfigLabelRename, onEdited: () => {
+  markProjectEdited(); renderSidebar(); refreshManuscriptFacts(); refreshCurrentSceneContext();
+  scheduleValidate(); scheduleAuthoringIndexRebuild();
+} });
 bindTimelineHooks({
   onPreview: (timelineId) => {
     state.previewTimelineId = timelineId;

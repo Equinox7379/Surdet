@@ -38,11 +38,11 @@ function fixtureStorage(configText = '{"entryScene":"prologue","variables":{}}',
 describe('typed authoring operations', () => {
   it('protects gallery text replay entries when deleting or renaming their label', async () => {
     const gallery = '\uFEFF{\r\n  "texts": [{"id":"memory","scene":"prologue","label":"memory","name":"memory","custom":42}], "custom":{"label":"memory"}\r\n}\r\n';
-    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, '@scene prologue\r\n@label memory\r\n回想。\r\n@end\r\n', undefined, { 'content/config/gallery.json': gallery }), hasher);
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, '@scene prologue\r\n@label memory\r\n回想。\r\n@end\r\n', undefined, { 'content/config/gallery.json': gallery, 'content/scenario/caller.gal': '@scene caller\n@call prologue.memory\n@end\n' }), hasher);
     const label = buildObjectIndex(snapshot).byRef.get('label:prologue.memory')!;
     const change = await beginChange(snapshot, new InMemoryChangeRepository(), undefined, undefined, { composition: { mode: 'direct', operationFactsVersion: '1.0.0', baseAssetRefs: [] } });
     const before = structuredClone(change.record);
-    await expect(applyScenePatch(change, { operationId: 'delete-gallery-label', patch: { kind: 'removeLabel', target: label.objectRef, expectedFingerprint: label.fingerprint! } }, hasher)).rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED', details: { references: expect.arrayContaining([expect.objectContaining({ path: 'content/config/gallery.json', kind: 'gallery-text', target: 'prologue.memory' })]) } });
+    await expect(applyScenePatch(change, { operationId: 'delete-gallery-label', patch: { kind: 'removeLabel', target: label.objectRef, expectedFingerprint: label.fingerprint! } }, hasher)).rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED', details: { references: expect.arrayContaining([expect.objectContaining({ path: 'content/config/gallery.json', kind: 'gallery-text', target: 'prologue.memory' }), expect.objectContaining({ path: 'content/scenario/caller.gal', kind: 'call', target: 'prologue.memory' })]) } });
     expect(change.record).toEqual(before);
     await applyScenePatch(change, { operationId: 'rename-gallery-label', patch: { kind: 'renameLabel', target: label.objectRef, expectedFingerprint: label.fingerprint!, name: 'recollection' } }, hasher);
     const rewritten = change.record.workingFiles['content/config/gallery.json']!;

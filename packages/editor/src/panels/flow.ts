@@ -249,6 +249,7 @@ function blockConfiguredSceneOperation(sceneId: string): boolean {
 /** 只更新内存与引用；旧磁盘文件由“保存全部”在新文件写成后清理。 */
 async function renameSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
   assertProjectWriteUnlocked();
+  if (state.pendingSceneConfigRenames.some(rename => rename.labelScene !== undefined)) throw new Error('请先保存标签改名，再改变场景身份');
   if (state.pendingSceneCommit !== null) {
     setStatus('上一次场景保存正在收束，请先重试“保存全部”', false, 6000);
     return;
@@ -379,6 +380,7 @@ export async function renameSceneAtKey(sceneKey: string): Promise<void> {
 export async function moveSceneAtKey(sceneKey: string): Promise<void> {
   await runProjectWriteOperation(async () => {
     assertProjectWriteUnlocked();
+    if (state.pendingSceneConfigRenames.some(rename => rename.labelScene !== undefined)) throw new Error('请先保存标签改名，再移动场景');
     if (state.pendingSceneCommit || pendingRenameFor(sceneKey)) {
       setStatus('该场景有尚未完成的改名、移动或保存，请先保存全部', false, 6000);
       return;
@@ -439,6 +441,7 @@ export async function renameScene(sceneId: string): Promise<void> {
 /** 精确路径进入待保存清理；不在点击按钮时直接改磁盘。 */
 async function deleteSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
   assertProjectWriteUnlocked();
+  if (state.pendingSceneConfigRenames.some(rename => rename.labelScene !== undefined)) throw new Error('请先保存标签改名，再删除场景');
   if (state.pendingSceneCommit !== null) {
     setStatus('上一次场景保存正在收束，请先重试“保存全部”', false, 6000);
     return;

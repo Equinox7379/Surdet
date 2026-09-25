@@ -14,6 +14,7 @@ import {
   saveAll,
   sceneTextSha256,
   prepareSceneConfigRename,
+  prepareSceneLabelConfigRename,
   prepareSceneConfigRecovery,
 } from '../src/project-io.js';
 import { state } from '../src/state.js';
@@ -222,6 +223,15 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(onSaveSettled).not.toHaveBeenCalled();
   });
 
+  it('标签关联保存缺少安全服务时拒绝退回逐文件保存', async () => {
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn() });
+    state.scenes.set('a', scene('a', fileHandle(null, log, 'a.gal')));
+    state.pendingSceneConfigRenames = [{ labelScene: 'a', from: 'entry', to: 'arrival' }];
+    await expect(saveAll()).rejects.toThrow('需要安全保存服务');
+    expect(log).toEqual([]); expect(state.scenes.get('a')!.dirty).toBe(true);
+    expect(state.pendingSceneConfigRenames).toHaveLength(1);
+  });
+
   it('配置引用草稿保留未知字段与原指纹；恢复缺成员或外部已改时整组拒绝', async () => {
     const rootText = '\uFEFF{"entryScene":"old","player":{"endScenes":["old"]},"note":"old"}\r\n';
     const docs = {
@@ -266,6 +276,27 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     await expect(prepareSceneConfigRecovery(writes, renames)).rejects.toThrow('不能部分恢复');
     expect(JSON.stringify(state.configFiles)).toBe(before);
     expect(log).toEqual([]);
+  });
+
+  it('标签回想改名保留来源指纹与未知字段；重命名链及恢复不触碰其他配置', async () => {
+    const source = '\uFEFF{"texts":[{"scene":"a","label":"entry","note":"entry"}],"custom":true}\r\n';
+    const raw = JSON.parse(source.slice(1));
+    state.scenes = new Map([['a', scene('a', fileHandle(null, log, 'a.gal'))]]);
+    state.gameConfigText = '{"entryScene":"a"}';
+    state.configFiles = { events: null, growth: null, calendar: null, achievements: null, terminology: null, gallery: raw };
+    state.handles = { gameConfig: null, events: null, growth: null, calendar: null, achievements: null, terminology: null, gallery: fileHandle(null, log, 'gallery.json', source) };
+    const apply = await prepareSceneLabelConfigRename('a', 'entry', 'arrival');
+    expect(state.configFiles.gallery).toEqual(raw); expect(state.pendingSceneConfigWrites).toEqual([]);
+    apply();
+    (await prepareSceneLabelConfigRename('a', 'arrival', '抵达'))();
+    expect(state.pendingSceneConfigWrites).toHaveLength(1);
+    expect(state.pendingSceneConfigWrites[0]!.expectedSha256).toBe(await sceneTextSha256(source));
+    expect(JSON.parse(state.pendingSceneConfigWrites[0]!.text.slice(1))).toEqual({ ...raw, texts: [{ scene: 'a', label: '抵达', note: 'entry' }] });
+    const writes = state.pendingSceneConfigWrites, renames = state.pendingSceneConfigRenames;
+    await expect(prepareSceneConfigRecovery([], renames)).rejects.toThrow('不能部分恢复');
+    const restore = await prepareSceneConfigRecovery(writes, renames); state.configFiles.gallery = raw; restore();
+    expect(state.configFiles.gallery).toMatchObject({ texts: [{ label: '抵达' }], custom: true });
+    expect(state.gameConfigText).toBe('{"entryScene":"a"}'); expect(log).toEqual([]);
   });
 
   it('项目写操作按调用顺序串行执行', async () => {

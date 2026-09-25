@@ -25,6 +25,7 @@ import type {
   SceneEol,
   VariableEnsureInput,
   TextHasher,
+  ProjectReferenceRename,
 } from './contracts.js';
 import { AuthoringOperationError, runOperation, stableStringify, type ChangeSession } from './change-session.js';
 import { parseProjectConfigDocument, serializeProjectConfigDocument } from './config-document.js';
@@ -35,6 +36,7 @@ import { resolveUniqueScenarioPath, sceneIdFromScenarioPath } from './scenario-i
 import { GALLERY_PATH } from './gallery-operations.js';
 import { analyzeSceneCompositionReferences } from './composition-reference-analysis.js';
 import { inspectPlayerConfig } from './config-operations.js';
+import { renameConfigReferences } from './scene-relocation.js';
 
 function sceneCharacters(files: Record<string, string>): Record<string, unknown> {
   const characters = parseProjectConfigDocument(files['game.config.json'] ?? '{}')['characters'];
@@ -474,7 +476,7 @@ function validateSceneCandidate(path: string, sceneId: string, text: string): vo
   }
 }
 
-function rewriteLabelReferences(source: string, path: string, currentScene: string, targetScene: string, oldName: string, newName: string | undefined,
+export function rewriteLabelReferences(source: string, path: string, currentScene: string, targetScene: string, oldName: string, newName: string | undefined,
   references: Array<{ path: string; line?: number; kind: string; target: string }>): string {
   validateSceneCandidate(path, currentScene, source);
   const document = parseSceneDocument(source);
@@ -639,6 +641,111 @@ export async function applySceneRemove(change: ChangeSession, input: SceneRemove
   });
 }
 
+export function renameGalleryLabel(source: string, sceneId: string, oldName: string, newName?: string,
+  references?: Array<{ path: string; line?: number; kind: string; target: string }>): string {
+  const gallery = parseProjectConfigDocument(source, GALLERY_PATH);
+  if (gallery['texts'] !== undefined && !Array.isArray(gallery['texts'])) throw new AuthoringOperationError('PROJECT_INVALID', 'gallery.json.texts 必须是数组');
+  let changed = false;
+  for (const entry of (gallery['texts'] ?? []) as unknown[]) {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) throw new AuthoringOperationError('PROJECT_INVALID', '文本回想条目必须是对象');
+    const item = entry as Record<string, unknown>;
+    if (item['scene'] !== sceneId || item['label'] !== oldName) continue;
+    if (newName === undefined) {
+      const reference = { path: GALLERY_PATH, kind: 'gallery-text', target: `${sceneId}.${oldName}` };
+      if (references) { references.push(reference); continue; }
+      throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '标签仍有引用，不能删除', { references: [reference] });
+    }
+    item['label'] = newName; changed = true;
+  }
+  return changed ? serializeProjectConfigDocument(gallery, source) : source;
+}
+
+export function isValidLabelName(name: unknown): name is string {
+  return typeof name === 'string' && /^[^\s@"'\\]+$/.test(name);
+}
+
+export function applyConfigReferenceRename(files: Record<string, string>, rename: ProjectReferenceRename, fallbackEntry: string): void {
+  if (rename.labelScene === undefined) renameConfigReferences(files, rename.from, rename.to, fallbackEntry);
+  else if (files[GALLERY_PATH] !== undefined) files[GALLERY_PATH] = renameGalleryLabel(files[GALLERY_PATH]!, rename.labelScene, rename.from, rename.to);
+}
+
+/** Identity rebasing for current source and existing Editor undo/redo snapshots. */
+export function renameLabelDefinition(source: string, oldName: string, newName: string): string {
+  const lines = parseSceneDocument(source);
+  const labels = lines.filter(line => line.kind === 'label' && line.name === oldName);
+  if (labels.length === 0) return source;
+  if (labels.length > 1 || lines.some(line => line.kind === 'label' && line.name === newName)) throw new AuthoringOperationError('INVALID_REQUEST', '标签改名与既有标签冲突');
+  const label = labels[0]!;
+  label.raw = label.raw.replace(/^(\s*@label\s+)[^\s@]+/, (_match, prefix: string) => prefix + newName);
+  return serializeSceneDocument(lines, defaultEol(lines));
+}
+
+/** Shared pure label edit; permissions/fingerprints remain the caller's boundary. */
+export function editProjectLabel(files: Record<string, string>, sceneId: string, oldName: string, newName?: string): {
+  path: string; line: number; affectedScenes: string[]; workingFiles: Record<string, string>;
+} {
+  const path = resolveUniqueScenarioPath(files, sceneId) ?? scenePath(sceneId);
+  const source = files[path];
+  if (source === undefined) throw new AuthoringOperationError('PROJECT_NOT_FOUND', `场景不存在：${sceneId}`);
+  const lines = parseSceneDocument(source);
+  const labelIndex = lines.findIndex(line => line.kind === 'label' && line.name === oldName);
+  if (labelIndex < 0) throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '标签已不存在，请重新读取场景');
+  if (newName !== undefined && (!isValidLabelName(newName) || newName === oldName
+    || lines.some(line => line.kind === 'label' && line.name === newName))) throw new AuthoringOperationError('INVALID_REQUEST', '新标签名不能重复、为空或包含空白、引号、反斜杠或 @');
+  const workingFiles = { ...files }, references: Array<{ path: string; line?: number; kind: string; target: string }> = [];
+  const affectedScenes = new Set<string>([sceneId]);
+  for (const [filePath, text] of Object.entries(files)) {
+    if (!/^content\/scenario\/.+\.gal$/i.test(filePath)) continue;
+    const id = sceneIdFromScenarioPath(filePath);
+    const rewritten = rewriteLabelReferences(text, filePath, id, sceneId, oldName, newName, references);
+    if (rewritten !== text) { workingFiles[filePath] = rewritten; affectedScenes.add(id); }
+  }
+  const gallery = workingFiles[GALLERY_PATH];
+  if (gallery !== undefined) workingFiles[GALLERY_PATH] = renameGalleryLabel(gallery, sceneId, oldName, newName, references);
+  if (newName === undefined && references.length) throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '标签仍有引用，不能删除', { references });
+  if (newName === undefined) {
+    const updated = parseSceneDocument(workingFiles[path]!); updated.splice(labelIndex, 1);
+    workingFiles[path] = serializeSceneDocument(updated, defaultEol(updated));
+  } else workingFiles[path] = renameLabelDefinition(workingFiles[path]!, oldName, newName);
+  for (const id of affectedScenes) {
+    const changedPath = resolveUniqueScenarioPath(workingFiles, id)!;
+    validateSceneCandidate(changedPath, id, workingFiles[changedPath]!);
+  }
+  return { path, line: labelIndex + 1, affectedScenes: [...affectedScenes].sort(), workingFiles };
+}
+
+/** Validate a saved/recovered group against its real disk callers, not only the label definition. */
+export function validateLabelRenameBatch(baseScenes: Record<string, string>, writes: Record<string, string>, renames: readonly ProjectReferenceRename[]): void {
+  const invalid = (message: string): never => { throw new AuthoringOperationError('INVALID_REQUEST', message); };
+  let expected = { ...baseScenes };
+  const affected = new Set<string>();
+  for (const rename of renames) {
+    if (rename.labelScene === undefined) invalid('请分别保存标签改名和场景身份变更');
+    const result = editProjectLabel(expected, rename.labelScene!, rename.from, rename.to);
+    for (const path of Object.keys(expected)) if (result.workingFiles[path] !== expected[path]) affected.add(path);
+    expected = result.workingFiles;
+  }
+  for (const path of affected) if (writes[path] === undefined) invalid(`标签改名缺少关联场景：${path}`);
+  const finals = renames.map((rename, index) => {
+    let name = rename.to;
+    for (const later of renames.slice(index + 1)) if (later.labelScene === rename.labelScene && later.from === name) name = later.to;
+    const path = resolveUniqueScenarioPath(writes, rename.labelScene!);
+    if (!path || !parseSceneDocument(writes[path]!).some(line => line.kind === 'label' && line.name === name)) invalid('标签改名的目标定义必须在同批保存中');
+    return { scene: rename.labelScene, name };
+  });
+  const submitted = { ...baseScenes, ...writes };
+  for (const rename of renames) {
+    if (finals.some(label => label.scene === rename.labelScene && label.name === rename.from)) continue;
+    const references: Array<{ path: string; line?: number; kind: string; target: string }> = [];
+    for (const [path, text] of Object.entries(submitted)) {
+      const id = sceneIdFromScenarioPath(path);
+      rewriteLabelReferences(text, path, id, rename.labelScene!, rename.from, undefined, references);
+      if (id === rename.labelScene && parseSceneDocument(text).some(line => line.kind === 'label' && line.name === rename.from)) invalid('旧标签定义仍存在');
+    }
+    if (references.length) invalid('标签改名仍有未更新的引用');
+  }
+}
+
 export async function applyScenePatch(change: ChangeSession, input: ScenePatchInput, hasher: TextHasher = compositionTextHasher): Promise<{ path: string; line: number; kind: string; affectedScenes?: string[] }> {
   const patch = input.patch;
   if ((patch.kind === 'renameLabel' || patch.kind === 'removeLabel')
@@ -668,45 +775,8 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
       const labelIndex = lines.findIndex((line) => line.kind === 'label' && line.name === oldName);
       if (!patch.target.startsWith(`label:${sceneId}.`) || labelIndex < 0) throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '标签已不存在，请重新读取场景');
       checkPatchPrecondition(lines, patch, labelIndex);
-      const newName = patch.kind === 'renameLabel' ? patch.name : undefined;
-      if (newName !== undefined && (!/^[^\s@"'\\]+$/.test(newName) || newName === oldName
-        || lines.some((line) => line.kind === 'label' && line.name === newName))) {
-        throw new AuthoringOperationError('INVALID_REQUEST', '新标签名不能重复、为空或包含空白、引号、反斜杠或 @');
-      }
-      const workingFiles = { ...record.workingFiles };
-      const references: Array<{ path: string; line?: number; kind: string; target: string }> = [];
-      const affectedScenes = new Set<string>([sceneId]);
-      for (const [filePath, text] of Object.entries(record.workingFiles)) {
-        if (!/^content\/scenario\/.+\.gal$/i.test(filePath)) continue;
-        const id = sceneIdFromScenarioPath(filePath);
-        const rewritten = rewriteLabelReferences(text, filePath, id, sceneId, oldName, newName, references);
-        if (rewritten !== text) { workingFiles[filePath] = rewritten; affectedScenes.add(id); }
-      }
-      // Text replay is another real hostJump(scene, label) entry, not DSL prose.
-      const gallerySource = workingFiles[GALLERY_PATH];
-      if (gallerySource !== undefined) {
-        const gallery = parseProjectConfigDocument(gallerySource, GALLERY_PATH);
-        if (gallery['texts'] !== undefined && !Array.isArray(gallery['texts'])) throw new AuthoringOperationError('PROJECT_INVALID', 'gallery.json.texts 必须是数组');
-        let changed = false;
-        for (const entry of (gallery['texts'] ?? []) as unknown[]) {
-          if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) throw new AuthoringOperationError('PROJECT_INVALID', '文本回想条目必须是对象');
-          const item = entry as Record<string, unknown>;
-          if (item['scene'] !== sceneId || item['label'] !== oldName) continue;
-          references.push({ path: GALLERY_PATH, kind: 'gallery-text', target: `${sceneId}.${oldName}` });
-          if (newName !== undefined) { item['label'] = newName; changed = true; }
-        }
-        if (changed) workingFiles[GALLERY_PATH] = serializeProjectConfigDocument(gallery, gallerySource);
-      }
-      if (newName === undefined && references.length > 0) throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '标签仍有引用，不能删除', { references });
-      const updated = parseSceneDocument(workingFiles[path]!);
-      if (newName === undefined) updated.splice(labelIndex, 1);
-      else updated[labelIndex] = { ...updated[labelIndex]!, raw: updated[labelIndex]!.raw.replace(/^(\s*@label\s+)[^\s@]+/, (_match, prefix: string) => prefix + newName) };
-      workingFiles[path] = serializeSceneDocument(updated, defaultEol(updated));
-      for (const id of affectedScenes) {
-        const changedPath = resolveUniqueScenarioPath(workingFiles, id)!;
-        validateSceneCandidate(changedPath, id, workingFiles[changedPath]!);
-      }
-      return { result: { path, line: labelIndex + 1, kind: patch.kind, affectedScenes: [...affectedScenes].sort() }, workingFiles };
+      const { workingFiles, ...result } = editProjectLabel(record.workingFiles, sceneId, oldName, patch.kind === 'renameLabel' ? patch.name : undefined);
+      return { result: { ...result, kind: patch.kind }, workingFiles };
     }
 
     if (patch.kind === 'replaceChoiceGroup' || patch.kind === 'replaceConditionBlock') {
