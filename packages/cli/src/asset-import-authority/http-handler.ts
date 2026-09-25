@@ -123,7 +123,7 @@ export interface AssetImportAuthorityHttpTarget {
   relocationCancel?(operationId: string): Promise<AssetRelocationDetailResponse>;
   relocationRecover?(operationId: string, request: RecoverAssetRelocationRequest): Promise<AssetRelocationDetailResponse>;
   relocationUndo?(operationId: string, request: UndoAssetRelocationRequest): Promise<AssetRelocationDetailResponse>;
-  scenePlan?(request: SceneLifecyclePlanRequest): Promise<SceneLifecyclePlanResponse>;
+  scenePlan?(request: SceneLifecyclePlanRequest, workspaceWrite?: ActiveEditorWriteInput): Promise<SceneLifecyclePlanResponse>;
   sceneCommit?(request: SceneLifecycleCommitRequest, workspaceWrite?: ActiveEditorWriteInput): Promise<SceneLifecycleCommitResponse>;
 }
 
@@ -1064,16 +1064,11 @@ export function createAssetImportAuthorityHttpHandler(
           data = publicRelocationDetail(await options.authority.relocationUndo(route.operationId!, parseRelocationUndo(body)));
           break;
         case 'scene-plan':
-          if (options.authority.scenePlan === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '场景安全保存服务尚未就绪');
-          data = await options.authority.scenePlan(parseScenePlan(body));
-          break;
         case 'scene-commit': {
-          if (options.authority.sceneCommit === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '场景安全保存服务尚未就绪');
           const object = body as Record<string, unknown>;
           let workspaceWrite: ActiveEditorWriteInput | undefined;
           let sceneBody = body;
           if (typeof object === 'object' && object !== null && 'workspaceWrite' in object) {
-            exactObject(object, ['requestId', 'plans', 'writes', 'workspaceWrite']);
             const write = object.workspaceWrite as Record<string, unknown>;
             workspaceWrite = { ...parseWorkspaceState(write, ['writeLeaseId']), writeLeaseId: requireUuid(write.writeLeaseId, 'writeLeaseId') };
             if (!await options.authority.validateBinding(requestBindingToken!, workspaceWrite.browserSessionId)) {
@@ -1082,7 +1077,15 @@ export function createAssetImportAuthorityHttpHandler(
             const { workspaceWrite: _workspaceWrite, ...rest } = object;
             sceneBody = rest;
           }
-          data = await options.authority.sceneCommit(parseSceneCommit(sceneBody), workspaceWrite);
+          // The existing exact parsers reject extra body keys after removing
+          // the independently validated Editor lease; no source-write bypass.
+          if (route.kind === 'scene-plan') {
+            if (options.authority.scenePlan === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '场景安全保存服务尚未就绪');
+            data = await options.authority.scenePlan(parseScenePlan(sceneBody), workspaceWrite);
+          } else {
+            if (options.authority.sceneCommit === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '场景安全保存服务尚未就绪');
+            data = await options.authority.sceneCommit(parseSceneCommit(sceneBody), workspaceWrite);
+          }
           break;
         }
       }

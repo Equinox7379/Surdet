@@ -71,6 +71,7 @@ import {
   renderFlow,
   renameScene,
   renameSceneAtKey,
+  moveSceneAtKey,
 } from './panels/flow.js';
 import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant, resetConfigSession,
   inspectConfigDraftState, saveDirtyConfigSections } from './panels/config.js';
@@ -1556,7 +1557,7 @@ bindProjectIoHooks({
       kind: input.kind,
       sourcePath: input.sourcePath,
       ...(input.kind === 'rename' ? { targetPath: input.targetPath } : {}),
-    });
+    }, currentEditorWorkspaceWrite());
     return { operationId: planned.operationId, planFingerprint: planned.planFingerprint };
   },
   onSceneMutationCommit: async (input) => {
@@ -1630,6 +1631,7 @@ bindProjectIoHooks({
 bindSidebarHooks({
   onSelectScene: (sceneKey) => jumpToScene(sceneKey),
   onRenameScene: (sceneKey) => { void runSceneLifecycleAction(() => renameSceneAtKey(sceneKey)); },
+  onMoveScene: (sceneKey) => { void runSceneLifecycleAction(() => moveSceneAtKey(sceneKey)); },
   onDeleteScene: (sceneKey) => { void runSceneLifecycleAction(() => deleteSceneAtKey(sceneKey)); },
 });
 bindAssetsPanelHooks({
@@ -2424,7 +2426,7 @@ async function tryAutosaveRecover(
   const details = [
     recoverable.length > 0 ? `${recoverable.length} 个场景：${names}` : '',
     recoverableSceneTransaction.length > 0
-      ? `${recoverableSceneTransaction.length} 个未完成的场景改名或删除（将整组恢复）`
+      ? `${recoverableSceneTransaction.length} 个未完成的场景改名、移动或删除（将整组恢复）`
       : '',
     recoverableTimelines.length > 0 ? `${recoverableTimelines.length} 个演出：${timelineNames}` : '',
     quarantinedConflicts.length > 0 ? `${quarantinedConflicts.length} 个演出身份冲突需要确认` : '',
@@ -2449,6 +2451,7 @@ async function tryAutosaveRecover(
       sc.eol = e.eol;
       if (e.persistedSha256) sc.persistedSha256 = e.persistedSha256;
       sc.dirty = true;
+      if (e.pendingEntryScene) sc.pendingEntryScene = e.pendingEntryScene;
     } else {
       state.scenes.set(e.key, {
         id: e.id,
@@ -2459,6 +2462,7 @@ async function tryAutosaveRecover(
         handle: null,
         ...(e.persistedSha256 ? { persistedSha256: e.persistedSha256 } : {}),
         ...(e.pendingCreateOperationId ? { pendingCreateOperationId: e.pendingCreateOperationId } : {}),
+        ...(e.pendingEntryScene ? { pendingEntryScene: e.pendingEntryScene } : {}),
       });
     }
   }
@@ -2466,6 +2470,7 @@ async function tryAutosaveRecover(
     ...pending,
     ...(pending.affectedSceneKeys ? { affectedSceneKeys: [...pending.affectedSceneKeys] } : {}),
   }));
+  state.entryScene ||= [...state.scenes.values()].find(scene => scene.pendingEntryScene)?.pendingEntryScene ?? '';
   blockedSceneAutosave = null;
   if (state.current && !state.scenes.has(state.current)) {
     state.current = recoverableSceneTransaction.find((pending) => pending.replacementKey)?.replacementKey

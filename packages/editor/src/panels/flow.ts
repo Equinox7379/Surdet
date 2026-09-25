@@ -18,9 +18,10 @@ import {
   runProjectWriteOperation,
   sceneFileIdentity,
   sceneProjectPath,
+  workingGameConfigText,
 } from '../project-io.js';
 import { collectConfigSceneRoots } from '@surdet/core';
-import { parseProjectConfigDocument, visitSceneReferences } from '@surdet/authoring';
+import { parseProjectConfigDocument, sceneMoveTargetPath, visitSceneReferences } from '@surdet/authoring';
 import { buildFlowGraph } from '../graph/build.js';
 import type { FlowGraph, FlowNode, FlowEdge } from '../graph/build.js';
 import { histories, setSceneText } from '../history.js';
@@ -231,7 +232,7 @@ async function renameSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
   const current = state.scenes.get(sceneKey);
   if (!current) return;
   if (pendingRenameFor(sceneKey)) {
-    setStatus('该场景已有尚未保存的重命名，请先保存全部', false, 5000);
+    setStatus('该场景已有尚未保存的改名或移动，请先保存全部', false, 5000);
     return;
   }
   const sceneId = current.id;
@@ -345,6 +346,59 @@ export async function renameSceneAtKey(sceneKey: string): Promise<void> {
   await runProjectWriteOperation(() => renameSceneAtKeyUnlocked(sceneKey));
 }
 
+/** Chapter organization changes the path only; existing physical relocation
+ * plans/receipts and autosave retain the move until Save All succeeds. */
+export async function moveSceneAtKey(sceneKey: string): Promise<void> {
+  await runProjectWriteOperation(async () => {
+    assertProjectWriteUnlocked();
+    if (state.pendingSceneCommit || pendingRenameFor(sceneKey)) {
+      setStatus('该场景有尚未完成的改名、移动或保存，请先保存全部', false, 6000);
+      return;
+    }
+    const current = state.scenes.get(sceneKey);
+    if (!current) return;
+    if ([...state.scenes.values()].filter(scene => scene.id === current.id).length !== 1) {
+      throw new Error(`场景 ID“${current.id}”对应多个文件，请先处理重复场景`);
+    }
+    const previousPath = sceneProjectPath(current.file);
+    const directory = previousPath.slice('content/scenario/'.length).split('/').slice(0, -1).join('/');
+    const input = window.prompt('移动到章节目录（可用 / 分级，留空返回项目场景；不改剧情跳转）', directory);
+    if (input === null || input === directory) return;
+    const target = sceneMoveTargetPath(previousPath, input.normalize('NFC'), [
+      ...[...state.scenes.values()].map(scene => sceneProjectPath(scene.file)),
+      ...state.pendingSceneDeletes.map(pending => sceneProjectPath(pending.file)),
+    ]);
+    const config = parseProjectConfigDocument(workingGameConfigText() || '{}');
+    if (config['entryScene'] !== undefined && typeof config['entryScene'] !== 'string') throw new Error('请先修正配置中的开场场景');
+    const implicitEntry = config['entryScene'] ? undefined
+      : [...state.scenes.values()].sort((a, b) => sceneProjectPath(a.file) < sceneProjectPath(b.file) ? -1 : sceneProjectPath(a.file) > sceneProjectPath(b.file) ? 1 : 0)[0]!.id;
+    const pinnedEntry = [...state.scenes.values()].find(scene => scene.pendingEntryScene)?.pendingEntryScene ?? implicitEntry;
+    const plan = current.handle && state.dirHandle
+      ? await prepareSceneMutation({ kind: 'rename', sourcePath: previousPath, targetPath: target }) : null;
+    const oldFile = current.file;
+    const targetFile = target.slice('content/scenario/'.length);
+    const targetKey = targetFile.replace(/\.gal$/i, '');
+    current.file = targetFile;
+    current.dirty = true;
+    if (pinnedEntry) { current.pendingEntryScene = pinnedEntry; state.entryScene = pinnedEntry; }
+    const history = histories.get(sceneKey);
+    histories.delete(sceneKey);
+    histories.delete(targetKey);
+    if (history) histories.set(targetKey, history);
+    state.scenes = new Map([...state.scenes].map(([key, scene]) => key === sceneKey ? [targetKey, scene] : [key, scene]));
+    remapPendingSceneKey(sceneKey, targetKey);
+    if (state.current === sceneKey) state.current = targetKey;
+    if (plan) {
+      state.pendingSceneDeletes.push({ kind: 'rename', id: current.id, file: oldFile,
+        replacementKey: targetKey, affectedSceneKeys: [targetKey], ...plan });
+      current.handle = null;
+    }
+    setStatus(`场景已移到 ${input || '项目场景'}（正文与跳转不变；保存全部后写入磁盘）`, true, 6000);
+    renderSidebar();
+    requestValidateHook();
+  });
+}
+
 export async function renameScene(sceneId: string): Promise<void> {
   const sceneKey = resolveSceneKeyForOperation(sceneId);
   if (!sceneKey) {
@@ -364,7 +418,7 @@ async function deleteSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
   const scene = state.scenes.get(sceneKey);
   if (!scene) return;
   if (pendingRenameFor(sceneKey)) {
-    setStatus('该场景已有尚未保存的重命名，请先保存全部再删除', false, 5000);
+    setStatus('该场景已有尚未保存的改名或移动，请先保存全部再删除', false, 5000);
     return;
   }
   const sceneId = scene.id;

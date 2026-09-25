@@ -341,7 +341,7 @@ export interface AssetImportAuthorityClient {
   relocationCancel(operationId: string): Promise<AssetRelocationDetail>;
   relocationRecover(operationId: string, input: { action: 'resume' | 'rollback' }): Promise<AssetRelocationDetail>;
   relocationUndo(operationId: string, input: { receiptId: string; receiptFingerprint: string }): Promise<AssetRelocationDetail>;
-  scenePlan(input: SceneLifecyclePlanInput): Promise<SceneLifecyclePlanResult>;
+  scenePlan(input: SceneLifecyclePlanInput, workspaceWrite?: EditorWorkspaceWrite): Promise<SceneLifecyclePlanResult>;
   sceneCommit(input: SceneLifecycleCommitInput, workspaceWrite?: EditorWorkspaceWrite): Promise<SceneLifecycleCommitResult>;
   revokeBinding(): Promise<void>;
   dispose(): void;
@@ -1743,7 +1743,7 @@ export function createAssetImportAuthorityClient(
     return requireRelocationDetailOperation(detail, operationId);
   };
 
-  const scenePlan = async (input: SceneLifecyclePlanInput): Promise<SceneLifecyclePlanResult> => {
+  const scenePlan = async (input: SceneLifecyclePlanInput, workspaceWrite?: EditorWorkspaceWrite): Promise<SceneLifecyclePlanResult> => {
     if (!isRecord(input) || !isUuid(input.operationId)
       || (input.kind !== 'rename' && input.kind !== 'delete')
       || !isSafeText(input.sourcePath, 1_024)
@@ -1756,6 +1756,7 @@ export function createAssetImportAuthorityClient(
       kind: input.kind,
       sourcePath: input.sourcePath,
       ...(input.kind === 'rename' ? { targetPath: input.targetPath } : {}),
+      ...(workspaceWrite === undefined ? {} : { workspaceWrite: { ...workspaceWrite, browserSessionId } }),
     }, parseScenePlanResult, { binding: true, operationKind: 'scene' });
     const expectedTarget = input.kind === 'rename' ? input.targetPath : null;
     if (result.operationId !== input.operationId || result.kind !== input.kind

@@ -156,7 +156,7 @@ function directoryHandle(
 
 describe('chapter scene loading', () => {
   it('reads nested scenes with mixed-case suffixes without changing identity or source bytes', async () => {
-    const text = '@scene start\r\n// 保持空白\r\n旁白：章节中的对白。\r\n@end\r\n';
+    const text = '\uFEFF@scene start\r\n// 保持空白\r\n旁白：章节中的对白。\r\n@end\r\n';
     const handle = fileHandle(null, [], 'start.GaL', text);
     const root = directoryHandle('scenario', { '第一章': directoryHandle('第一章', {}, {
       'start.GaL': handle, 'notes.txt': fileHandle(null, [], 'notes.txt', '不要导入'),
@@ -408,6 +408,45 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     const content = directoryHandle('content', { scenario });
     return { root: directoryHandle('project', { content }), operations, nestedFiles, fileTexts };
   }
+
+  it('移动与开场配置一起保存，回包丢失重试同一批次并保留等待期间正文', async () => {
+    const fixture = nestedScenarioProject();
+    let configDisk = '{"unknown":{"keep":true}}';
+    const configHandle = { ...fileHandle(null, log, 'game.config.json'), getFile: async () => new File([configDisk], 'game.config.json') } as FileSystemFileHandle;
+    state.dirHandle = { ...fixture.root, getFileHandle: async () => configHandle } as FileSystemDirectoryHandle;
+    state.gameConfigText = configDisk;
+    state.handles.gameConfig = configHandle;
+    const text = '@scene first\r\n旁白：正文。\r\n';
+    const hash = await sceneTextSha256(text);
+    state.scenes.set('chapter/first', { id: 'first', file: 'chapter/first.GAL', text, eol: '\r\n', handle: null, dirty: true, persistedSha256: hash, pendingEntryScene: 'first' });
+    state.pendingSceneDeletes = [{ kind: 'rename', id: 'first', file: 'first.GAL', replacementKey: 'chapter/first', affectedSceneKeys: ['chapter/first'], operationId: '123e4567-e89b-42d3-a456-426614174000', planFingerprint: 'a'.repeat(64) }];
+    const inputs: unknown[] = [];
+    const commit = vi.fn(async (input: import('../src/project-io.js').SceneMutationCommitInput) => {
+      inputs.push(structuredClone(input));
+      const write = input.writes.find(write => write.path === 'game.config.json')!;
+      expect(write.expectedSha256).toBe(await sceneTextSha256('{"unknown":{"keep":true}}'));
+      configDisk = write.text;
+      const sceneWrite = input.writes.find(write => write.path.endsWith('.GAL'))!;
+      fixture.fileTexts.set('first.GAL', sceneWrite.text);
+      fixture.nestedFiles.add('first.GAL');
+      if (inputs.length === 1) throw new Error('response lost');
+      return { requestId: input.requestId, status: 'COMMITTED' as const, deletedPaths: ['content/scenario/first.GAL'],
+        writes: await Promise.all(input.writes.map(async write => ({ path: write.path, sha256: await sceneTextSha256(write.text) }))) };
+    });
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onSceneMutationCommit: commit });
+    await saveAll();
+    expect(state.pendingSceneCommit).not.toBeNull();
+    expect(state.gameConfigText).toBe('{"unknown":{"keep":true}}');
+    state.scenes.get('chapter/first')!.text += '旁白：等待期间输入。\r\n';
+    await saveAll();
+    expect(inputs[1]).toEqual(inputs[0]);
+    expect(JSON.parse(state.gameConfigText)).toEqual({ unknown: { keep: true }, entryScene: 'first' });
+    expect(state.pendingSceneCommit).toBeNull();
+    expect(state.pendingSceneDeletes).toEqual([]);
+    expect(state.scenes.get('chapter/first')).toMatchObject({ dirty: true, persistedSha256: hash });
+    expect(state.scenes.get('chapter/first')!.pendingEntryScene).toBeUndefined();
+    expect(state.scenes.get('chapter/first')!.text).toContain('等待期间输入');
+  });
 
   it('未连接 authority 时不退回浏览器覆盖式重命名写删', async () => {
     const project = nestedScenarioProject();
@@ -1414,7 +1453,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(state.dirName).toBe('next-project');
   });
 
-  it.each(['{', '[]', ''])('打开项目保留无法解析的 game.config.json 原文，场景生命周期不能将其当作无引用：%s', async (config) => {
+  it.each(['{', '[]', '', 'null', '0'])('打开项目保留无法解析的 game.config.json 原文，场景生命周期不能将其当作无引用：%s', async (config) => {
     const root = directoryHandle('invalid-player-config', {
       content: directoryHandle('content', { scenario: directoryHandle('scenario', {}, {
         'end_a.gal': fileHandle(null, log, 'end_a.gal', '@scene end_a\n结束。\n@end\n'),
@@ -1426,6 +1465,18 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     await expect(deleteSceneAtKey('end_a')).rejects.toThrow(/game.config.json/);
     expect(state.scenes.has('end_a')).toBe(true);
     expect(state.pendingSceneDeletes).toEqual([]);
+    expect(log).toEqual([]);
+  });
+
+  it('重新打开带 BOM 的开场配置保留原文并读取真实入口', async () => {
+    const config = '\uFEFF{\r\n  "entryScene":"z_start","unknown":true\r\n}\r\n';
+    const root = directoryHandle('bom-entry', { content: directoryHandle('content', { scenario: directoryHandle('scenario', {}, {
+      'a_other.gal': fileHandle(null, log, 'a_other.gal', '@scene a_other\n@end\n'),
+      'z_start.gal': fileHandle(null, log, 'z_start.gal', '@scene z_start\n@end\n'),
+    }) }) }, { 'game.config.json': fileHandle(null, log, 'game.config.json', config) });
+    await openProjectFromHandle(root);
+    expect(state.entryScene).toBe('z_start');
+    expect(state.gameConfigText).toBe(config);
     expect(log).toEqual([]);
   });
 

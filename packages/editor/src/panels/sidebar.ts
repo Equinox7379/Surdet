@@ -97,12 +97,17 @@ export function renderSidebar(): void {
       rename.dataset.action = 'rename-scene';
       rename.setAttribute('aria-label', `重命名场景 ${sc.file}`);
       rename.onclick = () => onRenameSceneHook(id);
+      const move = h('button', 'scene-row-action', '移动');
+      move.type = 'button';
+      move.dataset.action = 'move-scene';
+      move.setAttribute('aria-label', `移动场景 ${sc.file}`);
+      move.onclick = () => onMoveSceneHook(id);
       const remove = h('button', 'scene-row-action', '删除');
       remove.type = 'button';
       remove.dataset.action = 'delete-scene';
       remove.setAttribute('aria-label', `删除场景 ${sc.file}`);
       remove.onclick = () => onDeleteSceneHook(id);
-      actions.append(rename, remove);
+      actions.append(rename, move, remove);
       row.append(item, actions);
       group.appendChild(row);
     }
@@ -114,14 +119,17 @@ export function renderSidebar(): void {
 /** 场景导航钩子（main.ts 注入，确保所有跳转共享同一选择协调器）。 */
 let onSelectSceneHook: (sceneKey: string) => void = () => {};
 let onRenameSceneHook: (sceneKey: string) => void = () => {};
+let onMoveSceneHook: (sceneKey: string) => void = () => {};
 let onDeleteSceneHook: (sceneKey: string) => void = () => {};
 export function bindSidebarHooks(opts: {
   onSelectScene: (sceneKey: string) => void;
   onRenameScene?: (sceneKey: string) => void;
+  onMoveScene?: (sceneKey: string) => void;
   onDeleteScene?: (sceneKey: string) => void;
 }): void {
   onSelectSceneHook = opts.onSelectScene;
   onRenameSceneHook = opts.onRenameScene ?? (() => {});
+  onMoveSceneHook = opts.onMoveScene ?? (() => {});
   onDeleteSceneHook = opts.onDeleteScene ?? (() => {});
 }
 

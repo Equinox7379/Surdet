@@ -16,7 +16,7 @@ import {
   type TimelineAutosaveDocument,
   type TimelineAutosaveIdentity,
 } from './timeline-autosave-identity.js';
-import { timelinePathFor } from '@surdet/authoring';
+import { parseProjectConfigDocument, serializeProjectConfigDocument, timelinePathFor } from '@surdet/authoring';
 import { kindOfDir, parsePortraitFileName } from './assets.js';
 import type { AssetKind, DirAsset } from './assets.js';
 
@@ -326,11 +326,12 @@ async function readProjectFromHandle(
   try {
     const cfgHandle = await dir.getFileHandle('game.config.json');
     handles.gameConfig = cfgHandle;
-    gameConfigText = await (await cfgHandle.getFile()).text();
-    const cfg = JSON.parse(gameConfigText) as { entryScene?: string };
-    entryScene = typeof cfg.entryScene === 'string' ? cfg.entryScene : '';
+    gameConfigText = await readProjectSourceText(cfgHandle);
+    const cfg = parseProjectConfigDocument(gameConfigText);
+    entryScene = typeof cfg['entryScene'] === 'string' ? cfg['entryScene'] : '';
   } catch (error) {
-    if (!isMissingDirectoryError(error) && !(error instanceof SyntaxError)) throw error;
+    if (!isMissingDirectoryError(error) && !(error instanceof SyntaxError)
+      && !(typeof error === 'object' && error !== null && 'code' in error && error.code === 'PROJECT_INVALID')) throw error;
     // Keep malformed source visible to validation and scene-reference guards;
     // a parse failure must not erase the difference from a missing config.
     entryScene = '';
@@ -592,6 +593,11 @@ export async function sceneTextSha256(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+/** Blob.text strips a UTF-8 BOM; source hashes and relocation must preserve it. */
+export async function readProjectSourceText(handle: FileSystemFileHandle): Promise<string> {
+  return new TextDecoder('utf-8', { ignoreBOM: true }).decode(await (await handle.getFile()).arrayBuffer());
+}
+
 export async function readScenarioDir(
   dir: FileSystemDirectoryHandle,
   prefix: string,
@@ -606,7 +612,7 @@ export async function readScenarioDir(
       await readScenarioDir(ent, prefix + ent.name + '/', target);
     } else if (ent.kind === 'file' && /\.gal$/i.test(ent.name)) {
       const id = ent.name.replace(/\.gal$/i, '');
-      const text = await (await ent.getFile()).text();
+      const text = await readProjectSourceText(ent);
       // key = 相对路径：子目录同名 .gal 各占一条，同名冲突由校验 LINT_DUP 显式报错（M4）
       const key = prefix + id;
       target.set(key, {
@@ -671,6 +677,20 @@ export function sceneFileIdentity(file: string): string {
 
 export function sceneProjectPath(file: string): string {
   return `content/scenario/${scenarioPathParts(file).join('/')}`;
+}
+
+/** Project reads see the pinned implicit entry while its scene move is a draft;
+ * gameConfigText remains the last config source used for the write precondition. */
+export function workingGameConfigText(source = state): string {
+  const entry = [...source.scenes.values()].find(scene => scene.pendingEntryScene)?.pendingEntryScene;
+  if (!entry) return source.gameConfigText;
+  const config = parseProjectConfigDocument(source.gameConfigText || '{}');
+  if (config['entryScene'] !== undefined && config['entryScene'] !== '') return source.gameConfigText;
+  return serializeProjectConfigDocument({ ...config, entryScene: entry }, source.gameConfigText);
+}
+
+function sceneWriteIdentity(file: string): string {
+  return file === 'game.config.json' ? file : sceneFileIdentity(file);
 }
 
 export function isSceneFilePathReserved(file: string, ignoredSceneKey?: string): boolean {
@@ -1085,6 +1105,11 @@ async function saveAllUnlocked(): Promise<void> {
             expectedSha256: renameTarget || !scene.persistedSha256 ? null : scene.persistedSha256,
           };
         }));
+        const configText = workingGameConfigText();
+        if (configText !== state.gameConfigText) {
+          writes.push({ path: 'game.config.json', text: configText,
+            expectedSha256: state.handles.gameConfig === null ? null : await sceneTextSha256(state.gameConfigText) });
+        }
         const createRequestId = newSceneKeys
           .map((key) => state.scenes.get(key)?.pendingCreateOperationId)
           .find((value): value is string => typeof value === 'string');
@@ -1100,6 +1125,7 @@ async function saveAllUnlocked(): Promise<void> {
         onSceneCommitStateChanged();
       } else {
         for (const write of pendingCommit.writes) {
+          if (write.path === 'game.config.json') continue;
           const matching = [...state.scenes].find(([, scene]) => (
             sceneFileIdentity(sceneProjectPath(scene.file)) === sceneFileIdentity(write.path)
           ));
@@ -1112,10 +1138,10 @@ async function saveAllUnlocked(): Promise<void> {
         plans: pendingCommit.plans,
         writes: pendingCommit.writes,
       });
-      const expectedWritePaths = new Set(pendingCommit.writes.map((entry) => sceneFileIdentity(entry.path)));
+      const expectedWritePaths = new Set(pendingCommit.writes.map((entry) => sceneWriteIdentity(entry.path)));
       const resultByPath = new Map<string, { path: string; sha256: string }>();
       for (const entry of result.writes) {
-        const identity = sceneFileIdentity(entry.path);
+        const identity = sceneWriteIdentity(entry.path);
         if (!expectedWritePaths.has(identity) || resultByPath.has(identity)) {
           throw new Error('安全保存回执包含意外或重复的场景路径');
         }
@@ -1136,6 +1162,14 @@ async function saveAllUnlocked(): Promise<void> {
       if (actualDeletedPaths.size !== expectedDeletedPaths.size) {
         throw new Error('安全保存回执缺少场景删除结果');
       }
+      let refreshedConfig: { text: string; handle: FileSystemFileHandle } | null = null;
+      const configWrite = resultByPath.get('game.config.json');
+      if (configWrite) {
+        const handle = await state.dirHandle.getFileHandle('game.config.json');
+        const text = await readProjectSourceText(handle);
+        if (await sceneTextSha256(text) !== configWrite.sha256) throw new Error('开场配置回读与保存回执不一致');
+        refreshedConfig = { text, handle };
+      }
       const refreshed = new Map<string, { handle: FileSystemFileHandle; file: string; sha256: string }>();
       for (const key of authoritySceneKeys) {
         const scene = state.scenes.get(key);
@@ -1144,7 +1178,7 @@ async function saveAllUnlocked(): Promise<void> {
         if (!written) throw new Error(`场景“${scene.id}”缺少安全保存回执`);
         const target = await scenarioParentDirectory(state.dirHandle, scene.file, false);
         const handle = await target.directory.getFileHandle(target.fileName);
-        const diskText = await (await handle.getFile()).text();
+        const diskText = await readProjectSourceText(handle);
         if (await sceneTextSha256(diskText) !== written.sha256) {
           throw new Error(`场景“${scene.id}”写入后回读与服务回执不一致`);
         }
@@ -1159,6 +1193,12 @@ async function saveAllUnlocked(): Promise<void> {
         scene.persistedSha256 = disk.sha256;
         scene.dirty = await sceneTextSha256(scene.text) !== disk.sha256;
         delete scene.pendingCreateOperationId;
+        delete scene.pendingEntryScene;
+      }
+      if (refreshedConfig) {
+        state.gameConfigText = refreshedConfig.text;
+        state.handles.gameConfig = refreshedConfig.handle;
+        state.entryScene = String(parseProjectConfigDocument(refreshedConfig.text)['entryScene']);
       }
       saved += result.writes.length;
       removed += result.deletedPaths.length;
@@ -1166,7 +1206,7 @@ async function saveAllUnlocked(): Promise<void> {
       state.pendingSceneCommit = null;
       onSceneCommitStateChanged();
     } catch (err) {
-      recordFailure('场景改名或删除安全保存', err);
+      recordFailure('场景改名、移动或删除安全保存', err);
     }
   }
   for (const [key, sc] of state.scenes) {

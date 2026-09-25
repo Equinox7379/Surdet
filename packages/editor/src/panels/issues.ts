@@ -6,6 +6,7 @@ import { state, h, setStatus } from '../state.js';
 import { validateProject } from '../validate.js';
 import type { Issue } from '../validate.js';
 import type { CompiledScene } from '@surdet/core';
+import { parseProjectConfigDocument } from '@surdet/authoring';
 import { renderSidebar } from './sidebar.js';
 import { updateEdges, updateGraph } from './right.js';
 import { refreshFlowIfVisible } from './flow.js';
@@ -42,7 +43,7 @@ function buildValidateInput(): { sources: { key: string; id: string; file: strin
   let configRaw: Record<string, unknown> | null = null;
   if (state.gameConfigText) {
     try {
-      configRaw = JSON.parse(state.gameConfigText) as Record<string, unknown>;
+      configRaw = parseProjectConfigDocument(state.gameConfigText);
     } catch {
       configRaw = null;
     }

@@ -27,6 +27,7 @@ export interface AutosaveEntry {
   eol?: '\r\n' | '\n';
   persistedSha256?: string;
   pendingCreateOperationId?: string;
+  pendingEntryScene?: string;
 }
 
 export interface AutosavePendingSceneMutation {
@@ -165,6 +166,7 @@ export function buildAutosave(
     eol?: string;
     persistedSha256?: string;
     pendingCreateOperationId?: string;
+    pendingEntryScene?: string;
   }>,
   timelines: Iterable<{ id: string; file: string; text: string; eol: '\r\n' | '\n'; dirty: boolean }>,
   now: number,
@@ -200,6 +202,7 @@ export function buildAutosave(
         ...(typeof sc.file === 'string' ? { file: sc.file } : {}),
         ...(sc.eol === '\n' || sc.eol === '\r\n' ? { eol: sc.eol } : {}),
         ...(typeof sc.persistedSha256 === 'string' ? { persistedSha256: sc.persistedSha256 } : {}),
+        ...(typeof sc.pendingEntryScene === 'string' ? { pendingEntryScene: sc.pendingEntryScene } : {}),
         ...(typeof sc.pendingCreateOperationId === 'string'
           ? { pendingCreateOperationId: sc.pendingCreateOperationId }
           : {}),
@@ -263,6 +266,7 @@ export function parseAutosave(raw: string | null): AutosavePayload | null {
   for (const s of d.scenes) {
     if (!s || typeof s !== 'object') continue;
     const e = s as Record<string, unknown>;
+    if (e.pendingEntryScene !== undefined && (typeof e.pendingEntryScene !== 'string' || !e.pendingEntryScene)) return null;
     if (typeof e.key === 'string' && typeof e.text === 'string') {
       scenes.push({
         key: e.key,
@@ -271,6 +275,7 @@ export function parseAutosave(raw: string | null): AutosavePayload | null {
         ...(typeof e.file === 'string' ? { file: e.file } : {}),
         ...(e.eol === '\n' || e.eol === '\r\n' ? { eol: e.eol } : {}),
         ...(typeof e.persistedSha256 === 'string' ? { persistedSha256: e.persistedSha256 } : {}),
+        ...(typeof e.pendingEntryScene === 'string' ? { pendingEntryScene: e.pendingEntryScene } : {}),
         ...(typeof e.pendingCreateOperationId === 'string'
           ? { pendingCreateOperationId: e.pendingCreateOperationId }
           : {}),
@@ -371,8 +376,8 @@ export function parseAutosave(raw: string | null): AutosavePayload | null {
     for (const value of pending.writes) {
       if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
       const write = value as Record<string, unknown>;
-      if (typeof write.path !== 'string' || !write.path.startsWith('content/scenario/')
-        || normalizedSceneKeyFromFile(write.path) === null || typeof write.text !== 'string'
+      if (typeof write.path !== 'string' || (write.path !== 'game.config.json' && (!write.path.startsWith('content/scenario/')
+        || normalizedSceneKeyFromFile(write.path) === null)) || typeof write.text !== 'string'
         || (write.expectedSha256 !== null
           && (typeof write.expectedSha256 !== 'string' || !SHA256.test(write.expectedSha256)))) return null;
       writes.push({
@@ -449,6 +454,7 @@ export function settlePendingSceneCommit(
   if (receivedDeletes.size !== result.deletedPaths.length || receivedDeletes.size !== expectedDeletes.size
     || [...receivedDeletes].some((entry) => !expectedDeletes.has(entry))) return null;
   const matchedWrites = new Set<string>();
+  if (receivedWrites.has('game.config.json')) matchedWrites.add('game.config.json');
   const scenes = payload.scenes.map((entry) => {
     if (!entry.file) return { ...entry };
     const projectPath = entry.file.startsWith('content/scenario/') ? entry.file : `content/scenario/${entry.file}`;
@@ -456,7 +462,7 @@ export function settlePendingSceneCommit(
     const receipt = receivedWrites.get(key);
     if (!receipt) return { ...entry };
     matchedWrites.add(key);
-    const { pendingCreateOperationId: _pendingCreateOperationId, ...rest } = entry;
+    const { pendingCreateOperationId: _pendingCreateOperationId, pendingEntryScene: _pendingEntryScene, ...rest } = entry;
     return { ...rest, persistedSha256: receipt.sha256 };
   });
   if (matchedWrites.size !== receivedWrites.size) return null;

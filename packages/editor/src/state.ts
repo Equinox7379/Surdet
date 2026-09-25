@@ -22,6 +22,8 @@ export interface SceneEntry {
   persistedSha256?: string;
   /** 新场景首次安全写入的稳定请求身份；响应丢失后可重放同一提交。 */
   pendingCreateOperationId?: string;
+  /** Moving an implicit-entry project must pin this identity with the file save. */
+  pendingEntryScene?: string;
 }
 
 export interface TimelineEntry {

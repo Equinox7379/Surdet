@@ -130,6 +130,28 @@ describe('buildAutosave（快照构建）', () => {
     });
   });
 
+  it('章节移动与缺省入口一起重放，回执收束后不遗留待固定入口', () => {
+    const requestId = '123e4567-e89b-42d3-a456-426614174000';
+    const scene = { id: 'start', file: '第一章/start.GAL', text: '@scene start\r\n', eol: '\r\n',
+      dirty: true, persistedSha256: 'a'.repeat(64), pendingEntryScene: 'start' };
+    const pending = [{ kind: 'rename' as const, id: 'start', file: 'start.GAL', replacementKey: '第一章/start',
+      operationId: requestId, planFingerprint: 'b'.repeat(64), affectedSceneKeys: ['第一章/start'] }];
+    const writes = [
+      { path: 'content/scenario/第一章/start.GAL', text: scene.text, expectedSha256: null },
+      { path: 'game.config.json', text: '{"entryScene":"start"}', expectedSha256: 'c'.repeat(64) },
+    ];
+    const payload = buildAutosave('proj', new Map([['第一章/start', scene]]), [], 1, 'project', pending,
+      { requestId, writes, plans: [{ operationId: requestId, planFingerprint: pending[0]!.planFingerprint }], deletedPaths: ['content/scenario/start.GAL'] });
+    expect(parseAutosave(JSON.stringify(payload))).toEqual(payload);
+    const result = { requestId, status: 'COMMITTED' as const, deletedPaths: ['content/scenario/start.GAL'],
+      writes: writes.map(write => ({ path: write.path, sha256: 'd'.repeat(64) })) };
+    const settled = settlePendingSceneCommit(payload!, result);
+    expect(settled).not.toBeNull();
+    expect(settled!.scenes[0]!.pendingEntryScene).toBeUndefined();
+    expect(settled!.scenes[0]!.file).toBe(scene.file);
+    expect(settlePendingSceneCommit(payload!, { ...result, writes: result.writes.slice(0, 1) })).toBeNull();
+  });
+
   it('保存回包丢失时冻结首次请求，并在回执到达后保留随后编辑', () => {
     const requestId = '123e4567-e89b-42d3-a456-426614174000';
     const receiptSha256 = 'd'.repeat(64);

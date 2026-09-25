@@ -199,7 +199,7 @@ describe('configuration draft state', () => {
 
     let failWrite = false;
     const handle = {
-      getFile: async () => ({ text: async () => state.gameConfigText }),
+      getFile: async () => new File([state.gameConfigText], 'game.config.json'),
       createWritable: async () => ({
         write: async (value: unknown) => {
           if (failWrite) throw new Error('fixture write failure');
@@ -230,7 +230,7 @@ describe('configuration draft state', () => {
     let diskText = state.gameConfigText;
     let failWrite = false;
     const handle = {
-      getFile: async () => ({ text: async () => diskText }),
+      getFile: async () => new File([diskText], 'game.config.json'),
       createWritable: async () => ({
         write: async (value: unknown) => {
           if (failWrite) throw new Error('global fixture write failure');
@@ -265,7 +265,7 @@ describe('configuration draft state', () => {
     const writeReleased = new Promise<void>((resolve) => { releaseWrite = resolve; });
     let diskText = state.gameConfigText;
     const handle = {
-      getFile: async () => ({ text: async () => diskText }),
+      getFile: async () => new File([diskText], 'game.config.json'),
       createWritable: async () => ({
         write: async (value: unknown) => {
           writeStarted();

@@ -424,6 +424,9 @@ describe('project asset import authority HTTP boundary', () => {
       leaseManager: new NodeLocalLeaseManager(path.join(path.dirname(fixture.projectRoot), 'coordination')),
     });
     fixture.target.workspace = workspace;
+    fixture.target.scenePlan = async (input, write) => workspace.withWriteLease(write!, async () => ({
+      ...input, targetPath: input.targetPath ?? null, planFingerprint: '5'.repeat(64), status: 'PLANNED',
+    }));
     const browserSessionId = 'workspace-http-browser';
     const token = await bindProject(fixture, browserSessionId);
     const state = { workspaceSessionId: itemId, browserSessionId, workspaceGeneration: 0, availability: 'clean',
@@ -454,10 +457,22 @@ describe('project asset import authority HTTP boundary', () => {
         text: '@scene start\n凛：真实绑定保存。\n@end\n' });
       expect(published.response.status).toBe(200);
       expect(await readFile(path.join(fixture.projectRoot, 'content/scenario/start.gal'), 'utf8')).toContain('真实绑定保存');
+      const sendPlan = (body: object) => request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/plan`, {
+        method: 'POST', headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: token }), body: JSON.stringify(body),
+      });
+      for (const kind of ['rename', 'delete'] as const) {
+        const plan = { operationId, kind, sourcePath: 'content/scenario/start.gal',
+          ...(kind === 'rename' ? { targetPath: 'content/scenario/第一章/start.gal' } : {}), workspaceWrite: active };
+        expect((await sendPlan(plan)).response.status).toBe(200);
+        expect((await sendPlan({ ...plan, extra: true })).response.status).toBe(400);
+        expect((await sendPlan({ ...plan, workspaceWrite: { ...active, browserSessionId: 'another-browser' } })).response.status).toBe(403);
+      }
       const finished = await send('finish', { ...active, workspaceGeneration: 2, availability: 'clean', busyReasons: [] });
       expect(finished.response.status).toBe(200);
       expect(finished.body.data.changedPaths).toEqual(['content/scenario/start.gal']);
       expect(finished.body.data.mutationNotice.status).toBe('written');
+      const latePlan = await sendPlan({ operationId, kind: 'delete', sourcePath: 'content/scenario/start.gal', workspaceWrite: active });
+      expect(latePlan.body.error.code).toBe('HUMAN_WORKSPACE_STATE_CORRUPT');
       const late = await send('publish', { ...active, path: 'content/scenario/start.gal', expectedSha256: published.body.data.sha256, text: 'late' });
       expect(late.body.error.code).toBe('HUMAN_WORKSPACE_STATE_CORRUPT');
     } finally {

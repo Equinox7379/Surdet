@@ -4,6 +4,7 @@ import {
   bindFlowHooks,
   deleteSceneAtKey,
   renameSceneAtKey,
+  moveSceneAtKey,
   resolveFlowLinkSceneKeys,
   resolveSceneKeyForOperation,
   rewriteSceneRefs,
@@ -11,7 +12,8 @@ import {
 } from '../src/panels/flow.js';
 import type { FlowNode } from '../src/graph/build.js';
 import { newScene } from '../src/panels/sidebar.js';
-import { bindProjectIoHooks } from '../src/project-io.js';
+import { bindProjectIoHooks, workingGameConfigText } from '../src/project-io.js';
+import { createEditorProjectStorage } from '../src/authoring-project-storage.js';
 import { histories, setCurrentText, undo, redo } from '../src/history.js';
 
 function scene(id: string, file: string, handle: FileSystemFileHandle | null): SceneEntry {
@@ -74,6 +76,59 @@ describe('场景路径安全生命周期', () => {
     state.scenes.set('chapter-b/shared', scene('shared', 'chapter-b/shared.gal', diskHandle));
     expect(resolveSceneKeyForOperation('shared')).toBeNull();
     expect(resolveSceneKeyForOperation('missing')).toBeNull();
+  });
+
+  it('移动章节只改目录和历史 key，保留正文、引用、后缀与缺省入口投影', async () => {
+    const planned = vi.fn(async () => ({ operationId: 'move', planFingerprint: 'f'.repeat(64) }));
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onSceneMutationPlan: planned });
+    const source = '@scene first\r\n// 注释\r\n旁白：正文。\r\n';
+    state.gameConfigText = '{"unknown": {"keep":true}}';
+    state.scenes.set('first', { ...scene('first', 'first.GAL', diskHandle), text: source, eol: '\r\n', persistedSha256: 'a'.repeat(64) });
+    state.scenes.set('reader', { ...scene('reader', 'reader.gal', diskHandle), text: '@call first\n' });
+    state.current = 'first';
+    setCurrentText(source + '旁白：后来。\r\n');
+    vi.mocked(window.prompt).mockReturnValue('第一章/雨夜');
+    await moveSceneAtKey('first');
+    expect(planned).toHaveBeenCalledWith({ kind: 'rename', sourcePath: 'content/scenario/first.GAL', targetPath: 'content/scenario/第一章/雨夜/first.GAL' });
+    expect(state.current).toBe('第一章/雨夜/first');
+    expect(state.scenes.get(state.current)).toMatchObject({ id: 'first', file: '第一章/雨夜/first.GAL', pendingEntryScene: 'first', dirty: true, handle: null });
+    expect(state.scenes.get('reader')!.text).toBe('@call first\n');
+    expect(state.gameConfigText).toBe('{"unknown": {"keep":true}}');
+    expect(JSON.parse(workingGameConfigText())).toEqual({ unknown: { keep: true }, entryScene: 'first' });
+    expect(JSON.parse((await createEditorProjectStorage().readText('game.config.json')).text).entryScene).toBe('first');
+    undo(); expect(state.scenes.get(state.current)!.text).toBe(source);
+    redo(); expect(state.scenes.get(state.current)!.text).toBe(source + '旁白：后来。\r\n');
+    expect(state.pendingSceneDeletes[0]).toMatchObject({ kind: 'rename', file: 'first.GAL', replacementKey: state.current });
+    await moveSceneAtKey(state.current);
+    expect(planned).toHaveBeenCalledTimes(1);
+  });
+
+  it('移动已被配置引用的场景不改引用，取消/不安全目录/服务拒绝均不改内存', async () => {
+    state.gameConfigText = '{"entryScene":"first","player":{"endScenes":["first"]}}';
+    state.entryScene = 'first';
+    state.scenes.set('first', scene('first', 'first.gal', diskHandle));
+    const before = [...state.scenes].map(([key, scene]) => [key, { ...scene }]);
+    vi.mocked(window.prompt).mockReturnValue(null);
+    await moveSceneAtKey('first');
+    vi.mocked(window.prompt).mockReturnValue('../outside');
+    await expect(moveSceneAtKey('first')).rejects.toThrow();
+    vi.mocked(window.prompt).mockReturnValue('chapter');
+    await expect(moveSceneAtKey('first')).rejects.toThrow('未连接');
+    expect([...state.scenes]).toEqual(before);
+    expect(state.pendingSceneDeletes).toEqual([]);
+    bindProjectIoHooks({ renderAll: vi.fn(), runValidate: vi.fn(), renderSidebar: vi.fn(), onSceneMutationPlan: async () => ({ operationId: 'move', planFingerprint: 'b'.repeat(64) }) });
+    await moveSceneAtKey('first');
+    expect(state.scenes.get('chapter/first')!.pendingEntryScene).toBeUndefined();
+    expect(state.gameConfigText).toBe('{"entryScene":"first","player":{"endScenes":["first"]}}');
+  });
+
+  it('恢复条目携带项目相对完整路径时，章节输入仍相对 scenario 根目录', async () => {
+    state.gameConfigText = '{"entryScene":"first"}';
+    state.scenes.set('chapter/first', scene('first', 'content/scenario/chapter/first.GAL', null));
+    vi.mocked(window.prompt).mockReturnValue('next');
+    await moveSceneAtKey('chapter/first');
+    expect(window.prompt).toHaveBeenCalledWith(expect.any(String), 'chapter');
+    expect(state.scenes.get('next/first')).toMatchObject({ id: 'first', file: 'next/first.GAL' });
   });
 
   it('历史中无法安全改写的引用在改动当前场景之前拒绝，保留所有内存内容', async () => {

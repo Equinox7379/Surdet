@@ -299,7 +299,9 @@ async function openRuntime(options: Required<Pick<AssetImportAuthorityVitePlugin
         }
         return response;
       }),
-      scenePlan: (request) => sceneLifecycle.plan(request),
+      scenePlan: (request, workspaceWrite) => workspaceWrite === undefined
+        ? mutationContext.run(() => sceneLifecycle.plan(request))
+        : workspace.withWriteLease(workspaceWrite, lease => mutationContext.runWithLease(lease, () => sceneLifecycle.plan(request))),
       sceneCommit: (request, workspaceWrite) => workspaceWrite === undefined
         ? mutationContext.run(async () => {
           const before = await readBaseline();

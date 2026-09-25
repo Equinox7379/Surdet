@@ -1,7 +1,7 @@
 import { state, h, setStatus, type SceneEntry } from '../state.js';
 import { setCurrentText } from '../history.js';
 import { parseScript, splitInstr, type LineModel } from '../model.js';
-import { decodeInstructionArgument } from '@surdet/authoring';
+import { decodeInstructionArgument, parseProjectConfigDocument } from '@surdet/authoring';
 import { disposePreviewPanel, renderPreviewPanel, refreshPreviewSourceState } from '../panels/preview-panel.js';
 import { allowedToEdit, button, disclosure, field, ImageScope, navigateMode } from './ui.js';
 import { renderTimelineSummary } from './timeline-summary.js';
@@ -230,7 +230,7 @@ export class ScriptWorkbench {
     this.root.querySelector('#v4-speaker-choices')?.remove();
     const speakers = h('datalist'); speakers.id = 'v4-speaker-choices';
     try {
-      const config = JSON.parse(state.gameConfigText) as { characters?: Record<string, { name?: unknown }> };
+      const config = parseProjectConfigDocument(state.gameConfigText) as { characters?: Record<string, { name?: unknown }> };
       for (const character of Object.values(config.characters ?? {})) {
         if (typeof character?.name === 'string') speakers.append(new Option(character.name, character.name));
       }

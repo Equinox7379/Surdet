@@ -164,6 +164,36 @@ export async function applySceneRename(change: ChangeSession, input: SceneRename
   });
 }
 
+export function sceneDirectorySegments(directory: string): string[] {
+  const segments = directory === '' ? [] : directory.split('/');
+  if (directory.length > 1024 || segments.some(segment => !segment || segment === '.' || segment === '..'
+    || /[\\<>:"|?*\u0000-\u001f]/.test(segment) || /[. ]$/.test(segment)
+    || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(segment)
+    || /^(?:node_modules|dist|\.git)$/i.test(segment) || /^\.surdet-/i.test(segment))) {
+    throw new AuthoringOperationError('INVALID_REQUEST', '章节目录必须是 content/scenario 内可用的相对目录；返回根目录请传空字符串');
+  }
+  return segments;
+}
+
+/** Shared chapter path contract for public authoring and the human Editor. */
+export function sceneMoveTargetPath(previousPath: string, directory: string, existingPaths: readonly string[]): string {
+  const segments = sceneDirectorySegments(directory);
+  const path = ['content', 'scenario', ...segments, previousPath.slice(previousPath.lastIndexOf('/') + 1)].join('/');
+  const fold = (value: string) => value.normalize('NFC').toUpperCase().toLowerCase();
+  if (fold(path) === fold(previousPath)) throw new AuthoringOperationError('INVALID_REQUEST', '目标目录必须不同，不能仅改变大小写或 Unicode 表示');
+  const targetParts = path.split('/');
+  for (const existing of existingPaths) {
+    const existingParts = existing.split('/');
+    for (let index = 0; index < Math.min(existingParts.length, targetParts.length); index++) {
+      if (fold(existingParts[index]!) !== fold(targetParts[index]!)) break;
+      if (existingParts[index] !== targetParts[index] || index === existingParts.length - 1 || index === targetParts.length - 1) {
+        throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '目标位置已占用或目录名称存在别名冲突', { path, existing });
+      }
+    }
+  }
+  return path;
+}
+
 /** Chapter folders are organization only: neither script bytes nor scene IDs change. */
 export async function applySceneMove(change: ChangeSession, input: SceneMoveInput, hasher: TextHasher = compositionTextHasher) {
   if (change.record.composition?.mode !== 'direct' || change.record.integration !== undefined) {
@@ -171,33 +201,13 @@ export async function applySceneMove(change: ChangeSession, input: SceneMoveInpu
   }
   return runOperation(change, input, async record => {
     if (!isValidSceneId(input.sceneId)) throw new AuthoringOperationError('INVALID_REQUEST', '无效的场景 ID');
-    const directory = input.directory;
-    const segments = directory === '' ? [] : directory.split('/');
-    if (directory.length > 1024 || segments.some(segment => !segment || segment === '.' || segment === '..'
-      || /[\\<>:"|?*\u0000-\u001f]/.test(segment) || /[. ]$/.test(segment)
-      || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(segment)
-      || /^(?:node_modules|dist|\.git)$/i.test(segment) || /^\.surdet-/i.test(segment))) {
-      throw new AuthoringOperationError('INVALID_REQUEST', '章节目录必须是 content/scenario 内可用的相对目录；返回根目录请传空字符串');
-    }
     const previousPath = resolveUniqueScenarioPath(record.workingFiles, input.sceneId);
     if (previousPath === undefined) throw new AuthoringOperationError('OBJECT_NOT_FOUND', `场景不存在：${input.sceneId}`);
     const source = record.workingFiles[previousPath]!;
     if (previousPath !== input.expectedPath || await hasher.sha256(source) !== input.expectedFingerprint) {
       throw new AuthoringOperationError('OBJECT_REF_STALE', '场景位置或正文已变化，请重新读取 object.inspect');
     }
-    const path = ['content', 'scenario', ...segments, previousPath.slice(previousPath.lastIndexOf('/') + 1)].join('/');
-    const fold = (value: string) => value.normalize('NFC').toUpperCase().toLowerCase();
-    if (fold(path) === fold(previousPath)) throw new AuthoringOperationError('INVALID_REQUEST', '目标目录必须不同，不能仅改变大小写或 Unicode 表示');
-    const targetParts = path.split('/');
-    for (const existing of Object.keys(record.workingFiles)) {
-      const existingParts = existing.split('/');
-      for (let index = 0; index < Math.min(existingParts.length, targetParts.length); index++) {
-        if (fold(existingParts[index]!) !== fold(targetParts[index]!)) break;
-        if (existingParts[index] !== targetParts[index] || index === existingParts.length - 1 || index === targetParts.length - 1) {
-          throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '目标位置已占用或目录名称存在别名冲突', { path, existing });
-        }
-      }
-    }
+    const path = sceneMoveTargetPath(previousPath, input.directory, Object.keys(record.workingFiles));
     const workingFiles = { ...record.workingFiles, [path]: source };
     delete workingFiles[previousPath];
     const configSource = workingFiles['game.config.json'];
