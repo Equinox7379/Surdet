@@ -309,10 +309,10 @@ export interface VariablePatchInitialInput {
   initial: unknown;
 }
 
-/** Stage 6 Wave 2：可由 authoring 时间轴入口写入的非音频 track kind。 */
-export type Wave2TrackKind = 'background' | 'portrait' | 'camera' | 'screen' | 'particle';
+/** Authoring track kinds; the historical public type name is retained. */
+export type Wave2TrackKind = 'background' | 'portrait' | 'camera' | 'screen' | 'particle' | 'audio';
 
-/** Stage 6 Wave 2：可由 authoring 时间轴入口写入的非音频 action。 */
+/** Actions supported by the shared Core timeline validator. */
 export type Wave2Action =
   | 'set'
   | 'show'
@@ -327,7 +327,10 @@ export type Wave2Action =
   | 'flash'
   | 'wipe'
   | 'start'
-  | 'stop';
+  | 'stop'
+  | 'bgm'
+  | 'se'
+  | 'voice';
 
 export interface TimelineCueInput {
   atMs: number;
@@ -459,6 +462,11 @@ export interface ProjectAssetItem {
   physical: boolean;
   references: ProjectAssetReference[];
   issues: ProjectAssetIssueCode[];
+  /** Exact-key examples for supported, unambiguous media; no decode guarantee. */
+  usage?: {
+    scene: Extract<SceneBlockInput, { kind: 'instruction' }>;
+    timeline?: { kind: 'audio'; cues: TimelineCueInput[] };
+  };
 }
 
 export interface ProjectAssetKindSummary {

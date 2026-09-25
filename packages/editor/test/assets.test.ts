@@ -42,6 +42,8 @@ describe('素材目录约定助手', () => {
     expect(kindOfDir('bg')).toBe('bg');
     expect(kindOfDir('portrait')).toBe('portrait');
     expect(kindOfDir('voice')).toBe('voice');
+    expect(kindOfDir('MUSIC')).toBe('bgm');
+    expect(kindOfDir('AmBiEnCe')).toBe('ambience');
     expect(kindOfDir('random_dir')).toBeNull();
   });
   it('parsePortraitFileName：角色_服装_表情 → 角色:服装 + 表情（缺段补 normal）', () => {

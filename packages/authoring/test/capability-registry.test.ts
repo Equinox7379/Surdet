@@ -113,18 +113,18 @@ describe('authoring capability registry', () => {
     expect(patch.$defs.sceneConditionPatchBranch.oneOf).toHaveLength(9);
   });
 
-  it('publishes the complete non-audio timeline schema and patch variants', () => {
+  it('publishes supported visual/audio timeline schemas and patch variants', () => {
     const create = getCapabilityDefinition('timeline.create');
     const definition = create.inputSchema.properties as Record<string, any>;
     const timeline = definition.definition as Record<string, any>;
     expect(timeline.properties.durationMs).toMatchObject({ type: 'integer', minimum: 0, maximum: 600000 });
     expect(timeline.properties.tracks).toMatchObject({ minItems: 1 });
     const track = timeline.properties.tracks.items as Record<string, any>;
-    expect(track.properties.kind.enum).toEqual(['background', 'portrait', 'camera', 'screen', 'particle']);
+    expect(track.properties.kind.enum).toEqual(['background', 'portrait', 'camera', 'screen', 'particle', 'audio']);
     const cue = track.properties.cues.items as Record<string, any>;
     expect(cue.properties.action.enum).toEqual([
       'set', 'show', 'hide', 'move', 'expression', 'zoom', 'pan', 'shake',
-      'fade', 'tint', 'flash', 'wipe', 'start', 'stop',
+      'fade', 'tint', 'flash', 'wipe', 'start', 'stop', 'bgm', 'se', 'voice',
     ]);
     expect(cue.properties).toEqual(expect.objectContaining({
       key: expect.any(Object), expression: expect.any(Object), position: expect.any(Object),

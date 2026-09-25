@@ -190,6 +190,10 @@ Editor 会阻止改名或删除仍被 `player.endScenes` 引用的场景，并�
 
 先读取 `project.assets({ "view": "working" })`（未建草稿时用 project）。背景和立绘的可用条目带有 `usage.scene` 与 `usage.timeline`：前者是可直接放进 scene.create 的 blocks 或 scene.patch 的 insertAfter.blocks 的指令对象，后者是可放进 timeline.create 的 definition.tracks 的轨道。示例已经使用当前项目的真实键，并处理场景参数的引号，不要把 sourcePath 当成素材键，也不要去掉示例 args 内的引号。
 
+声音和视频从 `intelligence.items` 选择：可用条目也带 `usage.scene`；音乐、音效、语音还提供 `usage.timeline`，可用原 timeline.create/patch 创建和返修 audio 轨道。当前 audio actions 为 bgm/se/voice；环境音与视频只有场景用法，不编造对应轨道。示例是素材接线，不代表媒体已经解码或节奏已经合适。重名、缺失、非法名称和当前未接入格式不会获得示例；环境音保留字 off 表示停止，不用于播放同名文件。
+
+候选的场景、选项内指令和时间轴会记录声音／视频的分声道依赖，只接受 change.begin 时已解析的项目媒体；新文件须先完成素材导入，再开始候选。即使同名，bgm/ambience/se/voice 仍是不同资源。直接 URL 或无项目来源的媒体不会被冒认为基线素材；已有 direct 用法不因此取得候选资格。已封存旧胶囊不重写，旧草稿若缺少现在需要的媒体事实，应保留原记录并重新建立候选，不能手改事实强行封装。
+
 - 背景：复制所选 backgrounds 条目的 usage.scene；它是 `bg` 指令。
 - 立绘登场或换表情：在 portraits 中选同一 timelineTarget 的不同 expression，分别使用其 usage.scene（`show`）。再次 show 同一角色/服装会更新表情；默认居中，可将 modifiers.pos 改为 left/right/center。不是每说一句话都重新 show。
 - 头像不是立绘：avatars 用于角色的对话头像，不能拿来作为 show 的目标。角色表中的 id/name 管台词身份与显示名，立绘的 role/outfit/expression 管图像；需要说话焦点对应时，让角色 id 与素材 role 对应。新增/改名先读取 `project.inspect({ "view": "working" })` 的 charactersFingerprint 并传给 character.ensure.expectedFingerprint；角色表为空也能读取，不为换表情改角色名。

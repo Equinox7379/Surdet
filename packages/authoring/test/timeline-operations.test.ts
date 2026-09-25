@@ -188,12 +188,12 @@ describe('timeline.create', () => {
     expect(change.record.workingFiles).toEqual({});
   });
 
-  it('does not add an audio track through timeline.create', async () => {
+  it('creates existing Core audio actions without dropping source metadata', async () => {
     const { change } = await open();
-    await expect(applyTimelineCreate(change, createInput('op-audio-create', definitionWithAudio()), hasher))
-      .rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
-    expect(change.record.workingFiles).toEqual({});
-    expect(change.record.workingRevision).toBe(0);
+    const definition = definitionWithAudio();
+    await applyTimelineCreate(change, { operationId: 'op-audio-create', timelineId: definition.id, definition }, hasher);
+    expect(JSON.parse(change.record.workingFiles[`content/timelines/${definition.id}.json`]!)).toEqual(definition);
+    expect(change.record.workingRevision).toBe(1);
   });
 });
 
@@ -378,7 +378,7 @@ describe('timeline.patch', () => {
     expect(Object.prototype.hasOwnProperty.call(removed.tracks[0], 'target')).toBe(false);
   });
 
-  it('retains existing audio tracks across non-audio patches and rejects every audio mutation path', async () => {
+  it('retains existing audio tracks across non-audio patches and rejects invalid audio actions', async () => {
     const { change } = await openedWithAudio();
     const path = 'content/timelines/agent_audio.json';
     const source = JSON.parse(change.record.workingFiles[path]!) as TimelineDefinition;
@@ -400,12 +400,8 @@ describe('timeline.patch', () => {
     const preservedText = change.record.workingFiles[path]!;
 
     const attempts: TimelinePatchInput[] = [
-      { operationId: 'op-audio-add', timelineId: 'agent_audio', patch: { kind: 'addTrack', expectedFingerprint: updated.fingerprint, trackKind: 'audio' as never } },
-      { operationId: 'op-audio-remove-track', timelineId: 'agent_audio', patch: { kind: 'removeTrack', expectedFingerprint: audioTrackFingerprint, trackRef: audioTrackRef } },
-      { operationId: 'op-audio-set-target', timelineId: 'agent_audio', patch: { kind: 'setTrackTarget', expectedFingerprint: audioTrackFingerprint, trackRef: audioTrackRef, target: 'forbidden' } },
       { operationId: 'op-audio-insert', timelineId: 'agent_audio', patch: { kind: 'insertCue', expectedFingerprint: audioTrackFingerprint, trackRef: audioTrackRef, cue: { atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'forbidden' } } },
       { operationId: 'op-audio-replace', timelineId: 'agent_audio', patch: { kind: 'replaceCue', expectedFingerprint: audioCueFingerprint, cueRef: audioCueRef, cue: { atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'forbidden' } } },
-      { operationId: 'op-audio-remove-cue', timelineId: 'agent_audio', patch: { kind: 'removeCue', expectedFingerprint: audioCueFingerprint, cueRef: audioCueRef } },
     ];
     for (const attempt of attempts) {
       await expect(applyTimelinePatch(change, attempt, hasher)).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
@@ -414,6 +410,35 @@ describe('timeline.patch', () => {
     const final = JSON.parse(change.record.workingFiles[path]!) as TimelineDefinition;
     expect(final.tracks[audioIndex]).toEqual(audioTrack);
     expect(change.record.workingRevision).toBe(1);
+  });
+
+  it('edits audio tracks/cues through current fingerprints while keeping unrelated tracks and metadata', async () => {
+    const { change } = await openedWithAudio();
+    const path = 'content/timelines/agent_audio.json';
+    const read = () => JSON.parse(change.record.workingFiles[path]!) as TimelineDefinition;
+    const before = read(), index = before.tracks.length - 1;
+    const trackRef = trackRefFor('agent_audio', index), cueRef = cueRefFor('agent_audio', index, 0);
+    const cue: TimelineCueInput = { atMs: 20, durationMs: 0, easing: 'linear', action: 'voice', key: 'prepared_voice' };
+    await applyTimelinePatch(change, { operationId: 'audio-replace', timelineId: 'agent_audio', patch: {
+      kind: 'replaceCue', cueRef, expectedFingerprint: await timelineFingerprint(read().tracks[index]!.cues[0], hasher), cue,
+    } }, hasher);
+    expect(read().tracks[index]!.cues[0]).toEqual(cue);
+    expect(read().tracks.slice(0, index)).toEqual(before.tracks.slice(0, index));
+    expect((read().tracks[index] as unknown as Record<string, unknown>)['opaqueTrackMetadata']).toEqual({ source: 'audio-fixture' });
+    await applyTimelinePatch(change, { operationId: 'audio-insert', timelineId: 'agent_audio', patch: {
+      kind: 'insertCue', trackRef, expectedFingerprint: await timelineFingerprint(read().tracks[index], hasher), cue: { ...cue, atMs: 50, action: 'se' },
+    } }, hasher);
+    await applyTimelinePatch(change, { operationId: 'audio-remove-cue', timelineId: 'agent_audio', patch: {
+      kind: 'removeCue', cueRef, expectedFingerprint: await timelineFingerprint(read().tracks[index]!.cues[0], hasher),
+    } }, hasher);
+    expect(read().tracks[index]!.cues).toEqual([{ ...cue, atMs: 50, action: 'se' }]);
+    await applyTimelinePatch(change, { operationId: 'audio-add-track', timelineId: 'agent_audio', patch: {
+      kind: 'addTrack', expectedFingerprint: await timelineFingerprint(read(), hasher), trackKind: 'audio',
+    } }, hasher);
+    await applyTimelinePatch(change, { operationId: 'audio-remove-track', timelineId: 'agent_audio', patch: {
+      kind: 'removeTrack', trackRef: trackRefFor('agent_audio', index + 1), expectedFingerprint: await timelineFingerprint(read().tracks[index + 1], hasher),
+    } }, hasher);
+    expect(read().tracks).toHaveLength(before.tracks.length);
   });
 
   it('rejects a stale fingerprint without any partial write', async () => {

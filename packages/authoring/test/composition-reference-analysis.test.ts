@@ -7,6 +7,18 @@ import {
 } from '../src/composition-reference-analysis.js';
 
 describe('raw composition reference analysis', () => {
+  it('keeps audio/video dependencies in scene and choice instructions, but not empty stops or ambience off', () => {
+    const refs = analyzeSceneCompositionReferences({ sceneId: 'entry', path: 'content/scenario/entry.gal', characters: {},
+      text: '@scene entry\n@bgm "同名 声音"\n@ambience "同名 声音"\n@video "片头 WEBM"\n@ambience off\n@bgm\n@choice\n  听听 -> @se "同名 声音" @voice "同名 声音" @goto done\n@label done\n@end\n' });
+    expect(refs.filter(ref => ref.kind.endsWith('-asset')).map(ref => ref.objectRef).sort()).toEqual([
+      'asset:ambience:同名 声音', 'asset:bgm:同名 声音', 'asset:se:同名 声音', 'asset:video:片头 WEBM', 'asset:voice:同名 声音',
+    ]);
+    expect(refs.find(ref => ref.objectRef === 'asset:voice:同名 声音')?.source).toMatchObject({ line: 8, optionIndex: 0 });
+    const timeline = analyzeTimelineCompositionReferences({ timelineId: 'sound', path: 'content/timelines/sound.json',
+      definition: { tracks: [{ kind: 'audio', cues: ['bgm', 'se', 'voice'].map(action => ({ action, atMs: 0, key: '同名 声音' })) }] } });
+    expect(timeline.map(ref => ref.objectRef).sort()).toEqual(['asset:bgm:同名 声音', 'asset:se:同名 声音', 'asset:voice:同名 声音']);
+    expect(timeline.find(ref => ref.objectRef === 'asset:voice:同名 声音')?.source).toMatchObject({ trackIndex: 0, cueIndex: 2 });
+  });
   it('keeps missing scene targets and distinguishes local labels from external scenes', () => {
     const refs = analyzeSceneCompositionReferences({
       sceneId: 'entry',
@@ -171,6 +183,7 @@ describe('raw composition reference analysis', () => {
     expect(timelineRefs).toEqual([
       expect.objectContaining({ kind: 'background-asset', objectRef: 'asset:bg:night', source: expect.objectContaining({ trackIndex: 0, cueIndex: 0 }) }),
       expect.objectContaining({ kind: 'portrait-asset', objectRef: 'asset:portrait:lynn:uniform:smile', source: expect.objectContaining({ trackIndex: 1, cueIndex: 0 }) }),
+      expect.objectContaining({ kind: 'audio-asset', objectRef: 'asset:bgm:theme', source: expect.objectContaining({ trackIndex: 2, cueIndex: 0 }) }),
     ]);
     expect(analyzeCharacterCompositionReferences({ id: 'lynn', avatar: 'lynn' })).toEqual([
       expect.objectContaining({ kind: 'avatar-asset', token: 'lynn', objectRef: 'asset:avatar:lynn', source: { path: 'game.config.json' } }),

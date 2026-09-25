@@ -556,7 +556,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
     };
     const register = async (rel: string, url: string): Promise<boolean> => {
       const parts = rel.split('/');
-      const kind = parts[0] ?? '';
+      const kind = (parts[0] ?? '').toLowerCase();
       const fname = parts[parts.length - 1] ?? '';
       const format = fname.split('.').pop()?.toLowerCase();
       if (kind === 'bg' && IMG.test(fname)) {

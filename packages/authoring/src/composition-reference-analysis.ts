@@ -106,6 +106,13 @@ function addSceneInstructionReferences(
   args: readonly string[],
   source: ReferenceSource,
 ): void {
+  if (name === 'bgm' || name === 'ambience' || name === 'se' || name === 'voice' || name === 'video') {
+    const token = args[0] === undefined ? '' : decodeInstructionArgument(args[0]);
+    if (token.length > 0 && !(name === 'ambience' && token === 'off')) {
+      addReference(references, name === 'video' ? 'video-asset' : 'audio-asset', 'candidate-external', token, source, `asset:${name}:${token}`);
+    }
+    return;
+  }
   if (name === 'timeline') {
     const token = cleanToken(args[0]);
     if (token.length > 0 && !token.startsWith('@')) {
@@ -331,6 +338,10 @@ export function analyzeTimelineCompositionReferences(input: {
       if (!isRecord(rawCue)) continue;
       const action = rawCue['action'];
       const source = timelineSource(input.path, trackIndex, cueIndex);
+      if (kind === 'audio' && (action === 'bgm' || action === 'se' || action === 'voice') && typeof rawCue['key'] === 'string') {
+        addReference(references, 'audio-asset', 'candidate-external', rawCue['key'], source, `asset:${action}:${rawCue['key']}`);
+        continue;
+      }
       if (kind === 'background' && action === 'set' && typeof rawCue['key'] === 'string' && rawCue['key'].trim().length > 0) {
         const token = rawCue['key'].trim();
         addReference(references, 'background-asset', 'candidate-external', token, source, `asset:bg:${token}`);

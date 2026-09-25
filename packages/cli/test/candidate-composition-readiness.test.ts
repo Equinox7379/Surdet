@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AUTHORING_CONTRACT_VERSION, CANDIDATE_COMPOSITION_READINESS_SCHEMA, type AuthoringEnvelope, type AuthoringObject, type CompositionManifest } from '@surdet/authoring';
+import { AUTHORING_CONTRACT_VERSION, CANDIDATE_COMPOSITION_READINESS_SCHEMA, getCapabilityDefinition, type ProjectAssetCatalog, type AuthoringEnvelope, type AuthoringObject, type CompositionManifest } from '@surdet/authoring';
 import { openAgentPortSession, type AgentPortSession } from '../src/agent-port/session.js';
 import { generateDeliveryCapsule } from '../src/agent-port/delivery-capsule.js';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
@@ -38,6 +38,65 @@ async function insertJump(session: AgentPortSession, operationId: string, sceneI
 }
 
 describe('Wave 8 candidate readiness through Agent Port', () => {
+  it('copies public media recipes into candidate scenes/timelines with channel-specific sealed dependencies', async () => {
+    const { root } = fixture();
+    for (const folder of ['MUSIC', 'ambience', 'se', 'voice', 'video']) {
+      const file = path.join(root, 'content/assets', folder, folder === 'video' ? '同名 素材.webm' : '同名 素材.WAV');
+      fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'catalog metadata fixture, not decoding evidence');
+    }
+    for (const relative of ['bg/duplicate.svg', 'bg/sub/duplicate.png']) {
+      const file = path.join(root, 'content/assets', relative);
+      fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'ambiguous image metadata fixture');
+    }
+    const session = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
+    try {
+      const catalog = result<ProjectAssetCatalog>(await session.invoke('project.assets', { view: 'project' }));
+      const schema = standardSchemaFromJson(getCapabilityDefinition('project.assets').outputSchema);
+      expect((await schema['~standard'].validate(catalog)).issues).toBeUndefined();
+      const media = catalog.intelligence.items.filter(item => item.usage);
+      expect(media).toHaveLength(5);
+      result(await session.invoke('change.begin', {}));
+      const before = (await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record;
+      expect(await session.invoke('scene.create', { operationId: 'duplicate-image', sceneId: 'duplicate_image', blocks: [
+        { kind: 'instruction', name: 'bg', args: ['duplicate'] },
+      ] })).toMatchObject({ ok: false, error: { code: 'CANDIDATE_DEPENDENCY_NOT_READY' } });
+      expect((await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record).toEqual(before);
+      const rejected = await session.invoke('scene.create', { operationId: 'media', sceneId: 'media', blocks: [{ kind: 'instruction', name: 'voice', args: ['absent'] }] });
+      expect(rejected).toMatchObject({ ok: false, error: { code: 'CANDIDATE_DEPENDENCY_NOT_READY' } });
+      expect((await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record).toEqual(before);
+      result(await session.invoke('scene.create', { operationId: 'media', sceneId: 'media', blocks: media.map(item => item.usage!.scene) }));
+      const voiceAsset = result<AuthoringObject>(await session.invoke('object.inspect', { objectRef: 'asset:voice:同名 素材' }));
+      expect(voiceAsset.referencedBy).toHaveLength(1);
+      const voiceInstruction = result<AuthoringObject>(await session.invoke('object.inspect', { objectRef: voiceAsset.referencedBy[0] }));
+      expect(voiceInstruction.source?.raw).toBe('@voice "同名 素材"');
+      const audioTracks = media.flatMap(item => item.usage!.timeline ? [item.usage!.timeline] : []);
+      result(await session.invoke('timeline.create', { operationId: 'media-timeline', timelineId: 'sound', definition: { version: 1, id: 'sound', durationMs: 100, tracks: audioTracks } }));
+      const timeline = result<AuthoringObject>(await session.invoke('object.inspect', { objectRef: 'timeline:sound' }));
+      const track = result<AuthoringObject>(await session.invoke('object.inspect', { objectRef: timeline.childRefs![0] }));
+      const cue = result<AuthoringObject>(await session.invoke('object.inspect', { objectRef: track.childRefs![0] }));
+      const patch = { kind: 'replaceCue', cueRef: cue.objectRef, expectedFingerprint: cue.fingerprint, cue: { ...(cue.details as Record<string, unknown>), atMs: 20 } };
+      result(await session.invoke('timeline.patch', { operationId: 'cue-time', timelineId: 'sound', patch }));
+      expect(await session.invoke('timeline.patch', { operationId: 'old-cue', timelineId: 'sound', patch })).toMatchObject({ ok: false, error: { code: 'OBJECT_REF_STALE' } });
+      const workingAssets = result<ProjectAssetCatalog>(await session.invoke('project.assets', { view: 'working' }));
+      expect(workingAssets.intelligence.items.find(item => item.kind === 'voice')?.references).toEqual(expect.arrayContaining([
+        expect.objectContaining({ sourceKind: 'scene', sourcePath: 'content/scenario/media.gal' }),
+        expect.objectContaining({ sourceKind: 'timeline', sourcePath: 'content/timelines/sound.json' }),
+      ]));
+      const projectAssets = result<ProjectAssetCatalog>(await session.invoke('project.assets', { view: 'project' }));
+      expect(projectAssets.intelligence.items.every(item => item.references.length === 0)).toBe(true);
+      const capsule = await generateDeliveryCapsule(session);
+      expect(capsule.composition.eligibility, JSON.stringify(capsule.composition)).toBe('ready');
+      const manifest = capsule.composition.manifest as CompositionManifest;
+      const scene = manifest.operations.find(operation => operation.primaryObject === 'scene:media')!;
+      expect(scene.requiredObjects.map(item => item.objectRef).sort()).toEqual(['ambience', 'bgm', 'se', 'video', 'voice'].map(channel => `asset:${channel}:同名 素材`));
+      const frozen = structuredClone((await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record);
+      fs.writeFileSync(path.join(root, 'content/assets/voice/late.wav'), 'later file');
+      expect(await session.invoke('scene.create', { operationId: 'late', sceneId: 'late', blocks: [{ kind: 'instruction', name: 'voice', args: ['late'] }] })).toMatchObject({ ok: false, error: { code: 'CANDIDATE_DEPENDENCY_NOT_READY' } });
+      expect((await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record).toEqual(frozen);
+      expect(fs.existsSync(path.join(root, 'content/scenario/media.gal'))).toBe(false);
+      expect(fs.existsSync(path.join(root, 'content/timelines/sound.json'))).toBe(false);
+    } finally { await session.close(); }
+  });
   it.each([{ capability: 'scene.patch' }, { inputSha256: 'conflicting-input-sha' }])('keeps exact retry history and rejects a distinct success fact: %j', async (conflict) => {
     const { root } = fixture();
     const session = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
@@ -95,7 +154,7 @@ describe('Wave 8 candidate readiness through Agent Port', () => {
       const opened = (await NodeChangeStore.openByChangeId(session.activeChangeId!))!;
       expect(opened.record).toEqual(beforeCycle);
       const description = await session.describe();
-      expect(description.contractVersion).toBe('2.11.0');
+      expect(description.contractVersion).toBe('2.12.0');
       expect(description.candidateReadiness).toMatchObject({ mode: 'candidate', status: 'ready', operationCount: 5, issueCount: 0, truncated: false });
       result(await session.invoke('project.validate', {}));
       result(await session.invoke('project.simulate', { sceneId: 'entry' }));
@@ -180,7 +239,7 @@ describe('Wave 8 candidate readiness through Agent Port', () => {
   });
 
   it('validates strict mode/status and nested readiness fields under contract 2.5', async () => {
-    expect(AUTHORING_CONTRACT_VERSION).toBe('2.11.0');
+    expect(AUTHORING_CONTRACT_VERSION).toBe('2.12.0');
     const schema = standardSchemaFromJson(CANDIDATE_COMPOSITION_READINESS_SCHEMA);
     const readiness = { mode: 'candidate', status: 'ready', operationFactsVersion: '1.0.0', operationCount: 0, issueCount: 0, issues: [], truncated: false };
     expect((await schema['~standard'].validate(readiness)).issues).toBeUndefined();

@@ -63,6 +63,26 @@ async function insert(change: ChangeSession, operationId: string, sceneId: strin
 }
 
 describe('candidate operation-time facts', () => {
+  it('rejects unresolved media before writing, then seals scene and audio timeline dependencies', async () => {
+    const blocks: SceneBlockInput[] = ['bgm', 'ambience', 'se', 'voice', 'video'].map(name => ({ kind: 'instruction', name, args: ['"同名 素材"'] }));
+    const missing = await candidate(); const before = structuredClone(missing.record);
+    await expect(applySceneCreate(missing, { operationId: 'media', sceneId: 'media', blocks }, hasher)).rejects.toMatchObject({
+      code: 'CANDIDATE_DEPENDENCY_NOT_READY', details: { issues: expect.arrayContaining([
+        expect.objectContaining({ code: 'ASSET_NOT_RESOLVED', objectRef: 'asset:voice:同名 素材' }),
+        expect.objectContaining({ code: 'ASSET_NOT_RESOLVED', objectRef: 'asset:video:同名 素材' }),
+      ]) },
+    });
+    expect(missing.record).toEqual(before);
+    const refs = ['bgm', 'ambience', 'se', 'voice', 'video'].map(channel => `asset:${channel}:同名 素材`);
+    const ready = await candidate(refs);
+    await applySceneCreate(ready, { operationId: 'media', sceneId: 'media', blocks }, hasher);
+    await applyTimelineCreate(ready, { operationId: 'timeline', timelineId: 'sound', definition: { version: 1, id: 'sound', durationMs: 1,
+      tracks: [{ kind: 'audio', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'voice', key: '同名 素材' }] }] } }, hasher);
+    expect(facts(ready, 'media').requiredObjects.map(ref => ref.objectRef).sort()).toEqual(refs.sort());
+    expect(facts(ready, 'timeline').requiredObjects).toEqual([{ objectRef: 'asset:voice:同名 素材', source: 'base' }]);
+    const sealed = await seal(ready);
+    expect(sealed.eligibility, JSON.stringify(sealed)).toBe('ready');
+  });
   it('returns the same early missing-producer contract for an entry-scene mutation', async () => {
     const change = await candidate();
     const before = structuredClone(change.record);
