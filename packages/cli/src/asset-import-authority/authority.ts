@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {
   buildProjectAssetImportPlan,
+  AGENT_LICENSE_MAX_BYTES,
   describeProjectAssetPath,
   isProjectAssetFormatSupported,
   destinationDirectoryForAssetKind,
@@ -14,6 +15,7 @@ import {
   type TextHasher,
 } from '@surdet/authoring';
 import { syncFileAndParent, syncParentDirectories } from '../authoring/node-durable-file.js';
+import { validateAssetSourceFormat } from '../authoring/asset-source-format.js';
 import {
   absoluteAssetImportProjectPath,
   assetImportDirectoryIdentity,
@@ -427,7 +429,9 @@ export class ProjectAssetImportAuthority {
     await this.assertOperationWorkspace(operationId);
   }
 
-  private async verifyStagedBinary(item: ProjectAssetImportStagedItem): Promise<void> {
+  private async verifyStagedBinary(item: ProjectAssetImportStagedItem, licenseFileName?: string): Promise<void> {
+    if (licenseFileName !== undefined && item.bytes > AGENT_LICENSE_MAX_BYTES) throw new AssetImportAuthorityError('IMPORT_LIMIT_EXCEEDED', `许可证/说明不能超过 1 MiB：${licenseFileName}`);
+    const licenseChunks: Buffer[] = [];
     const file = this.store.stagedItemBinaryFile(item.operationId, item.itemId);
     let handle: fs.FileHandle | undefined;
     try {
@@ -446,6 +450,7 @@ export class ProjectAssetImportAuthority {
         const read = await handle.read(buffer, 0, length, position);
         if (read.bytesRead <= 0) return this.enterRecovery(item.operationId, '素材暂存文件读取不完整');
         digest.update(buffer.subarray(0, read.bytesRead));
+        if (licenseFileName !== undefined) licenseChunks.push(Buffer.from(buffer.subarray(0, read.bytesRead)));
         position += read.bytesRead;
       }
       const after = await handle.stat({ bigint: true });
@@ -459,11 +464,16 @@ export class ProjectAssetImportAuthority {
     } finally {
       if (handle !== undefined) await handle.close().catch(() => undefined);
     }
+    if (licenseFileName !== undefined) {
+      try { validateAssetSourceFormat(Buffer.concat(licenseChunks), licenseFileName); }
+      catch (error) { throw new AssetImportAuthorityError('IMPORT_PLAN_BLOCKED', error instanceof Error ? error.message : String(error)); }
+    }
   }
 
   private async verifiedStagedItems(
     manifest: AssetImportOperationManifest,
     requireComplete: boolean,
+    targets?: readonly ProjectAssetImportTargetRequest[],
   ): Promise<ProjectAssetImportStagedItem[]> {
     if ((await this.store.assertStagingEntriesKnown(manifest)).length > 0) {
       return this.enterRecovery(manifest.operationId, '发现未完成的素材上传意图');
@@ -485,7 +495,7 @@ export class ProjectAssetImportAuthority {
       if (fact.sourceName !== declared.sourceName || fact.bytes !== declared.declaredBytes) {
         return this.enterRecovery(manifest.operationId, '素材暂存事实与创建清单不一致');
       }
-      await this.verifyStagedBinary(fact);
+      await this.verifyStagedBinary(fact, targets?.find(target => target.itemId === fact.itemId && target.kind === 'license')?.fileName);
       result.push(fact);
     }
     return result;
@@ -758,7 +768,7 @@ export class ProjectAssetImportAuthority {
     if (!sameJson(manifestIds, targetIds)) {
       throw new AssetImportAuthorityError('INVALID_REQUEST', '每个导入文件必须且只能指定一个目标');
     }
-    const stagedItems = await this.verifiedStagedItems(manifest, true);
+    const stagedItems = await this.verifiedStagedItems(manifest, true, targets);
     const targetFacts = suppliedFacts ?? await this.targetFacts(targets);
     const plan = await buildProjectAssetImportPlan({
       projectIdentity: this.paths.projectIdentity,

@@ -481,7 +481,7 @@ const RELOCATION_OPERATION_STATUSES = new Set<AssetRelocationOperationStatus>([
 ]);
 const ASSET_KINDS = new Set([
   'background', 'portrait', 'avatar', 'music', 'ambience',
-  'sound-effect', 'voice', 'video', 'font', 'other',
+  'sound-effect', 'voice', 'video', 'font', 'license', 'other',
 ]);
 const PLAN_ISSUES = new Set([
   'IMPORT_NAME_INVALID', 'IMPORT_FORMAT_UNSUPPORTED', 'IMPORT_PORTRAIT_NAME_INVALID',

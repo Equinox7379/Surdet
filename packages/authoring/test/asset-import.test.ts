@@ -33,6 +33,7 @@ const kinds: readonly ProjectAssetKind[] = [
   'voice',
   'video',
   'font',
+  'license',
   'other',
 ];
 
@@ -46,6 +47,7 @@ const fileNames: Record<ProjectAssetKind, string> = {
   voice: '凛的台词.M4A',
   video: '片头.webm',
   font: '霞鹜文楷.woff2',
+  license: 'OFL.txt',
   other: '界面图.svg',
 };
 

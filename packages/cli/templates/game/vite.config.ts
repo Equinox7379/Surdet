@@ -5,5 +5,6 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsInlineLimit: 0,
+    rollupOptions: { output: { assetFileNames: 'assets/[name]-[hash][extname]' } },
   },
 });

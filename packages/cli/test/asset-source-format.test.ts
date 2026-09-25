@@ -2,6 +2,19 @@ import { expect, it } from 'vitest';
 import { validateAssetSourceFormat } from '../src/authoring/asset-source-format.js';
 
 const wav = Buffer.from('524946462600000057415645666d74201000000001000100401f0000803e00000200100064617461020000000000', 'hex');
+
+it('accepts UTF-8 license companions without certifying their legal meaning', () => {
+  for (const name of ['OFL.txt', '授权说明.MD', 'LICENSE', 'LICENSE-MIT', 'NOTICE']) {
+    expect(() => validateAssetSourceFormat(Buffer.from('\uFEFFCopyright Example\r\n授权说明。\r\n'), name)).not.toThrow();
+  }
+});
+
+it('rejects binary, malformed UTF-8, empty and oversized license companions', () => {
+  for (const bytes of [Buffer.alloc(0), Buffer.from(' \r\n'), Buffer.from([0xc0, 0xaf]), Buffer.from('text\u0000binary'), Buffer.alloc(1024 * 1024 + 1, 65)]) {
+    expect(() => validateAssetSourceFormat(bytes, 'NOTICE.txt')).toThrow();
+  }
+  expect(() => validateAssetSourceFormat(Buffer.from('not executable'), 'program.exe')).toThrow();
+});
 const mp3 = Buffer.concat([Buffer.from([255, 251, 144, 0]), Buffer.alloc(413)]);
 function box(type: string, data: Buffer): Buffer {
   const header = Buffer.alloc(8);

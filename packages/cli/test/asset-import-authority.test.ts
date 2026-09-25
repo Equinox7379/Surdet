@@ -165,6 +165,19 @@ describe('project asset import authority operations', () => {
     expect(created.status).toBe('UPLOADING');
   });
 
+  it('rejects binary license bytes at the shared Editor authority without publishing or entering recovery', async () => {
+    const { authority, paths, projectRoot } = await fixture();
+    const operationId = crypto.randomUUID(), itemId = crypto.randomUUID();
+    const bytes = Buffer.from('license\u0000binary');
+    await authority.createOperation({ operationId, items: [{ itemId, sourceName: 'NOTICE.txt', declaredBytes: bytes.length }] });
+    await authority.uploadItem(operationId, itemId, Readable.from(bytes));
+    await expect(authority.plan(operationId, { targets: [{ itemId, kind: 'license', fileName: 'NOTICE.txt' }] }))
+      .rejects.toMatchObject({ code: 'IMPORT_PLAN_BLOCKED' });
+    expect((await authority.query(operationId)).operation.status).toBe('STAGED');
+    expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(false);
+    await expect(readFile(path.join(projectRoot, 'content/assets/licenses/NOTICE.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('streams measured bytes, creates a ready plan and seals it deterministically', async () => {
     const { authority } = await fixture();
     const operationId = '22222222-2222-4222-8222-222222222222';

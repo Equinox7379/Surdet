@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import net from 'node:net';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { build, preview } from 'vite';
 import { chromium } from 'playwright';
@@ -79,6 +79,27 @@ try {
   await fs.writeFile(configPath, JSON.stringify(sourceConfig));
   const sourceBefore = await fs.readFile(configPath, 'utf8');
   process.env.SURDET_AGENT_DATA_DIR = path.join(engine, 'agent-data');
+  const sourceRoot = path.join(engine, 'prepared-font-license');
+  await fs.mkdir(sourceRoot);
+  const licenses = [
+    ['OFL-NotoSansSC.txt', await fs.readFile(path.join(repo, 'examples/zero-after-midnight/content/assets/fonts/OFL-NotoSansSC.txt'))],
+    ['LICENSE-正文', await fs.readFile(path.join(repo, 'examples/zero-after-midnight/content/assets/fonts/OFL-NotoSerifSC.txt'))],
+  ];
+  await fs.writeFile(path.join(sourceRoot, '带授权字体.TTF'), bytesB);
+  for (const [name, bytes] of licenses) await fs.writeFile(path.join(sourceRoot, name), bytes);
+  session = await openAgentPortSession({ projectRoot: game, policy: 'apply', assetSources: [sourceRoot], assetImportDataRoot: path.join(engine, 'import-data') });
+  const sourceId = (await call('asset.sources')).roots[0].sourceId;
+  const items = [];
+  for (const [name, kind] of [['带授权字体.TTF', 'font'], ...licenses.map(([name]) => [name, 'license'])]) {
+    const { file } = await call('asset.sources', { sourceId, path: name });
+    items.push({ itemId: randomUUID(), sourceId, sourcePath: name, sha256: file.sha256, kind, fileName: name });
+  }
+  const importId = randomUUID();
+  const ready = await call('asset.import.stage', { operationId: importId, items });
+  await assert.rejects(fs.access(path.join(game, 'content/assets/licenses')), { code: 'ENOENT' });
+  await call('asset.import.commit', { operationId: importId, planFingerprint: ready.plan.planFingerprint });
+  for (const [name, bytes] of licenses) assert.deepEqual(await fs.readFile(path.join(game, 'content/assets/licenses', name)), bytes);
+  await session.close();
   session = await openAgentPortSession({ projectRoot: game, policy: 'stage' });
   await call('change.begin', { compositionMode: 'direct' });
   const changeId = session.activeChangeId;
@@ -148,6 +169,17 @@ try {
   await session.close(); session = null;
   assert.equal(await fs.readFile(path.join(game, 'src/main.ts'), 'utf8'), mainBefore);
   await build({ root: game, configFile: path.join(game, 'vite.config.ts'), logLevel: 'error' });
+  const builtAssets = await fs.readdir(path.join(game, 'dist/assets'));
+  const builtLicenses = [];
+  for (const [name, bytes] of licenses) {
+    let found;
+    for (const asset of builtAssets.filter(asset => asset.startsWith(name.replace(/\.txt$/, '') + '-'))) {
+      if ((await fs.readFile(path.join(game, 'dist/assets', asset))).equals(bytes)) { found = asset; break; }
+    }
+    assert.ok(found, `license missing or rewritten in built output: ${name}`);
+    assert.ok(!found.endsWith('.'), `Windows-incompatible generated license filename: ${found}`);
+    builtLicenses.push(found);
+  }
   playerServer = await preview({ root: game, configFile: path.join(game, 'vite.config.ts'), logLevel: 'error', preview: { host: '127.0.0.1', port: 0 } });
   page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${playerServer.httpServer.address().port}/`); await waitTitle(page);
@@ -158,7 +190,7 @@ try {
   await page.screenshot({ path: path.join(output, 'built-player-font.png') });
   assert.deepEqual(errors, []);
   await fs.writeFile(path.join(output, 'evidence.json'), JSON.stringify({ workingUsesUnpublishedConfig: true, sourceUnchangedBeforeCommit: true,
-    badFontReportedAsFailed: true, recoveredSameChange: true, unchangedMain: true, builtPlayerLoadedExactFont: true, loads, errors }, null, 2));
+    badFontReportedAsFailed: true, recoveredSameChange: true, unchangedMain: true, builtPlayerLoadedExactFont: true, licenseBatchImported: true, builtLicenses, loads, errors }, null, 2));
   console.log(`PASS project fonts: working preview, bad font recovery, authorized commit, built Player / ${output}`);
 } catch (error) {
   if (page && !page.isClosed()) {

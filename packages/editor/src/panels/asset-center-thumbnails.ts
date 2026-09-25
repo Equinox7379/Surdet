@@ -23,6 +23,7 @@ const KIND_LABELS: Record<ProjectAssetKind, string> = {
   voice: '语音',
   video: '视频',
   font: '字体',
+  license: '许可证/说明',
   other: '其他',
 };
 

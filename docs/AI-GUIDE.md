@@ -171,7 +171,7 @@ candidate/integration 明确拒绝该跨文件操作，既有候选创建/修改
 
 字体复制 `project.assets.intelligence.items` 中 `kind: "font"` 的完整 `sourcePath`，不是 basename 或素材短键。例如 `patch: { fonts: { body: "content/assets/fonts/正文.TTF", title: "", ui: null } }`：body 换字体、title 明确使用默认字体、ui 删除该角色配置，未提供的角色保持原值。`fonts` 对象整体优先于旧 `font`，缺省/空角色不会从旧 font 继承；`fonts: {}` 表示建立/保留角色表，`fonts: null` 才删除整表并恢复旧 font 或默认行为。未知配置字段仍保留，读取的角色 null 表示未提供。路径区分目录与大小写；不同目录同名字体不是重复键。字体目录同时列出每个角色的实际引用。
 
-字体修改只支持 direct；candidate 场景引用基线字体路径并记录有效角色配置的重放指纹，不得伴随写配置。未封存旧草稿若缺少新增字体事实，须保留原记录并新建候选，不能补写历史；已封存胶囊不改写。隔离工作版本试玩读取未写回的配置，坏字体明确显示文件与失败原因并记失败；Player 会报告失败并使用默认字体，不能把回退当作字体加载成功。字体许可随附仍在 P2 后续施工，作者须保留原授权文件。
+字体修改只支持 direct；candidate 场景引用基线字体路径并记录有效角色配置的重放指纹，不得伴随写配置。未封存旧草稿若缺少新增字体事实，须保留原记录并新建候选，不能补写历史；已封存胶囊不改写。隔离工作版本试玩读取未写回的配置，坏字体明确显示文件与失败原因并记失败；Player 会报告失败并使用默认字体，不能把回退当作字体加载成功。字体许可原件随附方式见下文素材导入。
 
 Editor 会阻止改名或删除仍被 `player.endScenes` 引用的场景，并指出配置来源。先通过上述配置入口调整结束场景引用，再进行场景操作；本轮不自动改写结束数组。
 
@@ -230,7 +230,7 @@ Editor 会阻止改名或删除仍被 `player.endScenes` 引用的场景，并�
 没有足够素材时明确说明缺什么，不把“只用一个背景”说成用户默认要求，也不凭空写出素材键。复用或制作素材由实际授权决定；本流程只导入已经准备好的文件，不下载、生成美术或制作音频。
 
 1. 获授权的执行者启动 Agent Port 时追加 `--asset-source <素材目录绝对路径>`；可多次指定。stage 可以暂存，但发布素材需要明确的 apply 会话。已开剧情草稿时先完成/处理原草稿，不擅自丢弃它来导入。
-2. `asset.sources({})` 取得 roots 的 sourceId，再用 `{ "sourceId": "返回的 ID", "path": "目录内相对素材路径" }` 取得 file.sha256。导入接收 PNG/JPEG/WebP、WAV/OGG/MP3、MP4/WebM、TTF/OTF/WOFF2；摘要从公开读取复制，不自己猜，也不传任意本机路径。返回 `validation: "container-header"` 只代表容器头检查，不证明目标浏览器解码、播放或字体加载成功，不自动转码，也不认证素材许可。
+2. `asset.sources({})` 取得 roots 的 sourceId，再用 `{ "sourceId": "返回的 ID", "path": "目录内相对素材路径" }` 取得 file.sha256。导入接收 PNG/JPEG/WebP、WAV/OGG/MP3、MP4/WebM、TTF/OTF/WOFF2，以及许可证/说明 TXT、MD 和无扩展名的 LICENSE/LICENCE/COPYING/NOTICE/OFL（可带连字符或下划线后缀）。摘要从公开读取复制，不自己猜，也不传任意本机路径。返回 `validation: "container-header-or-utf8-text"`：媒体只检查容器头，说明文件检查非空 UTF-8、无二进制控制字符且不超过 1 MiB；不证明目标浏览器解码、播放或字体加载成功，不转码或认证许可。
 3. 调用 `asset.import.stage`，例如下方结构。operationId 和 itemId 使用本次新建的 UUID；对同一请求重试保持原编号与内容。
 
 ```json
@@ -247,7 +247,11 @@ Editor 会阻止改名或删除仍被 `player.endScenes` 引用的场景，并�
 4. 在 apply 会话用原 operationId 和返回的 plan.planFingerprint 调用 `asset.import.commit`；不覆盖同名文件。portrait 文件名遵守 role_outfit_expression 三段规则，背景 kind 用 background。不同表情各导入一张，不能将一张图改名冒充多个表情。
 5. 重新读取 project.assets/project.inspect，确认发布后能找到新素材，再 change.begin。后续仍走普通草稿、验证与获授权写回。响应丢失先 asset.import.inspect 原 operationId，需要恢复时按回执使用 asset.import.recover，不换号重复发布。
 
-声音分别使用 `music`（bgm）、`ambience`、`sound-effect`（se）、`voice`，视频使用 `video`，字体使用 `font`；`fileName` 只填保留原格式的单个文件名，不填目录。每文件最多 32 MiB、每批 32 项且总计 128 MiB。新媒体发布后可在 `project.assets.intelligence.items` 查看物理路径、用途和引用。声音键按四个声道独立解析，`@bgm`、`@ambience`、`@se`、`@voice` 使用各自的真实键，含空格时用引号包住；普通 Player 与 Editor 试玩均可使用环境音。导入回执不是运行验收；视频使用 `@video "真实素材键"`，会阻塞至结束或点击跳过；Player 与 Editor 都从项目素材解析，不要改入口文件手接 URL。坏视频会报告具体文件与原因，Editor 试玩会记为失败；不能以剧情仍能继续就称该视频通过。字体使用上文“项目展示配置”的公开读写；许可随附及其余 P2 工作仍在施工，不得仅凭媒体已列出或入包就承诺完整可播或可分发。
+声音分别使用 `music`（bgm）、`ambience`、`sound-effect`（se）、`voice`，视频使用 `video`，字体使用 `font`；`fileName` 只填保留原格式的单个文件名，不填目录。每文件最多 32 MiB、每批 32 项且总计 128 MiB，许可证/说明单文件另限 1 MiB。新媒体发布后可在 `project.assets.intelligence.items` 查看物理路径、用途和引用。声音键按四个声道独立解析，`@bgm`、`@ambience`、`@se`、`@voice` 使用各自的真实键，含空格时用引号包住；普通 Player 与 Editor 试玩均可使用环境音。导入回执不是运行验收；视频使用 `@video "真实素材键"`，会阻塞至结束或点击跳过；Player 与 Editor 都从项目素材解析，不要改入口文件手接 URL。坏视频会报告具体文件与原因，Editor 试玩会记为失败；不能以剧情仍能继续就称该视频通过。字体使用上文“项目展示配置”的公开读写；其余 P2 工作仍在施工，不得仅凭媒体已列出或入包就承诺完整可播或可分发。
+
+字体与随附的许可证/说明放在同一个 `asset.import.stage.items` 批次：字体项用 `kind: "font"`，原许可文件项用 `kind: "license"`，其余来源、摘要、操作身份和封存步骤相同；许可项写入 `content/assets/licenses/`，保留原字节（包括 BOM/换行），不改写或生成替代许可。文件名冲突应在封存前明确指定不冲突的名称，不能覆盖已有文件。来源未提供许可时不要编造，需由作品作者确认素材授权。
+
+公开目录会识别 licenses 目录及现有 font/fonts 目录内的许可说明，不把它们算成未使用媒体，也不提供剧本插入指令。正常 Web 构建会收集这些原文并使用构建文件名；新模板与内置示例使用 `build.rollupOptions.output.assetFileNames: "assets/[name]-[hash][extname]"`，无扩展名文件不会生成末尾的点。已有自定义 Vite 配置也须保留这一命名规则，或使用原本具有 TXT/MD 扩展名的许可文件；不要删除许可来消除构建问题。最终交付应核对构建目录确有原文，导入成功不等于取得商业使用许可。
 
 ## 2. DSL 速查
 

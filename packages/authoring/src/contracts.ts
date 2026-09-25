@@ -400,6 +400,7 @@ export type ProjectAssetKind =
   | 'voice'
   | 'video'
   | 'font'
+  | 'license'
   | 'other';
 
 /** 适配器提供的只读物理文件事实；不包含文件内容或本机绝对路径。 */
