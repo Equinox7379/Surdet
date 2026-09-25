@@ -174,6 +174,8 @@ export const v4WorkbenchCases: BrowserCase[] = [
       input('#search-input', '灯塔'); input('[aria-label="查找范围"]', 'scene', 'change');
       clickText('#search-panel', '替换'); input('.search-replacement input', '邮局');
       clickText('#search-panel', '替换当前场景');
+      assert(scene.text === before && histories.size === 0, 'preview already changed the draft');
+      clickText('.search-replace-dialog', '确认替换');
       assert(currentFixtureText() === before.replace('灯塔', '邮局'), 'replacement removed an unrelated source prefix');
       assert(scene.dirty && !other.dirty && other.text === otherBefore, 'scoped replacement saved or changed another scene');
       assert(histories.get('start')?.past.length === 1, 'replacement lost its independent undo point');
@@ -205,6 +207,7 @@ export const v4WorkbenchCases: BrowserCase[] = [
     const { scene, other } = searchFixture(); const before = scene.text, otherBefore = other.text;
     input('#search-input', '查找'); input('[aria-label="查找范围"]', 'scene', 'change');
     clickText('#search-panel', '替换'); input('.search-replacement input', '修改'); clickText('#search-panel', '替换当前场景');
+    clickText('.search-replace-dialog', '确认替换');
     assert(scene.text === before.replaceAll('查找', '修改') && other.text === otherBefore && scene.dirty && !other.dirty, 'replacement crossed scene scope or saved');
     undo(); assert(currentFixtureText() === before && histories.get('start')?.past.length === 0, 'replacement was not a single undo point');
     assert(control<HTMLInputElement>('#search-input').value === '查找', 'replacement discarded search');
@@ -214,6 +217,9 @@ export const v4WorkbenchCases: BrowserCase[] = [
     input('.search-replacement input', '查找'); clickText('#search-panel', '替换整个项目');
     assert(histories.size === 0 && !scene.dirty && !other.dirty, 'identical replacement created edits');
     input('.search-replacement input', '共同修改'); clickText('#search-panel', '替换整个项目');
+    assert(!scene.dirty && !other.dirty && histories.size === 0, 'project preview mutated documents');
+    assert(document.querySelectorAll('.search-replace-dialog details').length === 2, 'preview omitted a scene');
+    clickText('.search-replace-dialog', '确认替换');
     assert(scene.text.includes('共同修改') && other.text.includes('共同修改'), 'project scope missed a scene');
     assert(histories.get('start')?.past.length === 1 && histories.get('other')?.past.length === 1, 'project replacement lost independent scene history');
   } },
@@ -263,7 +269,43 @@ export const v4WorkbenchCases: BrowserCase[] = [
     query.dispatchEvent(new Event('input')); replacement.dispatchEvent(new Event('input'));
     scope.dispatchEvent(new Event('change')); regex.dispatchEvent(new Event('change'));
     clickText('#search-panel', '替换当前场景');
+    clickText('.search-replace-dialog', '确认替换');
     assert(scene.text.includes('新文字一') && !scene.text.includes('旧文字') && other.text === otherBefore, 'stale controls retargeted the current replacement');
+  } },
+  { name: 'replacement preview shows every changed line safely and cancellation is a no-op', run: () => {
+    const before = '@scene start\r\n' + Array.from({ length: 205 }, (_, i) => `凛：查找${i}`).join('\r\n');
+    const { scene } = searchFixture(before);
+    input('#search-input', '查找'); input('[aria-label="查找范围"]', 'scene', 'change');
+    clickText('#search-panel', '替换'); input('.search-replacement input', '<img src=x>$&');
+    clickText('#search-panel', '替换当前场景');
+    const dialog = control<HTMLDialogElement>('.search-replace-dialog');
+    assert(dialog.open && dialog.querySelectorAll('[data-replacement-line]').length === 205, 'preview was silently limited to search results');
+    assert(dialog.textContent?.includes('205') && dialog.textContent.includes('第 206 行'), 'preview range or original line number missing');
+    assert(dialog.textContent?.includes('<img src=x>$&204') && !dialog.querySelector('img'), 'preview interpreted markup or replacement tokens');
+    clickText('.search-replace-dialog', '取消');
+    assert(scene.text === before && histories.size === 0 && !dialog.isConnected, 'cancel edited the project');
+  } },
+  { name: 'replacement confirmation rejects changed scope, documents, project identities and permissions atomically', run: () => {
+    const mutations = [
+      () => { state.scenes.get('other')!.text += '\n旁白：后来新增。'; },
+      () => { state.scenes.set('other', { ...state.scenes.get('other')! }); },
+      () => { state.scenes.delete('other'); },
+      () => { state.scenes.set('extra', { ...state.scenes.get('other')!, id: 'extra', file: 'extra.gal' }); },
+      () => { input('.search-replacement input', '尚未预览的词'); },
+      () => { input('[aria-label="查找范围"]', 'scene', 'change'); },
+      () => { state.projectWriteLock = 'asset-relocation'; },
+      () => { state.reviewPreviewReadOnly = true; },
+      () => { control('#search-panel').inert = true; },
+      () => { resetSearchSession(); },
+    ];
+    for (const mutate of mutations) {
+      const { scene } = searchFixture(), before = scene.text;
+      input('#search-input', '查找'); clickText('#search-panel', '替换'); input('.search-replacement input', '共同修改');
+      clickText('#search-panel', '替换整个项目');
+      const confirm = [...control('.search-replace-dialog').querySelectorAll('button')].find(node => node.textContent === '确认替换')!;
+      mutate(); confirm.click();
+      assert(scene.text === before && histories.size === 0, 'stale or protected preview partially applied');
+    }
   } },
   { name: 'zero-length regex results locate only real editor rows before a terminal newline', run: () => {
     const { jumps } = searchFixture('@scene start\r\n凛：正文\n@end\r');

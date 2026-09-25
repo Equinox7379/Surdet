@@ -312,6 +312,10 @@ try {
   await page.getByRole('button', { name: '展开或收起替换', exact: true }).click();
   await page.getByRole('textbox', { name: '替换为（可空）', exact: true }).fill('查找替换确认。');
   await page.getByRole('button', { name: '替换当前场景', exact: true }).click();
+  assert.equal(await page.locator('.v4-source-editor').inputValue(), sourceAfterInsert, 'preview edited the document before confirmation');
+  const replacementPreview = page.getByRole('dialog', { name: '替换预览', exact: true });
+  assert((await replacementPreview.getByLabel('替换前', { exact: true }).innerText()).includes('源码插入定位用例。'));
+  await replacementPreview.getByRole('button', { name: '确认替换', exact: true }).click();
   assert.equal(await page.locator('.v4-source-editor').inputValue(), sourceAfterInsert.replace('源码插入定位用例。', '查找替换确认。'));
   await page.locator('[data-action="undo"]').click();
   assert.equal(await page.locator('.v4-source-editor').inputValue(), sourceAfterInsert, 'replacement did not have its own undo');
@@ -476,6 +480,9 @@ try {
     for (const [mode, name, width, height] of [
       ['editor', '01-editor-wide.png', 1792, 900],
       ['assets', '02-assets-wide.png', 1792, 900],
+      ['config', '02b-config-wide.png', 1792, 900],
+      ['editor', '02c-editor-desktop.png', 1280, 800],
+      ['config', '02d-config-desktop.png', 1280, 800],
       ['flow', '03-flow-medium.png', 960, 720],
       ['preview', '04-preview-or-review-wide.png', 1792, 900],
       ['stats', '05-project-health-wide.png', 1792, 900],
