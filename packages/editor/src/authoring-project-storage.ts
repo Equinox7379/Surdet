@@ -10,6 +10,7 @@ import {
   commitChange,
   loadProjectSnapshot,
   recordValidation,
+  stableStringify,
   validateSnapshot,
   type ChangeSession,
   type ChangeRecord,
@@ -108,6 +109,8 @@ export interface CharacterTableEditRow {
   id: string;
   name: string;
   avatar: string;
+  /** UI rows preserve incomplete input until save; omitted leaves the stored mapping untouched. */
+  portraits?: { outfit: string; expression: string; sourcePath: string }[];
 }
 
 export interface CharacterTableCommitResult {
@@ -216,23 +219,26 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
   const snapshot = await loadProjectSnapshot(base, base);
   const session: ChangeSession = await beginChange(snapshot, new InMemoryChangeRepository());
 
-  // 差异行：name 或 avatar 相对当前内存基线变化的角色才产生 ensure 操作；未触碰字段保持原样。
+  // 仅变化的角色资料产生 ensure；旧调用方省略 portraits 时保留原映射。
   const charactersValue = snapshot.config['characters'];
   const table = typeof charactersValue === 'object' && charactersValue !== null && !Array.isArray(charactersValue)
     ? charactersValue as Record<string, unknown>
     : {};
-  const baselineOf = (id: string): { name: string; avatar: string } | undefined => {
+  const baselineOf = (id: string): { name: string; avatar: string; portraits: unknown } | undefined => {
     const raw = table[id];
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
     const record = raw as Record<string, unknown>;
     return {
       name: typeof record['name'] === 'string' ? record['name'] as string : '',
       avatar: typeof record['avatar'] === 'string' ? record['avatar'] as string : '',
+      portraits: record['portraits'] ?? {},
     };
   };
   let fingerprint = await charactersFingerprint(snapshot.config, base);
   let changed = 0;
   const speakerMigrations: SpeakerMigrationImpact[] = [];
+  const assetPaths = assetPathsFromFiles(await base.listFiles());
+  const physicalAssets = buildAssetCatalog(assetPaths);
   for (const row of rows) {
     const baseline = baselineOf(row.id);
     if (baseline === undefined) {
@@ -240,15 +246,25 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
     }
     const nameChanged = row.name !== baseline.name;
     const avatarChanged = row.avatar !== baseline.avatar;
-    if (!nameChanged && !avatarChanged) continue;
+    const portraitEntries = new Map<string, Map<string, string>>();
+    for (const portrait of row.portraits ?? []) {
+      const expressions = portraitEntries.get(portrait.outfit) ?? new Map<string, string>();
+      if (expressions.has(portrait.expression)) throw new AuthoringOperationError('VALIDATION_FAILED', `角色 ${row.id} 的服装/表情重复：${portrait.outfit} / ${portrait.expression}`);
+      expressions.set(portrait.expression, portrait.sourcePath);
+      portraitEntries.set(portrait.outfit, expressions);
+    }
+    const portraits = Object.fromEntries([...portraitEntries].map(([outfit, expressions]) => [outfit, Object.fromEntries(expressions)]));
+    const portraitsChanged = row.portraits !== undefined && stableStringify(portraits) !== stableStringify(baseline.portraits);
+    if (!nameChanged && !avatarChanged && !portraitsChanged) continue;
     const result = await applyCharacterEnsure(session, {
       operationId: `editor:character.ensure:${row.id}`,
       id: row.id,
       name: row.name,
       // avatar 未变时传 undefined（共享语义：保留原值），空串按 null（清除）
       ...(avatarChanged ? { avatar: row.avatar.trim().length === 0 ? null : row.avatar } : {}),
+      ...(portraitsChanged ? { portraits: row.portraits!.length === 0 ? null : portraits } : {}),
       expectedFingerprint: fingerprint,
-    }, base);
+    }, base, undefined, physicalAssets);
     fingerprint = result.fingerprint;
     changed += 1;
     if (result.speakerMigrations !== undefined) speakerMigrations.push(...result.speakerMigrations);
@@ -261,7 +277,7 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
   // 共享校验门（与 CLI project.validate 同构）：对象索引 + 资产目录 + 快照校验，error 必须 = 0。
   const workingSnapshot = await loadProjectSnapshot(workingFilesStorage(session.record, base), base);
   const index = buildObjectIndex(workingSnapshot);
-  const assetCatalog = buildAssetCatalog(assetPathsFromFiles(await base.listFiles()), workingSnapshot);
+  const assetCatalog = buildAssetCatalog(assetPaths, workingSnapshot);
   const validation = validateSnapshot(workingSnapshot, index, { assetCatalog, timelineReferenceScope: 'complete' });
   const errors = validation.issues.filter((issue) => issue.severity === 'error');
   await recordValidation(session, {

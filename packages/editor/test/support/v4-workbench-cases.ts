@@ -6,7 +6,7 @@ import { buildAuthoringWorkbench } from '../../src/shell/authoring-workbench.js'
 import { disposeScriptV4, revealScriptV4Line } from '../../src/v4/script-workbench.js';
 import { enhanceConfigTables } from '../../src/v4/surfaces.js';
 import { bindSearchHooks, renderSearchPanel, focusSearchInput, resetSearchSession } from '../../src/panels/search-panel.js';
-import { renderConfig, resetConfigSession, inspectConfigDraftState, prepareConfigLabelRename } from '../../src/panels/config.js';
+import { renderConfig, resetConfigSession, inspectConfigDraftState, prepareConfigLabelRename, configUndo } from '../../src/panels/config.js';
 import { renderTimelinePanel, bindTimelineHooks, clearTimelineViewStates } from '../../src/panels/timeline-panel.js';
 import { clearTimelineHistories, timelineHistoryDepth } from '../../src/timeline-history.js';
 import { renderFlow } from '../../src/panels/flow.js';
@@ -747,6 +747,31 @@ export const v4WorkbenchCases: BrowserCase[] = [
     original.oninput = () => { changed = original.value; };
     enhanceConfigTables(host); original.value = '15'; original.dispatchEvent(new Event('input', { bubbles: true }));
     assert(changed === '15', 'lost original handler'); assert(host.querySelectorAll('tbody input').length === 4, 'original fields removed');
+  } },
+  { name: 'character portrait fields retain drafts and undo while stale and readonly controls cannot edit', run: async () => {
+    fixture(); resetConfigSession();
+    state.gameConfigText = JSON.stringify({ entryScene: 'start', characters: { lynn: { name: '凛' } }, variables: {} });
+    state.dirAssets = [{ kind: 'portrait', key: 'art:coat', expr: 'smile', isImage: true, handle: null, sourcePath: 'content/assets/portrait/art_coat_smile.svg' }];
+    const host = document.createElement('div'); host.id = 'config-view'; document.body.append(host);
+    renderConfig(host); await nextTask();
+    const selector = '[aria-label="lynn 添加服装 / 表情"]';
+    control<HTMLButtonElement>(selector).click();
+    input('[aria-label="lynn 第 1 项服装"]', 'uniform');
+    input('[aria-label="lynn 第 1 项表情"]', 'smile');
+    input('[aria-label="lynn 第 1 项立绘"]', 'content/assets/portrait/art_coat_smile.svg', 'change');
+    assert(inspectConfigDraftState().dirtySections.includes('characters'), 'mapping did not enter normal config draft');
+    assert(!state.gameConfigText.includes('portraits'), 'editing wrote through the source configuration');
+    const old = control<HTMLInputElement>('[aria-label="lynn 第 1 项表情"]');
+    const remove = control<HTMLButtonElement>('[aria-label="lynn 移除第 1 项绑定"]');
+    remove.click();
+    assert(!document.querySelector('[aria-label="lynn 第 1 项表情"]'), 'remove left the old row active');
+    old.value = 'stale'; old.dispatchEvent(new Event('input', { bubbles: true }));
+    configUndo();
+    assert(control<HTMLInputElement>('[aria-label="lynn 第 1 项表情"]').value === 'smile', 'undo lost mapping or stale control changed it');
+    state.reviewPreviewReadOnly = true;
+    control<HTMLButtonElement>(selector).click();
+    assert(!document.querySelector('[aria-label="lynn 第 2 项服装"]'), 'readonly mapping was added');
+    state.reviewPreviewReadOnly = false;
   } },
   { name: 'stale inspector does not reinterpret a different instruction as a portrait', run: async () => {
     const scene = fixture(); control<HTMLButtonElement>('[data-step-summary="3"]').click();

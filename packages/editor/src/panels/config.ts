@@ -8,8 +8,9 @@
  *  - 名词表导入/导出；审计面板一键加变体入口（addTerminologyVariant）
  */
 import { state, h, setStatus } from '../state.js';
+import { projectPortraitOverrides } from '@surdet/core';
 import { assertConfigSourcesReadable, configSourceError, configSourcePath, parseConfigSource, type ConfigSourceName } from '../config-source.js';
-import { assertProjectWriteUnlocked, readProjectSourceText, runProjectWriteOperation, writeProjectText } from '../project-io.js';
+import { assetPathForHandle, assertProjectWriteUnlocked, readProjectSourceText, runProjectWriteOperation, writeProjectText } from '../project-io.js';
 import { editorWorkspaceStatus } from '../editor-workspace.js';
 import { AuthoringOperationError, parseProjectConfigDocument, renameConfigReferences, renameGalleryLabel } from '@surdet/authoring';
 import { commitCharacterTable, type CharacterTableEditRow } from '../authoring-project-storage.js';
@@ -62,7 +63,7 @@ interface ConfigSectionDescriptor {
 }
 
 const CONFIG_SECTIONS: readonly ConfigSectionDescriptor[] = [
-  { id: 'characters', label: '角色', description: '管理说话人显示名称、头像与稳定角色身份。', file: 'game.config.json', render: renderCharactersSection },
+  { id: 'characters', label: '角色', description: '管理显示名称、头像与服装/表情立绘。', file: 'game.config.json', render: renderCharactersSection },
   { id: 'variables', label: '变量', description: '定义剧情状态、初始值、范围和只读约束。', file: 'game.config.json', render: renderVariablesSection },
   { id: 'achievements', label: '成就', description: '整理成就文案、触发条件与隐藏状态。', file: 'content/config/achievements.json', render: renderAchievementsSection },
   { id: 'calendar', label: '日历与地图', description: '安排回合规则、地图节点、前置关系与据点指令。', file: 'content/config/calendar.json', render: renderCalendarSection },
@@ -281,6 +282,7 @@ function ensureCharRows(): CharacterTableEditRow[] {
           id,
           name: typeof record['name'] === 'string' ? record['name'] as string : '',
           avatar: typeof record['avatar'] === 'string' ? record['avatar'] as string : '',
+          portraits: projectPortraitOverrides({ characters: { [id]: record } }).map(({ outfit, expression, sourcePath }) => ({ outfit, expression, sourcePath })),
         };
       })
       : [];
@@ -700,7 +702,7 @@ async function saveVariables(): Promise<void> {
   catch (error) { setStatus(`变量表未保存：${error instanceof Error ? error.message : String(error)}`, false, 6000); }
 }
 
-/** 角色表（Wave 3 closure）：显示名/头像可编辑；保存经 @surdet/authoring 的共享
+/** 角色表：显示名/头像与服装表情绑定可编辑；保存经 @surdet/authoring 的共享
  *  character.ensure 事务语义写盘（与 CLI / Agent 同一 semantic truth），编辑器不复制第二套写实现。
  *  ID 是语义身份，本轮保持只读（rename 属于更大的引用迁移能力）。 */
 function renderCharactersSection(): HTMLElement {
@@ -713,7 +715,7 @@ function renderCharactersSection(): HTMLElement {
   const table = h('table', 'config-table') as HTMLTableElement;
   const thead = h('thead');
   const hr = h('tr');
-  for (const [label, key] of [['角色标识', 'id'], ['显示名称', 'name'], ['头像素材', 'avatar']] as const) {
+  for (const [label, key] of [['角色标识', 'id'], ['显示名称', 'name'], ['头像素材', 'avatar'], ['服装 / 表情', 'portraits']] as const) {
     const th = h('th');
     th.appendChild(configLabel(label, key));
     hr.appendChild(th);
@@ -742,6 +744,62 @@ function renderCharactersSection(): HTMLElement {
     avatar.oninput = () => { pushConfigHistory(true); rows[i]!.avatar = avatar.value; };
     tdAvatar.appendChild(avatar);
     tr.appendChild(tdAvatar);
+    const tdPortraits = h('td');
+    const details = h('details');
+    details.style.whiteSpace = 'normal';
+    const summary = h('summary', '', `${row.portraits?.length ?? 0} 项显式绑定`);
+    const list = h('div');
+    const sessionRevision = configSessionRevision;
+    const canEdit = () => {
+      if (!details.isConnected || details.closest('[inert]') || charRows !== rows || configSessionRevision !== sessionRevision
+        || state.projectLoading || state.reviewPreviewReadOnly) return false;
+      try { assertProjectWriteUnlocked(); return true; }
+      catch (error) { setStatus(error instanceof Error ? error.message : String(error), false); return false; }
+    };
+    const paths = [...new Set(state.dirAssets.flatMap(asset => {
+      if (asset.kind !== 'portrait' || !asset.isImage) return [];
+      const path = asset.sourcePath ?? (asset.handle ? assetPathForHandle(asset.handle) : undefined);
+      return path === undefined ? [] : [path];
+    }))].sort();
+    const renderMappings = () => {
+      list.textContent = '';
+      summary.textContent = `${row.portraits?.length ?? 0} 项显式绑定`;
+      for (const [index, mapping] of (row.portraits ?? []).entries()) {
+        const fields = h('div');
+        fields.style.cssText = 'display:grid;gap:6px;margin:8px 0;min-width:0';
+        const canEditMapping = () => fields.isConnected && row.portraits?.[index] === mapping && canEdit();
+        for (const [field, label] of [['outfit', '服装'], ['expression', '表情']] as const) {
+          const input = h('input'); input.value = mapping[field]; input.placeholder = label;
+          input.setAttribute('aria-label', `${row.id} 第 ${index + 1} 项${label}`);
+          input.oninput = () => { if (!canEditMapping()) return; pushConfigHistory(true); mapping[field] = input.value; };
+          fields.appendChild(input);
+        }
+        const select = h('select');
+        select.setAttribute('aria-label', `${row.id} 第 ${index + 1} 项立绘`);
+        const empty = h('option', '', '选择立绘图片'); empty.value = ''; select.appendChild(empty);
+        const choices = [...new Set([...paths, ...(mapping.sourcePath ? [mapping.sourcePath] : [])])];
+        for (const path of choices) {
+          const option = h('option', '', `${paths.includes(path) ? '' : '不可用：'}${path.replace('content/assets/portrait/', '')}`);
+          option.value = path; select.appendChild(option);
+        }
+        select.value = mapping.sourcePath;
+        select.onchange = () => { if (!canEditMapping()) return; pushConfigHistory(true); mapping.sourcePath = select.value; };
+        const remove = h('button', 'danger', '移除绑定');
+        remove.setAttribute('aria-label', `${row.id} 移除第 ${index + 1} 项绑定`);
+        remove.onclick = () => { if (!canEditMapping()) return; pushConfigHistory(false); row.portraits!.splice(index, 1); renderMappings(); };
+        fields.append(select, remove); list.appendChild(fields);
+      }
+    };
+    const add = h('button', '', '添加服装 / 表情');
+    add.setAttribute('aria-label', `${row.id} 添加服装 / 表情`);
+    add.onclick = () => {
+      if (!canEdit()) return;
+      pushConfigHistory(false); (row.portraits ??= []).push({ outfit: '', expression: '', sourcePath: '' });
+      renderMappings();
+      list.lastElementChild?.querySelector('input')?.focus();
+    };
+    details.append(summary, h('p', 'hint', '这里的绑定优先于文件名；未绑定的表情仍自动发现。移除绑定不删除图片。'), list, add);
+    renderMappings(); tdPortraits.appendChild(details); tr.appendChild(tdPortraits);
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);

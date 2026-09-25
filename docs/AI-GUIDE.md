@@ -207,6 +207,8 @@ Editor 的合法场景改名会同步已知引用及 `player.endScenes` 等结�
 
 角色资料沿用 `character.ensure`：`name` 是默认显示名，`avatar` 是 avatars 中的实际键。需要让某个服装／表情使用另一张立绘时，direct 草稿可传 `portraits: { "coat": { "smile": "content/assets/portrait/实际角色_实际服装_实际表情.png" } }`；路径必须复制当前目录返回的完整 sourcePath。这会替换该角色的整份显式映射，省略 portraits 保留原值，传 null 清除映射并恢复文件名发现。未配置的槽仍按“角色_服装_表情”发现；配置了却缺文件或解码失败会明确报错，不静默改用旧图。`project.inspect` 的 characters[].declaration 与 charactersFingerprint 提供当前值和修改指纹；修改后重新读取 `project.assets(view:working)`，configured 和 overriddenSourcePaths 会标出显式绑定及其覆盖的原文件，usage 使用最终逻辑键。未知角色字段保留。
 
+人类可在 Editor“配置 → 角色”展开服装／表情绑定，添加一行、填写服装与表情、从项目立绘中选图，再点“保存角色表”或“保存全部”。编辑支持原配置撤销，未保存不写磁盘；移除绑定只恢复该槽的自动发现，不删除图片。重复槽、不完整字段和不存在的图片会拒绝保存，保留草稿供修正。
+
 Player、Editor 的工作稿试玩读取对应版本的角色资料。候选可以使用基线映射并核对 config:portraits 状态，但禁止修改 portraits 或删除带映射的角色；原 name/avatar 候选操作仍可用。映射与物理素材分别保留各自依赖，先导入再建候选。原安全素材移动会同步更新映射的完整路径；涉及显式槽本身的服装／表情语义改名会要求先调整资料，不以全文替换猜测。
 
 需要背景/人物/镜头同时变化时，再创建时间轴：从 usage.timeline 复制背景和立绘轨道，按需要改位置与时长，也可增加镜头轨道。下例只有镜头，不依赖某个示例素材：
