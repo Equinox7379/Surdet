@@ -476,9 +476,10 @@ function parseSceneCommit(value: unknown): SceneLifecycleCommitRequest {
     ...(object.configRenames === undefined ? {} : { configRenames: (() => {
       if (!Array.isArray(object.configRenames) || object.configRenames.length > 100) throw new AssetImportAuthorityError('INVALID_REQUEST', '配置改名映射格式无效');
       return object.configRenames.map(value => {
-        const rename = exactObject(value, ['from', 'to']);
-        if (typeof rename.from !== 'string' || typeof rename.to !== 'string') throw new AssetImportAuthorityError('INVALID_REQUEST', '配置改名映射格式无效');
-        return { from: rename.from, to: rename.to };
+        const hasLabelScene = typeof value === 'object' && value !== null && 'labelScene' in value;
+        const rename = exactObject(value, ['from', 'to', ...(hasLabelScene ? ['labelScene'] : [])]);
+        if (typeof rename.from !== 'string' || typeof rename.to !== 'string' || (hasLabelScene && typeof rename.labelScene !== 'string')) throw new AssetImportAuthorityError('INVALID_REQUEST', '配置改名映射格式无效');
+        return { from: rename.from, to: rename.to, ...(hasLabelScene ? { labelScene: rename.labelScene as string } : {}) };
       });
     })() }),
     plans: object.plans.map((value, index) => {

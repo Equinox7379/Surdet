@@ -5,12 +5,13 @@
 import { state, h, setStatus } from '../state.js';
 import { setCurrentText } from '../history.js';
 import {
-  parseScript, serializeScript, parseLine, rebuildTextRaw, rebuildLabelRaw,
+  parseScript, serializeScript, parseLine, rebuildTextRaw,
 } from '../model.js';
 import type { LineModel } from '../model.js';
 import { selectAuthoringObject } from '../causal-selection.js';
 import { InstructionFieldSource } from '../instruction-field-source.js';
 import { installScriptV4, prepareScriptV4Render } from '../v4/script-workbench.js';
+import { editSceneLabel } from '../label-editing.js';
 
 export function currentText(): string {
   return state.current ? state.scenes.get(state.current)?.text ?? '' : '';
@@ -32,10 +33,21 @@ export function updateLine(index: number, next: LineModel): void {
 
 export function deleteLine(index: number): void {
   const lines = parseScript(currentText());
+  const line = lines[index];
+  if (line?.kind === 'label') { requestLabelEdit(index, line.raw); return; }
   lines.splice(index, 1);
   state.selectedObjectRef = null;
   setCurrentText(serializeScript(lines, currentEol()));
   renderEditor();
+}
+
+function requestLabelEdit(index: number, expectedRaw: string, to?: string): void {
+  const key = state.current, host = document.getElementById('editor');
+  if (!key || !host?.isConnected || host.closest('[inert]')) return;
+  void editSceneLabel(key, index, expectedRaw, to).then(() => {
+    state.selectedObjectRef = null; renderEditor();
+    setStatus(to === undefined ? '未引用的标签已删除（未保存，可撤销）' : `标签已改为 ${to}，引用已同步（保存全部后写入磁盘）`, true, 6000);
+  }).catch(error => { setStatus(error instanceof Error ? error.message : String(error), false, 7000); });
 }
 
 export function insertLine(index: number): void {
@@ -291,7 +303,7 @@ function renderBlock(line: LineModel, index: number, lineCount: number): HTMLEle
   delBtn.type = 'button';
   delBtn.title = '删除这一行';
   delBtn.setAttribute('aria-label', `删除第 ${index + 1} 行`);
-  delBtn.onclick = (event) => { event.stopPropagation(); deleteLine(index); };
+  delBtn.onclick = (event) => { event.stopPropagation(); if (readBoundLine() !== null) deleteLine(index); };
   ops.append(upBtn, downBtn, insBtn, delBtn);
   bar.appendChild(ops);
   block.appendChild(bar);
@@ -362,11 +374,15 @@ function renderBlock(line: LineModel, index: number, lineCount: number): HTMLEle
       const name = h('input', 'wide');
       name.placeholder = '标签名';
       name.value = model.name;
-      name.oninput = () => {
-        if (!name.isConnected) return;
-        commit({ ...model, name: name.value, raw: rebuildLabelRaw(name.value) });
+      name.readOnly = true;
+      const rename = h('button', undefined, '改名并更新引用'); rename.type = 'button';
+      rename.onclick = () => {
+        if (readBoundLine() === null) return;
+        const next = window.prompt('新标签名（会同步本场景、跨场景调用与回想入口）', model.name);
+        if (next === null || next === model.name) return;
+        requestLabelEdit(index, expectedRaw, next);
       };
-      fields.appendChild(name);
+      fields.append(name, rename);
     } else if (model.kind === 'instr') {
       renderInstrFields(fields, model, readBoundLine, commit);
     } else {

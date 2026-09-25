@@ -6,6 +6,7 @@ import { disposePreviewPanel, renderPreviewPanel, refreshPreviewSourceState } fr
 import { allowedToEdit, button, disclosure, field, ImageScope, navigateMode } from './ui.js';
 import { renderTimelineSummary } from './timeline-summary.js';
 import { toggleAuthoringOutline } from '../shell/authoring-workbench.js';
+import { editSceneLabel } from '../label-editing.js';
 import {
   applySourceTextareaEdit, deleteStep, duplicateStep, insertStep, instructionPosition,
   moveStep, moveStepBefore, projectEditLayout, quoteAssetArgument, setInstructionArgument,
@@ -782,8 +783,19 @@ export class ScriptWorkbench {
     return true;
   }
   private remove(index: number): void {
+    if (!this.editable()) return;
     const range = stepAt(this.lines(), index);
     if (!window.confirm(range.end > range.start ? '删除这组分支及全部选项？可以撤销。' : '删除这个剧情步骤？可以撤销。')) return;
+    const line = this.lines()[range.start];
+    if (line?.kind === 'label') {
+      if (this.scene.text !== this.knownSource) throw new Error('源文已变化，请重新选择标签后再删除');
+      void editSceneLabel(this.sceneKey, range.start, line.raw).then(() => {
+        if (!this.current()) return;
+        this.returnFields(); this.rerender();
+        setStatus('未引用的标签已删除（未保存，可撤销）', true, 5000);
+      }).catch(error => setStatus(error instanceof Error ? error.message : String(error), false, 7000));
+      return;
+    }
     this.structural((text) => deleteStep(text, index));
   }
 

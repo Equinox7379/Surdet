@@ -260,6 +260,9 @@ export interface SceneCreateInput {
   blocks?: SceneBlockInput[];
 }
 
+/** Editor companion configuration rewrite. labelScene scopes from/to to one scene's labels. */
+export interface ProjectReferenceRename { from: string; to: string; labelScene?: string }
+
 export interface SceneRemoveInput {
   operationId: string;
   sceneId: string;

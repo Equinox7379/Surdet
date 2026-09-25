@@ -2,7 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { isValidSceneId } from '@surdet/core';
-import { parseProjectConfigDocument, renameConfigReferences, sceneReferenceConfigPaths as sceneConfigPaths, sceneDirectorySegments, stableStringify } from '@surdet/authoring';
+import { parseProjectConfigDocument, applyConfigReferenceRename, validateLabelRenameBatch, isValidLabelName, sceneReferenceConfigPaths as sceneConfigPaths, sceneDirectorySegments, stableStringify } from '@surdet/authoring';
 import { NodeProjectStorage } from '../authoring/node-project-storage.js';
 import { createJsonRecord, readJsonRecord, replaceJsonRecord } from '../authoring/node-json-record.js';
 import { syncFileAndParent, syncParentDirectories } from '../authoring/node-durable-file.js';
@@ -21,14 +21,15 @@ import {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 
-function normalizeConfigRenames(value: unknown): Array<{ from: string; to: string }> {
+function normalizeConfigRenames(value: unknown): Array<{ from: string; to: string; labelScene?: string }> {
   if (!Array.isArray(value) || value.length === 0 || value.length > 100) throw new AssetImportAuthorityError('INVALID_REQUEST', '配置改名映射格式无效');
   return value.map(item => {
-    if (!item || typeof item !== 'object' || Object.keys(item).some(key => key !== 'from' && key !== 'to')
-      || !isValidSceneId(item.from) || !isValidSceneId(item.to) || item.from.toLowerCase() === item.to.toLowerCase()) {
+    if (!item || typeof item !== 'object' || Object.keys(item).some(key => key !== 'from' && key !== 'to' && key !== 'labelScene')
+      || (item.labelScene === undefined ? !isValidSceneId(item.from) || !isValidSceneId(item.to) || item.from.toLowerCase() === item.to.toLowerCase()
+        : !isValidSceneId(item.labelScene) || !isValidLabelName(item.from) || !isValidLabelName(item.to) || item.from === item.to)) {
       throw new AssetImportAuthorityError('INVALID_REQUEST', '配置改名映射格式无效');
     }
-    return { from: item.from as string, to: item.to as string };
+    return { from: item.from as string, to: item.to as string, ...(item.labelScene === undefined ? {} : { labelScene: item.labelScene as string }) };
   });
 }
 
@@ -71,7 +72,7 @@ interface SceneCommitRecord {
   requestId: string;
   commitFingerprint: string;
   plans: Array<{ operationId: string; planFingerprint: string }>;
-  configRenames?: Array<{ from: string; to: string }>;
+  configRenames?: Array<{ from: string; to: string; labelScene?: string }>;
   writes: SceneCommitWriteRecord[];
   deletes: SceneCommitDeleteRecord[];
   status: 'PREPARING' | 'PREPARED' | 'COMMITTED' | 'ROLLED_BACK' | 'RECOVERY_REQUIRED';
@@ -953,10 +954,20 @@ export class ProjectSceneLifecycleAuthority {
       }
 
       if (configRenames !== undefined) {
+        const labelEdits = configRenames.filter(rename => rename.labelScene !== undefined);
+        if (labelEdits.length > 0 && (labelEdits.length !== configRenames.length || records.length > 0)) throw new AssetImportAuthorityError('INVALID_REQUEST', '请分别保存标签改名和场景路径变更');
         const existingScenes = (await (await NodeProjectStorage.open(this.paths.projectRoot)).listFiles())
           .filter(file => file.startsWith('content/scenario/') && /\.gal$/i.test(file)).sort();
         const id = (file: string) => path.posix.basename(file).slice(0, -4);
+        if (labelEdits.length > 0) {
+          const sourceFiles: Record<string, string> = {};
+          for (const file of existingScenes) sourceFiles[file] = await fs.readFile((await safeParent(this.paths, file)).absolutePath, 'utf8');
+          const sceneWrites = Object.fromEntries(writes.filter(write => write.path.startsWith('content/scenario/')).map(write => [write.path, write.text]));
+          try { validateLabelRenameBatch(sourceFiles, sceneWrites, labelEdits); }
+          catch (error) { throw new AssetImportAuthorityError('INVALID_REQUEST', `标签改名结果无效：${error instanceof Error ? error.message : String(error)}`); }
+        }
         for (const [index, rename] of configRenames.entries()) {
+          if (rename.labelScene !== undefined) continue;
           const original = existingScenes.filter(file => id(file) === rename.from);
           if (original.length > 1 || (original.length === 1 && !records.some(record => record.request.sourcePath === original[0]
             && record.request.kind === 'rename' && id(record.request.targetPath!) === rename.to))) {
@@ -976,9 +987,9 @@ export class ProjectSceneLifecycleAuthority {
         const requestedEntry = writes.find(write => write.path === 'game.config.json');
         const fallback = existingScenes[0] ? id(existingScenes[0])
           : String(parseProjectConfigDocument(requestedEntry?.text ?? '{}')['entryScene'] ?? '');
-        for (const rename of configRenames) renameConfigReferences(expected, rename.from, rename.to, fallback);
+        for (const rename of configRenames) applyConfigReferenceRename(expected, rename, fallback);
         const originalEntry = parseProjectConfigDocument(beforeFiles['game.config.json'] ?? '{}')['entryScene'];
-        if (originalEntry === undefined || originalEntry === '') {
+        if (labelEdits.length === 0 && (originalEntry === undefined || originalEntry === '')) {
           const pinnedEntry = parseProjectConfigDocument(expected['game.config.json'] ?? '{}')['entryScene'];
           const finalScenes = [...existingScenes.filter(file => !sourcePaths.has(portableFold(file))),
             ...writes.filter(write => write.path.startsWith('content/scenario/')).map(write => write.path)];

@@ -55,7 +55,7 @@ export interface PendingSceneCommit {
   /** 首次提交前冻结；网络中断后必须原样重放，不能用后续编辑改写。 */
   requestId: string;
   plans: Array<{ operationId: string; planFingerprint: string }>;
-  configRenames?: Array<{ from: string; to: string }>;
+  configRenames?: Array<{ from: string; to: string; labelScene?: string }>;
   writes: Array<{ path: string; text: string; expectedSha256: string | null }>;
   /** 只用于 Editor 核验服务回执，不发送给 authority。 */
   deletedPaths: string[];
@@ -90,7 +90,7 @@ export const state = {
   pendingSceneCommit: null as PendingSceneCommit | null,
   /** Scene identity and config references remain a single unsaved/recoverable edit. */
   pendingSceneConfigWrites: [] as Array<{ path: string; text: string; expectedSha256: string | null }>,
-  pendingSceneConfigRenames: [] as Array<{ from: string; to: string }>,
+  pendingSceneConfigRenames: [] as Array<{ from: string; to: string; labelScene?: string }>,
   /** content/timelines/*.json（预览运行时与 starter 共用的演出定义） */
   timelines: [] as TimelineEntry[],
   /** 由时间轴面板删除、待下一次“保存全部”从 content/timelines 移除的文件。 */

@@ -17,7 +17,7 @@ import {
   type TimelineAutosaveDocument,
   type TimelineAutosaveIdentity,
 } from './timeline-autosave-identity.js';
-import { parseProjectConfigDocument, renameConfigReferences, sceneReferenceConfigPaths, serializeProjectConfigDocument, stableStringify, timelinePathFor } from '@surdet/authoring';
+import { parseProjectConfigDocument, renameConfigReferences, renameGalleryLabel, applyConfigReferenceRename, sceneReferenceConfigPaths, serializeProjectConfigDocument, stableStringify, timelinePathFor } from '@surdet/authoring';
 import { kindOfDir, parsePortraitFileName } from './assets.js';
 import type { AssetKind, DirAsset } from './assets.js';
 
@@ -130,7 +130,7 @@ export interface SceneMutationPlanReference {
 
 export interface SceneMutationCommitInput {
   requestId: string;
-  configRenames?: Array<{ from: string; to: string }>;
+  configRenames?: Array<{ from: string; to: string; labelScene?: string }>;
   plans: SceneMutationPlanReference[];
   writes: Array<{ path: string; text: string; expectedSha256: string | null }>;
 }
@@ -748,6 +748,24 @@ export async function prepareSceneConfigRename(from: string, to: string, fallbac
   };
 }
 
+/** Prepare gallery backing source and the in-memory projection without publishing either. */
+export async function prepareSceneLabelConfigRename(sceneId: string, from: string, to: string): Promise<() => void> {
+  assertConfigSourcesReadable(['gallery']);
+  const path = 'content/config/gallery.json';
+  const pending = state.pendingSceneConfigWrites.find(write => write.path === path), handle = state.handles.gallery;
+  const before = pending?.text ?? (handle ? await readProjectSourceText(handle) : undefined);
+  const after = before === undefined ? undefined : renameGalleryLabel(before, sceneId, from, to);
+  const expectedSha256 = pending ? pending.expectedSha256 : (before === undefined ? null : await sceneTextSha256(before));
+  const memory = state.configFiles.gallery === null ? null : parseConfigSource('gallery', renameGalleryLabel(JSON.stringify(state.configFiles.gallery), sceneId, from, to));
+  return () => {
+    if (after !== before) {
+      state.pendingSceneConfigWrites = [...state.pendingSceneConfigWrites.filter(write => write.path !== path), { path, text: after!, expectedSha256 }];
+    }
+    state.configFiles.gallery = memory;
+    state.pendingSceneConfigRenames.push({ from, to, labelScene: sceneId });
+  };
+}
+
 /** A path transaction may only restore its config draft onto the original disk baseline. */
 export async function prepareSceneConfigRecovery(
   writes: typeof state.pendingSceneConfigWrites,
@@ -763,7 +781,7 @@ export async function prepareSceneConfigRecovery(
   const first = [...state.scenes.values()].sort((a, b) => sceneProjectPath(a.file) < sceneProjectPath(b.file) ? -1 : 1)[0];
   const rootWrite = writes.find(write => write.path === 'game.config.json');
   const fallback = first?.id ?? String(parseProjectConfigDocument(rootWrite?.text ?? '{}')['entryScene'] ?? '');
-  for (const rename of renames) renameConfigReferences(expected, rename.from, rename.to, fallback);
+  for (const rename of renames) applyConfigReferenceRename(expected, rename, fallback);
   for (const path of sceneReferenceConfigPaths) {
     const write = writes.find(entry => entry.path === path);
     if ((expected[path] !== before[path] && !write) || (write && (expected[path] === undefined
@@ -1079,6 +1097,7 @@ export function repairTimelineAutosaveConflict(
 
 async function saveAllUnlocked(): Promise<void> {
   assertProjectWriteUnlocked();
+  if (state.pendingSceneConfigRenames.some(rename => rename.labelScene !== undefined) && (!state.dirHandle || onSceneMutationCommit === null)) throw new Error('标签改名需要安全保存服务，未写入任何关联场景或配置');
   const hadPendingChanges = [...state.scenes.values()].some((scene) => scene.dirty)
     || state.timelines.some((timeline) => timeline.dirty)
     || state.pendingSceneDeletes.length > 0
@@ -1164,13 +1183,13 @@ async function saveAllUnlocked(): Promise<void> {
     .map(([key]) => key);
   let authoritySceneCommitAttempted = false;
   if (state.dirHandle && onSceneMutationCommit !== null
-    && (state.pendingSceneDeletes.length > 0 || newSceneKeys.length > 0 || state.pendingSceneCommit !== null)) {
+    && (state.pendingSceneDeletes.length > 0 || newSceneKeys.length > 0 || state.pendingSceneCommit !== null || state.pendingSceneConfigRenames.length > 0)) {
     authoritySceneCommitAttempted = true;
     try {
       let pendingCommit = state.pendingSceneCommit;
       if (pendingCommit === null) {
         for (const key of newSceneKeys) authoritySceneKeys.add(key);
-        if (newSceneKeys.length > 0) {
+        if (newSceneKeys.length > 0 || state.pendingSceneConfigRenames.some(rename => rename.labelScene !== undefined)) {
           for (const [key, scene] of state.scenes) {
             if (scene.dirty) authoritySceneKeys.add(key);
           }
@@ -1212,7 +1231,7 @@ async function saveAllUnlocked(): Promise<void> {
         const createRequestId = newSceneKeys
           .map((key) => state.scenes.get(key)?.pendingCreateOperationId)
           .find((value): value is string => typeof value === 'string');
-        const requestId = plans[0]?.operationId ?? createRequestId;
+        const requestId = plans[0]?.operationId ?? createRequestId ?? (state.pendingSceneConfigRenames.some(rename => rename.labelScene !== undefined) ? crypto.randomUUID() : undefined);
         if (!requestId) throw new Error('场景保存缺少可重试的请求身份');
         pendingCommit = {
           requestId,

@@ -1,17 +1,18 @@
 import { state, type SceneEntry } from '../../src/state.js';
 import { histories, bindHistoryHooks, undo, redo } from '../../src/history.js';
-import { renderEditor } from '../../src/panels/editor.js';
+import { renderEditor, deleteLine } from '../../src/panels/editor.js';
 import { disposePreviewPanel, renderPreviewPanel } from '../../src/panels/preview-panel.js';
 import { buildAuthoringWorkbench } from '../../src/shell/authoring-workbench.js';
 import { disposeScriptV4, revealScriptV4Line } from '../../src/v4/script-workbench.js';
 import { enhanceConfigTables } from '../../src/v4/surfaces.js';
 import { bindSearchHooks, renderSearchPanel, focusSearchInput, resetSearchSession } from '../../src/panels/search-panel.js';
-import { renderConfig, resetConfigSession, inspectConfigDraftState } from '../../src/panels/config.js';
+import { renderConfig, resetConfigSession, inspectConfigDraftState, prepareConfigLabelRename } from '../../src/panels/config.js';
 import { renderTimelinePanel, bindTimelineHooks, clearTimelineViewStates } from '../../src/panels/timeline-panel.js';
 import { clearTimelineHistories, timelineHistoryDepth } from '../../src/timeline-history.js';
 import { renderFlow } from '../../src/panels/flow.js';
 import { validateProject } from '../../src/validate.js';
 import { openScriptImport } from '../../src/panels/script-import.js';
+import { bindLabelEditingHooks, editSceneLabel } from '../../src/label-editing.js';
 
 export const SOURCE = '@scene start\r\n@label opening\r\n@bg hall\r\n@show lynn:uniform normal @ right\r\n凛:你好。\r\n@wait 500\r\n@choice\r\n  继续 -> @goto again\r\n  离开 -> @goto done\r\n@label again\r\n凛：继续。\r\n@label done\r\n@end';
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
@@ -88,6 +89,7 @@ function fixture(sourceText = SOURCE): SceneEntry {
   resetSearchSession(); state.reviewPreviewReadOnly = false;
   document.body.innerHTML = '<main id="main"></main><div id="status"></div>';
   state.scenes.clear(); histories.clear();
+  state.pendingSceneCommit = null; state.pendingSceneDeletes = []; state.pendingSceneConfigWrites = []; state.pendingSceneConfigRenames = []; state.configReadErrors = {};
   state.dirHandle = null; state.projectLoading = false; state.projectWriteLock = null;
   state.reviewWorkspace = null; state.selectedObjectRef = null; state.authoringIndex = null;
   state.previewTrace = []; state.selectedTraceStep = null;
@@ -129,6 +131,54 @@ function searchKey(key: string, options: KeyboardEventInit = {}): void {
   control('#search-input').dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options }));
 }
 export const v4WorkbenchCases: BrowserCase[] = [
+  { name: 'label rename follows cross-scene calls and gallery while rebasing existing undo/redo and preserving source bytes', run: async () => {
+    const before = '\uFEFF@scene start\r\n  @label opening\r\n凛：opening 只是正文。\r\n@end';
+    const scene = fixture(before); resetConfigSession();
+    const caller = { ...scene, id: 'other', file: 'chapter/other.GAL', text: '@scene other\n@label opening\n@call start.opening\n旁白：start.opening 不应替换。\n@end\n' };
+    state.scenes.set('chapter/other', caller);
+    state.configFiles.gallery = { texts: [{ id: 'memory', scene: 'start', label: 'opening', note: 'opening' }], custom: 'keep' };
+    histories.set('start', { past: [before.replace('只是正文', '先前正文')], future: [before.replace('只是正文', '后来正文')], lastPushAt: 0 });
+    histories.set('chapter/other', { past: [caller.text], future: [], lastPushAt: 0 });
+    bindLabelEditingHooks({ prepareConfig: prepareConfigLabelRename, onEdited: () => {} });
+    const prompt = window.prompt; window.prompt = () => '抵达';
+    try { clickText('#main', '改名并更新引用'); await nextTask(); } finally { window.prompt = prompt; }
+    assert(scene.text === before.replace('@label opening', '@label 抵达'), 'definition/prose/BOM/CRLF changed incorrectly');
+    assert(caller.text.includes('@call start.抵达') && caller.text.includes('@label opening') && caller.text.includes('旁白：start.opening 不应替换。'), 'cross-scene targets/prose were not distinguished');
+    assert(JSON.stringify(state.configFiles.gallery) === JSON.stringify({ texts: [{ id: 'memory', scene: 'start', label: '抵达', note: 'opening' }], custom: 'keep' }), 'gallery identity or unknown fields changed');
+    assert(state.pendingSceneConfigRenames[0]?.labelScene === 'start', 'config relationship was not staged');
+    undo(); assert(scene.text.includes('@label 抵达') && scene.text.includes('先前正文'), 'undo restored obsolete identity');
+    redo(); assert(scene.text.includes('@label 抵达'), 'redo restored obsolete identity');
+    assert(histories.get('chapter/other')!.past[0]!.includes('@call start.抵达'), 'caller history retained obsolete target');
+  } },
+  { name: 'label deletion rejects live DSL and gallery/draft references; unused removal uses ordinary undo', run: async () => {
+    const before = '@scene start\n@label entry\n凛：正文。\n@end\n';
+    const scene = fixture(before); resetConfigSession(); bindLabelEditingHooks({ prepareConfig: prepareConfigLabelRename, onEdited: () => {} });
+    const caller = { ...scene, id: 'other', file: 'other.gal', text: '@scene other\n@call start.entry\n@end\n' }; state.scenes.set('other', caller);
+    deleteLine(1); await nextTask();
+    assert(scene.text === before && control('#status').textContent?.includes('仍有引用'), 'used label was deleted');
+    state.scenes.delete('other'); state.configFiles.gallery = { texts: [{ id: 'm', scene: 'start', label: 'entry' }] };
+    deleteLine(1); await nextTask(); assert(scene.text === before && histories.size === 0, 'gallery reference was ignored');
+    state.configFiles.gallery = { texts: [] }; deleteLine(1); await nextTask();
+    assert(!scene.text.includes('@label') && histories.get('start')?.past.length === 1, 'unused label was not an ordinary edit');
+    undo(); assert(scene.text === before, 'deleted unused label could not be restored');
+    state.scenes.set('other', caller);
+    const confirm = window.confirm; window.confirm = () => true;
+    try { clickText('.block[data-line="1"] .v4-row-menu', '删除步骤'); await nextTask(); }
+    finally { window.confirm = confirm; }
+    assert(scene.text === before && control('#status').textContent?.includes('仍有引用'), 'step menu bypassed label reference protection');
+  } },
+  { name: 'label edit refuses stale anchors, changed scene objects, readonly and malformed callers before any mutation', run: async () => {
+    for (const mode of ['stale', 'replaced', 'readonly', 'bad-caller']) {
+      const scene = fixture('@scene start\n@label entry\n凛：正文\n@end'); resetConfigSession();
+      const before = scene.text;
+      if (mode === 'readonly') state.reviewPreviewReadOnly = true;
+      if (mode === 'bad-caller') state.scenes.set('bad', { ...scene, id: 'bad', file: 'bad.gal', text: '@scene bad\n@call "unfinished' });
+      const edit = editSceneLabel('start', mode === 'stale' ? 2 : 1, '@label entry', 'arrival');
+      if (mode === 'replaced') state.scenes.set('start', { ...scene });
+      let rejected = false; try { await edit; } catch { rejected = true; }
+      assert(rejected && scene.text === before && !scene.dirty && state.pendingSceneConfigRenames.length === 0 && histories.size === 0, `rejected ${mode} applied part of rename`);
+    }
+  } },
   { name: 'CSV import previews explicit column/role mapping, creates only a new draft and keeps normal undo', run: async () => {
     const original = fixture(); state.configReadErrors = {}; state.pendingSceneCommit = null; state.pendingSceneDeletes = [];
     state.gameConfigText = '{"entryScene":"start","characters":{"rin":{"name":"凛"}}}';

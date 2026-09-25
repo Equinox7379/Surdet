@@ -139,6 +139,7 @@ const {
   configUndo,
   inspectConfigDraftState,
   prepareConfigSceneRename,
+  prepareConfigLabelRename,
   configRedo,
   renderConfig,
   resetConfigSession,
@@ -179,6 +180,18 @@ afterEach(() => {
 });
 
 describe('configuration draft state', () => {
+  it('rebases gallery label rows/history without saving unrelated changes; dirty replay references prevent deletion', async () => {
+    const root = await renderFixture();
+    byText(root, '＋ 新增回想').click();
+    const scene = byAttribute(root, 'aria-label', '回放场景，第 1 行'); scene.value = 'a'; scene.oninput?.();
+    const label = byAttribute(root, 'aria-label', '回放标签，第 1 行'); label.value = 'entry'; label.oninput?.();
+    expect(() => prepareConfigLabelRename('a', 'entry')).toThrow('仍有引用');
+    prepareConfigLabelRename('a', 'entry', 'arrival')();
+    configUndo(); configRedo();
+    expect(byAttribute(root, 'aria-label', '回放标签，第 1 行').value).toBe('arrival');
+    expect(inspectConfigDraftState().dirtySections).toEqual(['gallery']);
+    expect(state.configFiles.gallery).toEqual({ cgs: [], music: [], texts: [] });
+  });
   it('rebases live scene references and undo/redo without losing unrelated unfinished fields', async () => {
     const root = await renderFixture();
     const scene = byAttribute(root, 'aria-label', '场景，第 1 行');

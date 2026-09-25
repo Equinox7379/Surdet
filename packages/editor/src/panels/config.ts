@@ -11,7 +11,7 @@ import { state, h, setStatus } from '../state.js';
 import { assertConfigSourcesReadable, configSourceError, configSourcePath, parseConfigSource, type ConfigSourceName } from '../config-source.js';
 import { assertProjectWriteUnlocked, readProjectSourceText, runProjectWriteOperation, writeProjectText } from '../project-io.js';
 import { editorWorkspaceStatus } from '../editor-workspace.js';
-import { AuthoringOperationError, parseProjectConfigDocument, renameConfigReferences } from '@surdet/authoring';
+import { AuthoringOperationError, parseProjectConfigDocument, renameConfigReferences, renameGalleryLabel } from '@surdet/authoring';
 import { commitCharacterTable, type CharacterTableEditRow } from '../authoring-project-storage.js';
 import {
   VAR_TYPES, parseVariablesToRows, rowsToVariables, applyVariablesToConfig,
@@ -396,6 +396,22 @@ export function prepareConfigSceneRename(from: string, to: string, fallbackEntry
 function assertConfigSaveReady(name: ConfigSourceName): void {
   assertConfigSourcesReadable([name]);
   if (state.pendingSceneConfigRenames.length > 0) throw new Error('场景改名尚未写盘，请使用“保存全部”一起保存场景和配置引用');
+}
+
+/** Keep unsaved gallery rows and their independent undo stack aligned with label identity. */
+export function prepareConfigLabelRename(sceneId: string, from: string, to?: string): () => void {
+  const rewrite = (rows: GalleryRows | null): GalleryRows | null => rows === null ? null
+    : JSON.parse(renameGalleryLabel(JSON.stringify(rows), sceneId, from, to)) as GalleryRows;
+  const current = rewrite(gaRows);
+  if (to === undefined) return () => {};
+  const past = configHist.past.map(snapshot => ({ ...snapshot, gaRows: rewrite(snapshot.gaRows) }));
+  const future = configHist.future.map(snapshot => ({ ...snapshot, gaRows: rewrite(snapshot.gaRows) }));
+  const baseline = configBaselines.gallery === undefined ? undefined : JSON.stringify(rewrite(JSON.parse(configBaselines.gallery) as GalleryRows));
+  return () => {
+    gaRows = current; configHist.past = past; configHist.future = future;
+    if (baseline !== undefined) configBaselines.gallery = baseline;
+    notifyConfigDraftStateChanged();
+  };
 }
 
 /** 变更前拍快照。coalesce=true：连续打字合并（同一撤销点）；结构操作（增删行/拖拽/导入）传 false */

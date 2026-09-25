@@ -31,6 +31,23 @@ function timelineText(definitionId: string, eol: Eol = '\n', durationMs = 1200):
 afterEach(() => vi.unstubAllGlobals());
 
 describe('buildAutosave（快照构建）', () => {
+  it('标签改名无需创建/删除文件也完整备份，漏掉调用者或还原旧目标时拒绝整组恢复', () => {
+    const a = { id: 'a', file: 'a.GAL', text: '@scene a\n@label entry\n@end\n', dirty: false, eol: '\n' as const, persistedSha256: 'a'.repeat(64) };
+    const b = { id: 'b', file: 'b.gal', text: '@scene b\n@call a.entry\n@end\n', dirty: false, eol: '\n' as const, persistedSha256: 'b'.repeat(64) };
+    const baseline = new Map([['a', a], ['b', b]]);
+    const changed = new Map([['a', { ...a, text: a.text.replace('@label entry', '@label 抵达'), dirty: true }], ['b', { ...b, text: b.text.replace('@call a.entry', '@call a.抵达'), dirty: true }]]);
+    const renames = [{ labelScene: 'a', from: 'entry', to: '抵达' }];
+    const writes = [{ path: 'content/config/gallery.json', text: '{"texts":[{"scene":"a","label":"抵达"}]}', expectedSha256: 'c'.repeat(64) }];
+    const payload = buildAutosave('project', changed, [], 1, 'identity', [], null, writes, renames)!;
+    expect(parseAutosave(JSON.stringify(payload))).toEqual(payload);
+    expect(inspectSceneAutosaveRecovery(payload, 'identity', baseline).status).toBe('recoverable');
+    const missingCaller = { ...payload, scenes: payload.scenes.slice(0, 1) };
+    expect(inspectSceneAutosaveRecovery(missingCaller, 'identity', baseline).status).toBe('blocked');
+    const staleCaller = structuredClone(payload); staleCaller.scenes[1]!.text = b.text;
+    expect(inspectSceneAutosaveRecovery(staleCaller, 'identity', baseline).status).toBe('blocked');
+    const invalid = structuredClone(payload); invalid.sceneTransaction!.configRenames![0]!.labelScene = '../a';
+    expect(parseAutosave(JSON.stringify(invalid))).toBeNull();
+  });
   it('场景配置改名和正文一起备份/重放；缺少配置、映射或回执时不部分收束', () => {
     const operationId = '123e4567-e89b-42d3-a456-426614174000';
     const scene = { id: 'new', file: 'new.gal', text: '@scene new\n后续编辑\n', dirty: true, eol: '\n', persistedSha256: 'a'.repeat(64) };
