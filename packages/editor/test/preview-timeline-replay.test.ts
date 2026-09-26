@@ -5,6 +5,12 @@ import { state } from '../src/state.js';
 import * as workspace from '../src/editor-workspace.js';
 import { previewTextHash } from '../src/preview-content.js';
 
+// This suite verifies replay/source publication, not the independently tested
+// stage inspector DOM. Preserve the real mounting and disposal contract.
+vi.mock('../src/stage-workspace.js', () => ({
+  createStageWorkspace: () => ({ element: document.createElement('details'), reset() {}, dispose() {} }),
+}));
+
 class FakeElement {
   readonly tagName: string;
   readonly children: FakeElement[] = [];
@@ -45,6 +51,12 @@ class FakeElement {
 
   appendChild(child: FakeElement): FakeElement {
     this.children.push(child);
+    return child;
+  }
+
+  insertBefore(child: FakeElement, before: FakeElement | null): FakeElement {
+    const index = before === null ? -1 : this.children.indexOf(before);
+    if (index < 0) this.children.push(child); else this.children.splice(index, 0, child);
     return child;
   }
 

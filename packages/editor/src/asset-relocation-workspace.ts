@@ -4,7 +4,7 @@ import type { AssetRelocationDetail } from './asset-import-client.js';
 export interface AssetRelocationSource {
   assetId: string;
   sourcePath: string;
-  kind: Extract<ProjectAssetKind, 'background' | 'portrait' | 'avatar'>;
+  kind: ProjectAssetKind;
   targetDirectory: string;
   fileName: string;
 }

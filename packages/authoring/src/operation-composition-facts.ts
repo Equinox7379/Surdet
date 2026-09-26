@@ -1,4 +1,4 @@
-import { projectPortraitOverrides } from '@surdet/core';
+import { projectPortraitOverrides, projectStageAssetKeys, readProjectStage } from '@surdet/core';
 import type { OperationCompositionDraft } from './composition-contracts.js';
 import type { TextHasher } from './project-storage.js';
 import { stableStringify } from './change-session.js';
@@ -29,6 +29,7 @@ export async function buildSceneOperationCompositionDraft(input: {
   afterText: string;
   characters: Record<string, unknown>;
   fontPaths: Partial<Record<'body' | 'title' | 'ui', string>>;
+  stageConfig?: unknown;
   hasher: TextHasher;
 }): Promise<OperationCompositionDraft> {
   const primaryObject = `scene:${input.sceneId}`;
@@ -41,11 +42,12 @@ export async function buildSceneOperationCompositionDraft(input: {
     }), ...[...new Set(Object.values(input.fontPaths))].map(path => ({
       kind: 'font-asset' as const, scope: 'candidate-external' as const, token: path,
       objectRef: `asset:font:${path}`, source: { path: 'game.config.json' },
-    }))],
+    })), ...projectStageAssetKeys(readProjectStage({ stage: input.stageConfig })).map(key => ({ kind: 'background-asset' as const, scope: 'candidate-external' as const, token: key, objectRef: `asset:bg:${key}`, source: { path: 'game.config.json' } }))],
     producedObjects: [{ objectRef: primaryObject, disposition: input.capabilityId === 'scene.create' ? 'create' : 'update', finalFingerprint: objectFingerprintAfter }],
     ...(input.beforeText === undefined ? {} : { objectFingerprintBefore: await input.hasher.sha256(input.beforeText) }),
     objectFingerprintAfter,
     replayStatePreconditions: [
+      { objectRef: 'config:stage', expectedFingerprint: await input.hasher.sha256(stableStringify(input.stageConfig ?? null)) },
       { objectRef: 'config:fonts', expectedFingerprint: await input.hasher.sha256(stableStringify(input.fontPaths)) },
       { objectRef: 'config:portraits', expectedFingerprint: await input.hasher.sha256(stableStringify(projectPortraitOverrides({ characters: input.characters }))) },
       ...(input.beforeText === undefined ? [] : [{ objectRef: primaryObject, expectedFingerprint: await input.hasher.sha256(input.beforeText) }]),
@@ -60,15 +62,25 @@ export async function buildTimelineOperationCompositionDraft(input: {
   beforeDefinition?: unknown;
   afterDefinition: unknown;
   config: Record<string, unknown>;
+  workingFiles?: Readonly<Record<string, string>>;
   hasher: TextHasher;
 }): Promise<OperationCompositionDraft> {
   const primaryObject = `timeline:${input.timelineId}`;
   const objectFingerprintAfter = await input.hasher.sha256(stableStringify(input.afterDefinition));
+  const dependencies = new Map<string, unknown>();
+  const rawReferences = analyzeTimelineCompositionReferences({
+    timelineId: input.timelineId, path: input.path ?? `content/timelines/${input.timelineId}.json`, definition: input.afterDefinition,
+    lookup: id => {
+      const files = Object.entries(input.workingFiles ?? {}).filter(([path]) => path.startsWith('content/timelines/') && path.replace(/\.json$/i, '').split('/').at(-1) === id);
+      if (files.length !== 1) return undefined;
+      const definition = JSON.parse(files[0]![1].replace(/^\uFEFF/, ''));
+      dependencies.set(id, definition);
+      return { path: files[0]![0], definition };
+    },
+  });
   return {
     capabilityId: input.capabilityId, primaryObject,
-    rawReferences: analyzeTimelineCompositionReferences({
-      timelineId: input.timelineId, path: input.path ?? `content/timelines/${input.timelineId}.json`, definition: input.afterDefinition,
-    }),
+    rawReferences,
     producedObjects: [{ objectRef: primaryObject, disposition: input.capabilityId === 'timeline.create' ? 'create' : 'update', finalFingerprint: objectFingerprintAfter }],
     ...(input.beforeDefinition === undefined ? {} : { objectFingerprintBefore: await input.hasher.sha256(stableStringify(input.beforeDefinition)) }),
     objectFingerprintAfter,
@@ -77,6 +89,10 @@ export async function buildTimelineOperationCompositionDraft(input: {
         objectRef: primaryObject,
         expectedFingerprint: await input.hasher.sha256(stableStringify(input.beforeDefinition)),
       }]),
+      ...await Promise.all([...dependencies].sort(([a], [b]) => a.localeCompare(b)).map(async ([id, definition]) => ({
+        objectRef: `timeline:${id}`, expectedFingerprint: await input.hasher.sha256(stableStringify(definition)),
+      }))),
+      { objectRef: 'config:stage', expectedFingerprint: await input.hasher.sha256(stableStringify(input.config.stage ?? null)) },
       { objectRef: 'config:portraits', expectedFingerprint: await input.hasher.sha256(stableStringify(projectPortraitOverrides(input.config))) },
     ],
   };

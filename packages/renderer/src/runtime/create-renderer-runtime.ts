@@ -234,7 +234,7 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
   let compositionAttempted = false;
   try {
     assetRegistry = new RenderAssetRegistry({ lifecycle });
-    stage = new RendererStageHost(assetRegistry, lifecycle);
+    stage = new RendererStageHost(assetRegistry, lifecycle, options.stage);
     await stage.init(options.canvas);
     if (options.quality !== undefined) stage.setQuality(options.quality);
     if (options.preferences !== undefined) stage.setPresentationPreferences(options.preferences);
@@ -243,6 +243,7 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
       assetRegistry,
       resourceSnapshot: () => lifecycle.snapshot(),
       worldLayer: stage.worldLayer,
+      menuLayer: stage.menuLayer,
       dialogueLayer: stage.dialogueLayer,
       projectionSnapshot: () => stage!.projectionSnapshot,
     });

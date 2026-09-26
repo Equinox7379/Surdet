@@ -1,9 +1,13 @@
 import type { TimelineCue, TimelineDefinition, TimelineEasing, TimelineTrackKind } from '@surdet/core';
 
 export interface TimelineFrameEvent {
+  source?: import('@surdet/core').StageSource;
   track: TimelineTrackKind;
   target?: string;
   cue: TimelineCue;
+  definitionVersion?: 1 | 2;
+  cueId?: number;
+  runId?: number;
   /** 本帧跨过 cue 起点；用于背景、音频等一次性动作。 */
   started: boolean;
   /** 播放器被跳过至末尾时为 true；用于结算最终可见状态。 */
@@ -13,12 +17,14 @@ export interface TimelineFrameEvent {
 }
 
 export interface TimelinePlayerSnapshot {
-  version: 1;
+  version: 1 | 2;
   id: string;
   cursorMs: number;
+  started?: number[];
 }
 
 interface FlatCue {
+  source: import('@surdet/core').StageSource;
   track: TimelineTrackKind;
   target?: string;
   cue: TimelineCue;
@@ -36,6 +42,7 @@ export class TimelinePlayer {
     this.definition = definition;
     this.#cues = definition.tracks.flatMap((track, trackIndex) => track.cues.map((cue, cueIndex) => ({
       track: track.kind,
+      source: definition.resolvedCueSources?.[trackIndex]?.[cueIndex] ?? { kind: 'timeline' as const, timelineId: definition.id, trackIndex, cueIndex },
       ...(track.target ? { target: track.target } : {}),
       cue,
       order: trackIndex * 100_000 + cueIndex,
@@ -48,6 +55,12 @@ export class TimelinePlayer {
 
   get done(): boolean {
     return this.#cursorMs >= this.definition.durationMs;
+  }
+
+  timeToBoundary(): number {
+    let next = this.definition.durationMs;
+    for (const { cue } of this.#cues) for (const value of [cue.atMs, cue.atMs + cue.durationMs]) if (value > this.#cursorMs) next = Math.min(next, value);
+    return Math.max(0, next - this.#cursorMs);
   }
 
   advance(deltaMs: number): TimelineFrameEvent[] {
@@ -73,16 +86,30 @@ export class TimelinePlayer {
   }
 
   snapshot(): TimelinePlayerSnapshot {
-    return { version: 1, id: this.definition.id, cursorMs: this.#cursorMs };
+    return this.definition.version === 2
+      ? { version: 2, id: this.definition.id, cursorMs: this.#cursorMs, started: [...this.#startedCues].map(cue => cue.order).sort((a, b) => a - b) }
+      : { version: 1, id: this.definition.id, cursorMs: this.#cursorMs };
   }
 
   restore(snapshot: unknown): void {
     if (typeof snapshot !== 'object' || snapshot === null) throw new Error('timeline player snapshot must be an object');
     const raw = snapshot as Record<string, unknown>;
-    if (raw.version !== 1 || raw.id !== this.definition.id || typeof raw.cursorMs !== 'number' || !Number.isFinite(raw.cursorMs)) {
+    if ((raw.version !== 1 && raw.version !== 2) || raw.id !== this.definition.id || typeof raw.cursorMs !== 'number' || !Number.isFinite(raw.cursorMs)) {
       throw new Error(`timeline player snapshot does not match '${this.definition.id}'`);
     }
-    this.#cursorMs = Math.max(0, Math.min(this.definition.durationMs, raw.cursorMs));
+    const cursor = Math.max(0, Math.min(this.definition.durationMs, raw.cursorMs));
+    let started: FlatCue[];
+    if (raw.version === 2) {
+      if (cursor !== raw.cursorMs || !Array.isArray(raw.started) || raw.started.length > this.#cues.length || new Set(raw.started).size !== raw.started.length)
+        throw new Error('invalid saved timeline cursor/start set');
+      started = raw.started.map(order => {
+        const entry = this.#cues.find(cue => cue.order === order);
+        if (!entry || entry.cue.atMs > cursor) throw new Error('invalid saved timeline cue identity');
+        return entry;
+      });
+    } else started = this.#cues.filter(entry => entry.cue.atMs <= cursor);
+    this.#cursorMs = cursor;
+    this.#startedCues = new Set(started);
   }
 
   #eventsBetween(previous: number, current: number, forceFinal = false): TimelineFrameEvent[] {
@@ -116,6 +143,9 @@ export class TimelinePlayer {
   #event(entry: FlatCue, progress: number, started: boolean, final: boolean): TimelineFrameEvent {
     return {
       track: entry.track,
+      source: entry.source,
+      cueId: entry.order,
+      definitionVersion: this.definition.version,
       ...(entry.target ? { target: entry.target } : {}),
       cue: entry.cue,
       started,

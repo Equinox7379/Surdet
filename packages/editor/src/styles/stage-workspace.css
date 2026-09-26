@@ -1,0 +1,24 @@
+.preview-workspace:has(> .stage-adjustment-workspace) { grid-template-rows: auto minmax(240px, 1fr) auto auto auto minmax(0, auto); overflow: auto; }
+.preview-workspace:has(> .stage-adjustment-workspace[open]) { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); grid-template-rows: auto minmax(240px, 1fr) auto auto minmax(0, 170px); }
+.preview-workspace:has(> .stage-adjustment-workspace[open]) > .preview-toolbar { grid-column: 1 / -1; grid-row: 1; }
+.preview-workspace:has(> .stage-adjustment-workspace[open]) > .preview-stage { grid-column: 1; grid-row: 2; }
+.preview-workspace:has(> .stage-adjustment-workspace[open]) > .preview-diagnostics { grid-column: 1; grid-row: 3; }
+.preview-workspace:has(> .stage-adjustment-workspace[open]) > .preview-source-state { grid-column: 1; grid-row: 4; }
+.preview-workspace:has(> .stage-adjustment-workspace[open]) > .stage-adjustment-workspace { grid-column: 2; grid-row: 2 / 5; overflow: auto; min-height: 0; padding: 8px 12px; border-left: 1px solid var(--surdet-border-default); }
+.preview-workspace:has(> .stage-adjustment-workspace[open]) > .preview-causal-dock { grid-column: 1 / -1; grid-row: 5; overflow: auto; }
+@media (max-width: 700px) {
+ .preview-workspace:has(> .stage-adjustment-workspace[open]) { display: flex; flex-direction: column; }
+ .preview-workspace:has(> .stage-adjustment-workspace[open]) > .preview-stage { flex: 0 0 240px; }
+ .preview-workspace:has(> .stage-adjustment-workspace[open]) > .stage-adjustment-workspace { flex: 0 0 320px; }
+}
+.stage-adjustment-workspace { padding: 12px 0; border-top: 1px solid var(--border, #d4d4d4); }
+.stage-adjustment-workspace summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
+.stage-adjustment-workspace > select { max-width: 100%; margin: 4px 12px 8px 0; }
+.stage-adjustment-workspace .config-scalars { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 12px 0; }
+.stage-adjustment-workspace .config-scalars label { display: grid; gap: 4px; }
+.stage-adjustment-workspace .config-scalars input { width: 120px; max-width: 100%; }
+.stage-adjustment-workspace textarea { width: 100%; box-sizing: border-box; resize: vertical; font-family: monospace; }
+.stage-adjustment-workspace p { overflow-wrap: anywhere; line-height: 1.6; }
+.stage-configuration { margin-top: 16px; }
+.stage-configuration button { margin: 4px 8px 4px 0; }
+.stage-calibration-image { display: block; max-width: 100%; height: auto; background: repeating-conic-gradient(#f6f6f6 0 25%, #e3e3e3 0 50%) 0 / 16px 16px; touch-action: none; }

@@ -154,3 +154,22 @@ describe('shared asset catalog', () => {
     expect(catalog.intelligence.issues.map(issue => issue.code)).toEqual(expect.arrayContaining(['ASSET_KEY_DUPLICATE', 'ASSET_NAME_INVALID', 'ASSET_FORMAT_UNSUPPORTED']));
   });
 });
+
+
+it('keeps exact configured slots usable when another automatic slot sharing the image is ambiguous', () => {
+  const first = 'content/assets/portrait/library_coat_normal.svg';
+  const second = 'content/assets/portrait/sub/library_coat_normal.svg';
+  const config = { characters: { rin: { name: '凛', portraits: { uniform: { normal: first, smile: first } } } } };
+  const snapshot = { rootIdentity: 'fixture', revision: 'r', files: [], configFile: null, config, scenes: [], timelines: [], variables: {} };
+  const catalog = buildAssetCatalog([first, second], snapshot);
+  const explicit = catalog.portraits.filter(p => p.role === 'rin');
+  expect(explicit).toHaveLength(2);
+  expect(explicit.every(p => p.resolved && p.usage?.scene)).toBe(true);
+  expect(catalog.portraits.filter(p => p.role === 'library').every(p => !p.resolved && !p.usage)).toBe(true);
+  expect(catalog.intelligence.items.find(p => p.sourcePath === first)?.issues).toContain('ASSET_KEY_DUPLICATE');
+  expect(catalog.intelligence.summary.fileCount).toBe(2);
+  expect(resolvedCompositionAssetRefs([first, second], snapshot)).toEqual([
+    'asset:portrait:rin:uniform:normal', 'asset:portrait:rin:uniform:smile',
+  ]);
+  expect(buildAssetCatalog([second], snapshot).portraits.filter(p => p.role === 'rin').every(p => !p.resolved)).toBe(true);
+});

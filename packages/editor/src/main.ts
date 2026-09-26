@@ -1,3 +1,5 @@
+import { bindStageEditingHooks } from './stage-editing.js';
+import { PROJECT_ASSET_RELOCATION_KINDS, AGENT_IMAGE_MAX_BYTES } from '@surdet/authoring';
 /**
  * Surdet 可视化剧本编辑器入口（E0 拆分后：仅装配与事件路由）。
  * 功能：打开游戏目录（File System Access）→ 场景列表 → 块式可视化编辑（raw 行为事实来源，
@@ -77,7 +79,7 @@ import {
 import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant, resetConfigSession,
   inspectConfigDraftState, prepareConfigSceneRename, prepareConfigLabelRename, saveDirtyConfigSections } from './panels/config.js';
 import { bindLabelEditingHooks } from './label-editing.js';
-import { renderPreviewPanel, disposePreviewPanel } from './panels/preview-panel.js';
+import { renderPreviewPanel, disposePreviewPanel, refreshPreviewSourceState } from './panels/preview-panel.js';
 import { disposeScriptV4, revealScriptV4Line } from './v4/script-workbench.js';
 import { bindV4Navigation, navigateMode, navigateTimeline } from './v4/ui.js';
 import { openProjectSearch } from './shell/project-search.js';
@@ -730,7 +732,7 @@ function assetRelocationAvailabilityMessage(): string | null {
 }
 
 function assetRelocationSourceForItem(item: ProjectAssetItem, targetDirectory?: string): AssetRelocationSource | null {
-  if (!item.sourcePath || !['background', 'portrait', 'avatar'].includes(item.kind)) return null;
+  if (!item.sourcePath || !PROJECT_ASSET_RELOCATION_KINDS.includes(item.kind)) return null;
   return {
     assetId: item.assetId,
     sourcePath: item.sourcePath,
@@ -738,6 +740,35 @@ function assetRelocationSourceForItem(item: ProjectAssetItem, targetDirectory?: 
     targetDirectory: targetDirectory ?? item.sourcePath.split('/').slice(0, -1).join('/'),
     fileName: item.sourcePath.split('/').at(-1) ?? '',
   };
+}
+
+async function prepareAssetReplacement(item: ProjectAssetItem, file: File): Promise<void> {
+  const source = assetRelocationSourceForItem(item);
+  const root = state.dirHandle, generation = assetImportGeneration;
+  if (!source || assetRelocationAvailabilityMessage() !== null || assetRelocationWorkspace.snapshot().busy || file.size <= 0 || file.size > AGENT_IMAGE_MAX_BYTES) {
+    assetRelocationWorkspace.setMessage('请先保存项目、结束其他素材操作，并选择大小受支持的同格式文件。'); return;
+  }
+  await waitForProjectWritesToSettle();
+  if (root !== state.dirHandle || generation !== assetImportGeneration || hasDirtyProjectFiles()) return;
+  assetRelocationWorkspace.begin(source);
+  setAssetRelocationWriteLock(true);
+  await runAssetRelocationAction('正在读取新文件并准备原位替换…', async context => {
+    if (!context.client.relocationReplace) throw new Error('当前素材服务尚未支持原位替换');
+    const bytes = await file.arrayBuffer();
+    const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+    requireCurrentAssetRelocationAction(context);
+    const operationId = crypto.randomUUID();
+    let planned: Awaited<ReturnType<NonNullable<typeof context.client.relocationReplace>>>;
+    try { planned = await context.client.relocationReplace({ operationId, targetPath: source.sourcePath, sourcePath: file.name, sha256 }, new Blob([bytes])); }
+    catch (error) {
+      try { planned = await context.client.relocationResume(operationId); }
+      catch { throw error; }
+    }
+    requireCurrentAssetRelocationAction(context);
+    assetRelocationWorkspace.setDetail(planned.detail);
+    assetRelocationWorkspace.setMessage(planned.detail.plan.replacement?.noChange
+      ? '新旧文件内容相同，不会改动原素材。' : '替换计划已准备。原文件尚未改变；核对摘要及引用后再确认替换。');
+  });
 }
 
 function beginAssetRelocation(item: ProjectAssetItem, targetDirectory: string): void {
@@ -956,7 +987,7 @@ async function reconcileAssetRelocationMutation(
 async function commitAssetRelocation(): Promise<void> {
   const detail = assetRelocationWorkspace.snapshot().detail;
   if (detail === null || detail.plan.status !== 'ready') return;
-  await runAssetRelocationAction('正在移动素材并更新引用…', async (context) => {
+  await runAssetRelocationAction(detail.plan.replacement ? '正在原位替换素材字节…' : '正在移动素材并更新引用…', async (context) => {
     await context.client.relocationResume(detail.operation.operationId);
     requireCurrentAssetRelocationAction(context);
     try {
@@ -1666,12 +1697,13 @@ bindFlowHooks({
 bindConfigHooks({
   // 配置保存后重新调度校验（新变量/成就即刻参与 lint）
   requestValidate: () => { scheduleValidate(); scheduleAuthoringIndexRebuild(); },
-  onDraftStateChanged: refreshProjectBarProjection,
+  onDraftStateChanged: () => { refreshProjectBarProjection(); refreshPreviewSourceState(); },
 });
 bindLabelEditingHooks({ prepareConfig: prepareConfigLabelRename, onEdited: () => {
   markProjectEdited(); renderSidebar(); refreshManuscriptFacts(); refreshCurrentSceneContext();
   scheduleValidate(); scheduleAuthoringIndexRebuild();
 } });
+bindStageEditingHooks({ onTimelineEdited: handleTimelineEdited });
 bindTimelineHooks({
   onPreview: (timelineId) => {
     state.previewTimelineId = timelineId;
@@ -2018,6 +2050,7 @@ function renderMainArea(): void {
         workspace: assetRelocationWorkspace.snapshot(),
         availabilityMessage: assetRelocationAvailabilityMessage(),
         onBegin: beginAssetRelocation,
+        onReplace: (item, file) => { void prepareAssetReplacement(item, file); },
         onBeginBatch: beginAssetRelocationBatch,
         onSelectBatchItem: selectAssetRelocationBatchItem,
         onSetVisibleBatchItems: (assetIds) => assetRelocationWorkspace.setVisibleAssetIds(assetIds),

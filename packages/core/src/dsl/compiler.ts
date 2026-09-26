@@ -1,3 +1,4 @@
+import { stageCommandFromInstruction, decodeStageToken } from '../stage.js';
 import { DslError, type AstBlock, type CompiledScene, type CondJumpInstr, type DslDiagnostic, type DslInstr, type GenericInstr, type JumpInstr, type ModifyInstr, type SceneAst, type SetInstr, type SwitchInstr, type TimelineInstr, type VideoInstr, type WaitInstr } from './ast.js';
 import { validateExpr } from './expr-parser.js';
 import { Lexer } from './lexer.js';
@@ -13,7 +14,7 @@ import type { SourcePos } from './token.js';
  */
 export const IMPLEMENTED_INSTRUCTIONS: ReadonlySet<string> = new Set([
   // 演出（渲染层消费）
-  'bg', 'show', 'hide', 'voice', 'bgm', 'se', 'fadein', 'fadeout',
+  'bg', 'show', 'hide', 'pose', 'layer', 'stage', 'voice', 'bgm', 'se', 'fadein', 'fadeout',
   'shake', 'flash', 'zoom', 'wipe', 'transition', 'ambience',
   'particle', 'mov', 'tint',
   'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'ruby',
@@ -518,6 +519,10 @@ export class SceneCompiler {
   }
 
   #makeGeneric(name: string, args: string[], modifiers: Map<string, string>, p: SourcePos): GenericInstr {
+    if (['pose', 'layer', 'stage'].includes(name)) {
+      try { stageCommandFromInstruction(name, args.map(decodeStageToken), new Map([...modifiers].map(([key, value]) => [key, decodeStageToken(value)]))); }
+      catch (error) { throw new DslError('STAGE_INVALID', error instanceof Error ? error.message : String(error), p); }
+    }
     return { op: 'instr', name, args, modifiers, index: -1, file: p.file, line: p.line, col: p.col };
   }
 

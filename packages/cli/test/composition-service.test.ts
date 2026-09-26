@@ -1058,3 +1058,46 @@ describe('CompositionService compare/plan/dry-run', () => {
     });
     expect(reviewed.plan.planFingerprint).not.toBe(direct.plan.planFingerprint);
   });
+
+
+it('stage clips seal baseline dependencies, replay through integration, and reject changed child bytes', async () => {
+  const f = await setup('stage-clips-baseline');
+  const config = { entryScene: 'start', variables: {}, stage: { version: 1, positions: { pier: { x: 400, y: 680 } } } };
+  fs.writeFileSync(path.join(f.projectRoot, 'game.config.json'), JSON.stringify(config));
+  fs.mkdirSync(path.join(f.projectRoot, 'content/timelines'), { recursive: true });
+  const leaf = { version: 2, id: 'leaf', durationMs: 200, tracks: [{ kind: 'camera', cues: [{ atMs: 0, durationMs: 200, easing: 'linear', action: 'pan', x: 30, y: 0 }] }] };
+  fs.writeFileSync(path.join(f.projectRoot, 'content/timelines/leaf.json'), JSON.stringify(leaf));
+  const baseline = treeSnapshot(f.projectRoot);
+  const first = await sealCandidate(f.projectRoot, 'stage-parent', async session => {
+    const inspected = await session.invoke('project.inspect', { view: 'working' });
+    if (!inspected.ok) throw new Error(JSON.stringify(inspected));
+    const stageConfig = (inspected.result as { stageConfig: { fingerprint: string } }).stageConfig;
+    expect(await session.invoke('project.stage-config.patch', { operationId: 'deny-config', expectedFingerprint: stageConfig.fingerprint, patch: { distances: { near: 2 } } }))
+      .toMatchObject({ ok: false, error: { code: 'UNSUPPORTED_OPERATION' } });
+    const result = await session.invoke('timeline.create', { operationId: 'stage-parent', timelineId: 'parent', definition: {
+      version: 2, id: 'parent', durationMs: 450, tracks: [], clips: [{ timelineId: 'leaf', atMs: 20, repeat: 2, gapMs: 10 }],
+    } });
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+  });
+  const second = await sealCandidate(f.projectRoot, 'stage-other', async session => {
+    expect((await session.invoke('scene.create', { operationId: 'extra', sceneId: 'extra', blocks: [{ kind: 'text', value: '独立候选。' }] })).ok).toBe(true);
+  });
+  const refs = [first.ref, second.ref];
+  const comparison = await f.service.compare(refs);
+  const parent = Object.values(comparison.comparison.candidateManifests!).flatMap(manifest => manifest.operations).find(operation => operation.capabilityId === 'timeline.create')!;
+  expect(parent.replayStateRequirements).toEqual(expect.arrayContaining([
+    expect.objectContaining({ objectRef: 'config:stage', source: 'base' }),
+    expect.objectContaining({ objectRef: 'timeline:leaf', source: 'base' }),
+  ]));
+  const plan = await planFromComparison(f, refs);
+  expect(plan.plan.dryRun.status, JSON.stringify(plan.plan.dryRun)).toBe('passed');
+  const done = await f.service.executePlan({ planId: plan.plan.planId, artifactSha256: plan.identity.sha256, executeOperationId: 'stage-replay' });
+  expect(done.status).toBe('READY');
+  const opened = await NodeChangeStoreStatic.openByChangeId(done.changeId, f.dataDir);
+  expect(JSON.parse(opened!.record.workingFiles['content/timelines/parent.json']!).clips[0]).toMatchObject({ timelineId: 'leaf', repeat: 2 });
+  expect(treeSnapshot(f.projectRoot)).toEqual(baseline);
+  leaf.tracks[0]!.cues[0]!.x = 60;
+  fs.writeFileSync(path.join(f.projectRoot, 'content/timelines/leaf.json'), JSON.stringify(leaf));
+  expect((await f.service.compare(refs)).comparison.status).toBe('review-only');
+  expect(fs.readFileSync(path.join(f.projectRoot, 'content/timelines/leaf.json'), 'utf8')).toBe(JSON.stringify(leaf));
+}, 30_000);

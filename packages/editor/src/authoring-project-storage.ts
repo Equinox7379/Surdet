@@ -1,3 +1,5 @@
+import { readProjectStage, stagePinnedSourcePaths } from '@surdet/core';
+import { inspectStageConfig, applyStageConfigPatch, parseProjectConfigDocument } from '@surdet/authoring';
 import {
   AuthoringOperationError,
   InMemoryChangeRepository,
@@ -106,6 +108,8 @@ export async function loadEditorProjectSnapshot(): Promise<Awaited<ReturnType<ty
 
 /** 角色表编辑行（UI 行模型；avatar 空串 = 清除，与共享操作 null 语义对应）。 */
 export interface CharacterTableEditRow {
+  /** Explicit local creation intent, never inferred from a missing old declaration. */
+  create?: true;
   id: string;
   name: string;
   avatar: string;
@@ -239,13 +243,17 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
   const speakerMigrations: SpeakerMigrationImpact[] = [];
   const assetPaths = assetPathsFromFiles(await base.listFiles());
   const physicalAssets = buildAssetCatalog(assetPaths);
+  if (new Set(rows.map(row => row.id)).size !== rows.length) throw new AuthoringOperationError('VALIDATION_FAILED', '角色表含重复 ID');
   for (const row of rows) {
     const baseline = baselineOf(row.id);
-    if (baseline === undefined) {
-      throw new AuthoringOperationError('OBJECT_NOT_FOUND', `角色不存在：${row.id}`);
+    if (row.create === true && Object.prototype.hasOwnProperty.call(table, row.id)) {
+      throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `新角色 ID 已存在：${row.id}`);
     }
-    const nameChanged = row.name !== baseline.name;
-    const avatarChanged = row.avatar !== baseline.avatar;
+    if (baseline === undefined && row.create !== true) {
+      throw new AuthoringOperationError('OBJECT_NOT_FOUND', `原角色不存在，请重新读取项目，不会自动重建：${row.id}`);
+    }
+    const nameChanged = baseline === undefined || row.name !== baseline.name;
+    const avatarChanged = baseline === undefined ? row.avatar !== '' : row.avatar !== baseline.avatar;
     const portraitEntries = new Map<string, Map<string, string>>();
     for (const portrait of row.portraits ?? []) {
       const expressions = portraitEntries.get(portrait.outfit) ?? new Map<string, string>();
@@ -254,7 +262,7 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
       portraitEntries.set(portrait.outfit, expressions);
     }
     const portraits = Object.fromEntries([...portraitEntries].map(([outfit, expressions]) => [outfit, Object.fromEntries(expressions)]));
-    const portraitsChanged = row.portraits !== undefined && stableStringify(portraits) !== stableStringify(baseline.portraits);
+    const portraitsChanged = row.portraits !== undefined && stableStringify(portraits) !== stableStringify(baseline?.portraits ?? {});
     if (!nameChanged && !avatarChanged && !portraitsChanged) continue;
     const result = await applyCharacterEnsure(session, {
       operationId: `editor:character.ensure:${row.id}`,
@@ -307,4 +315,59 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
     scene.dirty = scene.text !== migrated;
   }
   return { changeId: session.record.changeId, updatedText, changed, speakerMigrations };
+}
+
+
+/** Narrow stage writer: the same source-preserving authoring transaction used
+ * by the character table. Source application is explicit and direct-only. */
+export async function commitStageConfiguration(stageValue: Record<string, unknown> | null, expectedConfigText: string): Promise<{ text: string; before: unknown; after: unknown }> {
+  const root = state.dirHandle, handle = state.handles.gameConfig;
+  const name = state.dirName;
+  if (!root || !handle || state.reviewWorkspace !== null || state.reviewPreviewReadOnly || state.projectLoading)
+    throw new Error('舞台配置只可保存到当前可写项目，不能改写审阅结果。');
+  if (state.gameConfigText !== expectedConfigText) throw new Error('配置已经改变，请刷新舞台配置。');
+  const beforeConfig = parseProjectConfigDocument(expectedConfigText || '{}');
+  readProjectStage({ stage: stageValue });
+  const editorStorage = createEditorProjectStorage();
+  const snapshot = await loadProjectSnapshot(editorStorage, editorStorage);
+  const pins = new Set(stagePinnedSourcePaths({ stage: stageValue }));
+  const assetFiles = await Promise.all(state.dirAssets.flatMap(asset => {
+    const sourcePath = asset.sourcePath ?? (asset.handle ? assetPathForHandle(asset.handle) : undefined);
+    if (!sourcePath) return [];
+    return [(async () => {
+      if (!pins.has(sourcePath)) return { path: sourcePath, bytes: asset.bytes };
+      if (!asset.handle) throw new Error(`校准素材不可读取：${sourcePath}`);
+      const file = await asset.handle.getFile(), bytes = await file.arrayBuffer();
+      const sha256 = hex(await crypto.subtle.digest('SHA-256', bytes));
+      return { path: sourcePath, bytes: bytes.byteLength, sha256 };
+    })()];
+  }));
+  if (state.dirHandle !== root || state.handles.gameConfig !== handle || state.dirName !== name || state.gameConfigText !== expectedConfigText) throw new Error('校准读取期间项目已变化。');
+  const before = await inspectStageConfig(beforeConfig, editorStorage);
+  const session = await beginChange(snapshot, new InMemoryChangeRepository());
+  session.record.composition = { ...session.record.composition!, mode: 'direct' };
+  // Replace only the supported stage object; omitted tables should not retain
+  // an old value when the human explicitly edited the complete stage form.
+  const patch = stageValue === null ? null : Object.fromEntries(['version', 'design', 'positions', 'distances', 'portraits', 'compositions']
+    .map(key => [key, stageValue[key] ?? (key === 'version' ? 1 : null)]));
+  const result = await applyStageConfigPatch(session, { operationId: crypto.randomUUID(), expectedFingerprint: before.fingerprint, patch }, editorStorage,
+    buildAssetCatalog(assetFiles, snapshot, { gallery: state.configFiles.gallery }));
+  const text = session.record.workingFiles['game.config.json']!;
+  const validationStorage: ProjectStorage = { ...editorStorage,
+    readText: async path => { if (path === 'game.config.json') return { path, text, bytes: bytesOf(text), sha256: await editorStorage.sha256(text) }; return editorStorage.readText(path); } };
+  const changedSnapshot = await loadProjectSnapshot(validationStorage, editorStorage);
+  const validation = validateSnapshot(changedSnapshot, buildObjectIndex(changedSnapshot), { assetCatalog: buildAssetCatalog(assetFiles, changedSnapshot, { gallery: state.configFiles.gallery }) });
+  if (!validation.ok) throw new Error(validation.issues.filter(issue => issue.severity === 'error').map(issue => issue.text).join('\n'));
+  await recordValidation(session, { evidenceId: `editor-stage-${crypto.randomUUID()}`, errors: 0 });
+  const sceneHandles = new Map<string, FileSystemFileHandle>();
+  for (const scene of state.scenes.values()) if (scene.handle) sceneHandles.set(scenarioPath(scene), scene.handle);
+  const committed = await commitChange(session, new EditorWriteStorage(editorStorage, handle, sceneHandles));
+  const actual = committed.files.includes('game.config.json') ? session.record.workingFiles['game.config.json'] : undefined;
+  if (actual === undefined) {
+    if (text === expectedConfigText) return { text, before: before.value, after: result.stageConfig.value };
+    throw new Error('舞台配置事务未返回已写入正文。');
+  }
+  if (state.dirHandle !== root || state.handles.gameConfig !== handle || state.dirName !== name) throw new Error('原项目配置已写入，但当前项目已切换；没有覆盖当前项目内存。');
+  state.gameConfigText = actual;
+  return { text: actual, before: before.value, after: result.stageConfig.value };
 }

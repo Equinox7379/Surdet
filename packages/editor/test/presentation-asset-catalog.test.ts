@@ -29,6 +29,8 @@ describe('presentation asset catalog', () => {
       sourcePath: 'content/assets/bg/night_field.svg',
       format: 'svg',
       resolved: true,
+      usage: { scene: { kind: 'instruction', name: 'bg', args: ['"night_field"'] },
+        timeline: { kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'night_field' }] } },
     });
     const lynn = catalog.portraits[0];
     expect(lynn).toEqual({
@@ -41,6 +43,8 @@ describe('presentation asset catalog', () => {
       sourcePath: 'content/assets/portrait/lynn_uniform_night.svg',
       format: 'svg',
       resolved: true,
+      usage: { scene: { kind: 'instruction', name: 'show', args: ['"lynn:uniform"', '"night"'], modifiers: { pos: 'center' } },
+        timeline: { kind: 'portrait', target: 'lynn:uniform', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'show', expression: 'night', position: 'center' }] } },
     });
   });
 

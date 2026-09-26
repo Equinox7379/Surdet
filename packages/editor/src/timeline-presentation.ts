@@ -21,6 +21,7 @@ export interface TimelineAssetChoice {
 }
 
 const TRACK_LABELS: Record<TimelineTrackKind, string> = {
+  layer: '环境 / 前景',
   background: '背景',
   portrait: '角色立绘',
   camera: '镜头',
@@ -30,12 +31,14 @@ const TRACK_LABELS: Record<TimelineTrackKind, string> = {
 };
 
 const ACTION_LABELS: Record<TimelineTrackKind, Readonly<Record<string, string>>> = {
+  layer: { show: '显示图层', hide: '隐藏图层', pose: '变换图层' },
   background: { set: '设置背景' },
   portrait: {
     show: '显示角色',
     hide: '隐藏角色',
     move: '移动角色',
     expression: '切换表情',
+    pose: '独立变换',
   },
   camera: {
     zoom: '缩放镜头',

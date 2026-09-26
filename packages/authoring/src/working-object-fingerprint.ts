@@ -14,6 +14,7 @@ export type ComposableObjectRef =
   | `gallery:cgs:${string}`
   | 'config:characters'
   | 'config:fonts'
+  | 'config:stage'
   | 'config:portraits'
   | 'config:entryScene';
 
@@ -108,6 +109,7 @@ function readWorkingObject(workingFiles: Readonly<Record<string, string>>, objec
   }
 
   const config = parseConfigObject(workingFiles['game.config.json']);
+  if (objectRef === 'config:stage') return present(parseProjectConfigDocument(workingFiles['game.config.json'] ?? '{}').stage ?? null);
   if (objectRef === 'config:fonts') return present(resolveProjectFontPaths(parseProjectConfigDocument(workingFiles['game.config.json'] ?? '{}')));
   if (objectRef === 'config:portraits') return present(projectPortraitOverrides(parseProjectConfigDocument(workingFiles['game.config.json'] ?? '{}')));
   if (objectRef.startsWith('variable:')) {

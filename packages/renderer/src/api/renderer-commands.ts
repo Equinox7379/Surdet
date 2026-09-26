@@ -32,7 +32,7 @@ export type RendererFontRole = 'title' | 'body' | 'ui';
 
 export interface AssetCommands {
   registerBackground(key: string, source: RendererAssetSource, format?: string): Promise<void>;
-  registerPortrait(charId: string, costume: string, expression: string, source: RendererAssetSource, format?: string): Promise<void>;
+  registerPortrait(charId: string, costume: string, expression: string, source: RendererAssetSource, format?: string, sourcePath?: string): Promise<void>;
   registerAvatar(key: string, source: RendererAssetSource, format?: string): Promise<void>;
   /** URL ownership stays with the host; decoding occurs when the video is played. */
   registerVideo(key: string, source: RendererAssetSource, sourcePath?: string): Promise<void>;
@@ -44,6 +44,8 @@ export interface AssetCommands {
 }
 
 export interface WorldCommands {
+  /** Finite stage commands; legacy adapters without this port must reject new stage content. */
+  applyStage?(command: import('@surdet/core').StageCommand): void;
   setBackground(key: string | null): void;
   setPortrait(key: string, view: PortraitView): void;
   removePortrait(key: string): void;
@@ -68,6 +70,7 @@ export interface WorldCommands {
  * capabilities are kept on the concrete world owner rather than on Facade.
  */
 export interface WorldProjectionPort extends WorldCommands {
+  inspectStage?(): import('@surdet/core').StageInspection;
   readonly needsUpdate: boolean;
   setFrameRequest(handler: FrameRequestHandler | null): void;
   update(deltaMs: number): void;

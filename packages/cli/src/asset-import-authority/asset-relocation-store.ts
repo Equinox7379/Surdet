@@ -103,7 +103,21 @@ function validateRecord(operationId: string, value: AssetRelocationStoredOperati
       sourceIdentity: value.undoReceipt.sourceIdentity,
     }];
   }
-  let valid = value?.schemaVersion === 1;
+  const replacement = value?.schemaVersion === 2 && request?.replacement !== undefined && value?.replacement !== undefined;
+  const replacementFacts = plan?.schemaVersion === 2 ? plan.replacement : undefined;
+  let valid = (value?.schemaVersion === 1 && value.replacement === undefined && request?.replacement === undefined && replacementFacts === undefined)
+    || (replacement && request.moves?.length === 1 && request.sourcePath === request.targetPath
+      && typeof request.replacement!.sourceId === 'string' && request.replacement!.sourceId.length > 0
+      && validRelativePath(request.replacement!.sourcePath) && SHA256.test(request.replacement!.sha256)
+      && value.replacement!.preparedRelativePath === `.surdet/asset-relocation/${operationId}/prepared/replacement.bin`
+      && (value.replacement!.preparedIdentity === null || validEvidence(value.replacement!.preparedIdentity))
+      && replacementFacts !== undefined && replacementFacts.afterSha256 === request.replacement!.sha256
+      && replacementFacts.beforeSha256 === value.binaryBaseline?.source.sha256
+      && replacementFacts.sourcePath === request.replacement!.sourcePath && replacementFacts.sourceId === request.replacement!.sourceId
+      && Number.isSafeInteger(replacementFacts.bytes) && replacementFacts.bytes > 0
+      && replacementFacts.noChange === (replacementFacts.beforeSha256 === replacementFacts.afterSha256)
+      && Array.isArray(replacementFacts.references)
+      && value.textFiles?.length === 0);
   valid = valid
     && request.operationId === operationId
     && Array.isArray(request.moves)
@@ -113,14 +127,14 @@ function validateRecord(operationId: string, value: AssetRelocationStoredOperati
       && validRelativePath(move.targetPath)
       && move.sourcePath.startsWith('content/assets/')
       && move.targetPath.startsWith('content/assets/')
-      && move.sourcePath !== move.targetPath)
+      && (replacement ? move.sourcePath === move.targetPath : move.sourcePath !== move.targetPath))
     && request.sourcePath === request.moves[0]?.sourcePath
     && request.targetPath === request.moves[0]?.targetPath
     && validRelativePath(request.sourcePath)
     && validRelativePath(request.targetPath)
     && request.sourcePath.startsWith('content/assets/')
     && request.targetPath.startsWith('content/assets/')
-    && request.sourcePath !== request.targetPath
+    && (replacement || request.sourcePath !== request.targetPath)
     && journal?.operationId === operationId
     && journal.schemaVersion === 1
     && Number.isSafeInteger(journal.journalVersion)

@@ -2,6 +2,8 @@
 
 本指南面向编写剧情、配置与演出的内容作者。默认使用正式 Agent Port 工具，在隔离草稿中修改、验证和试玩；不需要先读引擎源码、长期台账或重新接线播放器。已有项目保持原位，新项目使用现有模板。
 
+本批公开创作合同为 **2.16.0**，新增素材整理／原位替换及有限舞台配置能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+
 ## 0. 准备项目与会话
 
 环境已可用时不要重装依赖或全量重建。由获授权的执行者创建新项目、启动会话；已绑定会话直接进入能力发现。
@@ -207,7 +209,7 @@ Editor 的合法场景改名会同步已知引用及 `player.endScenes` 等结�
 
 角色资料沿用 `character.ensure`：`name` 是默认显示名，`avatar` 是 avatars 中的实际键。需要让某个服装／表情使用另一张立绘时，direct 草稿可传 `portraits: { "coat": { "smile": "content/assets/portrait/实际角色_实际服装_实际表情.png" } }`；路径必须复制当前目录返回的完整 sourcePath。这会替换该角色的整份显式映射，省略 portraits 保留原值，传 null 清除映射并恢复文件名发现。未配置的槽仍按“角色_服装_表情”发现；配置了却缺文件或解码失败会明确报错，不静默改用旧图。`project.inspect` 的 characters[].declaration 与 charactersFingerprint 提供当前值和修改指纹；修改后重新读取 `project.assets(view:working)`，configured 和 overriddenSourcePaths 会标出显式绑定及其覆盖的原文件，usage 使用最终逻辑键。未知角色字段保留。
 
-人类可在 Editor“配置 → 角色”展开服装／表情绑定，添加一行、填写服装与表情、从项目立绘中选图，再点“保存角色表”或“保存全部”。编辑支持原配置撤销，未保存不写磁盘；移除绑定只恢复该槽的自动发现，不删除图片。重复槽、不完整字段和不存在的图片会拒绝保存，保留草稿供修正。
+人类可在 Editor“配置 → 角色”填写 ID 和显示名，点击“添加角色”建立首个或新的未保存角色；“取消新增”只撤销该草稿，不删除已有角色。仍须保存角色表才写入文件，原角色缺失不会被误当成新增。随后可展开服装／表情绑定，添加一行、填写服装与表情、从项目立绘中选图，再点“保存角色表”或“保存全部”。编辑支持原配置撤销，未保存不写磁盘；移除绑定只恢复该槽的自动发现，不删除图片。重复槽、不完整字段和不存在的图片会拒绝保存，保留草稿供修正。
 
 Player、Editor 的工作稿试玩读取对应版本的角色资料。候选可以使用基线映射并核对 config:portraits 状态，但禁止修改 portraits 或删除带映射的角色；原 name/avatar 候选操作仍可用。映射与物理素材分别保留各自依赖，先导入再建候选。原安全素材移动会同步更新映射的完整路径；涉及显式槽本身的服装／表情语义改名会要求先调整资料，不以全文替换猜测。
 
@@ -253,11 +255,76 @@ Player、Editor 的工作稿试玩读取对应版本的角色资料。候选可�
 4. 在 apply 会话用原 operationId 和返回的 plan.planFingerprint 调用 `asset.import.commit`；不覆盖同名文件。portrait 文件名遵守 role_outfit_expression 三段规则，背景 kind 用 background。不同表情各导入一张，不能将一张图改名冒充多个表情。
 5. 重新读取 project.assets/project.inspect，确认发布后能找到新素材，再 change.begin。后续仍走普通草稿、验证与获授权写回。响应丢失先 asset.import.inspect 原 operationId，需要恢复时按回执使用 asset.import.recover，不换号重复发布。
 
-声音分别使用 `music`（bgm）、`ambience`、`sound-effect`（se）、`voice`，视频使用 `video`，字体使用 `font`；`fileName` 只填保留原格式的单个文件名，不填目录。每文件最多 32 MiB、每批 32 项且总计 128 MiB，许可证/说明单文件另限 1 MiB。新媒体发布后可在 `project.assets.intelligence.items` 查看物理路径、用途和引用。声音键按四个声道独立解析，`@bgm`、`@ambience`、`@se`、`@voice` 使用各自的真实键，含空格时用引号包住；普通 Player 与 Editor 试玩均可使用环境音。导入回执不是运行验收；视频使用 `@video "真实素材键"`，会阻塞至结束或点击跳过；Player 与 Editor 都从项目素材解析，不要改入口文件手接 URL。坏视频会报告具体文件与原因，Editor 试玩会记为失败；不能以剧情仍能继续就称该视频通过。字体使用上文“项目展示配置”的公开读写；其余 P2 工作仍在施工，不得仅凭媒体已列出或入包就承诺完整可播或可分发。
+声音分别使用 `music`（bgm）、`ambience`、`sound-effect`（se）、`voice`，视频使用 `video`，字体使用 `font`；`fileName` 只填保留原格式的单个文件名，不填目录。每文件最多 32 MiB、每批 32 项且总计 128 MiB，许可证/说明单文件另限 1 MiB。新媒体发布后可在 `project.assets.intelligence.items` 查看物理路径、用途和引用。声音键按四个声道独立解析，`@bgm`、`@ambience`、`@se`、`@voice` 使用各自的真实键，含空格时用引号包住；普通 Player 与 Editor 试玩均可使用环境音。导入回执不是运行验收；视频使用 `@video "真实素材键"`，会阻塞至结束或点击跳过；Player 与 Editor 都从项目素材解析，不要改入口文件手接 URL。坏视频会报告具体文件与原因，Editor 试玩会记为失败；不能以剧情仍能继续就称该视频通过。字体使用上文“项目展示配置”的公开读写；素材整理与替换使用下节的原 authority；不得仅凭媒体已列出或入包就承诺全部平台可播或已取得分发许可。
 
 字体与随附的许可证/说明放在同一个 `asset.import.stage.items` 批次：字体项用 `kind: "font"`，原许可文件项用 `kind: "license"`，其余来源、摘要、操作身份和封存步骤相同；许可项写入 `content/assets/licenses/`，保留原字节（包括 BOM/换行），不改写或生成替代许可。文件名冲突应在封存前明确指定不冲突的名称，不能覆盖已有文件。来源未提供许可时不要编造，需由作品作者确认素材授权。
 
 公开目录会识别 licenses 目录及现有 font/fonts 目录内的许可说明，不把它们算成未使用媒体，也不提供剧本插入指令。正常 Web 构建会收集这些原文并使用构建文件名；新模板与内置示例使用 `build.rollupOptions.output.assetFileNames: "assets/[name]-[hash][extname]"`，无扩展名文件不会生成末尾的点。已有自定义 Vite 配置也须保留这一命名规则，或使用原本具有 TXT/MD 扩展名的许可文件；不要删除许可来消除构建问题。最终交付应核对构建目录确有原文，导入成功不等于取得商业使用许可。
+
+### 整理现有素材与原位替换
+
+两种操作继续使用已有素材整理事务，不进入剧情 change，也不借普通导入覆盖旧文件。先保存／处理所有人类草稿，结束未确认的写入；权限或恢复状态不满足时读取原操作状态，不绕过保护。
+
+**移动或改名**：调用 `asset.relocation.plan`，传新 UUID 的 `operationId` 与 `moves: [{ sourcePath, targetPath }]`。路径必须取当前素材目录，目标须在同类已有目录，扩展名不改变，不覆盖其他文件。支持现有背景、立绘、头像、四类声音、视频、字体及许可证。计划列出实际场景、选择项行内指令、时间轴、角色映射、字体／鉴赏／舞台配置引用；不明自定义引用或重名会阻止发布，不以全文替换猜测语义。许可文件只移动原字节，没有剧本播放指令。显式角色槽本身的语义改名仍先调整角色资料。
+
+**只替换文件内容**：保持现有路径、键及引用，先经 `asset.sources` 读取已授权目录中的新文件和 SHA-256，再调用：
+
+```json
+{
+  "operationId": "本次新 UUID",
+  "targetPath": "project.assets 返回的现有 sourcePath",
+  "source": { "sourceId": "授权来源 ID", "path": "来源目录内新文件路径", "sha256": "刚读取的摘要" }
+}
+```
+
+以上参数交给 `asset.relocation.replace`，不是 `asset.import.stage`。新旧文件须为相同且入口已支持的格式；本次不转码，不用 SVG 等未通过来源格式校验的文件冒充受支持替换。单文件最多 32 MiB，许可文本另受 1 MiB 的现有来源校验限制。计划 `replacement` 包含 `beforeSha256`、`afterSha256`、`bytes`、`sourceId`、`sourcePath`、`noChange` 和现有引用。原文件此时不变；摘要相同会明确 no-change，不换文件身份。替换图片不会自动认可旧校准，旧校准摘要不同须重新读取并确认。
+
+两种计划均用 `asset.relocation.commit({operationId, planFingerprint})` 发布，需要 apply 权限。查询用 `asset.relocation.inspect`；计划未发布可 `cancel`；中断用 `recover({operationId, action:"resume"|"rollback"})`；成功后用原 `receiptId` 与 `receiptFingerprint` 调 `undo`。相同操作号不得绑定不同来源或计划。发布、恢复、撤销都会重验原件、准备文件、备份和路径身份；发现第三方新内容时保留它并报告阻断。终态历史仍可读取，不代表旧回执能覆盖后来合法修改。
+
+Editor 在原素材详情使用“移动或重命名”“替换文件内容”，核对摘要／影响后显式确认。完成后重新读取项目，原键应显示新内容；替换使用原整理历史和撤销入口。没有另一个隐藏写入通道，也不自动修改许可证或通知其他人。
+
+### 独立人物、环境图层与可复用演出
+
+先 `project.inspect({view:"working"})` 读取 `stageConfig` 的 `value`、`effective` 与 `fingerprint`。未配置 `stage` 的旧项目仍保留旧显示默认值。需要新舞台时，在 OPEN direct 草稿用 `project.stage-config.patch({operationId, expectedFingerprint, patch})`；candidate／integration 禁止改变该配置，但可引用封存时的配置和素材。`patch:null` 明确关闭新配置；省略的顶层字段保留，命名表整体替换，不把深层部分对象误当成合并。
+
+`stage` 版本为 1，可配置 `design:{width,height}`、`positions:{名称:{x,y}}`、`distances:{名称:倍率}`、`portraits` 和 `compositions`。坐标使用设计舞台像素，与浏览器显示缩放分离。位置／距离是预设，显式 x/y/scale 覆盖其对应值。校准按 `portraits["角色:服装"]` 设置基准 `height`、`anchorX/anchorY` 和 `expressions[表情]:{x,y,width,height}`；范围只用于归一化锚点和可见身高，**不裁掉图片、不扫描透明通道、不重写原图**。`sources[表情]:{path,sha256,width,height}` 固定作者实际确认的图片；同名同尺寸的新字节也会触发重新校准要求。
+
+```text
+@show rin:coat normal @pos=left @scale=1.1 @facing=left @opacity=.8 @z=2
+@pose rin:coat 600 @x=780 @scale=1.25 @easing=inOutSine
+@layer rail "项目背景键" @band=foreground @parallax=1.2
+@pose layer:rail 400 @opacity=.5
+@layer rail @off
+@stage pier
+```
+
+例中的角色和图片键必须先在项目中存在，`pier` 也须先声明。`@pose` 不会移动全局镜头；只给 x 不夺取 scale、opacity 等其他属性。`show` 在同一实例换表情时保留已有姿态；用 `@instance=实例名` 可区分显示实例与角色资源。`@bg` 不会偷偷清除角色／前景。构图 `background` 省略表示保留，null 表示清除；`layers` 省略保留，空数组清除；`keepActors` 默认为 true，`resetCamera` 默认为 false。
+
+舞台从后至前是背景、environment、人物、foreground，z 只在本区域排序，不能跨到 UI。layer 的 parallax 控制平移差异。新数值非有限、透明度越界、零／负缩放、非法命名距离或缺失资源都应先修正，不依赖运行时悄悄夹取。
+
+精确返修用 `scene.patch` 的 `patchStageProperties`：先读取当前指令或选择项对象的 `objectRef`、`fingerprint` 与 `details.stageInstructions`，按名称、参数选中实际指令，再复制其 `instructionIndex`。同一选择项可能有多个舞台指令；不要把源码行号当成编译位置。编辑器中的舞台配置、校准和构图修改进入同一配置草稿，参与未保存保护、保存全部及配置撤销/重做；保存前不改变项目文件。
+
+时间轴 **version 2** 增加 portrait 的 `pose`，layer 的 `show/hide/pose`，以及 `clips`。原 version 1 保留旧动作合同。例：先以原 `timeline.create` 建立 leaf，再建立含引用的 parent，不复制 leaf 的轨道：
+
+```json
+{
+  "version": 2, "id": "parent", "durationMs": 2300, "tracks": [],
+  "clips": [{ "timelineId": "leaf", "atMs": 100, "repeat": 2, "gapMs": 100,
+    "targets": { "rin:coat": "left-instance" } }]
+}
+```
+
+leaf 在本例中最长 1000 ms。repeat 为 1..100；引用深度最多 16、每定义最多 256 个 clip、展开预算 10000，总时长最多 600000 ms。缺失、成环、越界、无法区分类型或碰撞的目标映射会拒绝。`targets` 改的是舞台实例，原立绘资源由 cue 的 source 保留；不能把映射后的实例当成素材键。版本升级和片段修改仍走 `timeline.patch` 的 `setVersion`／`setClips`，需要刚读取的完整时间轴指纹。引用定义和传递子定义都纳入操作时点的依赖与重放指纹，不能只凭根 JSON 未变沿用旧候选。
+
+独立变换的竞争以属性为单位，后开始者接管同一对象的同一属性；不同属性可并行。完整一次性最终投影、演出时钟及中段展示快照由现有 Controller／TimelinePlayer／World 管理。读档前先验证展示载荷、来源与校准，不从头重播已经触发的瞬时音效。不把单纯事件轨迹当作真实像素或听感证明。
+
+### 在 Editor 调整当前画面
+
+在原剧情预览展开“舞台对象与演出调整”，点击“暂停并读取舞台”。对象列表包含透明、重叠、画面外对象；先选择对象和要改的**属性来源**，再输入数值或拖动。未属于当前来源的属性不会被顺手回写。临时画面不改变源文件、不作为正式观察。
+
+Esc 或“取消调整”恢复暂存前画面；数值框 Enter 或“应用到选定来源”才写入对应来源。场景指令／选择项行内动作经原 scene.patch 路径，时间轴经原 timeline.patch，产生一个原有历史点；仍须正常保存草稿。项目切换、源版本改变、待确认保存、只读结果都拒绝迟到回写并保留试改值。应用后使用已记录的 seed、选择和播放位置重新执行，而非从另一条随机路线冒充原画面。引用片段修改须明确确认修改的是定义，会影响它的全部调用。
+
+“舞台配置与图片校准”单独读取实际图片、人工填写／拖选可见范围、确认后加入草稿，再显式保存配置。配置经原写入事务保存，提供本面板的明确撤销；不与普通角色移动草稿混为同一写入。参考图／测试截图不是 Owner 美术验收；正式作品仍需使用自己的已授权资源检查。
 
 ## 2. DSL 速查
 
@@ -330,7 +397,7 @@ Player、Editor 的工作稿试玩读取对应版本的角色资料。候选可�
 }
 ```
 
-轨道类型：`background`、`portrait`、`camera`、`screen`、`particle`、`audio`。cue 使用 `atMs`、`durationMs`、`action`，动作字段按轨道类型填写；缓动支持 `linear`、`inOutSine`、`outCubic`、`inOutCubic`。先用 `@timeline intro_arrival` 做非阻塞演出；需要演出完成后才继续台词时使用 `@ blocking`。保存、读档和快进会处理时间轴游标与最终状态，禁止在脚本中手动重复补一遍同样的演出。
+版本 1 轨道类型：`background`、`portrait`、`camera`、`screen`、`particle`、`audio`；版本 2 另含 `layer`，详见上文独立舞台与引用片段。cue 使用 `atMs`、`durationMs`、`action`，动作字段按轨道类型填写；缓动支持 `linear`、`inOutSine`、`outCubic`、`inOutCubic`。先用 `@timeline intro_arrival` 做非阻塞演出；需要演出完成后才继续台词时使用 `@ blocking`。保存、读档和快进会处理时间轴游标与最终状态，禁止在脚本中手动重复补一遍同样的演出。
 
 镜头轨道支持 `zoom`（`scale` 0.25..4）、`pan`（`x`/`y` 为像素偏移）和 `shake`（`strength` 0..64）；屏幕轨道支持 `fade`、`tint`、`flash`、`wipe`。`tint` 的颜色和透明度会随 cue 缓动同步变化。编辑器中 cue 中段控制开始时间，右端控制时长，曲线用于确认缓动形状。
 

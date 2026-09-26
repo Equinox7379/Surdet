@@ -99,6 +99,7 @@ export type AssetRelocationReferenceChange = ProjectAssetRelocationPlan['referen
 export type AssetRelocationBlocker = ProjectAssetRelocationPlan['blockers'][number];
 
 export interface AssetRelocationPublicPlan {
+  replacement?: ProjectAssetRelocationBatchPlan['replacement'];
   schemaVersion: 1 | 2;
   operationId: string;
   planId: string;
@@ -115,6 +116,7 @@ export interface AssetRelocationPublicPlan {
 }
 
 export interface AssetRelocationRequest {
+  replacement?: { sourceId: string; sourcePath: string; sha256: string };
   operationId: string;
   sourcePath: string;
   targetPath: string;
@@ -334,6 +336,7 @@ export interface AssetImportAuthorityClient {
   resume(operationId: string): Promise<AssetImportOperationDetail>;
   recover(operationId: string, input: { action: 'resume' | 'rollback' }): Promise<AssetImportOperationDetail>;
   undo(operationId: string, input: { receiptId: string; receiptSha256: string }): Promise<{ operation: AssetImportOperationSummary; undoReceipt: AssetImportUndoReceipt }>;
+  relocationReplace?(input: { operationId: string; targetPath: string; sourcePath: string; sha256: string }, bytes: Blob): Promise<AssetRelocationTokenResult>;
   relocationPlan(input: AssetRelocationPlanInput): Promise<AssetRelocationTokenResult>;
   relocationList(): Promise<AssetRelocationDiscovery>;
   relocationQuery(operationId: string): Promise<AssetRelocationDetail>;
@@ -730,11 +733,21 @@ function parseRelocationPublicPlan(value: unknown): AssetRelocationPublicPlan {
     'affectedFileCount', 'affectedReferenceCount', 'blockers', 'operationId', 'planFingerprint',
     'planId', 'referenceChanges', 'schemaVersion', 'source', 'status', 'target',
   ]);
-  const batch = schemaVersion === 2 && hasExactKeys(value, [
+  const batch = schemaVersion === 2 && hasRequiredKeys(value, [
     'affectedAssetCount', 'affectedFileCount', 'affectedReferenceCount', 'blockers', 'moves',
     'operationId', 'planFingerprint', 'planId', 'referenceChanges', 'schemaVersion', 'source', 'status', 'target',
-  ]);
+  ], ['replacement']);
   if (!legacy && !batch) throw invalidResponse();
+  const replacement = value.replacement;
+  if (replacement !== undefined && (!batch || !isRecord(replacement)
+    || !hasExactKeys(replacement, ['beforeSha256', 'afterSha256', 'bytes', 'sourceId', 'sourcePath', 'noChange', 'references'])
+    || !isSha256(replacement.beforeSha256) || !isSha256(replacement.afterSha256) || !Number.isSafeInteger(replacement.bytes) || Number(replacement.bytes) <= 0
+    || !isSafeText(replacement.sourceId, 256) || !isProjectRelativePath(replacement.sourcePath) || !Array.isArray(replacement.references)
+    || replacement.noChange !== (replacement.beforeSha256 === replacement.afterSha256))) throw invalidResponse();
+  if (isRecord(replacement)) for (const ref of replacement.references as unknown[]) {
+    if (!isRecord(ref) || !isSafeText(ref.referenceId, 256) || !isSafeText(ref.sourceLabel, 512)
+      || !isProjectRelativePath(ref.sourcePath) || !RELOCATION_REFERENCE_SOURCES.has(String(ref.sourceKind))) throw invalidResponse();
+  }
   const source = value.source === null ? null : parseRelocationDescriptor(value.source);
   const target = value.target === null ? null : parseRelocationDescriptor(value.target);
   const referenceChanges = value.referenceChanges.map(parseRelocationReferenceChange);
@@ -754,7 +767,7 @@ function parseRelocationPublicPlan(value: unknown): AssetRelocationPublicPlan {
       : [];
   const affectedAssetCount = batch ? value.affectedAssetCount : value.status === 'ready' ? moves.length : 0;
   if (!Number.isSafeInteger(affectedAssetCount) || (affectedAssetCount as number) < 0
-    || (value.status === 'ready' && affectedAssetCount !== moves.length)
+    || (value.status === 'ready' && affectedAssetCount !== (isRecord(replacement) && replacement.noChange ? 0 : moves.length))
     || (value.status === 'blocked' && affectedAssetCount !== 0)) throw invalidResponse();
   if (value.affectedReferenceCount !== referenceChanges.length
     || (value.status === 'ready' && blockers.length > 0)
@@ -793,7 +806,7 @@ function parseRelocationOperation(value: unknown): AssetRelocationOperation {
 
 function parseRelocationRequest(value: unknown): AssetRelocationRequest {
   if (!isRecord(value)
-    || !hasRequiredKeys(value, ['operationId', 'sourcePath', 'targetPath'], ['moves'])
+    || !hasRequiredKeys(value, ['operationId', 'sourcePath', 'targetPath'], ['moves', 'replacement'])
     || !isUuid(value.operationId)
     || !isProjectRelativePath(value.sourcePath)
     || !isProjectRelativePath(value.targetPath)) throw invalidResponse();
@@ -924,8 +937,13 @@ function parseRelocationDetail(value: unknown): AssetRelocationDetail {
     || !Array.isArray(value.allowedActions)
     || !value.allowedActions.every((entry) => typeof entry === 'string' && RELOCATION_ALLOWED_ACTIONS.has(entry))) throw invalidResponse();
   const request = parseRelocationRequest(value.request);
+  if (request.replacement && (!isRecord(request.replacement) || !hasExactKeys(request.replacement, ['sourceId', 'sourcePath', 'sha256'])
+    || !isSafeText(request.replacement.sourceId, 256) || !isProjectRelativePath(request.replacement.sourcePath) || !isSha256(request.replacement.sha256))) throw invalidResponse();
   const operation = parseRelocationOperation(value.operation);
   const plan = parseRelocationPublicPlan(value.plan);
+  if (request.replacement ? !plan.replacement || request.moves.length !== 1 || request.sourcePath !== request.targetPath
+    || request.replacement.sha256 !== plan.replacement.afterSha256 || request.replacement.sourceId !== plan.replacement.sourceId || request.replacement.sourcePath !== plan.replacement.sourcePath
+    : plan.replacement !== undefined) throw invalidResponse();
   const receipt = value.receipt === null ? null : parseRelocationReceipt(value.receipt);
   const undoReceipt = value.undoReceipt === null ? null : parseRelocationUndoReceipt(value.undoReceipt);
   if (operation.operationId !== request.operationId
@@ -1296,7 +1314,7 @@ export function createAssetImportAuthorityClient(
     suffix: string,
     body: unknown,
     parser: (value: unknown) => T,
-    auth: { binding?: boolean; operationId?: string; operationKind?: OperationKind } = {},
+    auth: { binding?: boolean; operationId?: string; operationKind?: OperationKind; raw?: Blob; extraHeaders?: Record<string, string> } = {},
   ): Promise<T> => {
     const config = requireConfiguration();
     if (auth.binding === true && bindingToken === null) {
@@ -1307,8 +1325,8 @@ export function createAssetImportAuthorityClient(
     try {
       const response = await fetcher!(`${config.endpoint}${suffix}`, {
         method: 'POST',
-        headers: headersFor(auth.operationId, auth.operationKind),
-        body: JSON.stringify(body),
+        headers: { ...headersFor(auth.operationId, auth.operationKind), ...auth.extraHeaders },
+        body: auth.raw ?? JSON.stringify(body),
         cache: 'no-store',
         credentials: 'same-origin',
         signal: controller.signal,
@@ -1629,6 +1647,17 @@ export function createAssetImportAuthorityClient(
     return result;
   };
 
+  const relocationReplace = async (input: { operationId: string; targetPath: string; sourcePath: string; sha256: string }, bytes: Blob): Promise<AssetRelocationTokenResult> => {
+    requireRelocationOperationId(input.operationId); requireRelocationFingerprint(input.sha256);
+    if (!isProjectRelativePath(input.targetPath) || !isProjectRelativePath(input.sourcePath) || bytes.size <= 0) throw invalidResponse();
+    const result = await request('/relocations/replace', null, parseRelocationTokenResult, { binding: true, operationKind: 'relocation', raw: bytes,
+      extraHeaders: { 'Content-Type': 'application/octet-stream', 'x-surdet-replacement': encodeURIComponent(JSON.stringify(input)) } });
+    const detail = requireRelocationDetailOperation(result.detail, input.operationId);
+    if (detail.request.targetPath !== input.targetPath || detail.plan.replacement?.afterSha256 !== input.sha256) throw invalidResponse();
+    operationTokens.set(operationTokenKey('relocation', input.operationId), result.operationToken);
+    return { ...result, detail };
+  };
+
   const relocationPlan = async (input: AssetRelocationPlanInput): Promise<AssetRelocationTokenResult> => {
     const normalized = requireRelocationPlanInput(input);
     const result = await request(
@@ -1872,6 +1901,7 @@ export function createAssetImportAuthorityClient(
     resume,
     recover,
     undo,
+    relocationReplace,
     relocationPlan,
     relocationList,
     relocationQuery,

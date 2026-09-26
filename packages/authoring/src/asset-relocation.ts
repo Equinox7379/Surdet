@@ -1,4 +1,4 @@
-import { projectPortraitOverrides, splitOutsideQuotes } from '@surdet/core';
+import { findChoiceArrow, projectPortraitOverrides, splitOutsideQuotes } from '@surdet/core';
 import type {
   ProjectAssetFileFact,
   ProjectAssetKind,
@@ -14,8 +14,8 @@ import type {
   ProjectFile,
   TextHasher,
 } from './contracts.js';
-import { describeProjectAssetPath } from './asset-intelligence.js';
-import { isProjectAssetFileNameSafe } from './asset-import.js';
+import { describeProjectAssetPath, isProjectAssetFormatSupported, mediaAssetCommand } from './asset-intelligence.js';
+import { isProjectAssetFileNameSafe, isProjectLicenseFileName } from './asset-import.js';
 import { normalizeProjectPath } from './project-storage.js';
 import type { ProjectSnapshot } from './project-snapshot.js';
 import {
@@ -27,9 +27,12 @@ import {
   splitInstruction,
 } from './scene-document.js';
 
-const SUPPORTED_KINDS = new Set<ProjectAssetKind>(['background', 'portrait', 'avatar']);
+export const PROJECT_ASSET_RELOCATION_KINDS: readonly ProjectAssetKind[] = [
+  'background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license',
+];
+const SUPPORTED_KINDS = new Set(PROJECT_ASSET_RELOCATION_KINDS);
 const KNOWN_ASSET_INSTRUCTIONS = new Set([
-  'bg', 'show', 'hide', 'mov', 'bgm', 'ambience', 'se', 'voice', 'video', 'unlock_cg', 'unlock_music',
+  'bg', 'show', 'hide', 'mov', 'pose', 'layer', 'stage', 'bgm', 'ambience', 'se', 'voice', 'video', 'unlock_cg', 'unlock_music',
 ]);
 const CODE_EXTENSIONS = new Set(['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'json']);
 const OPAQUE_ROOTS = ['src', 'scripts', 'test', 'tests'] as const;
@@ -103,6 +106,7 @@ interface JsonStringLocation {
 }
 
 interface JsonReplacement {
+  locationKind?: 'key' | 'value';
   path: JsonPath;
   before: string;
   after: string;
@@ -288,10 +292,9 @@ function jsonStringLocations(source: string): JsonStringLocation[] {
 function replaceJsonStrings(source: string, replacements: readonly JsonReplacement[]): string {
   if (replacements.length === 0) return source;
   const locations = new Map(jsonStringLocations(source)
-    .filter((location) => location.kind === 'value')
-    .map((location) => [pathKey(location.path), location]));
+    .map((location) => [`${location.kind}:${pathKey(location.path)}`, location]));
   const edits = replacements.map((replacement) => {
-    const location = locations.get(pathKey(replacement.path));
+    const location = locations.get(`${replacement.locationKind ?? 'value'}:${pathKey(replacement.path)}`);
     if (location === undefined || location.value !== replacement.before) {
       throw new Error(`JSON_RELOCATION_PRECONDITION_FAILED: ${pathKey(replacement.path)}`);
     }
@@ -448,12 +451,13 @@ function addJsonOpaqueBlockers(
     const topLevel = location.path[0];
     const knownConfigValue = sourcePath === 'game.config.json'
       && typeof topLevel === 'string'
-      && (['title', 'version', 'entryScene', 'variables', 'customInstructions', 'fonts'].includes(topLevel)
+      && (['title', 'version', 'entryScene', 'variables', 'customInstructions'].includes(topLevel)
+        || (topLevel === 'fonts' && location.kind === 'key')
         || (topLevel === 'player' && ['subtitle', 'endScenes', 'firstRunHint'].includes(String(location.path[1])))
         || (topLevel === 'characters'
-          && !(location.kind === 'value' && location.path.at(-1) === 'avatar')));
+          && (location.kind === 'key' || location.path.at(-1) === 'name')));
     if (knownConfigValue) continue;
-    if ((location.kind === 'value' && knownPaths.has(pathKey(location.path))) || !tokens.includes(location.value)) continue;
+    if (knownPaths.has(`${location.kind}:` + pathKey(location.path)) || (location.kind === 'value' && knownPaths.has(pathKey(location.path))) || !tokens.includes(location.value)) continue;
     addBlocker(
       blockers,
       'ASSET_RELOCATION_OPAQUE_REFERENCE',
@@ -488,7 +492,13 @@ function sceneRewrite(
       });
     };
 
-    if (source.kind === 'background' && parsed.name === 'bg' && args[0] === source.key && target.key !== source.key) {
+    const mediaCommand = mediaAssetCommand(source.kind);
+    if (mediaCommand !== undefined && parsed.name === mediaCommand && args[0] === source.key
+      && target.key !== source.key && !(mediaCommand === 'ambience' && args[0] === 'off')) {
+      addChange(0, mediaCommand, source.key, target.key);
+    } else if (source.kind === 'background' && parsed.name === 'layer' && args[1] === source.key && target.key !== source.key) {
+      addChange(1, 'layer.key', source.key, target.key);
+    } else if (source.kind === 'background' && parsed.name === 'bg' && args[0] === source.key && target.key !== source.key) {
       addChange(0, 'bg', source.key, target.key);
     } else if (source.kind === 'portrait' && parsed.name === 'show') {
       const key = args[0] === undefined ? '' : normalizePortraitTarget(args[0]);
@@ -497,7 +507,7 @@ function sceneRewrite(
         if (target.key !== source.key) addChange(0, 'show.target', args[0] ?? source.key, target.key);
         if (target.variant !== source.variant) addChange(1, 'show.expression', expression, target.variant ?? expression);
       }
-    } else if (source.kind === 'portrait' && (parsed.name === 'hide' || parsed.name === 'mov')) {
+    } else if (source.kind === 'portrait' && (parsed.name === 'hide' || parsed.name === 'mov' || parsed.name === 'pose')) {
       const rawKey = args[0]?.trim() ?? '';
       if (rawKey.includes(':') && rawKey === source.key && target.key !== source.key) {
         addChange(0, `${parsed.name}.target`, rawKey, target.key);
@@ -530,9 +540,9 @@ function sceneRewrite(
     if (line.kind === 'instr') lines[index] = { ...line, raw: rewrite(line.raw, index + 1) };
     if (line.kind !== 'choice-option') return;
     // 与 Core choice parser 使用同一箭头规则，指令分段复用其引号感知 lexer。
-    const arrow = /\s->(?:\s|$)/.exec(line.raw);
+    const arrow = findChoiceArrow(line.raw);
     if (!arrow) return;
-    const end = arrow.index + arrow[0].length;
+    const end = arrow.end;
     const parts = splitOutsideQuotes(line.raw.slice(end), '@');
     const inline = parts.map((part, n) => n === 0 ? part : rewrite(`@${part}`, index + 1, `inline.${n}.`).slice(1)).join('@');
     lines[index] = { ...line, raw: line.raw.slice(0, end) + inline };
@@ -565,10 +575,10 @@ function timelineRewrite(
     const track = isRecord(trackValue) ? trackValue : null;
     if (track === null) return;
     const cues = Array.isArray(track.cues) ? track.cues : [];
-    if (track.kind === 'background') {
+    if (track.kind === 'background' || track.kind === 'layer') {
       cues.forEach((cueValue, cueIndex) => {
         const cue = isRecord(cueValue) ? cueValue : null;
-        if (cue?.action !== 'set' || typeof cue.key !== 'string') return;
+        if (cue === null || (track.kind === 'background' ? cue.action !== 'set' : cue.action !== 'show') || typeof cue.key !== 'string') return;
         const path: JsonPath = ['tracks', trackIndex, 'cues', cueIndex, 'key'];
         knownPaths.add(pathKey(path));
         if (source.kind === 'background' && cue.key === source.key && target.key !== source.key) {
@@ -581,7 +591,37 @@ function timelineRewrite(
         }
       });
     }
+    if (track.kind === 'audio') {
+      for (const [cueIndex, cueValue] of cues.entries()) {
+        const cue = isRecord(cueValue) ? cueValue : null;
+        if (!cue || !['bgm', 'se', 'voice'].includes(String(cue.action)) || typeof cue.key !== 'string') continue;
+        const path: JsonPath = ['tracks', trackIndex, 'cues', cueIndex, 'key'];
+        knownPaths.add(pathKey(path));
+        if (cue.action === mediaAssetCommand(source.kind) && cue.key === source.key && source.key !== target.key) {
+          replacements.push({ path, before: cue.key, after: target.key,
+            reference: reference('timeline', file.path, `时间轴 · 轨道 ${trackIndex + 1} · 片段 ${cueIndex + 1}`,
+              `audio.${String(cue.action)}.key`, `timeline:${file.path}:${trackIndex}:${cueIndex}:key`) });
+        }
+      }
+    }
+    if (track.kind === 'layer') knownPaths.add(pathKey(['tracks', trackIndex, 'target']));
     if (track.kind !== 'portrait' || typeof track.target !== 'string') return;
+    const explicit = root.version === 2 ? cues.filter(value => isRecord(value) && ['show', 'expression'].includes(String(value.action)) && typeof value.source === 'string') : [];
+    for (const value of explicit) {
+      const cue = value as Record<string, unknown>, index = cues.indexOf(value);
+      const origin: JsonPath = ['tracks', trackIndex, 'cues', index, 'source'];
+      const expression: JsonPath = ['tracks', trackIndex, 'cues', index, 'expression'];
+      knownPaths.add(pathKey(origin)); knownPaths.add(pathKey(expression));
+      if (source.kind !== 'portrait' || cue.source !== source.key) continue;
+      if (source.key !== target.key && options.rewritePortraitTarget !== false) replacements.push({ path: origin, before: source.key, after: target.key,
+        reference: reference('timeline', file.path, `时间轴轨道 ${trackIndex + 1}`, 'portrait.source', `timeline:${file.path}:${trackIndex}:${index}:source`) });
+      if (cue.expression === source.variant && source.variant !== target.variant) replacements.push({ path: expression, before: String(cue.expression), after: target.variant!,
+        reference: reference('timeline', file.path, `时间轴轨道 ${trackIndex + 1}`, 'portrait.expression', `timeline:${file.path}:${trackIndex}:${index}:expression`) });
+    }
+    // An explicitly sourced track names a display instance, not an asset slot.
+    if (explicit.length > 0 && cues.every(value => !isRecord(value) || !['show', 'expression'].includes(String(value.action)) || typeof value.source === 'string')) {
+      knownPaths.add(pathKey(['tracks', trackIndex, 'target'])); return;
+    }
     const targetPath: JsonPath = ['tracks', trackIndex, 'target'];
     knownPaths.add(pathKey(targetPath));
     const normalizedTarget = track.target.includes(':') ? track.target : `${track.target}:normal`;
@@ -623,7 +663,7 @@ function timelineRewrite(
     if (source.kind === 'portrait' && (fullMatch || defaultMatch)) {
       cues.forEach((cueValue, cueIndex) => {
         const cue = isRecord(cueValue) ? cueValue : null;
-        if (cue === null || !['show', 'expression'].includes(String(cue.action))) return;
+        if (cue === null || !['show', 'expression'].includes(String(cue.action)) || root.version === 2 && typeof cue.source === 'string') return;
         const path: JsonPath = ['tracks', trackIndex, 'cues', cueIndex, 'expression'];
         if (typeof cue.expression === 'string') knownPaths.add(pathKey(path));
         if (typeof cue.expression !== 'string' && source.variant === 'normal' && target.variant !== source.variant) {
@@ -667,6 +707,19 @@ function configRewrite(
   const replacements: JsonReplacement[] = [];
   const knownPaths = new Set<string>();
   const characters = isRecord(root.characters) ? root.characters : {};
+  collectStageRelocation(root, file, source, target, replacements, knownPaths, blockers);
+  // Preserve dormant paths too: deleting the modern table later must not
+  // reactivate a legacy reference to the old location.
+  const fontPaths: JsonPath[] = [['font'], ['fonts', 'body'], ['fonts', 'title'], ['fonts', 'ui']];
+  for (const path of fontPaths) {
+    const value = path.length === 1 ? root.font : isRecord(root.fonts) ? root.fonts[path[1] as string] : undefined;
+    if (typeof value !== 'string') continue;
+    knownPaths.add(pathKey(path));
+    if (source.kind === 'font' && value === source.path && source.path !== target.path) {
+      replacements.push({ path, before: value, after: target.path,
+        reference: reference('config', file.path, `项目字体 ${path.join('.')}`, path.join('.'), `config:${path.join(':')}`) });
+    }
+  }
   for (const portrait of projectPortraitOverrides(root)) {
     const path: JsonPath = ['characters', portrait.role, 'portraits', portrait.outfit, portrait.expression];
     knownPaths.add(pathKey(path));
@@ -721,34 +774,46 @@ function galleryRewrite(
   }
   const replacements: JsonReplacement[] = [];
   const knownPaths = new Set<string>();
-  const cgs = Array.isArray(root.cgs) ? root.cgs : [];
-  cgs.forEach((value, index) => {
-    const entry = isRecord(value) ? value : null;
-    if (entry === null) return;
-    if (typeof entry.id === 'string') knownPaths.add(pathKey(['cgs', index, 'id']));
-    if (typeof entry.src === 'string' && entry.src.trim().length > 0) {
-      const path: JsonPath = ['cgs', index, 'src'];
-      knownPaths.add(pathKey(path));
-      if (source.kind === 'background' && entry.src === source.key && target.key !== source.key) {
-        replacements.push({
-          path,
-          before: source.key,
-          after: target.key,
-          reference: reference('gallery', file.path, `鉴赏条目 ${typeof entry.name === 'string' ? entry.name : entry.id ?? index + 1}`, 'cgs.src', `gallery:cgs:${index}:src`),
-        });
+  const insertions: Array<{ idPath: JsonPath; value: string; change: ProjectAssetRelocationReferenceChange }> = [];
+  for (const [field, kind] of [['cgs', 'background'], ['music', 'music']] as const) {
+    const entries = Array.isArray(root[field]) ? root[field] as unknown[] : [];
+    entries.forEach((value, index) => {
+      const entry = isRecord(value) ? value : null;
+      if (entry === null) return;
+      for (const metadata of ['id', 'name', 'description']) {
+        if (typeof entry[metadata] === 'string') knownPaths.add(pathKey([field, index, metadata]));
       }
-    } else if (source.kind === 'background' && entry.id === source.key && target.key !== source.key) {
-      addBlocker(
-        blockers,
-        'ASSET_RELOCATION_OPAQUE_REFERENCE',
-        '鉴赏条目省略了素材来源并使用条目 ID 作为背景键，不能自动重命名。',
-        file.path,
-      );
-    }
-  });
+      const path: JsonPath = [field, index, 'src'];
+      if (typeof entry.src === 'string') knownPaths.add(pathKey(path));
+      const effectiveSource = typeof entry.src === 'string' && entry.src.trim() ? entry.src.trim() : entry.id;
+      if (source.kind !== kind || effectiveSource !== source.key || source.key === target.key) return;
+      const item = reference('gallery', file.path,
+        `鉴赏条目 ${typeof entry.name === 'string' ? entry.name : entry.id ?? index + 1}`,
+        `${field}.src`, `gallery:${field}:${index}:src`);
+      if (typeof entry.src === 'string') {
+        replacements.push({ path, before: entry.src, after: target.key, reference: item });
+      } else if (entry.src === undefined && typeof entry.id === 'string') {
+        // Keep collection identity and unlock instructions. Materialize only
+        // the formerly implicit media source in this same text transaction.
+        knownPaths.add(pathKey(path));
+        insertions.push({ idPath: [field, index, 'id'], value: target.key,
+          change: { ...item, before: source.key, after: target.key } });
+      } else {
+        addBlocker(blockers, 'ASSET_RELOCATION_OPAQUE_REFERENCE', '鉴赏素材来源类型无效，不能安全更新。', file.path);
+      }
+    });
+  }
+  let text = replaceJsonStrings(file.text, replacements);
+  const locations = jsonStringLocations(text);
+  const edits = insertions.map((item) => {
+    const location = locations.find(value => value.kind === 'value' && pathKey(value.path) === pathKey(item.idPath));
+    if (!location) throw new Error('GALLERY_IMPLICIT_SOURCE_LOCATION_MISSING');
+    return { offset: location.end, value: `, "src": ${JSON.stringify(item.value)}` };
+  }).sort((left, right) => right.offset - left.offset);
+  for (const edit of edits) text = text.slice(0, edit.offset) + edit.value + text.slice(edit.offset);
   return {
-    text: replaceJsonStrings(file.text, replacements),
-    references: replacements.map((item) => ({ ...item.reference, before: item.before, after: item.after })),
+    text,
+    references: [...replacements.map((item) => ({ ...item.reference, before: item.before, after: item.after })), ...insertions.map(item => item.change)],
     knownPaths,
   };
 }
@@ -831,8 +896,8 @@ export async function planProjectAssetRelocation(
       || matches[0]!.sha256 !== input.binaryBaseline.source.sha256)) {
       addBlocker(blockers, 'ASSET_RELOCATION_SCAN_INCOMPLETE', '源素材内容与本次二进制基线不一致。', source.path);
     }
-    if (!SUPPORTED_KINDS.has(source.kind)) {
-      addBlocker(blockers, 'ASSET_RELOCATION_UNSUPPORTED_KIND', '第一版只支持背景、立绘和头像素材。', source.path);
+    if (!SUPPORTED_KINDS.has(source.kind) || !isProjectAssetFormatSupported(source.kind, source.format)) {
+      addBlocker(blockers, 'ASSET_RELOCATION_UNSUPPORTED_KIND', '该素材类别或格式尚未接入安全整理。', source.path);
     }
     if (source.kind === 'portrait' && source.invalidName) {
       addBlocker(blockers, 'ASSET_RELOCATION_PORTRAIT_NAME_INVALID', '源立绘名称不符合“角色_服装_表情”结构，不能推断其引用。', source.path);
@@ -872,6 +937,12 @@ export async function planProjectAssetRelocation(
     }
     if (!safeAssetFileName(target.fileName)) {
       addBlocker(blockers, 'ASSET_RELOCATION_TARGET_NAME_INVALID', '目标文件名包含当前平台不允许的字符或保留名称。', target.path);
+    }
+    if (target.kind === 'ambience' && target.key === 'off') {
+      addBlocker(blockers, 'ASSET_RELOCATION_RESERVED_KEY', 'off 是环境音停止指令，不能作为整理后的播放键。', target.path);
+    }
+    if (target.kind === 'license' && !isProjectLicenseFileName(target.fileName)) {
+      addBlocker(blockers, 'ASSET_RELOCATION_TARGET_NAME_INVALID', '许可证须保留受支持的文本文件名，不能通过改名变成媒体。', target.path);
     }
     const directories = new Set(input.assetDirectories.map(safeNormalizePath).filter((value): value is string => value !== null).map(portableFold));
     if (!directories.has(portableFold(directoryOf(target.path)))) {
@@ -1094,11 +1165,13 @@ function batchPlaceholder(
     const candidate: ProjectAssetPathDescriptor = source.kind !== 'portrait'
       ? (() => {
         const key = `surdetbatch${nonce}${suffix}`;
+        const fileName = source.format ? `${key}.${source.format}` : key;
+        const path = `${source.directory}/${fileName}`;
         return {
           ...source,
-          path: `${source.directory}/${key}.${source.format}`,
-          fileName: `${key}.${source.format}`,
-          key,
+          path,
+          fileName,
+          key: source.kind === 'font' || source.kind === 'license' ? path : key,
           invalidName: false,
         };
       })()
@@ -1551,4 +1624,55 @@ export async function planProjectAssetRelocationBatch(
     scannedFiles,
     binaryBaselines: moves.map((move) => move.binaryBaseline),
   };
+}
+
+
+/** Stage fields are part of the same exact JSON text edit, not a second save. */
+function collectStageRelocation(root: Record<string, unknown>, file: ProjectFile, source: ProjectAssetPathDescriptor,
+  target: ProjectAssetPathDescriptor, edits: JsonReplacement[], known: Set<string>, blockers: ProjectAssetRelocationBlocker[]): void {
+  const stage = isRecord(root.stage) ? root.stage : {};
+  const knownKey = (path: JsonPath) => known.add('key:' + pathKey(path));
+  const change = (path: JsonPath, value: unknown, before: string, after: string, label: string, kind: 'key' | 'value' = 'value') => {
+    if (kind === 'key') knownKey(path); else known.add(pathKey(path));
+    if (value !== before || before === after) return;
+    edits.push({ path, before, after, locationKind: kind,
+      reference: reference('config', file.path, label, 'stage', `stage:${pathKey(path)}:${kind}`) });
+  };
+  const compositions = isRecord(stage.compositions) ? stage.compositions : {};
+  for (const [id, value] of Object.entries(compositions)) {
+    knownKey(['stage', 'compositions', id]); if (!isRecord(value)) continue;
+    const prefix: JsonPath = ['stage', 'compositions', id];
+    if (typeof value.background === 'string') known.add(pathKey([...prefix, 'background']));
+    if (source.kind === 'background') change([...prefix, 'background'], value.background, source.key, target.key, `构图 ${id} 背景`);
+    if (Array.isArray(value.layers)) value.layers.forEach((layer, index) => {
+      if (!isRecord(layer)) return;
+      const layerPath: JsonPath = [...prefix, 'layers', index];
+      for (const field of ['id', 'band', 'key']) known.add(pathKey([...layerPath, field]));
+      if (source.kind === 'background') change([...layerPath, 'key'], layer.key, source.key, target.key, `构图 ${id} 图层 ${String(layer.id)}`);
+    });
+  }
+  for (const field of ['positions', 'distances']) if (isRecord(stage[field])) for (const id of Object.keys(stage[field])) knownKey(['stage', field, id]);
+  const profiles = isRecord(stage.portraits) ? stage.portraits : {};
+  for (const [id, raw] of Object.entries(profiles)) {
+    if (!isRecord(raw)) continue;
+    const prefix: JsonPath = ['stage', 'portraits', id]; knownKey(prefix);
+    if (source.kind === 'portrait' && id === source.key && source.key !== target.key) {
+      if (Object.hasOwn(profiles, target.key)) addBlocker(blockers, 'ASSET_RELOCATION_OPAQUE_REFERENCE', '目标校准已存在，不会覆盖。', file.path);
+      else change(prefix, id, source.key, target.key, `舞台校准 ${id}`, 'key');
+    }
+    for (const field of ['expressions', 'sources']) {
+      const variants = isRecord(raw[field]) ? raw[field] : {};
+      for (const [expression, value] of Object.entries(variants)) {
+        const path: JsonPath = [...prefix, field, expression]; knownKey(path);
+        if (source.kind === 'portrait' && (id === source.key || id === target.key) && expression === source.variant && source.variant !== target.variant) {
+          if (Object.hasOwn(variants, target.variant!)) addBlocker(blockers, 'ASSET_RELOCATION_OPAQUE_REFERENCE', '目标表情校准已存在，不会覆盖。', file.path);
+          else change(path, expression, expression, target.variant!, `表情校准 ${id}:${expression}`, 'key');
+        }
+        if (field === 'sources' && isRecord(value)) {
+          known.add(pathKey([...path, 'path'])); known.add(pathKey([...path, 'sha256']));
+          if (source.kind === 'portrait') change([...path, 'path'], value.path, source.path, target.path, `校准图片 ${id}:${expression}`);
+        }
+      }
+    }
+  }
 }

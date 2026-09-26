@@ -21,9 +21,20 @@ import { DEFAULT_POST_PROCESS, normalizePostProcess, type PostProcessSettings } 
 import { WorldEffectsController, type ShakeDirection, type TransitionName } from '../../world-effects-controller.js';
 import type { TimelineFrameEvent } from '../../timeline-player.js';
 import type { FrameRequestHandler, PortraitView } from '../../types.js';
+import type { ProjectStage, StageCommand, StageLayerDefinition, StagePose, StageGeometryPolicy, StageSource, StageInspection } from '../../stage-geometry.js';
+import { StageMotionController, prepareStageMotions, type StageMotionSnapshot, type StageProperty, type StageValues } from '../../stage-motion.js';
 
 export interface WorldPresentationSnapshot {
-  version: 1;
+  version: 1 | 2;
+  design?: { width: number; height: number };
+  layers?: readonly StageLayerDefinition[];
+  motions?: StageMotionSnapshot;
+  stageConfigKey?: string;
+  objectSources?: [string, StageSource][];
+  transitions?: {
+    background?: { oldKey: string; remain: number; duration: number };
+    portraits: { key: string; oldView: PortraitView; remain: number; duration: number }[];
+  };
   activeSpeakerId?: string | null;
   backgroundKey: string | null;
   portraits: readonly { key: string; view: PortraitView }[];
@@ -42,6 +53,8 @@ export interface WorldLayerDebugSnapshot {
 }
 
 export interface WorldLayerOptions {
+  readonly stage?: ProjectStage | null;
+  readonly stageGeometry?: StageGeometryPolicy;
   readonly width: number;
   readonly height: number;
   readonly assets: RenderAssetRegistry;
@@ -242,15 +255,24 @@ export class WorldLayer implements WorldProjectionPort {
   #effectRegistered = false;
 
   readonly #backgroundLayer = new Container();
+  readonly #environmentLayer = new Container();
   readonly #portraitLayer = new Container();
+  readonly #foregroundLayer = new Container();
+  readonly #stage: ProjectStage | null;
+  readonly #stageGeometry?: StageGeometryPolicy;
+  readonly #objectSources = new Map<string, StageSource>();
+  readonly #stageLayers = new Map<string, { definition: StageLayerDefinition; sprite: Sprite }>();
+  readonly #stageMotions = new StageMotionController((target, property) => this.#readStageProperty(target, property),
+    (target, patch) => this.#writeStageProperties(target, patch));
   readonly #tintOverlay: Graphics;
   readonly #worldEffects: WorldEffectsController;
   #backgroundSprite: Sprite | null = null;
   #backgroundKey: string | null = null;
-  #backgroundTransition: { old: Sprite | null; neu: Sprite; remain: number; dur: number } | null = null;
+  #backgroundTransition: { old: Sprite | null; oldKey: string | null; neu: Sprite; remain: number; dur: number } | null = null;
   #portraitSprites = new Map<string, Sprite>();
   #portraitViews = new Map<string, PortraitView>();
-  #portraitTweens: { key: string; old: Sprite; neu: Sprite; remain: number; dur: number }[] = [];
+  readonly #portraitFrames = new WeakMap<Sprite, import('@surdet/core').StageRect>();
+  #portraitTweens: { key: string; old: Sprite; neu: Sprite; remain: number; dur: number; oldView?: PortraitView }[] = [];
   #activeSpeakerId: string | null = null;
   #flashRemain = 0;
   #flashDur = 1;
@@ -276,8 +298,12 @@ export class WorldLayer implements WorldProjectionPort {
   #timelineTintStarts = new Map<object, { color: number; alpha: number }>();
 
   constructor(options: WorldLayerOptions) {
+    this.#stageGeometry = options.stageGeometry;
+    if (options.stage && !options.stageGeometry) throw new Error('Stage project geometry policy is required');
     this.#w = options.width;
     this.#h = options.height;
+    this.#stage = options.stage == null ? null : this.#geometry().parseProjectStage(options.stage);
+    if (this.#stage && (this.#stage.design.width !== this.#w || this.#stage.design.height !== this.#h)) throw new Error('舞台设计画布与 Runtime 尺寸不一致');
     this.#assets = options.assets;
     this.#lifecycle = options.lifecycle ?? new RenderLifecycle();
     this.#ownsLifecycle = options.lifecycle === undefined;
@@ -286,7 +312,10 @@ export class WorldLayer implements WorldProjectionPort {
     this.#createBackgroundTexture = options.createBackgroundTexture ?? makeWorldBackgroundTexture;
 
     this.worldContainer = new Container();
-    this.worldContainer.addChild(this.#backgroundLayer, this.#portraitLayer);
+    this.#portraitLayer.sortableChildren = true;
+    this.#environmentLayer.sortableChildren = true;
+    this.#foregroundLayer.sortableChildren = true;
+    this.worldContainer.addChild(this.#backgroundLayer, this.#environmentLayer, this.#portraitLayer, this.#foregroundLayer);
     this.particleContainer = new Container();
     this.screenContainer = new Container();
     this.wipeOverlay = new Graphics().rect(0, 0, this.#w, this.#h).fill(0x000000);
@@ -340,6 +369,7 @@ export class WorldLayer implements WorldProjectionPort {
 
   update(deltaMs: number): void {
     if (this.#disposed || !this.#hasEffectWork()) return;
+    this.#stageMotions.update(deltaMs);
     this.#worldEffects.update(deltaMs);
     if (this.#flashRemain > 0) {
       this.#flashRemain = Math.max(0, this.#flashRemain - deltaMs);
@@ -442,13 +472,224 @@ export class WorldLayer implements WorldProjectionPort {
     this.#backgroundLayer.addChildAt(sprite, 0);
   }
 
+  #geometry(): StageGeometryPolicy {
+    if (!this.#stageGeometry) throw invalidSnapshot('This World instance does not support project stage data');
+    return this.#stageGeometry;
+  }
+
+  #effectiveStage(): ProjectStage {
+    return this.#stage ?? this.#geometry().parseProjectStage({ version: 1, design: { width: this.#w, height: this.#h } });
+  }
+
+  #actorKeys(target: string): string[] {
+    return this.#portraitViews.has(target) ? [target]
+      : [...this.#portraitViews.keys()].filter(key => key.startsWith(`${target}:`));
+  }
+
+  #readPose(key: string): StagePose {
+    const view = this.#portraitViews.get(key), sprite = this.#portraitSprites.get(key);
+    if (!view || !sprite) throw new Error(`舞台对象不存在：${key}`);
+    if (view.pose) return { ...view.pose };
+    return { x: sprite.x, y: sprite.y, scale: 1, facing: 'right', opacity: sprite.alpha, z: sprite.zIndex,
+      baseHeight: Math.max(1, sprite.height), anchorX: .5, anchorY: 1 };
+  }
+
+  #explicitPoseValues(modifiers: ReadonlyMap<string, string>, pose: StagePose): StageValues {
+    const names = new Set<StageProperty>();
+    if (modifiers.has('pos')) {
+      names.add('x');
+      if (Object.prototype.hasOwnProperty.call(this.#effectiveStage().positions, modifiers.get('pos')!)) names.add('y');
+    }
+    if (modifiers.has('distance')) names.add('scale');
+    if (modifiers.has('alpha')) names.add('opacity');
+    for (const name of ['x', 'y', 'scale', 'opacity', 'z', 'facing', 'baseHeight', 'anchorX', 'anchorY'] as const) if (modifiers.has(name)) names.add(name);
+    return Object.fromEntries([...names].map(name => [name, pose[name]]));
+  }
+
+  #promoteMove(key: string): void {
+    const tween = this.#moveTweens.find(value => value.key === key);
+    this.#moveTweens = this.#moveTweens.filter(value => value.key !== key);
+    if (tween) this.#stageMotions.start(`portrait:${key}`, { x: tween.toX }, tween.remain, 'linear');
+  }
+
+  applyStage(command: StageCommand): void {
+    if (this.#disposed) return;
+    if (command.type === 'finish-timeline') { this.#stageMotions.releaseTimeline(command.runId); return; }
+    if (command.type === 'skip-motions') { this.#stageMotions.skip(); this.#requestFrame(); return; }
+    if (command.type === 'clear') {
+      this.#invalidatePreparation(); this.#clearVisibleState(true); this.#requestFrame(); return;
+    }
+    const stage = this.#effectiveStage();
+    if (command.source && !this.#geometry().validStageSource(command.source)) throw new Error('Invalid stage source');
+    if (command.type === 'show') {
+      const separator = command.target.indexOf(':');
+      const charId = separator < 0 ? command.target : command.target.slice(0, separator);
+      const costume = separator < 0 ? 'normal' : command.target.slice(separator + 1);
+      const key = command.instance ?? command.target;
+      if (!key.trim() || key.trim() !== key || /[\u0000-\u001f]/.test(key)) throw new Error('舞台实例 ID 无效');
+      const modifiers = new Map(Object.entries(command.modifiers ?? {}));
+      if (command.legacy && !this.#stage && command.instance === undefined && !this.#portraitViews.get(key)?.pose
+        && [...modifiers.keys()].every(name => name === 'pos')) {
+        this.setPortrait(key, { charId, costume, expression: command.expression, pos: modifiers.get('pos') ?? 'center' });
+        if (command.source) this.#objectSources.set(`portrait:${key}`, command.source);
+        return;
+      }
+      if (!this.#assets.resolvePortrait(charId, costume, command.expression)) throw new Error(`舞台立绘未注册：${command.target}:${command.expression}`);
+      const current = this.#portraitViews.has(key) ? this.#readPose(key) : undefined;
+      const pose = this.#geometry().stagePoseFromModifiers(stage, `${charId}:${costume}`, modifiers, current);
+      const values = this.#explicitPoseValues(modifiers, pose);
+      if (current) this.#promoteMove(key);
+      this.setPortrait(key, { charId, costume, expression: command.expression,
+        pos: modifiers.get('pos') ?? this.#portraitViews.get(key)?.pos ?? 'center', pose });
+      if (command.source) this.#objectSources.set(`portrait:${key}`, command.source);
+      if (!current) this.#stageMotions.start(`portrait:${key}`, pose, 0, 'linear', command.source);
+      else if (Object.keys(values).length) this.#stageMotions.start(`portrait:${key}`, values, 0, 'linear', command.source);
+    } else if (command.type === 'pose') {
+      const keys = this.#actorKeys(command.target);
+      if (!keys.length) throw new Error(`舞台对象不存在：${command.target}`);
+      const modifiers = new Map(Object.entries(command.modifiers));
+      const prepared = keys.map(key => {
+        const view = this.#portraitViews.get(key)!;
+        const pose = this.#geometry().stagePoseFromModifiers(stage, `${view.charId}:${view.costume}`, modifiers, this.#readPose(key));
+        const values = this.#explicitPoseValues(modifiers, pose);
+        if (!Object.keys(values).length) throw new Error('舞台变换至少需要一个明确属性');
+        return { key, values };
+      });
+      const duration = command.durationMs ?? 0;
+      if (!Number.isFinite(duration) || duration < 0 || duration > 600_000) throw new Error('舞台时长超出范围');
+      for (const item of prepared) {
+        this.#promoteMove(item.key);
+        this.#stageMotions.start(`portrait:${item.key}`, item.values, duration === 0 ? 0 : presentationDuration(duration, this.#presentation), command.easing ?? 'linear', command.source);
+      }
+    } else if (command.type === 'layer') {
+      this.#setStageLayer(this.#geometry().parseStageLayer(command.definition));
+      if (command.source) this.#objectSources.set(`layer:${command.definition.id}`, command.source);
+    } else if (command.type === 'layer-pose') {
+      const entry = this.#stageLayers.get(command.id);
+      if (!entry) throw new Error(`舞台图层不存在：${command.id}`);
+      const values: StageValues = {};
+      for (const [name, raw] of Object.entries(command.modifiers)) {
+        if (!['x', 'y', 'scale', 'opacity', 'alpha', 'z'].includes(name)) throw new Error(`图层不支持属性 ${name}`);
+        values[name === 'alpha' ? 'opacity' : name as StageProperty] = raw.trim() ? Number(raw) : NaN;
+      }
+      this.#geometry().parseStageLayer({ ...entry.definition, ...values });
+      this.#stageMotions.start(`layer:${command.id}`, values, !command.durationMs ? 0 : presentationDuration(command.durationMs, this.#presentation), command.easing ?? 'linear', command.source);
+    } else if (command.type === 'remove-layer') {
+      this.#removeStageLayer(command.id);
+    } else if (command.type === 'composition') {
+      const composition = Object.prototype.hasOwnProperty.call(stage.compositions, command.id) ? stage.compositions[command.id] : undefined;
+      if (!composition) throw new Error(`场景构图不存在：${command.id}`);
+      if (composition.background != null && !this.#assets.resolveBackground(composition.background)) throw new Error(`构图背景未注册：${composition.background}`);
+      for (const layer of composition.layers ?? []) if (!this.#assets.resolveBackground(layer.key)) throw new Error(`构图图层素材未注册：${layer.key}`);
+      // Every referenced image is checked before replacing current visible state.
+      if (composition.layers !== undefined) this.#clearStageLayers();
+      if (!(command.keepActors ?? composition.keepActors)) this.#clearPortraits();
+      if (composition.background !== undefined) this.setBackground(composition.background);
+      if (composition.resetCamera) { this.#stageMotions.cancel('camera'); this.#zoomRemain = 0; this.worldContainer.scale.set(1); this.#cameraPanX = this.#cameraPanY = 0; this.#setWorldBasePosition(); }
+      for (const layer of composition.layers ?? []) { this.#setStageLayer(layer); this.#objectSources.set(`layer:${layer.id}`, { kind: 'composition', id: command.id }); }
+    }
+    this.#invalidatePreparation();
+    this.#syncEffectRegistration();
+    this.#requestFrame();
+  }
+
+  #setStageLayer(definition: StageLayerDefinition): void {
+    const texture = this.#assets.resolveBackground(definition.key);
+    if (!texture) throw new Error(`图层素材未注册：${definition.key}`);
+    if (!this.#stageLayers.has(definition.id) && this.#stageLayers.size >= 64) throw new Error('同时显示的独立图层不能超过 64 个');
+    const sprite = new Sprite(texture);
+    const entry = { definition: { ...definition }, sprite };
+    this.#removeStageLayer(definition.id);
+    this.#stageLayers.set(definition.id, entry);
+    (definition.band === 'foreground' ? this.#foregroundLayer : this.#environmentLayer).addChild(sprite);
+    this.#projectStageLayer(entry);
+  }
+  #projectStageLayer(entry: { definition: StageLayerDefinition; sprite: Sprite }): void {
+    const { definition: layer, sprite } = entry;
+    const scale = this.worldContainer.scale.x;
+    sprite.position.set(layer.x + (layer.parallax - 1) * this.#cameraPanX / scale,
+      layer.y + (layer.parallax - 1) * this.#cameraPanY / scale);
+    sprite.scale.set(layer.scale); sprite.alpha = layer.opacity; sprite.zIndex = layer.z;
+  }
+  #removeStageLayer(id: string): void {
+    const entry = this.#stageLayers.get(id);
+    if (entry) { entry.sprite.parent?.removeChild(entry.sprite); entry.sprite.destroy(); this.#stageLayers.delete(id); }
+    this.#stageMotions.cancel(`layer:${id}`); this.#objectSources.delete(`layer:${id}`);
+  }
+  #clearStageLayers(): void { for (const id of [...this.#stageLayers.keys()]) this.#removeStageLayer(id); }
+
+  #readStageProperty(target: string, property: StageProperty): number | string {
+    if (target === 'camera') {
+      if (property === 'x') return this.#cameraPanX;
+      if (property === 'y') return this.#cameraPanY;
+      if (property === 'scale') return this.worldContainer.scale.x;
+      throw new Error(`相机不支持 ${property}`);
+    }
+    if (target.startsWith('portrait:')) return this.#readPose(target.slice(9))[property];
+    const layer = this.#stageLayers.get(target.slice(6));
+    const value = layer?.definition[property as keyof StageLayerDefinition];
+    if (typeof value !== 'number') throw new Error(`图层对象或属性不存在：${target}.${property}`);
+    return value;
+  }
+  #writeStageProperties(target: string, patch: StageValues): void {
+    if (target === 'camera') {
+      if (patch.x !== undefined) this.#cameraPanX = Number(patch.x);
+      if (patch.y !== undefined) this.#cameraPanY = Number(patch.y);
+      if (patch.scale !== undefined) this.worldContainer.scale.set(Number(patch.scale));
+      this.#setWorldBasePosition(); return;
+    }
+    if (target.startsWith('portrait:')) {
+      const key = target.slice(9), view = this.#portraitViews.get(key);
+      if (!view) return;
+      const pose = this.#geometry().validateStagePose({ ...this.#readPose(key), ...patch });
+      const next = { ...view, pose };
+      this.#portraitViews.set(key, next);
+      const sprite = this.#portraitSprites.get(key);
+      if (sprite) this.#projectPortraitPose(sprite, next);
+      for (const tween of this.#portraitTweens) if (tween.key === key) {
+        this.#projectPortraitPose(tween.old, next); this.#projectPortraitPose(tween.neu, next);
+        const p = 1 - tween.remain / tween.dur;
+        tween.old.alpha = pose.opacity * (1 - p); tween.neu.alpha = pose.opacity * p;
+      }
+    } else {
+      const layer = this.#stageLayers.get(target.slice(6));
+      if (!layer) return;
+      layer.definition = this.#geometry().parseStageLayer({ ...layer.definition, ...patch });
+      this.#projectStageLayer(layer);
+    }
+  }
+  #projectPortraitPose(sprite: Sprite, view: PortraitView): void {
+    if (!view.pose) return;
+    const pose = view.pose;
+    const frame = this.#portraitFrames.get(sprite) ?? view.frame ?? { x: 0, y: 0, width: sprite.texture.width, height: sprite.texture.height };
+    const scale = pose.baseHeight / frame.height * pose.scale;
+    sprite.anchor.set((frame.x + frame.width * pose.anchorX) / sprite.texture.width,
+      (frame.y + frame.height * pose.anchorY) / sprite.texture.height);
+    sprite.scale.set(pose.facing === 'left' ? -scale : scale, scale);
+    sprite.position.set(pose.x, pose.y); sprite.alpha = pose.opacity; sprite.zIndex = pose.z;
+  }
+
   setPortrait(key: string, view: PortraitView): void {
     if (this.#disposed) return;
-    this.#invalidatePreparation();
-    this.#requestFrame();
-    this.#portraitViews.set(key, { ...view });
     const texture = this.#assets.resolvePortrait(view.charId, view.costume, view.expression)
       ?? this.#assets.getOrCreatePortrait(`${view.charId}:${view.costume}:${view.expression}`, () => makeFallbackPortraitTexture(view.charId, view.costume, view.expression));
+    const previous = this.#portraitViews.get(key);
+    if (view.pose || previous?.pose) {
+      const pose = this.#geometry().validateStagePose(view.pose ?? previous!.pose);
+      const profile = this.#stage?.portraits[`${view.charId}:${view.costume}`];
+      const pin = profile?.sources[view.expression];
+      if (pin) {
+        const actual = this.#assets.resolvePortraitIdentity(view.charId, view.costume, view.expression);
+        if (!actual || actual.path !== pin.path || actual.sha256 !== pin.sha256 || actual.width !== pin.width || actual.height !== pin.height)
+          throw new Error(`角色图片已经改变，需重新确认校准：${view.charId}:${view.costume}:${view.expression}`);
+      }
+      const frame = this.#geometry().validateStageFrame(view.frame ?? profile?.expressions[view.expression]
+        ?? { x: 0, y: 0, width: texture.width, height: texture.height }, texture.width, texture.height);
+      view = { ...view, pose, frame };
+    }
+    this.#invalidatePreparation();
+    this.#requestFrame();
+    this.#portraitViews.set(key, { ...view, ...(view.pose ? { pose: { ...view.pose } } : {}), ...(view.frame ? { frame: { ...view.frame } } : {}) });
     const width = Math.min(this.#w * 0.48, this.#h * 1.28 * texture.width / Math.max(1, texture.height));
     const height = (texture.height / Math.max(1, texture.width)) * width;
     const x = this.#resolvePortraitX(view.pos) ?? this.#w * 0.5;
@@ -460,15 +701,29 @@ export class WorldLayer implements WorldProjectionPort {
       return;
     }
     if (existing.texture === texture) {
-      existing.position.set(x, Math.max(this.#h + 10, existing.height + this.#h * 0.025));
+      if (view.pose) {
+        if (view.frame) this.#portraitFrames.set(existing, { ...view.frame });
+        this.#projectPortraitPose(existing, view);
+      } else existing.position.set(x, Math.max(this.#h + 10, existing.height + this.#h * 0.025));
       existing.tint = this.#portraitTint(view);
       return;
     }
+    if (view.pose) {
+      // One transition owns one actor's expression. A replacement supersedes the
+      // old transition, not another actor that shares its texture.
+      const stale = this.#portraitTweens.filter(tween => tween.key === key);
+      this.#portraitTweens = this.#portraitTweens.filter(tween => tween.key !== key);
+      for (const tween of stale) if (tween.old !== existing) { tween.old.parent?.removeChild(tween.old); tween.old.destroy(); }
+      existing.alpha = view.pose.opacity;
+    }
     const next = this.#createPortraitSprite(texture, x, height, view);
     next.alpha = 0;
-    this.#portraitLayer.addChild(next);
+    if (view.pose) this.#portraitLayer.addChildAt(next, this.#portraitLayer.getChildIndex(existing) + 1);
+    else this.#portraitLayer.addChild(next);
     this.#portraitSprites.set(key, next);
-    this.#portraitTweens.push({ key, old: existing, neu: next, remain: 260, dur: 260 });
+    const dur = view.pose ? presentationDuration(260, this.#presentation) : 260;
+    this.#portraitTweens.push({ key, old: existing, neu: next, remain: dur, dur,
+      ...(view.pose && previous ? { oldView: JSON.parse(JSON.stringify(previous)) as PortraitView } : {}) });
     this.#ensureEffectRegistration();
   }
 
@@ -492,6 +747,7 @@ export class WorldLayer implements WorldProjectionPort {
       sprite.destroy();
       this.#portraitSprites.delete(candidate);
       this.#portraitViews.delete(candidate);
+      this.#stageMotions.cancel(`portrait:${candidate}`); this.#objectSources.delete(`portrait:${candidate}`);
     }
     this.#syncEffectRegistration();
   }
@@ -525,6 +781,11 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   zoom(scale = 1, durationMs = 400): void {
+    if (this.#stage || this.#stageMotions.hasState) {
+      this.#zoomRemain = 0;
+      this.#stageMotions.start('camera', { scale: Math.max(.25, Math.min(4, scale)) }, presentationDuration(durationMs, this.#presentation));
+      this.#ensureEffectRegistration(); this.#requestFrame(); return;
+    }
     this.#zoomFrom = this.worldContainer.scale.x;
     this.#zoomTo = Math.max(0.25, Math.min(4, scale));
     this.#zoomDur = presentationDuration(durationMs, this.#presentation);
@@ -542,6 +803,10 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   movePortrait(key: string, pos: string, durationMs = 400): void {
+    if (this.#actorKeys(key).some(target => this.#portraitViews.get(target)?.pose)) {
+      this.applyStage({ type: 'pose', target: key, modifiers: { pos }, durationMs });
+      return;
+    }
     const targetX = this.#resolvePortraitX(pos);
     if (targetX === null) return;
     const keys = this.#portraitSprites.has(key)
@@ -605,7 +870,93 @@ export class WorldLayer implements WorldProjectionPort {
     this.#requestFrame();
   }
 
+  #applyOwnedTimelineFrame(event: TimelineFrameEvent): boolean {
+    const cue = event.cue, target = event.target ?? '';
+    const identity = `${event.runId}/${event.cueId ?? 0}`;
+    // Legacy files retain their old pixel/layout interpretation until a new
+    // pose or an explicit stage configuration opts this target into the new model.
+    if (!this.#stage && event.definitionVersion !== 2 && !this.#stageMotions.hasState
+      && !this.#actorKeys(target).some(key => this.#portraitViews.get(key)?.pose) && this.#stageLayers.size === 0) return false;
+    const mods = new Map<string, string>();
+    for (const name of ['x', 'y', 'scale', 'opacity', 'z', 'facing', 'baseHeight', 'anchorX', 'anchorY', 'distance'] as const)
+      if (cue[name] !== undefined) mods.set(name, String(cue[name]));
+    if (cue.position !== undefined) mods.set('pos', String(cue.position));
+    if (event.track === 'portrait') {
+      if (cue.action === 'show' && event.started) {
+        const source = typeof cue.source === 'string' ? cue.source : target;
+        const existed = this.#portraitViews.has(target);
+        const desiredOpacity = mods.get('opacity') ?? (existed ? String(this.#readPose(target).opacity) : '1');
+        this.applyStage({ type: 'show', target: source, expression: String(cue.expression ?? 'normal'),
+          ...(source === target ? {} : { instance: target }), modifiers: Object.fromEntries(mods), legacy: event.definitionVersion !== 2, source: event.source });
+        // The timeline owns opacity once, including a zero-opacity start for a new actor.
+        if (!existed && cue.durationMs > 0) this.#stageMotions.start(`portrait:${target}`, { opacity: 0 });
+        this.#stageMotions.timeline(`${identity}/${target}/show`, `portrait:${target}`, { opacity: Number(desiredOpacity) }, event.progress, event.source);
+      } else if (cue.action === 'show' && this.#portraitViews.has(target)) {
+        this.#stageMotions.timeline(`${identity}/${target}/show`, `portrait:${target}`,
+          this.#stageMotions.timelineTarget(`${identity}/${target}/show`) ?? { opacity: Number(cue.opacity ?? 1) }, event.progress, event.source);
+      } else if (cue.action === 'expression' && (event.started || event.final)) {
+        const current = this.#portraitViews.get(target);
+        if (!current) throw new Error(`表情切换目标不存在：${target}`);
+        if (typeof cue.source === 'string' && cue.source !== `${current.charId}:${current.costume}`) throw new Error('表情轨道的素材身份与当前舞台实例不一致');
+        this.setPortrait(target, { ...current, frame: undefined, expression: String(cue.expression) });
+        if (event.source) this.#objectSources.set(`portrait:${target}`, event.source);
+      } else if (cue.action === 'pose' || cue.action === 'move') {
+        const keys = this.#actorKeys(target);
+        if (!keys.length && this.#stageMotions.isCueCancelled(identity)) return true;
+        if (!keys.length) throw new Error(`时间轴舞台对象不存在：${target}`);
+        const entries = keys.map(key => {
+          const view = this.#portraitViews.get(key)!;
+          const pose = this.#geometry().stagePoseFromModifiers(this.#effectiveStage(), `${view.charId}:${view.costume}`, mods, this.#readPose(key));
+          return { key, values: this.#explicitPoseValues(mods, pose) };
+        });
+        for (const entry of entries) {
+          if (event.started) this.#promoteMove(entry.key);
+          this.#stageMotions.timeline(`${identity}/${entry.key}`, `portrait:${entry.key}`, entry.values, event.progress, event.source);
+        }
+      } else if (cue.action === 'hide') {
+        for (const key of this.#actorKeys(target)) {
+          const id = `${identity}/${key}/hide`;
+          this.#stageMotions.timeline(id, `portrait:${key}`, { opacity: 0 }, event.progress, event.source);
+          if (event.progress >= 1 && this.#stageMotions.ownsTimeline(id, 'opacity')) this.removePortrait(key);
+        }
+      }
+      return true;
+    }
+    if (event.track === 'layer') {
+      if (this.#stageMotions.isCueCancelled(identity)) return true;
+      if (cue.action === 'show' && event.started) {
+        const definition = this.#geometry().parseStageLayer({ id: target, key: cue.key, band: cue.band ?? 'environment',
+          x: cue.x ?? 0, y: cue.y ?? 0, scale: cue.scale ?? 1, opacity: cue.durationMs > 0 ? 0 : cue.opacity ?? 1,
+          z: cue.z ?? 0, parallax: cue.parallax ?? 1 });
+        this.#setStageLayer(definition);
+        if (event.source) this.#objectSources.set(`layer:${target}`, event.source);
+      }
+      const entry = this.#stageLayers.get(target);
+      if (!entry) { if (cue.action === 'hide') return true; throw new Error(`时间轴图层不存在：${target}`); }
+      if (cue.action === 'show' || cue.action === 'hide') {
+        this.#stageMotions.timeline(identity, `layer:${target}`, { opacity: cue.action === 'hide' ? 0 : Number(cue.opacity ?? 1) }, event.progress, event.source);
+        if (cue.action === 'hide' && event.progress >= 1 && this.#stageMotions.ownsTimeline(identity, 'opacity')) this.#removeStageLayer(target);
+      } else if (cue.action === 'pose') {
+        const values: StageValues = {};
+        for (const name of ['x', 'y', 'scale', 'opacity', 'z'] as const) if (cue[name] !== undefined) values[name] = Number(cue[name]);
+        this.#stageMotions.timeline(identity, `layer:${target}`, values, event.progress, event.source);
+      }
+      return true;
+    }
+    if (event.track === 'camera' && (cue.action === 'pan' || cue.action === 'zoom')) {
+      const values = cue.action === 'pan' ? { x: Number(cue.x), y: Number(cue.y) } : { scale: Math.max(.25, Math.min(4, Number(cue.scale))) };
+      if (event.started) this.#zoomRemain = 0;
+      this.#stageMotions.timeline(identity, 'camera', values, event.progress, event.source);
+      return true;
+    }
+    return false;
+  }
+
   applyTimelineFrame(event: TimelineFrameEvent): void {
+    if (this.#disposed) return;
+    if (event.runId !== undefined && this.#applyOwnedTimelineFrame(event)) {
+      this.#syncEffectRegistration(); this.#requestFrame(); return;
+    }
     const cue = event.cue;
     if (event.track === 'background' && cue.action === 'set' && typeof cue.key === 'string' && (event.started || event.final)) {
       this.#startTimelineBackground(cue.key, cue.durationMs);
@@ -629,7 +980,7 @@ export class WorldLayer implements WorldProjectionPort {
         }
       } else if (cue.action === 'expression' && (event.started || event.final)) {
         const current = this.#portraitViews.get(target);
-        if (current && typeof cue.expression === 'string') this.setPortrait(target, { ...current, expression: cue.expression });
+        if (current && typeof cue.expression === 'string') this.setPortrait(target, { ...current, frame: undefined, expression: cue.expression });
       } else if (cue.action === 'move') {
         const sprite = this.#portraitSprites.get(target);
         const targetX = typeof cue.position === 'string' ? this.#resolvePortraitX(cue.position) : null;
@@ -709,12 +1060,35 @@ export class WorldLayer implements WorldProjectionPort {
     this.#syncEffectRegistration();
   }
 
+  inspectStage(): StageInspection {
+    return JSON.parse(JSON.stringify({ design: { width: this.#w, height: this.#h }, camera: { x: this.#cameraPanX, y: this.#cameraPanY, scale: this.worldContainer.scale.x },
+      objects: [
+        ...[...this.#portraitViews].map(([key, view]) => ({ id: `portrait:${key}`, target: key, kind: 'portrait',
+          charId: view.charId, costume: view.costume, expression: view.expression, pose: this.#readPose(key),
+          source: this.#objectSources.get(`portrait:${key}`) ?? null, propertySources: this.#stageMotions.sources(`portrait:${key}`) })),
+        ...[...this.#stageLayers].map(([key, entry]) => ({ id: `layer:${key}`, target: key, kind: 'layer', assetKey: entry.definition.key,
+          pose: { x: entry.definition.x, y: entry.definition.y, scale: entry.definition.scale, opacity: entry.definition.opacity, z: entry.definition.z },
+          source: this.#objectSources.get(`layer:${key}`) ?? null, propertySources: this.#stageMotions.sources(`layer:${key}`) })),
+      ] })) as StageInspection;
+  }
+
   snapshotPresentation(): WorldPresentationSnapshot {
+    const extended = this.#stage !== null || this.#stageLayers.size > 0 || this.#stageMotions.hasState || [...this.#portraitViews.values()].some(view => view.pose !== undefined);
     return {
-      version: 1,
+      version: extended ? 2 : 1,
+      ...(extended ? { design: { width: this.#w, height: this.#h },
+        layers: [...this.#stageLayers.values()].map(value => ({ ...value.definition })), motions: this.#stageMotions.snapshot(), stageConfigKey: this.#geometry().stageConfigurationKey(this.#stage),
+        objectSources: [...this.#objectSources].map(([key, source]) => [key, JSON.parse(JSON.stringify(source)) as StageSource]),
+        transitions: {
+          ...(this.#backgroundTransition?.oldKey ? { background: { oldKey: this.#backgroundTransition.oldKey,
+            remain: this.#backgroundTransition.remain, duration: this.#backgroundTransition.dur } } : {}),
+          portraits: this.#portraitTweens.filter(tween => tween.oldView).map(tween => ({ key: tween.key,
+            oldView: JSON.parse(JSON.stringify(tween.oldView)) as PortraitView, remain: tween.remain, duration: tween.dur })),
+        } } : {}),
       activeSpeakerId: this.#activeSpeakerId,
       backgroundKey: this.#backgroundKey,
-      portraits: [...this.#portraitViews.entries()].map(([key, view]) => ({ key, view: { ...view } })),
+      portraits: [...this.#portraitViews.entries()].map(([key, view]) => ({ key, view: { ...view,
+        ...(view.pose ? { pose: { ...view.pose } } : {}), ...(view.frame ? { frame: { ...view.frame } } : {}) } })),
       cameraScale: this.worldContainer.scale.x,
       cameraPan: { x: this.#cameraPanX, y: this.#cameraPanY },
       fadeAlpha: this.fadeOverlay.alpha,
@@ -747,6 +1121,7 @@ export class WorldLayer implements WorldProjectionPort {
     const preserveWorld = options.preserveWorld === true;
     this.#invalidatePreparation();
     if (!preserveWorld) {
+      this.#clearStageLayers();
       this.#clearPortraits();
       this.#clearBackground();
     } else {
@@ -809,6 +1184,7 @@ export class WorldLayer implements WorldProjectionPort {
     const next = this.#createBackgroundSprite(this.#resolveBackground(key));
     next.alpha = 0;
     const old = this.#backgroundSprite;
+    const oldKey = this.#backgroundKey;
     this.#backgroundKey = key;
     this.#backgroundSprite = next;
     this.#backgroundLayer.addChild(next);
@@ -817,7 +1193,7 @@ export class WorldLayer implements WorldProjectionPort {
       next.alpha = 1;
       return;
     }
-    this.#backgroundTransition = { old, neu: next, remain: Math.max(1, durationMs), dur: Math.max(1, durationMs) };
+    this.#backgroundTransition = { old, oldKey, neu: next, remain: Math.max(1, durationMs), dur: Math.max(1, durationMs) };
     this.#ensureEffectRegistration();
   }
 
@@ -852,6 +1228,8 @@ export class WorldLayer implements WorldProjectionPort {
     sprite.anchor.set(0.5, 1);
     sprite.position.set(x, Math.max(this.#h + 10, height + this.#h * 0.025));
     sprite.tint = this.#portraitTint(view);
+    if (view.frame) this.#portraitFrames.set(sprite, { ...view.frame });
+    if (view.pose) this.#projectPortraitPose(sprite, view);
     return sprite;
   }
 
@@ -923,8 +1301,9 @@ export class WorldLayer implements WorldProjectionPort {
       for (const tween of this.#portraitTweens) {
         tween.remain = Math.max(0, tween.remain - deltaMs);
         const progress = 1 - tween.remain / tween.dur;
-        tween.neu.alpha = progress;
-        tween.old.alpha = 1 - progress;
+        const opacity = this.#portraitViews.get(tween.key)?.pose?.opacity ?? 1;
+        tween.neu.alpha = opacity * progress;
+        tween.old.alpha = opacity * (1 - progress);
         if (tween.remain === 0) done.push(tween);
       }
       for (const tween of done) {
@@ -971,10 +1350,11 @@ export class WorldLayer implements WorldProjectionPort {
   #setWorldBasePosition(): void {
     const offset = this.#zoomBaseOffset();
     this.worldContainer.position.set(offset.x, offset.y);
+    for (const layer of this.#stageLayers.values()) this.#projectStageLayer(layer);
   }
 
   #hasEffectWork(): boolean {
-    return this.#worldEffects.needsUpdate
+    return this.#stageMotions.active || this.#worldEffects.needsUpdate
       || this.#flashRemain > 0
       || this.#zoomRemain > 0
       || this.#backgroundTransition !== null
@@ -1021,6 +1401,8 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   #clearPortraits(): void {
+    for (const key of this.#portraitViews.keys()) this.#objectSources.delete(`portrait:${key}`);
+    for (const key of this.#portraitViews.keys()) this.#stageMotions.cancel(`portrait:${key}`);
     const all = new Set<Sprite>([
       ...this.#portraitSprites.values(),
       ...this.#portraitTweens.flatMap((tween) => [tween.old, tween.neu]),
@@ -1045,7 +1427,8 @@ export class WorldLayer implements WorldProjectionPort {
     this.#backgroundKey = null;
   }
 
-  #clearEffects(options: { preserveWorld: boolean }): void {
+  #clearEffects(options: { preserveWorld: boolean; cancelActiveTimelines?: boolean }): void {
+    this.#stageMotions.clear(options.cancelActiveTimelines);
     this.#timelineMoveStarts.clear();
     this.#timelineValueStarts.clear();
     this.#timelinePanStarts.clear();
@@ -1075,17 +1458,24 @@ export class WorldLayer implements WorldProjectionPort {
     this.#syncEffectRegistration();
   }
 
-  #clearVisibleState(): void {
+  #clearVisibleState(cancelActiveTimelines = false): void {
+    this.#clearStageLayers();
     this.#clearPortraits();
     this.#clearBackground();
-    this.#clearEffects({ preserveWorld: false });
+    this.#clearEffects({ preserveWorld: false, cancelActiveTimelines });
     this.#syncEffectRegistration();
   }
 
   #prepareSnapshot(snapshot: unknown): WorldPresentationSnapshot {
     if (typeof snapshot !== 'object' || snapshot === null || Array.isArray(snapshot)) throw invalidSnapshot('Presentation snapshot must be an object');
     const raw = snapshot as Record<string, unknown>;
-    if (raw.version !== 1) throw invalidSnapshot('Presentation snapshot version must be 1');
+    if (raw.version !== 1 && raw.version !== 2) throw invalidSnapshot('Presentation snapshot version must be 1 or 2');
+    const extended = raw.version === 2;
+    if (extended) {
+      if (raw.stageConfigKey !== this.#geometry().stageConfigurationKey(this.#stage)) throw invalidSnapshot('Saved stage configuration differs from the current project');
+      const design = raw.design as { width?: unknown; height?: unknown } | undefined;
+      if (!design || design.width !== this.#w || design.height !== this.#h) throw invalidSnapshot('Stage design canvas differs from the saved canvas');
+    }
     if (raw.activeSpeakerId !== undefined && raw.activeSpeakerId !== null && typeof raw.activeSpeakerId !== 'string') throw invalidSnapshot('activeSpeakerId is invalid');
     if (!(raw.backgroundKey === null || typeof raw.backgroundKey === 'string')) throw invalidSnapshot('backgroundKey is invalid');
     if (!Array.isArray(raw.portraits)) throw invalidSnapshot('portraits must be an array');
@@ -1093,11 +1483,26 @@ export class WorldLayer implements WorldProjectionPort {
     for (const item of raw.portraits) {
       if (typeof item !== 'object' || item === null || Array.isArray(item)) throw invalidSnapshot('portrait record is invalid');
       const record = item as Record<string, unknown>;
-      const view = record.view;
-      if (typeof record.key !== 'string' || record.key.length === 0 || typeof view !== 'object' || view === null || Array.isArray(view)) throw invalidSnapshot('portrait record is invalid');
-      const candidate = view as Record<string, unknown>;
+      const rawView = record.view;
+      if (typeof record.key !== 'string' || record.key.length === 0 || typeof rawView !== 'object' || rawView === null || Array.isArray(rawView)) throw invalidSnapshot('portrait record is invalid');
+      const candidate = rawView as Record<string, unknown>;
       if (![candidate.charId, candidate.costume, candidate.expression, candidate.pos].every((value) => typeof value === 'string')) throw invalidSnapshot('portrait view is invalid');
-      portraits.push({ key: record.key, view: { charId: candidate.charId as string, costume: candidate.costume as string, expression: candidate.expression as string, pos: candidate.pos as string } });
+      if (portraits.some(value => value.key === record.key)) throw invalidSnapshot('Duplicate portrait instance identity');
+      const view: PortraitView = { charId: candidate.charId as string, costume: candidate.costume as string, expression: candidate.expression as string, pos: candidate.pos as string };
+      if (candidate.pose !== undefined) {
+        if (!extended) throw invalidSnapshot('Stage pose requires a version 2 world snapshot');
+        view.pose = this.#geometry().validateStagePose(candidate.pose);
+        const texture = this.#assets.resolvePortrait(view.charId, view.costume, view.expression);
+        if (!texture) throw invalidSnapshot(`Saved portrait asset is unavailable: ${view.charId}:${view.costume}:${view.expression}`);
+        const pin = this.#stage?.portraits[`${view.charId}:${view.costume}`]?.sources[view.expression];
+        if (pin) {
+          const actual = this.#assets.resolvePortraitIdentity(view.charId, view.costume, view.expression);
+          if (!actual || actual.path !== pin.path || actual.sha256 !== pin.sha256 || actual.width !== pin.width || actual.height !== pin.height)
+            throw invalidSnapshot('Saved calibrated portrait bytes have changed');
+        }
+        view.frame = this.#geometry().validateStageFrame(candidate.frame ?? { x: 0, y: 0, width: texture.width, height: texture.height }, texture.width, texture.height);
+      }
+      portraits.push({ key: record.key, view });
     }
     if (!finiteNumber(raw.cameraScale) || raw.cameraScale < 0.25 || raw.cameraScale > 4) throw invalidSnapshot('cameraScale is outside bounds');
     if (typeof raw.cameraPan !== 'object' || raw.cameraPan === null || Array.isArray(raw.cameraPan)) throw invalidSnapshot('cameraPan is invalid');
@@ -1108,14 +1513,61 @@ export class WorldLayer implements WorldProjectionPort {
     const tint = raw.tint as Record<string, unknown>;
     if (!finiteNumber(tint.color) || tint.color < 0 || tint.color > 0xffffff || !Number.isInteger(tint.color) || !finiteNumber(tint.alpha) || tint.alpha < 0 || tint.alpha > 1) throw invalidSnapshot('tint is outside bounds');
     if (!(raw.particleKind === null || (typeof raw.particleKind === 'string' && raw.particleKind in PARTICLE_PRESETS))) throw invalidSnapshot('particleKind is invalid');
+    const layers: StageLayerDefinition[] = [];
+    if (extended) {
+      if (!Array.isArray(raw.layers) || raw.layers.length > 64) throw invalidSnapshot('Stage layers are invalid');
+      for (const value of raw.layers) {
+        const layer = this.#geometry().parseStageLayer(value);
+        if (layers.some(existing => existing.id === layer.id)) throw invalidSnapshot('Duplicate stage layer identity');
+        if (!this.#assets.resolveBackground(layer.key)) throw invalidSnapshot(`Saved layer asset is unavailable: ${layer.key}`);
+        layers.push(layer);
+      }
+    }
+    const motions = extended ? prepareStageMotions(raw.motions, new Set(['camera',
+      ...portraits.map(value => `portrait:${value.key}`), ...layers.map(value => `layer:${value.id}`)])) : undefined;
     // Resolve every texture before touching visible state. A failure here leaves the old projection intact.
     if (typeof raw.backgroundKey === 'string') this.#resolveBackground(raw.backgroundKey);
     for (const record of portraits) {
       this.#assets.resolvePortrait(record.view.charId, record.view.costume, record.view.expression)
         ?? this.#assets.getOrCreatePortrait(`${record.view.charId}:${record.view.costume}:${record.view.expression}`, () => makeFallbackPortraitTexture(record.view.charId, record.view.costume, record.view.expression));
     }
+    if (raw.objectSources !== undefined && (!extended || !Array.isArray(raw.objectSources) || raw.objectSources.length > portraits.length + layers.length
+      || raw.objectSources.some(entry => !Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string' || !this.#geometry().validStageSource(entry[1])
+        || ![...portraits.map(value => `portrait:${value.key}`), ...layers.map(layer => `layer:${layer.id}`)].includes(entry[0])))) throw invalidSnapshot('Invalid object source map');
+    let transitions: WorldPresentationSnapshot['transitions'];
+    if (extended && raw.transitions !== undefined) {
+      const value = raw.transitions as NonNullable<WorldPresentationSnapshot['transitions']>;
+      if (!value || typeof value !== 'object' || !Array.isArray(value.portraits) || value.portraits.length > portraits.length) throw invalidSnapshot('Invalid saved visual transitions');
+      const validTime = (remain: unknown, duration: unknown): boolean => finiteNumber(remain) && finiteNumber(duration)
+        && duration > 0 && duration <= 600_000 && remain > 0 && remain <= duration;
+      const seen = new Set<string>();
+      for (const transition of value.portraits) {
+        if (!transition || typeof transition.key !== 'string' || seen.has(transition.key)
+          || !portraits.some(item => item.key === transition.key) || !validTime(transition.remain, transition.duration)) throw invalidSnapshot('Invalid saved portrait transition');
+        seen.add(transition.key);
+        const view = transition.oldView;
+        if (!view || ![view.charId, view.costume, view.expression, view.pos].every(value => typeof value === 'string')) throw invalidSnapshot('Invalid previous portrait');
+        const texture = this.#assets.resolvePortrait(view.charId, view.costume, view.expression);
+        if (!texture) throw invalidSnapshot('Previous expression is not registered');
+        const pin = this.#stage?.portraits[`${view.charId}:${view.costume}`]?.sources[view.expression];
+        if (pin) {
+          const actual = this.#assets.resolvePortraitIdentity(view.charId, view.costume, view.expression);
+          if (!actual || actual.path !== pin.path || actual.sha256 !== pin.sha256 || actual.width !== pin.width || actual.height !== pin.height)
+            throw invalidSnapshot('Previous calibrated expression bytes have changed');
+        }
+        this.#geometry().validateStagePose(view.pose);
+        if (!view.frame) throw invalidSnapshot('Previous expression is missing its calibration');
+        this.#geometry().validateStageFrame(view.frame, texture.width, texture.height);
+      }
+      if (value.background !== undefined) {
+        if (!value.background || typeof value.background.oldKey !== 'string' || raw.backgroundKey === null
+          || !validTime(value.background.remain, value.background.duration) || !this.#assets.resolveBackground(value.background.oldKey)) throw invalidSnapshot('Invalid saved background transition');
+      }
+      transitions = JSON.parse(JSON.stringify(value)) as typeof transitions;
+    }
     return {
-      version: 1,
+      version: extended ? 2 : 1,
+      ...(extended ? { design: { width: this.#w, height: this.#h }, layers, motions: motions!, stageConfigKey: raw.stageConfigKey as string, objectSources: JSON.parse(JSON.stringify(raw.objectSources ?? [])) as [string, StageSource][], ...(transitions ? { transitions } : {}) } : {}),
       activeSpeakerId: typeof raw.activeSpeakerId === 'string' ? raw.activeSpeakerId : null,
       backgroundKey: raw.backgroundKey,
       portraits,
@@ -1132,6 +1584,28 @@ export class WorldLayer implements WorldProjectionPort {
     this.#clearVisibleState();
     if (snapshot.backgroundKey !== null) this.setBackground(snapshot.backgroundKey);
     for (const record of snapshot.portraits) this.setPortrait(record.key, record.view);
+    for (const layer of snapshot.layers ?? []) this.#setStageLayer(layer);
+    if (snapshot.transitions?.background && this.#backgroundSprite) {
+      const entry = snapshot.transitions.background;
+      const old = this.#createBackgroundSprite(this.#assets.resolveBackground(entry.oldKey)!);
+      old.alpha = entry.remain / entry.duration;
+      this.#backgroundSprite.alpha = 1 - old.alpha;
+      this.#backgroundLayer.addChildAt(old, 0);
+      this.#backgroundTransition = { old, oldKey: entry.oldKey, neu: this.#backgroundSprite, remain: entry.remain, dur: entry.duration };
+    }
+    for (const entry of snapshot.transitions?.portraits ?? []) {
+      const current = this.#portraitViews.get(entry.key)!;
+      const neu = this.#portraitSprites.get(entry.key)!;
+      const oldView = { ...entry.oldView, pose: { ...current.pose! } };
+      const texture = this.#assets.resolvePortrait(oldView.charId, oldView.costume, oldView.expression)!;
+      const old = this.#createPortraitSprite(texture, oldView.pose.x, oldView.pose.baseHeight, oldView);
+      const opacity = current.pose!.opacity;
+      old.alpha = opacity * entry.remain / entry.duration;
+      neu.alpha = opacity * (1 - entry.remain / entry.duration);
+      this.#portraitLayer.addChildAt(old, this.#portraitLayer.getChildIndex(neu));
+      this.#portraitTweens.push({ key: entry.key, old, neu, remain: entry.remain, dur: entry.duration, oldView });
+    }
+    this.#syncEffectRegistration();
     this.setPortraitFocus(snapshot.activeSpeakerId ?? null);
     this.worldContainer.scale.set(snapshot.cameraScale);
     this.#cameraPanX = snapshot.cameraPan.x;
@@ -1142,5 +1616,8 @@ export class WorldLayer implements WorldProjectionPort {
     this.#tintOverlay.alpha = snapshot.tint.alpha;
     this.#tintOverlay.visible = snapshot.tint.alpha > 0.001;
     if (snapshot.particleKind !== null) this.startParticles(snapshot.particleKind);
+    if (snapshot.motions) this.#stageMotions.restore(snapshot.motions);
+    this.#objectSources.clear(); for (const [key, source] of snapshot.objectSources ?? []) this.#objectSources.set(key, source);
+    this.#syncEffectRegistration();
   }
 }

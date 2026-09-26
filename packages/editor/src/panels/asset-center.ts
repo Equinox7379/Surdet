@@ -14,6 +14,7 @@ import {
   beginAssetThumbnailSession,
   disposeAssetCenterThumbnails,
 } from './asset-center-thumbnails.js';
+import { PROJECT_ASSET_RELOCATION_KINDS } from '@surdet/authoring';
 import type { AssetRelocationWorkspaceProjection } from '../asset-relocation-workspace.js';
 import type { AssetRelocationOperationStatus } from '../asset-import-client.js';
 
@@ -67,6 +68,7 @@ export interface AssetCenterHooks {
   assetRelocation: {
     workspace: AssetRelocationWorkspaceProjection;
     availabilityMessage: string | null;
+    onReplace?: (item: ProjectAssetItem, file: File) => void;
     onBegin: (item: ProjectAssetItem, targetDirectory: string) => void;
     onBeginBatch: () => void;
     onSelectBatchItem: (item: ProjectAssetItem, selected: boolean) => void;
@@ -313,7 +315,7 @@ function filterButton(
   return button;
 }
 
-const RELOCATION_KINDS = new Set<ProjectAssetKind>(['background', 'portrait', 'avatar']);
+const RELOCATION_KINDS = new Set<ProjectAssetKind>(PROJECT_ASSET_RELOCATION_KINDS);
 const TERMINAL_RELOCATION_STATUSES = new Set<AssetRelocationOperationStatus>([
   'COMMITTED', 'UNDONE', 'ROLLED_BACK', 'CANCELLED',
 ]);
@@ -344,10 +346,11 @@ function relocationDirectoriesForKind(
   return [...directories].sort((left, right) => left.localeCompare(right, 'zh-CN'));
 }
 
-function relocationEntryIssue(item: ProjectAssetItem, hooks: AssetCenterHooks): string | null {
+function relocationEntryIssue(item: ProjectAssetItem, hooks: AssetCenterHooks, operation: 'move' | 'replace' = 'move'): string | null {
   if (!item.physical || !item.sourcePath) return '只有项目中真实存在的素材文件可以整理。';
-  if (!RELOCATION_KINDS.has(item.kind)) return '第一版先支持背景、立绘和头像素材。';
-  if (item.issues.includes('ASSET_KEY_DUPLICATE')) return '这个素材键对应多个文件，暂时无法确认要整理哪一个。';
+  if (!RELOCATION_KINDS.has(item.kind)) return '这种资源尚未接入安全整理。';
+  if (item.issues.includes('ASSET_NAME_INVALID') || item.issues.includes('ASSET_FORMAT_UNSUPPORTED')) return '请先修正素材的名称或格式，再进行整理。';
+  if (operation === 'move' && item.issues.includes('ASSET_KEY_DUPLICATE')) return '这个素材键对应多个文件，暂时无法安全移动或改名；仍可按完整路径替换文件内容。';
   return hooks.assetRelocation.availabilityMessage;
 }
 
@@ -475,6 +478,17 @@ function renderRelocation(
     if (issue) button.title = issue;
     button.onclick = () => hooks.assetRelocation.onBegin(item, assetDirectory(item.sourcePath!));
     section.appendChild(button);
+    if (hooks.assetRelocation.onReplace && item.kind !== 'other' && item.format !== 'svg') {
+      const pick = document.createElement('input'); pick.type = 'file'; pick.hidden = true; pick.multiple = false;
+      if (item.format) pick.accept = `.${item.format}`;
+      const replace = h('button', 'asset-relocation-entry', '替换文件内容') as HTMLButtonElement;
+      const replacementIssue = relocationEntryIssue(item, hooks, 'replace');
+      replace.type = 'button'; replace.disabled = replacementIssue !== null || projection.busy;
+      if (replacementIssue) replace.title = replacementIssue;
+      replace.onclick = () => { if (replace.isConnected && !replace.disabled) pick.click(); };
+      pick.onchange = () => { const file = pick.files?.[0]; if (file && replace.isConnected && !replace.disabled) hooks.assetRelocation.onReplace!(item, file); };
+      section.append(replace, pick);
+    }
     if (issue) section.appendChild(h('p', 'asset-relocation-note', issue));
     return section;
   }
@@ -486,6 +500,18 @@ function renderRelocation(
     return section;
   }
 
+  if (detail?.plan.replacement) {
+    const facts = detail.plan.replacement;
+    section.append(h('p', '', `原位替换：${detail.request.targetPath}`), h('p', 'hint', '保持路径、素材键和原许可证不变；不会用移动或普通导入冒充替换。'),
+      h('p', 'mono', `原 SHA-256: ${facts.beforeSha256}`), h('p', 'mono', `新 SHA-256: ${facts.afterSha256}`),
+      h('p', '', facts.noChange ? '内容相同，无需改变原文件。' : `${formatAssetBytes(facts.bytes)}；${facts.references.length} 处已知使用位置将读取新内容。`));
+    const confirm = h('button', 'asset-relocation-primary', facts.noChange ? '确认无变化' : '确认替换文件内容') as HTMLButtonElement;
+    confirm.type = 'button'; confirm.disabled = projection.busy; confirm.onclick = hooks.assetRelocation.onCommit;
+    const cancel = h('button', '', '取消替换') as HTMLButtonElement; cancel.type = 'button'; cancel.disabled = projection.busy; cancel.onclick = hooks.assetRelocation.onCancel;
+    section.append(confirm, cancel);
+    if (projection.message) section.append(h('p', 'asset-relocation-message', projection.message));
+    return section;
+  }
   const lockedByPlan = detail !== null;
   const form = h('div', 'asset-relocation-form');
   const location = h('p', 'asset-relocation-current', `当前位置：${projection.source!.sourcePath}`);

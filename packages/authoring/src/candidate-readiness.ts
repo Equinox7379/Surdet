@@ -60,12 +60,16 @@ export function compositionFactIdentityIssue(input: JsonValue | undefined, facts
   if (!Array.isArray(preconditions) || !Array.isArray(replay)) return '重放状态事实形状无效';
     const expectedRefs = facts.capabilityId === 'character.ensure' || facts.capabilityId === 'character.remove'
       ? ['config:characters', ...facts.producedObjects.filter((item) => item.objectRef.startsWith('scene:')).map((item) => item.objectRef)]
-      : facts.capabilityId === 'scene.create' ? ['config:fonts', 'config:portraits']
-      : facts.capabilityId === 'scene.patch' ? ['config:fonts', 'config:portraits', facts.primaryObject]
-      : facts.capabilityId === 'timeline.create' ? ['config:portraits']
-      : facts.capabilityId === 'timeline.patch' ? [facts.primaryObject, 'config:portraits']
+      : facts.capabilityId === 'scene.create' ? ['config:fonts', 'config:portraits', 'config:stage']
+      : facts.capabilityId === 'scene.patch' ? ['config:fonts', 'config:portraits', 'config:stage', facts.primaryObject]
+      : facts.capabilityId === 'timeline.create' ? ['config:portraits', 'config:stage']
+      : facts.capabilityId === 'timeline.patch' ? [facts.primaryObject, 'config:portraits', 'config:stage']
       : facts.capabilityId === 'gallery.cg.patch' || facts.capabilityId === 'variable.patch-initial'
         ? [facts.primaryObject] : [];
+  if (facts.capabilityId === 'timeline.create' || facts.capabilityId === 'timeline.patch') {
+    expectedRefs.push(...[...new Set(facts.rawReferences.filter(ref => ref.kind === 'timeline' && ref.scope === 'candidate-external')
+      .map(ref => ref.objectRef).filter((ref): ref is string => typeof ref === 'string' && ref !== facts.primaryObject))].sort());
+  }
   if (expectedRefs.includes('config:characters') && facts.producedObjects.filter((item) => item.objectRef === 'config:characters' && item.disposition === 'update').length !== 1) return '角色操作缺少唯一角色表产物';
   if (preconditions.length !== expectedRefs.length || new Set(preconditions.map((item) => item.objectRef)).size !== expectedRefs.length
     || expectedRefs.some((ref) => !preconditions.some((item) => item.objectRef === ref && typeof item.expectedFingerprint === 'string'))

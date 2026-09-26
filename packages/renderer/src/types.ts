@@ -29,6 +29,7 @@ export interface FrameLoopTarget extends FrameRequestSource {
 
 /** 舞台投影：渲染层需要实现的显示能力（可注入 fake 测试） */
 export interface AdvStage {
+  applyStage?(command: import('@surdet/core').StageCommand): void;
   /** 引擎级画质档位，剧情和脚本不感知该设置。 */
   setQuality?(quality: RenderQuality): void;
   getQuality?(): RenderQuality;
@@ -146,6 +147,8 @@ export interface AdvStage {
 }
 
 export interface PortraitView {
+  pose?: import('@surdet/core').StagePose;
+  frame?: import('@surdet/core').StageRect;
   charId: string;
   costume: string;
   expression: string;

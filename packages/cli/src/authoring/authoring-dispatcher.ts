@@ -1,3 +1,4 @@
+import type { StageConfigPatchInput } from '@surdet/authoring';
 import {
   AuthoringOperationError,
   getCapabilityDefinition,
@@ -86,8 +87,15 @@ export async function dispatchAuthoringCapability(
     case 'asset.import.stage':
     case 'asset.import.inspect':
     case 'asset.import.commit':
+    case 'asset.relocation.replace':
+    case 'asset.relocation.plan':
+    case 'asset.relocation.inspect':
+    case 'asset.relocation.commit':
+    case 'asset.relocation.cancel':
+    case 'asset.relocation.recover':
+    case 'asset.relocation.undo':
     case 'asset.import.recover': {
-      if (context.activeChangeId !== undefined && capability !== 'asset.sources' && capability !== 'asset.import.inspect') {
+      if (context.activeChangeId !== undefined && capability !== 'asset.sources' && capability !== 'asset.import.inspect' && capability !== 'asset.relocation.inspect') {
         throw new AuthoringOperationError('SESSION_STATE_INVALID', '先完成素材导入、重新读取项目，再创建剧情 change；已有 change 时不能导入素材。');
       }
       return { value: await service.invokeImageImport(requireProject(context), capability, payload, context.assetSources ?? [], context.assetImportDataRoot), operationId: operationIdFrom(payload) };
@@ -135,6 +143,8 @@ export async function dispatchAuthoringCapability(
       return { value: await service.timelinePatch(requireChange(context), payload as unknown as Parameters<AuthoringService['timelinePatch']>[1]), operationId: operationIdFrom(payload) };
     case 'project.entry-scene.set':
       return { value: await service.entrySceneSet(requireChange(context), payload as unknown as Parameters<AuthoringService['entrySceneSet']>[1]), operationId: operationIdFrom(payload) };
+    case 'project.stage-config.patch':
+      return { value: await service.stageConfigPatch(requireChange(context), payload as unknown as Parameters<AuthoringService['stageConfigPatch']>[1]), operationId: operationIdFrom(payload) };
     case 'project.player-config.patch':
       return { value: await service.playerConfigPatch(requireChange(context), payload as unknown as Parameters<AuthoringService['playerConfigPatch']>[1]), operationId: operationIdFrom(payload) };
     case 'project.validate':

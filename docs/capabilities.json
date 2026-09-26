@@ -14,7 +14,11 @@
         "packages/renderer/test/integration/resource-cycles.test.ts",
         "packages/editor/test/preview-runtime-lifecycle.test.ts"
       ],
-      "docs": ["README.md", "docs/renderer-v2-migration.md", "docs/AI-GUIDE.md"],
+      "docs": [
+        "README.md",
+        "docs/renderer-v2-migration.md",
+        "docs/AI-GUIDE.md"
+      ],
       "limitation": "正式候选仍保留 M7.5 sceneP95Ms 性能红灯；本能力不代表性能门禁已全绿。"
     },
     {
@@ -31,7 +35,11 @@
         "packages/editor/test/preview-runtime-contract.test.ts",
         "packages/host/test/system-router.test.ts"
       ],
-      "docs": ["README.md", "docs/renderer-v2-migration.md", "docs/AI-GUIDE.md"],
+      "docs": [
+        "README.md",
+        "docs/renderer-v2-migration.md",
+        "docs/AI-GUIDE.md"
+      ],
       "limitation": "PixiStage/AdvRenderer 在当前 major 的一版兼容窗口内保留；新生产消费者必须通过 Runtime v2 接线。"
     },
     {
@@ -46,7 +54,11 @@
         "packages/renderer/test/audio-manager.test.ts",
         "packages/renderer/test/legacy/adv-renderer.test.ts"
       ],
-      "docs": ["README.md", "docs/dsl-spec.md", "docs/AI-GUIDE.md"],
+      "docs": [
+        "README.md",
+        "docs/dsl-spec.md",
+        "docs/AI-GUIDE.md"
+      ],
       "limitation": "同一时间最多播放一条环境音；与 BGM、SE、语音分轨独立。"
     },
     {
@@ -59,7 +71,10 @@
       "tests": [
         "packages/renderer/test/legacy/pixi-stage.test.ts"
       ],
-      "docs": ["README.md", "docs/dsl-spec.md"],
+      "docs": [
+        "README.md",
+        "docs/dsl-spec.md"
+      ],
       "limitation": "文字记录为当前会话级数据，不跨存档持久化。"
     },
     {
@@ -70,7 +85,9 @@
       "editor": "planned",
       "host": "planned",
       "tests": [],
-      "docs": ["docs/known-limitations.md"],
+      "docs": [
+        "docs/known-limitations.md"
+      ],
       "limitation": "当前战斗使用 1D 位置；开战前阵型编辑、占位和阻挡规则尚未定义。"
     },
     {
@@ -85,7 +102,10 @@
         "packages/renderer/test/gallery.test.ts",
         "packages/renderer/e2e/starter-regressions.e2e.mjs"
       ],
-      "docs": ["README.md", "docs/dsl-spec.md"],
+      "docs": [
+        "README.md",
+        "docs/dsl-spec.md"
+      ],
       "limitation": "移动是 1D 位置模型，不包含阵型编辑或多位置布局。"
     },
     {
@@ -99,7 +119,10 @@
         "packages/core/test/compiler.test.ts",
         "packages/core/test/interpreter-save.test.ts"
       ],
-      "docs": ["README.md", "docs/dsl-spec.md"],
+      "docs": [
+        "README.md",
+        "docs/dsl-spec.md"
+      ],
       "limitation": "解释器负责本周目记录并广播事件；跨周目全局记录由宿主 Profile bridge 持久化。"
     },
     {
@@ -113,7 +136,10 @@
         "packages/renderer/test/gallery.test.ts",
         "packages/renderer/test/legacy/pixi-stage.test.ts"
       ],
-      "docs": ["README.md", "docs/dsl-spec.md"]
+      "docs": [
+        "README.md",
+        "docs/dsl-spec.md"
+      ]
     },
     {
       "id": "gallery-text",
@@ -126,7 +152,10 @@
         "packages/renderer/test/gallery.test.ts",
         "packages/renderer/e2e/starter-regressions.e2e.mjs"
       ],
-      "docs": ["README.md", "docs/dsl-spec.md"],
+      "docs": [
+        "README.md",
+        "docs/dsl-spec.md"
+      ],
       "limitation": "文本回想依配置跳转到场景与 label，不提供独立的文本资源编辑器。"
     },
     {
@@ -140,7 +169,10 @@
         "packages/core/test/audit-fixes.test.ts",
         "packages/renderer/test/scene-hot-reload.test.ts"
       ],
-      "docs": ["README.md", "docs/AI-GUIDE.md"],
+      "docs": [
+        "README.md",
+        "docs/AI-GUIDE.md"
+      ],
       "limitation": "仅 Vite 开发环境支持 .gal 场景热替换；正式包不启动文件监听器。"
     },
     {
@@ -155,7 +187,10 @@
         "packages/renderer/test/legacy/adv-renderer.test.ts",
         "packages/renderer/test/legacy/pixi-stage.test.ts"
       ],
-      "docs": ["README.md", "docs/dsl-spec.md"]
+      "docs": [
+        "README.md",
+        "docs/dsl-spec.md"
+      ]
     },
     {
       "id": "particle",
@@ -169,7 +204,10 @@
         "packages/renderer/test/legacy/adv-renderer.test.ts",
         "packages/renderer/test/legacy/pixi-stage.test.ts"
       ],
-      "docs": ["README.md", "docs/dsl-spec.md"],
+      "docs": [
+        "README.md",
+        "docs/dsl-spec.md"
+      ],
       "limitation": "当前为内置轻量粒子表现，不是可编排的完整粒子编辑器。"
     },
     {
@@ -183,7 +221,10 @@
         "packages/host/test/profile-store.test.ts",
         "packages/shell/test/profile-store.test.ts"
       ],
-      "docs": ["README.md", "docs/AI-GUIDE.md"],
+      "docs": [
+        "README.md",
+        "docs/AI-GUIDE.md"
+      ],
       "limitation": "Profile 数据与普通 slot 存档分离；Electron 损坏数据宽容回退，浏览器保留旧 localStorage 兼容读取。"
     },
     {
@@ -197,7 +238,10 @@
         "packages/renderer/test/rollback-buffer.test.ts",
         "packages/host/test/rollback-runtime.test.ts"
       ],
-      "docs": ["README.md", "docs/AI-GUIDE.md"],
+      "docs": [
+        "README.md",
+        "docs/AI-GUIDE.md"
+      ],
       "limitation": "运行时历史缓冲默认上限 50 帧；系统交互、菜单和读写档期间不允许回退。"
     },
     {
@@ -212,7 +256,10 @@
         "packages/shell/e2e/game.e2e.mjs",
         "packages/host/test/system-router.test.ts"
       ],
-      "docs": ["README.md", "docs/dsl-spec.md"]
+      "docs": [
+        "README.md",
+        "docs/dsl-spec.md"
+      ]
     },
     {
       "id": "tint",
@@ -226,7 +273,10 @@
         "packages/renderer/test/legacy/adv-renderer.test.ts",
         "packages/renderer/test/legacy/pixi-stage.test.ts"
       ],
-      "docs": ["README.md", "docs/dsl-spec.md"]
+      "docs": [
+        "README.md",
+        "docs/dsl-spec.md"
+      ]
     },
     {
       "id": "transition-registry",
@@ -240,7 +290,11 @@
         "packages/core/test/compiler.test.ts",
         "packages/cli/test/lint.test.ts"
       ],
-      "docs": ["README.md", "docs/dsl-spec.md", "docs/AI-GUIDE.md"],
+      "docs": [
+        "README.md",
+        "docs/dsl-spec.md",
+        "docs/AI-GUIDE.md"
+      ],
       "limitation": "当前提供内置注册表与四种安全转场；自定义插件转场不在本轮范围。"
     },
     {
@@ -291,6 +345,58 @@
         "docs/AI-GUIDE.md"
       ],
       "limitation": "主题令牌以不可变快照投影到五类真实 Layer；不改变 DSL、存档、剧情或规则，也不代表性能门禁已资格化。"
+    },
+    {
+      "id": "project-stage-pose",
+      "kind": "dsl",
+      "core": "implemented",
+      "renderer": "implemented",
+      "editor": "implemented",
+      "host": "n/a",
+      "tests": [
+        "packages/core/test/stage.test.ts",
+        "packages/renderer/test/integration/stage-runtime.test.ts",
+        "packages/authoring/test/stage-authoring.test.ts",
+        "packages/editor/e2e/stage-workspace.e2e.mjs"
+      ],
+      "docs": [
+        "docs/AI-GUIDE.md"
+      ],
+      "limitation": "有限二维舞台、手动可见范围与源摘要校准；不做自动透明边界猜测、骨骼动画或 Owner 美术验收。"
+    },
+    {
+      "id": "timeline-reusable-clips",
+      "kind": "dsl",
+      "core": "implemented",
+      "renderer": "implemented",
+      "editor": "implemented",
+      "host": "n/a",
+      "tests": [
+        "packages/core/test/stage.test.ts",
+        "packages/cli/test/composition-service.test.ts",
+        "packages/renderer/e2e/stage-player-dist.e2e.mjs"
+      ],
+      "docs": [
+        "docs/AI-GUIDE.md"
+      ],
+      "limitation": "version 2 有界引用、重复和实例映射；不支持无限循环、跨类型映射或任意图形脚本。"
+    },
+    {
+      "id": "asset-same-path-replacement",
+      "kind": "ui",
+      "core": "n/a",
+      "renderer": "implemented",
+      "editor": "implemented",
+      "host": "n/a",
+      "tests": [
+        "packages/cli/test/asset-relocation-authority.test.ts",
+        "packages/cli/test/agent-image-import.test.ts",
+        "packages/editor/e2e/asset-replacement.e2e.mjs"
+      ],
+      "docs": [
+        "docs/AI-GUIDE.md"
+      ],
+      "limitation": "使用原整理事务，同路径、同类、同格式、受授权来源校验约束；不转码，不改许可证，不覆盖第三方变更。"
     }
   ]
 }

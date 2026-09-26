@@ -34,6 +34,8 @@ export interface PresentationController extends FrameLoopTarget {
   snapshotPresentation(context?: PresentationSnapshotContext): unknown;
   restorePresentation(snapshot: unknown): PresentationRestoreResult | void;
   clearPresentation(): void;
+  setPresentationPaused?(paused: boolean): void;
+  readonly presentationPaused?: boolean;
   advance(): boolean;
   select(index: number): boolean;
   dispatchInput(action: RendererInputAction): boolean;
@@ -70,6 +72,7 @@ export interface RendererRuntime {
 }
 
 export interface RendererRuntimeOptions {
+  stage?: import('@surdet/core').ProjectStage | null;
   canvas?: HTMLCanvasElement;
   audio?: AudioHandle;
   preferences?: Partial<PresentationPreferences>;

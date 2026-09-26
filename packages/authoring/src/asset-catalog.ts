@@ -91,16 +91,28 @@ export function buildAssetCatalog(
     timelines: [],
   };
   const intelligence = buildProjectAssetIntelligence(emptySnapshot, facts, options);
-  for (const portrait of resolveProjectPortraits(emptySnapshot.config, paths)) {
+  const portraitBindings = resolveProjectPortraits(emptySnapshot.config, paths);
+  const slotPaths = new Map<string, Set<string>>();
+  const slotOf = (portrait: (typeof portraitBindings)[number]): string => JSON.stringify([portrait.role, portrait.outfit, portrait.expression]);
+  for (const portrait of portraitBindings) {
+    const slot = slotOf(portrait);
+    const matches = slotPaths.get(slot) ?? new Set<string>();
+    matches.add(portrait.sourcePath);
+    slotPaths.set(slot, matches);
+  }
+  for (const portrait of portraitBindings) {
     const { role, outfit, expression, sourcePath } = portrait;
     if (!portrait.configured && stemOf(sourcePath).split('_').length !== 3) continue;
     const item = intelligence.items.find(item => item.sourcePath === sourcePath);
     portraits.push({ ...portrait, kind: 'portrait', key: `${role}:${outfit}`, timelineTarget: `${role}:${outfit}`,
-      format: extensionOf(sourcePath), resolved: !!item && item.issues.every(issue => issue === 'ASSET_UNUSED') });
+      format: extensionOf(sourcePath), resolved: !!item && item.physical && slotPaths.get(slotOf(portrait))?.size === 1
+        && item.issues.every(issue => issue === 'ASSET_UNUSED' || issue === 'ASSET_KEY_DUPLICATE') });
   }
   for (const entry of [...backgrounds, ...portraits]) {
     const item = intelligence.items.find(item => item.sourcePath === entry.sourcePath);
-    if (!entry.resolved || !item || item.issues.some(issue => issue !== 'ASSET_UNUSED')) continue;
+    // Physical duplicates do not make every exact alias ambiguous. Portrait
+    // slots have already passed their own unique-path resolution above.
+    if (!entry.resolved || !item || (entry.kind !== 'portrait' && item.issues.some(issue => issue !== 'ASSET_UNUSED'))) continue;
     // Generic instruction arguments are serialized as DSL tokens. Quoting also
     // preserves spaces, apostrophes and modifier-looking names in legal files.
     const token = (value: string) => `"${value}"`;

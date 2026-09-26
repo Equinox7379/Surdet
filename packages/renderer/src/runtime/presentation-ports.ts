@@ -40,7 +40,7 @@ export interface PresentationStage extends
   showCommandRail?: (items: CommandRailItem[], onSelect: (id: string) => void) => void;
   setCommandRailItems?: (items: CommandRailItem[]) => void;
   registerBackground?: (key: string, source: string, format?: string) => Promise<void>;
-  registerPortrait?: (charId: string, costume: string, expression: string, source: string, format?: string) => Promise<void>;
+  registerPortrait?: (charId: string, costume: string, expression: string, source: string, format?: string, sourcePath?: string) => Promise<void>;
   registerAvatar?: (key: string, source: string, format?: string) => Promise<void>;
   registerFontRole?: (role: RendererFontRole, url: string, family?: string, timeoutMs?: number) => Promise<boolean>;
   registerFont?: (url: string, family?: string, timeoutMs?: number) => Promise<boolean>;
@@ -80,6 +80,7 @@ export interface PresentationPorts {
 }
 
 export interface PresentationPortOptions {
+  readonly menuLayer?: Pick<import('../api/renderer-commands.js').MenuProjectionPort, 'menu'>;
   readonly assetRegistry?: RenderAssetRegistry;
   readonly resourceSnapshot?: () => RendererResourceSnapshot;
   /** M7 production WorldLayer port; omitted for legacy stage compatibility. */
@@ -118,12 +119,12 @@ export function createPresentationPorts(
       }
       await stage.registerBackground?.(key, source, format);
     },
-    registerPortrait: async (charId, costume, expression, source, format) => {
+    registerPortrait: async (charId, costume, expression, source, format, sourcePath) => {
       if (options.assetRegistry) {
-        await options.assetRegistry.registerPortrait(charId, costume, expression, source, format);
+        await options.assetRegistry.registerPortrait(charId, costume, expression, source, format, sourcePath);
         return;
       }
-      await stage.registerPortrait?.(charId, costume, expression, source, format);
+      await stage.registerPortrait?.(charId, costume, expression, source, format, sourcePath);
     },
     registerVideo: async (key, source, sourcePath) => {
       if (!options.assetRegistry) throw new Error('Video asset registry is not configured');
@@ -167,6 +168,7 @@ export function createPresentationPorts(
     clearTint: (durationMs = 400) => { if (options.worldLayer) options.worldLayer.clearTint(durationMs); else stage.clearTint?.(durationMs); },
     startParticles: (kind) => { if (options.worldLayer) options.worldLayer.startParticles(kind); else stage.startParticles?.(kind); },
     stopParticles: () => { if (options.worldLayer) options.worldLayer.stopParticles(); else stage.stopParticles?.(); },
+    applyStage: options.worldLayer?.applyStage || stage.applyStage ? (command) => { if (options.worldLayer?.applyStage) options.worldLayer.applyStage(command); else stage.applyStage!(command); } : undefined,
     applyTimelineFrame: (event) => { if (options.worldLayer) options.worldLayer.applyTimelineFrame(event); else stage.applyTimelineFrame?.(event); },
     setPortraitFocus: (characterId) => { if (options.worldLayer) options.worldLayer.setPortraitFocus(characterId); else stage.setPortraitFocus?.(characterId); },
   };
@@ -291,6 +293,7 @@ export function createPresentationPorts(
 
   const queries: RendererQueries = {
     world: {
+      inspectStage: () => options.worldLayer?.inspectStage?.() ?? null,
       captureThumbnail: () => options.worldLayer?.captureThumbnail() ?? stage.captureThumbnail?.() ?? null,
     },
     dialogue: {
@@ -299,7 +302,7 @@ export function createPresentationPorts(
       nvlPresentationEntries: () => (options.dialogueLayer?.nvlPresentationEntries ?? []).map((entry) => ({ ...entry })),
     },
     overlay: {
-      menu: () => ({ type: 'none' }),
+      menu: () => options.menuLayer?.menu() ?? { type: 'none' },
       gallery: () => ({ type: 'none' }),
       system: () => ({ type: 'none' }),
     },

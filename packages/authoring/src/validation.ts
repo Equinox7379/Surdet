@@ -1,3 +1,4 @@
+import { validateProjectStageContent } from './stage-validation.js';
 import {
   attachHints,
   checkChoiceSuspects,
@@ -433,6 +434,7 @@ export function validateSnapshot(
       ...(assetCatalog === undefined ? {} : { bgAssets: new Set(assetCatalog.backgrounds.filter((entry) => entry.resolved).map((entry) => entry.key)) }),
     }));
   }
+  rawIssues.push(...validateProjectStageContent(snapshot, options.assetCatalog));
   attachHints(rawIssues);
   const issues = rawIssues.map((issue) => enrich(index, issue));
   return {

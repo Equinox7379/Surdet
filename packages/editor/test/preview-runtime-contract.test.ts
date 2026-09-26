@@ -54,7 +54,8 @@ describe('editor preview Renderer v2 lifecycle contract', () => {
     expect(invalidationBody).toMatch(/calendar\s*=\s*null;/);
     expect(invalidationBody).toMatch(/growth\s*=\s*null;/);
     expect(invalidationBody).toMatch(/turnResumeSnap\s*=\s*null;/);
-    expect(loadBody.match(/invalidatePreviewSession\(\);/g)).toHaveLength(2);
+    // Configuration rebuild invalidates the old runtime before creating its replacement.
+    expect(loadBody.match(/invalidatePreviewSession\(\);/g)).toHaveLength(3);
     const failureBody = loadBody.slice(loadBody.lastIndexOf('catch (err)'));
     expect(failureBody).toContain('if (previewDisposed) return;');
     expect(failureBody.indexOf('invalidatePreviewSession();')).toBeGreaterThan(failureBody.indexOf('if (previewDisposed) return;'));

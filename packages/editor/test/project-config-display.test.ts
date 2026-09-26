@@ -166,6 +166,30 @@ describe('character table editing through shared authoring semantics', () => {
     return { configDisk, sceneDisk };
   }
 
+  it('creates the first explicitly requested character, with no implied recreation of missing old rows', async () => {
+    const empty = JSON.stringify({ ...CHARACTER_FIXTURE_CONFIG, characters: {} });
+    const { configDisk, sceneDisk } = installFixture(empty);
+    const source = sceneDisk.read();
+    state.dirAssets = [];
+    await expect(commitCharacterTable([{ id: 'rin', name: '凛', avatar: '' }])).rejects.toMatchObject({ code: 'OBJECT_NOT_FOUND' });
+    expect(configDisk.writes).toEqual([]);
+    const result = await commitCharacterTable([{ id: 'rin', name: '凛', avatar: '', portraits: [], create: true }]);
+    expect(result.changed).toBe(1);
+    expect(JSON.parse(configDisk.read()).characters).toEqual({ rin: { name: '凛' } });
+    expect(sceneDisk.read()).toBe(source);
+    expect((await commitCharacterTable([{ id: 'rin', name: '凛', avatar: '', portraits: [] }])).changed).toBe(0);
+    configDisk.writes.length = 0;
+    await expect(commitCharacterTable([{ id: 'rin', name: '别人', avatar: '', create: true }])).rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED' });
+    expect(configDisk.writes).toEqual([]);
+  });
+
+  it('rejects duplicate creation rows without partially publishing either declaration', async () => {
+    const { configDisk } = installFixture(JSON.stringify({ ...CHARACTER_FIXTURE_CONFIG, characters: {} }));
+    const row: CharacterTableEditRow = { id: 'rin', name: '凛', avatar: '', create: true };
+    await expect(commitCharacterTable([row, row])).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(configDisk.writes).toEqual([]);
+  });
+
   it('preserves scene typing that arrives while the character transaction is writing', async () => {
     const { configDisk, sceneDisk } = installFixture(characterFixtureText());
     const createWritable = configDisk.handle.createWritable.bind(configDisk.handle);

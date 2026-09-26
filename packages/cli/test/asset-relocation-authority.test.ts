@@ -1,3 +1,4 @@
+import { deflateSync } from 'node:zlib';
 import * as crypto from 'node:crypto';
 import {
   mkdtemp,
@@ -9,6 +10,7 @@ import {
   stat,
   unlink,
   writeFile,
+  utimes,
 } from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -269,6 +271,62 @@ afterEach(async () => {
 });
 
 describe('project asset relocation authority', () => {
+  it('publishes and restores current-media bytes and their real consumers through the existing authority', async () => {
+    for (const [directory, extension, command] of [
+      ['bgm', 'wav', 'bgm'], ['ambience', 'ogg', 'ambience'], ['se', 'mp3', 'se'],
+      ['voice', 'wav', 'voice'], ['video', 'webm', 'video'], ['fonts', 'ttf', ''], ['licenses', '', ''],
+    ] as const) {
+      const value = await fixture();
+      const name = directory === 'licenses' ? 'OFL' : `旧 媒体.${extension}`;
+      const next = directory === 'licenses' ? 'NOTICE' : `新 媒体.${extension}`;
+      const source = `content/assets/${directory}/${name}`;
+      const target = `content/assets/${directory}/${next}`;
+      await mkdir(path.dirname(absolute(value.projectRoot, source)), { recursive: true });
+      const bytes = Buffer.from(`publication fixture for ${directory}; not decode evidence`);
+      await writeFile(absolute(value.projectRoot, source), bytes);
+      const configPath = absolute(value.projectRoot, 'game.config.json');
+      const config = JSON.stringify({ entryScene: 'start', ...(directory === 'fonts' ? { font: source, fonts: { body: source, title: '', ui: '' } } : {}) });
+      await writeFile(configPath, config);
+      const scene = command ? `@scene start\n@${command} "旧 媒体"\n@end\n` : '@scene start\n@end\n';
+      await writeFile(absolute(value.projectRoot, scenePath), scene);
+      const planned = await value.authority.plan({ operationId, moves: [{ sourcePath: source, targetPath: target }] });
+      expect(planned.plan.status, directory).toBe('ready');
+      expect(await readFile(absolute(value.projectRoot, source))).toEqual(bytes);
+      const committed = await value.authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+      expect(committed.operation.status).toBe('COMMITTED');
+      expect(await readFile(absolute(value.projectRoot, target))).toEqual(bytes);
+      await expect(stat(absolute(value.projectRoot, source))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await readFile(absolute(value.projectRoot, scenePath), 'utf8')).toBe(command ? scene.replace('旧 媒体', '新 媒体') : scene);
+      if (directory === 'fonts') expect(JSON.parse(await readFile(configPath, 'utf8'))).toMatchObject({ font: target, fonts: { body: target } });
+      const repeated = await value.authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint });
+      expect(repeated.receipt).toEqual(committed.receipt);
+      await value.authority.undo(operationId, { receiptId: committed.receipt!.receiptId, receiptFingerprint: committed.receipt!.receiptFingerprint });
+      expect(await readFile(absolute(value.projectRoot, source))).toEqual(bytes);
+      expect(await readFile(configPath, 'utf8')).toBe(config);
+      expect(await readFile(absolute(value.projectRoot, scenePath), 'utf8')).toBe(scene);
+      await expect(stat(absolute(value.projectRoot, target))).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+  });
+
+  it('recovers an interrupted font/config publication without inventing a second journal', async () => {
+    const value = await fixture({ faultPoint: 'after_text_replace_before_journal' });
+    const source = 'content/assets/fonts/正文.ttf', target = 'content/assets/fonts/正文新.ttf';
+    await mkdir(path.dirname(absolute(value.projectRoot, source)), { recursive: true });
+    await writeFile(absolute(value.projectRoot, source), 'font publication fixture');
+    const configPath = absolute(value.projectRoot, 'game.config.json');
+    const before = JSON.stringify({ entryScene: 'start', font: source, fonts: { body: source } });
+    await writeFile(configPath, before);
+    const planned = await value.authority.plan({ operationId, moves: [{ sourcePath: source, targetPath: target }] });
+    expect(planned.plan.status).toBe('ready');
+    await expect(value.authority.commit(operationId, { planFingerprint: planned.plan.planFingerprint })).rejects.toBeInstanceOf(AssetRelocationInjectedTermination);
+    const resumed = makeAuthority(value.paths);
+    const recovered = await resumed.recover(operationId, { action: 'rollback' });
+    expect(recovered.operation.status).toBe('ROLLED_BACK');
+    expect(await readFile(configPath, 'utf8')).toBe(before);
+    expect(await readFile(absolute(value.projectRoot, source), 'utf8')).toBe('font publication fixture');
+    await expect(stat(absolute(value.projectRoot, target))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it.skipIf(process.platform === 'win32')('preserves POSIX text permissions through commit and undo', async () => {
     const value = await fixture();
     const scene = absolute(value.projectRoot, scenePath);
@@ -1162,5 +1220,152 @@ describe('project asset relocation authority', () => {
       'relocation-enter',
     ]);
     expect(importGateCalls).toBe(1);
+  });
+});
+
+
+describe('same-path replacement uses the original relocation transaction', () => {
+  const replacementPath = 'content/assets/bg/image.png';
+  function png(fill: number): Buffer {
+    const crc = (bytes: Buffer): number => {
+      let value = 0xffffffff;
+      for (const byte of bytes) { value ^= byte; for (let bit = 0; bit < 8; bit++) value = (value >>> 1) ^ ((value & 1) ? 0xedb88320 : 0); }
+      return (value ^ 0xffffffff) >>> 0;
+    };
+    const chunk = (type: string, bytes: Buffer) => {
+      const body = Buffer.concat([Buffer.from(type), bytes]);
+      const result = Buffer.alloc(body.length + 8); result.writeUInt32BE(bytes.length); body.copy(result, 4); result.writeUInt32BE(crc(body), body.length + 4); return result;
+    };
+    const header = Buffer.alloc(13); header.writeUInt32BE(8, 0); header.writeUInt32BE(8, 4); header[8] = 8; header[9] = 2;
+    const pixels = Buffer.alloc(8 * 25, fill); for (let row = 0; row < 8; row++) pixels[row * 25] = 0;
+    return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]), chunk('IHDR', header), chunk('IDAT', deflateSync(pixels)), chunk('IEND', Buffer.alloc(0))]);
+  }
+  const a = png(37), b = png(71), c = png(19);
+  const digest = (bytes: Buffer) => crypto.createHash('sha256').update(bytes).digest('hex');
+  const request = (bytes = b, id = operationId) => ({ operationId: id, targetPath: replacementPath,
+    sourceId: 'source-permitted-fixture', sourcePath: 'new-image.png', sha256: digest(bytes) });
+  it('replaces an exact configured portrait despite an ambiguous unrelated automatic slot', async () => {
+    const f = await fixture();
+    const target = 'content/assets/portrait/library_coat_normal.png';
+    const other = 'content/assets/portrait/sub/library_coat_normal.png';
+    await mkdir(path.dirname(absolute(f.projectRoot, other)), { recursive: true });
+    await writeFile(absolute(f.projectRoot, target), a);
+    await writeFile(absolute(f.projectRoot, other), c);
+    const config = JSON.stringify({ entryScene: 'start', variables: {}, characters: {
+      rin: { name: 'Rin', portraits: { uniform: { normal: target, smile: target } } },
+    } });
+    await writeFile(absolute(f.projectRoot, 'game.config.json'), config);
+    const scene = '@scene start\n@show rin:uniform normal\n@end\n';
+    await writeFile(absolute(f.projectRoot, scenePath), scene);
+    const plan = await f.authority.planReplacement({ ...request(), targetPath: target }, b);
+    expect(plan.plan.status).toBe('ready');
+    const result = await f.authority.commit(operationId, { planFingerprint: plan.plan.planFingerprint });
+    expect(await readFile(absolute(f.projectRoot, target))).toEqual(b);
+    expect(await readFile(absolute(f.projectRoot, other))).toEqual(c);
+    expect(await readFile(absolute(f.projectRoot, 'game.config.json'), 'utf8')).toBe(config);
+    expect(await readFile(absolute(f.projectRoot, scenePath), 'utf8')).toBe(scene);
+    await f.authority.undo(operationId, { receiptId: result.receipt!.receiptId, receiptFingerprint: result.receipt!.receiptFingerprint });
+    expect(await readFile(absolute(f.projectRoot, target))).toEqual(a);
+    expect(await readFile(absolute(f.projectRoot, other))).toEqual(c);
+  });
+  async function setup() {
+    const f = await fixture();
+    await writeFile(absolute(f.projectRoot, replacementPath), a);
+    await writeFile(absolute(f.projectRoot, scenePath), '@scene start\n@bg image\n画面保持原键。\n@end\n');
+    await writeFile(absolute(f.projectRoot, 'content/assets/bg/LICENSE.txt'), 'retain the original license');
+    return f;
+  }
+  it('plans without changing source, replaces exact bytes without rewriting references, and undoes once', async () => {
+    const f = await setup(), target = absolute(f.projectRoot, replacementPath);
+    const scene = await readFile(absolute(f.projectRoot, scenePath));
+    const plan = await f.authority.planReplacement(request(), b);
+    expect(plan.plan).toMatchObject({ schemaVersion: 2, status: 'ready', replacement: { beforeSha256: digest(a), afterSha256: digest(b), noChange: false }, referenceChanges: [] });
+    expect((plan.plan as any).replacement.references.length).toBeGreaterThan(0);
+    expect(await readFile(target)).toEqual(a);
+    const commit = { planFingerprint: plan.plan.planFingerprint };
+    const result = await f.authority.commit(operationId, commit);
+    expect(result.operation.status).toBe('COMMITTED'); expect(await readFile(target)).toEqual(b);
+    expect(result.receipt!.targetIdentity.sha256).toBe(digest(b));
+    expect(await readFile(absolute(f.projectRoot, scenePath))).toEqual(scene);
+    expect(await readFile(absolute(f.projectRoot, 'content/assets/bg/LICENSE.txt'), 'utf8')).toBe('retain the original license');
+    expect((await f.authority.commit(operationId, commit)).receipt).toEqual(result.receipt);
+    const undo = { receiptId: result.receipt!.receiptId, receiptFingerprint: result.receipt!.receiptFingerprint };
+    const undone = await f.authority.undo(operationId, undo);
+    expect(undone.operation.status).toBe('UNDONE'); expect(await readFile(target)).toEqual(a);
+    expect((await f.authority.undo(operationId, undo)).undoReceipt).toEqual(undone.undoReceipt);
+  });
+
+  it('recognizes equal-content replacement as no-change without swapping the original inode', async () => {
+    const f = await setup(), target = absolute(f.projectRoot, replacementPath);
+    const before = await assetImportFileIdentity(target);
+    const plan = await f.authority.planReplacement(request(a), a);
+    expect(plan.plan).toMatchObject({ affectedAssetCount: 0, replacement: { noChange: true } });
+    const done = await f.authority.commit(operationId, { planFingerprint: plan.plan.planFingerprint });
+    expect(await assetImportFileIdentity(target)).toEqual(before);
+    await f.authority.undo(operationId, { receiptId: done.receipt!.receiptId, receiptFingerprint: done.receipt!.receiptFingerprint });
+    expect(await assetImportFileIdentity(target)).toEqual(before);
+  });
+
+  it('rejects source hash/format mismatch, stale same-size target bytes, and a conflicting operation retry', async () => {
+    const f = await setup(), target = absolute(f.projectRoot, replacementPath);
+    await expect(f.authority.planReplacement(request(), c)).rejects.toMatchObject({ code: 'IMPORT_UPLOAD_MISMATCH' });
+    await expect(f.authority.planReplacement({ ...request(), sourcePath: 'bad.webp' }, b)).rejects.toMatchObject({ code: 'IMPORT_TARGET_UNSAFE' });
+    const plan = await f.authority.planReplacement(request(), b);
+    await expect(f.authority.planReplacement(request(c), c)).rejects.toMatchObject({ code: 'IMPORT_OPERATION_CONFLICT' });
+    const before = await stat(target); await writeFile(target, c); await utimes(target, before.atime, before.mtime);
+    await expect(f.authority.commit(operationId, { planFingerprint: plan.plan.planFingerprint })).rejects.toMatchObject({ code: 'IMPORT_PLAN_STALE' });
+    expect(await readFile(target)).toEqual(c);
+  });
+
+  it('preserves a third-party C after commit and refuses both undo and stale receipt retry', async () => {
+    const f = await setup(), target = absolute(f.projectRoot, replacementPath);
+    const plan = await f.authority.planReplacement(request(), b);
+    const done = await f.authority.commit(operationId, { planFingerprint: plan.plan.planFingerprint });
+    await writeFile(target, c);
+    await expect(f.authority.undo(operationId, { receiptId: done.receipt!.receiptId, receiptFingerprint: done.receipt!.receiptFingerprint })).rejects.toMatchObject({ code: 'IMPORT_UNDO_BLOCKED_CHANGED' });
+    expect(await readFile(target)).toEqual(c);
+    await expect(f.authority.commit(operationId, { planFingerprint: '0'.repeat(64) })).rejects.toMatchObject({ code: 'IMPORT_OPERATION_CONFLICT' });
+  });
+
+  for (const point of ['after_binary_backup_intent', 'after_binary_backup_before_journal', 'after_target_link_intent',
+    'after_text_displaced_before_publish', 'after_target_link_before_journal', 'after_receipt_before_committed'] as const) {
+    it(`resumes replacement after durable interruption at ${point}`, async () => {
+      const f = await setup(), target = absolute(f.projectRoot, replacementPath);
+      const plan = await f.authority.planReplacement(request(), b);
+      let hit = false;
+      const interrupted = makeAuthority(f.paths, undefined, undefined, f.barrierStore, 1, at => {
+        if (at === point && !hit) { hit = true; throw new AssetRelocationInjectedTermination(at); }
+      });
+      await expect(interrupted.commit(operationId, { planFingerprint: plan.plan.planFingerprint })).rejects.toBeInstanceOf(AssetRelocationInjectedTermination);
+      const recovered = await f.authority.recover(operationId, { action: 'resume' });
+      expect(recovered.operation.status).toBe('COMMITTED'); expect(await readFile(target)).toEqual(b);
+      expect(recovered.receipt!.targetIdentity.sha256).toBe(digest(b));
+    });
+  }
+
+  it('rolls back an interrupted displacement, retaining the old file and later same-path replacement history', async () => {
+    const f = await setup(), target = absolute(f.projectRoot, replacementPath);
+    const plan = await f.authority.planReplacement(request(), b);
+    const interrupted = makeAuthority(f.paths, undefined, undefined, f.barrierStore, 1, at => {
+      if (at === 'after_text_displaced_before_publish') throw new AssetRelocationInjectedTermination(at);
+    });
+    await expect(interrupted.commit(operationId, { planFingerprint: plan.plan.planFingerprint })).rejects.toBeInstanceOf(AssetRelocationInjectedTermination);
+    const rolledBack = await f.authority.recover(operationId, { action: 'rollback' });
+    expect(rolledBack.operation.status).toBe('ROLLED_BACK'); expect(await readFile(target)).toEqual(a);
+    const second = await f.authority.planReplacement(request(c, batchOperationId), c);
+    await f.authority.commit(batchOperationId, { planFingerprint: second.plan.planFingerprint });
+    expect((await f.authority.query(operationId)).operation.status).toBe('ROLLED_BACK'); expect(await readFile(target)).toEqual(c);
+  });
+
+  it('finishes an interrupted undo displacement without repeating or discarding other assets', async () => {
+    const f = await setup(), target = absolute(f.projectRoot, replacementPath);
+    const plan = await f.authority.planReplacement(request(), b);
+    const done = await f.authority.commit(operationId, { planFingerprint: plan.plan.planFingerprint });
+    const interrupted = makeAuthority(f.paths, undefined, undefined, f.barrierStore, 1, at => {
+      if (at === 'after_text_displaced_before_publish') throw new AssetRelocationInjectedTermination(at);
+    });
+    await expect(interrupted.undo(operationId, { receiptId: done.receipt!.receiptId, receiptFingerprint: done.receipt!.receiptFingerprint })).rejects.toBeInstanceOf(AssetRelocationInjectedTermination);
+    expect((await f.authority.recover(operationId, { action: 'resume' })).operation.status).toBe('UNDONE');
+    expect(await readFile(target)).toEqual(a); expect(await readFile(f.sourceFile)).toEqual(Buffer.from('source-bytes'));
   });
 });

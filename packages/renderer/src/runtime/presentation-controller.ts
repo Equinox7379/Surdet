@@ -9,6 +9,7 @@ import {
   type PresentationSnapshotContext,
   type PresentationRestoreResult,
   validateTimeline,
+  stageCommandFromInstruction,
 } from '@surdet/core';
 import type { Backlog } from '../backlog.js';
 import type { AudioPlaybackSnapshot } from '../rollback-buffer.js';
@@ -293,6 +294,11 @@ export class PresentationController {
   /** 正在播放的时间轴；同一帧可有多个非阻塞时间轴并行。 */
   #timelineRuns = new Map<number, { player: TimelinePlayer; blocking: boolean }>();
   #timelineSeq = 0;
+  #settlingTimeline = false;
+  #skipTimelineAudio = false;
+  #explicitPaused = false;
+  #instructionOrigin?: import('@surdet/core').StageSource;
+  #pausedSince: number | null = null;
   #blockingTimelineId: number | null = null;
   /** 上一帧已同步给舞台的等待状态；避免空闲帧重复改写 UI 节点。 */
   #lastAwaiting: boolean | null = null;
@@ -363,7 +369,7 @@ export class PresentationController {
    * 旧舞台未实现该能力时返回 true，保持原有宿主行为。
    */
   get needsUpdate(): boolean {
-    if (this.#disposed) return false;
+    if (this.#disposed || this.presentationPaused) return false;
     return this.#hasRendererWork() || this.#queries.diagnostics.needsUpdate();
   }
 
@@ -381,6 +387,7 @@ export class PresentationController {
     const unsubs = [
       bus.on('text', (p) => { this.#onText(p); this.#requestFrame(); }),
       bus.on('choice', (p) => { this.#onChoice(p); this.#requestFrame(); }),
+      bus.on('runtimeTrace', event => { if (event.kind === 'instruction') this.#instructionOrigin = { kind: 'scene', file: event.source.file, line: event.source.line, sceneId: event.source.sceneId, instructionIndex: event.source.index }; }),
       bus.on('instr', (p) => { this.#onInstr(p); this.#requestFrame(); }),
       bus.on('wait', (p) => { this.#onWait(p); this.#requestFrame(); }),
       bus.on('video', (p) => { this.#onVideo(p); this.#requestFrame(); }),
@@ -502,9 +509,23 @@ export class PresentationController {
     }
   }
 
+  setPresentationPaused(paused: boolean): void { this.#explicitPaused = paused; this.#requestFrame(); }
+  get presentationPaused(): boolean {
+    const menu = this.#queries.overlay?.menu?.().type ?? 'none';
+    return this.#explicitPaused || this.#backlogOpen || ['system-menu', 'save-load', 'settings'].includes(menu);
+  }
+
   /** 帧推进（Pixi ticker 驱动）：打字中每帧把逐字进度推给舞台 */
   update(deltaMs: number): void {
     if (this.#disposed) return;
+    if (this.presentationPaused) {
+      this.#pausedSince ??= nowMs(); return;
+    }
+    if (this.#pausedSince !== null) {
+      const delay = nowMs() - this.#pausedSince;
+      if (this.#waitDeadline !== null) this.#waitDeadline += delay;
+      this.#awaitSince += delay; this.#pausedSince = null;
+    }
     if (!this.needsUpdate) return;
     this.#updateTimelines(deltaMs);
     // @wait 计时：到时（或快进中立即）结束等待并恢复解释器
@@ -549,7 +570,7 @@ export class PresentationController {
     }
     // 点击等待指示器投影（▼ 仅在文本等待推进时可见；fake stage 可未实现）
     this.#syncAwaiting(this.#status === 'awaiting');
-    this.#syncContinuePulse(deltaMs);
+    // Projection time was advanced once, at timeline boundaries, above.
 
     const fade = this.#fade;
     if (fade) {
@@ -717,6 +738,7 @@ export class PresentationController {
 
   /** 玩家点击/按键推进：等待中 → 跳过等待；打字中 → 瞬时完成；选择肢 → 确认高亮项；等待推进 → onAdvance */
   advance(): boolean {
+    if (this.#explicitPaused || ['system-menu', 'save-load', 'settings'].includes(this.#queries.overlay?.menu?.().type ?? 'none')) return false;
     this.#requestFrame();
     if (this.#blockingTimelineId !== null) {
       this.#skipTimeline(this.#blockingTimelineId);
@@ -744,6 +766,7 @@ export class PresentationController {
 
   /** 玩家选中选项 */
   select(index: number): boolean {
+    if (this.#explicitPaused || ['system-menu', 'save-load', 'settings'].includes(this.#queries.overlay?.menu?.().type ?? 'none')) return false;
     if (this.#status !== 'choice') return false;
     this.#requestFrame();
     this.#status = 'idle';
@@ -832,6 +855,7 @@ export class PresentationController {
   /** 读档状态重置（审计修复 C1）：作废等待计时并递增会话号，
    *  残留的 video 结束/计时到点回调不再调 onWaitEnd → finishWait 状态失配抛错 */
   #onStateReset(): void {
+    this.#explicitPaused = false; this.#pausedSince = null;
     this.#backlogOpen = false;
     this.#commands.dialogue.hideBacklog();
     this.#clearRestoreInteractiveTransients();
@@ -879,23 +903,38 @@ export class PresentationController {
     const player = new TimelinePlayer(definition);
     this.#timelineRuns.set(id, { player, blocking: p.blocking });
     if (p.blocking) this.#blockingTimelineId = id;
-    this.#applyTimelineEvents(player.eventsAtCursor());
-    if (this.#skipMode) this.#skipTimeline(id);
+    this.#applyTimelineEvents(player.eventsAtCursor().map(event => ({ ...event, runId: id })));
+    if (this.#skipMode && !this.#settlingTimeline) this.#skipTimeline(id);
   }
 
   #updateTimelines(deltaMs: number): void {
-    for (const [id, run] of [...this.#timelineRuns]) {
-      if (this.#skipMode) {
-        this.#skipTimeline(id);
-        continue;
-      }
-      this.#applyTimelineEvents(run.player.advance(deltaMs));
-      if (run.player.done) this.#completeTimeline(id);
+    if (this.#skipMode && !this.#settlingTimeline) {
+      for (const id of [...this.#timelineRuns.keys()]) this.#skipTimeline(id);
+      this.#commands.world.applyStage?.({ type: 'skip-motions' });
     }
+    this.#advanceTimelineClocks(Math.max(0, Number.isFinite(deltaMs) ? deltaMs : 0));
+  }
+
+  #advanceTimelineClocks(deltaMs: number): void {
+    let remaining = deltaMs, passes = 0;
+    do {
+      if (++passes > 30_000) throw new Error('Presentation timeline boundary budget exceeded');
+      const runs = [...this.#timelineRuns];
+      const step = Math.min(remaining, ...runs.map(([, run]) => run.player.timeToBoundary()));
+      this.#syncContinuePulse(step);
+      const events = runs.flatMap(([id, run]) => run.player.advance(step).map(event => ({ ...event, runId: id })));
+      // Finish prior writers before claiming new writers at the same instant.
+      events.sort((a, b) => Number(a.started) - Number(b.started) || a.runId! - b.runId! || (a.cueId ?? 0) - (b.cueId ?? 0));
+      this.#applyTimelineEvents(events);
+      for (const [id, run] of runs) if (this.#timelineRuns.get(id) === run && run.player.done) this.#completeTimeline(id);
+      remaining = Math.max(0, remaining - step);
+      if (remaining === 0) break;
+    } while (true);
   }
 
   #applyTimelineEvents(events: readonly import('../timeline-player.js').TimelineFrameEvent[]): void {
     for (const event of events) {
+      if (event.track === 'audio' && this.#skipTimelineAudio && event.cue.action !== 'bgm') continue;
       if (event.track === 'audio' && typeof event.cue.key === 'string' && (event.started || (event.final && event.cue.action === 'bgm'))) {
         if (event.cue.action === 'bgm') this.#audio.playBgm(event.cue.key);
         else if (event.cue.action === 'ambience') this.#audio.playAmbience?.(event.cue.key, event.cue.durationMs);
@@ -910,14 +949,20 @@ export class PresentationController {
   #skipTimeline(id: number): void {
     const run = this.#timelineRuns.get(id);
     if (!run) return;
-    this.#applyTimelineEvents(run.player.skip());
-    this.#completeTimeline(id);
+    if (this.#settlingTimeline) return;
+    if (!this.#commands.world.applyStage) {
+      this.#applyTimelineEvents(run.player.skip()); this.#completeTimeline(id); return;
+    }
+    this.#settlingTimeline = true; this.#skipTimelineAudio = true;
+    try { this.#advanceTimelineClocks(Math.max(0, run.player.definition.durationMs - run.player.cursorMs)); }
+    finally { this.#skipTimelineAudio = false; this.#settlingTimeline = false; }
   }
 
   #completeTimeline(id: number): void {
     const run = this.#timelineRuns.get(id);
     if (!run) return;
     this.#timelineRuns.delete(id);
+    this.#commands.world.applyStage?.({ type: 'finish-timeline', runId: id });
     if (this.#blockingTimelineId === id) {
       this.#blockingTimelineId = null;
       this.#onWaitEnd?.();
@@ -993,7 +1038,7 @@ export class PresentationController {
     for (const timeline of prepared.timelines) {
       this.#timelineRuns.set(timeline.id, { player: timeline.player, blocking: timeline.blocking });
       if (timeline.blocking) this.#blockingTimelineId = timeline.id;
-      this.#applyTimelineEvents(timeline.events);
+      this.#applyTimelineEvents(timeline.events.map(event => ({ ...event, runId: timeline.id })));
     }
     this.#requestFrame();
     return { awaitingTimer: this.#blockingTimelineId !== null };
@@ -1035,6 +1080,13 @@ export class PresentationController {
     const args = p.args.map(dequote);
     const mods = new Map([...p.modifiers].map(([k, v]) => [k, dequote(v)]));
 
+    if (['pose', 'layer', 'stage'].includes(p.name) || p.name === 'show' && this.#commands.world.applyStage) {
+      const command = stageCommandFromInstruction(p.name, args, mods);
+      if (command) {
+        if (!this.#commands.world.applyStage) throw new Error(`当前宿主未接入舞台指令 ${p.name}`);
+        this.#commands.world.applyStage({ ...command, source: this.#instructionOrigin?.kind === 'scene' && this.#instructionOrigin.file === p.pos.file && this.#instructionOrigin.line === p.pos.line ? this.#instructionOrigin : { kind: 'scene', file: p.pos.file, line: p.pos.line } }); return;
+      }
+    }
     switch (p.name) {
       case 'bg': {
         this.#commands.world.setBackground(args[0] ?? null);

@@ -160,6 +160,11 @@ function addSceneInstructionReferences(
     return;
   }
 
+  if (name === 'layer' && args[1] !== undefined) {
+    const token = cleanToken(args[1]);
+    addReference(references, 'background-asset', 'candidate-external', token, source, `asset:bg:${token}`);
+    return;
+  }
   if (name === 'bg') {
     const token = cleanToken(args[0]);
     if (token.length > 0) {
@@ -325,9 +330,20 @@ export function analyzeTimelineCompositionReferences(input: {
   timelineId: string;
   path: string;
   definition: unknown;
+  lookup?: (id: string) => { path: string; definition: unknown } | undefined;
+  ancestry?: readonly string[];
 }): RawCompositionReference[] {
-  void input.timelineId;
   const references: RawCompositionReference[] = [];
+  if ((input.ancestry ?? []).includes(input.timelineId) || (input.ancestry ?? []).length >= 16) throw new Error('时间轴片段引用成环或过深');
+  if (isRecord(input.definition) && Array.isArray(input.definition.clips)) {
+    for (const clip of input.definition.clips) {
+      if (!isRecord(clip) || typeof clip.timelineId !== 'string') continue;
+      addReference(references, 'timeline', 'candidate-external', clip.timelineId, { path: input.path }, `timeline:${clip.timelineId}`);
+      const child = input.lookup?.(clip.timelineId);
+      if (child) references.push(...analyzeTimelineCompositionReferences({ ...child, timelineId: clip.timelineId,
+        lookup: input.lookup, ancestry: [...input.ancestry ?? [], input.timelineId] }));
+    }
+  }
   if (!isRecord(input.definition) || !Array.isArray(input.definition['tracks'])) return references;
 
   for (const [trackIndex, rawTrack] of input.definition['tracks'].entries()) {
@@ -342,16 +358,17 @@ export function analyzeTimelineCompositionReferences(input: {
         addReference(references, 'audio-asset', 'candidate-external', rawCue['key'], source, `asset:${action}:${rawCue['key']}`);
         continue;
       }
-      if (kind === 'background' && action === 'set' && typeof rawCue['key'] === 'string' && rawCue['key'].trim().length > 0) {
+      if ((kind === 'background' && action === 'set' || kind === 'layer' && action === 'show') && typeof rawCue['key'] === 'string' && rawCue['key'].trim().length > 0) {
         const token = rawCue['key'].trim();
         addReference(references, 'background-asset', 'candidate-external', token, source, `asset:bg:${token}`);
         continue;
       }
       if (kind !== 'portrait' || (action !== 'show' && action !== 'expression') || target.length === 0) continue;
       if (typeof rawCue['expression'] !== 'string' || rawCue['expression'].trim().length === 0) continue;
-      const parts = portraitParts(target);
+      const physicalTarget = input.definition.version === 2 && typeof rawCue.source === 'string' ? rawCue.source : target;
+      const parts = portraitParts(physicalTarget);
       const expression = rawCue['expression'].trim();
-      const token = `${target}:${expression}`;
+      const token = `${physicalTarget}:${expression}`;
       addReference(references, 'portrait-asset', 'candidate-external', token, source, parts === null ? undefined : `asset:portrait:${parts.role}:${parts.outfit}:${expression}`);
     }
   }

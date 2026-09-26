@@ -1,4 +1,4 @@
-import { validateTimeline, type TimelineDefinition } from '@surdet/core';
+import { validateTimeline, resolveTimelineDefinition, type TimelineDefinition } from '@surdet/core';
 import { parseProjectConfigDocument } from './config-document.js';
 import {
   AuthoringOperationError,
@@ -20,10 +20,11 @@ import type { TextHasher } from './project-storage.js';
 import { buildTimelineOperationCompositionDraft } from './operation-composition-facts.js';
 import { resolveUniqueTimelinePath, timelineIdentityConflict, timelineIdentityMismatchMessage } from './timeline-identity.js';
 
-const WAVE2_TRACK_KINDS: ReadonlySet<string> = new Set(['background', 'portrait', 'camera', 'screen', 'particle', 'audio']);
+const WAVE2_TRACK_KINDS: ReadonlySet<string> = new Set(['background', 'portrait', 'camera', 'screen', 'particle', 'audio', 'layer']);
 const WAVE2_ACTIONS: Record<string, ReadonlySet<string>> = {
   background: new Set(['set']),
-  portrait: new Set(['show', 'hide', 'move', 'expression']),
+  portrait: new Set(['show', 'hide', 'move', 'expression', 'pose']),
+  layer: new Set(['show', 'hide', 'pose']),
   camera: new Set(['zoom', 'pan', 'shake']),
   screen: new Set(['fade', 'tint', 'flash', 'wipe']),
   particle: new Set(['start', 'stop']),
@@ -159,12 +160,13 @@ export async function applyTimelineCreate(
         diagnostics: diagnostics.map((item) => ({ code: item.code, message: item.message, path: item.path })),
       });
     }
+    validateWorkingTimelineReferences(definition as unknown as TimelineDefinition, record.workingFiles);
     const fingerprint = await timelineFingerprint(definition, hasher);
     const text = `${JSON.stringify(definition, null, 2)}\n`;
     return {
       compositionDraft: await buildTimelineOperationCompositionDraft({
         capabilityId: 'timeline.create', timelineId: input.timelineId, afterDefinition: definition, hasher,
-        config: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}'),
+        config: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}'), workingFiles: record.workingFiles,
       }),
       result: {
         timelineId: input.timelineId,
@@ -218,7 +220,14 @@ export async function applyTimelinePatch(
       || patch.expectedFingerprint === await timelineFingerprint(value, hasher)
     );
 
-    if (patch.kind === 'addTrack') {
+    if (patch.kind === 'setClips' || patch.kind === 'setVersion') {
+      if (patch.expectedFingerprint !== fingerprintBefore) throw new AuthoringOperationError('OBJECT_REF_STALE', `timeline fingerprint 不匹配：${input.timelineId}`);
+      if (patch.kind === 'setVersion') next.version = patch.version;
+      else {
+        if (next.version !== 2) throw new AuthoringOperationError('UNSUPPORTED_OPERATION', '片段引用需要先显式升级该时间轴到 version 2');
+        next.clips = JSON.parse(JSON.stringify(patch.clips));
+      }
+    } else if (patch.kind === 'addTrack') {
       if (patch.expectedFingerprint !== fingerprintBefore) {
         throw new AuthoringOperationError('OBJECT_REF_STALE', `timeline fingerprint 不匹配：${input.timelineId}`);
       }
@@ -321,11 +330,12 @@ export async function applyTimelinePatch(
     if (whitelistViolation !== null) {
       throw new AuthoringOperationError('UNSUPPORTED_OPERATION', whitelistViolation);
     }
+    validateWorkingTimelineReferences(next, record.workingFiles);
     const fingerprintAfter = await timelineFingerprint(next, hasher);
     return {
       compositionDraft: await buildTimelineOperationCompositionDraft({
         capabilityId: 'timeline.patch', timelineId: input.timelineId, path, beforeDefinition: definition, afterDefinition: next, hasher,
-        config: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}'),
+        config: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}'), workingFiles: record.workingFiles,
       }),
       result: {
         timelineId: input.timelineId,
@@ -361,3 +371,17 @@ export type {
   Wave2Action,
   Wave2TrackKind,
 } from './contracts.js';
+
+
+function validateWorkingTimelineReferences(definition: TimelineDefinition, files: Readonly<Record<string, string>>): void {
+  if (definition.version !== 2) return;
+  try {
+    resolveTimelineDefinition(definition, id => {
+      if (id === definition.id) return definition;
+      const path = resolveUniqueTimelinePath(files, id);
+      return path === undefined ? undefined : parseTimelineDefinition(files[path]!);
+    });
+  } catch (error) {
+    throw new AuthoringOperationError('VALIDATION_FAILED', `时间轴片段无法解析：${error instanceof Error ? error.message : String(error)}`);
+  }
+}

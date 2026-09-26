@@ -1,3 +1,4 @@
+import { stagePinnedSourcePaths } from '@surdet/core';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -13,6 +14,7 @@ import {
   applyGalleryCgPatch,
   inspectGallery,
   inspectPlayerConfig,
+  inspectStageConfig, applyStageConfigPatch, type StageConfigPatchInput,
   applyPlayerConfigPatch,
   type PlayerConfigPatchInput,
   GALLERY_PATH,
@@ -602,7 +604,7 @@ export class AuthoringService {
     const context = await openChangeContext(changeId, this.leaseManager.dataRoot);
     if (context.snapshot.rootIdentity !== storage.rootIdentity) throw new AuthoringOperationError('PROJECT_IDENTITY_MISMATCH', '指定 change 不属于当前项目');
     const assetFiles = includeAssets ? await withProjectLeaseRetry(this.leaseManager, storage.rootIdentity, async () =>
-      storage.inspectFileFacts(assetPathsFromFiles(await storage.listFiles()))) : [];
+      storage.inspectFileFacts(assetPathsFromFiles(await storage.listFiles()), stagePinnedSourcePaths(context.snapshot.config))) : [];
     const galleryText = context.snapshot.files.find((file) => file.path === GALLERY_PATH)?.text;
     let gallery: unknown;
     if (galleryText !== undefined) {
@@ -612,12 +614,13 @@ export class AuthoringService {
     return { snapshot: context.snapshot, assetFiles, gallery, metadata: metadataForChange(context.session), view: 'working' as const };
   }
 
-  async inspectProject(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof inspectProject> & { view: 'project' | 'working'; charactersFingerprint: string; playerConfig: Awaited<ReturnType<typeof inspectPlayerConfig>> }>> {
+  async inspectProject(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof inspectProject> & { view: 'project' | 'working'; charactersFingerprint: string; playerConfig: Awaited<ReturnType<typeof inspectPlayerConfig>>; stageConfig: Awaited<ReturnType<typeof inspectStageConfig>> }>> {
     const { snapshot, assetFiles, gallery, metadata, view } = await this.readProjectView(projectRoot, changeId, true);
     const index = buildObjectIndex(snapshot);
     return { ...metadata, result: { ...inspectProject(snapshot, index, assetFiles, gallery), view,
       charactersFingerprint: await charactersFingerprint(snapshot.config, { sha256: async text => hashText(text) }),
-      playerConfig: await inspectPlayerConfig(snapshot.config, { sha256: async text => hashText(text) }) } };
+      playerConfig: await inspectPlayerConfig(snapshot.config, { sha256: async text => hashText(text) }),
+      stageConfig: await inspectStageConfig(snapshot.config, { sha256: async text => hashText(text) }) } };
   }
 
   async projectAssets(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof buildAssetCatalog> & { view: 'project' | 'working' }>> {
@@ -745,7 +748,7 @@ export class AuthoringService {
     return this.withOpenChange(changeId, async (context) => {
       const patch = input.patch;
       if (!Object.prototype.hasOwnProperty.call(context.session.record.operations, input.operationId)
-        && patch.kind !== 'addTrack' && patch.kind !== 'setDuration') {
+        && patch.kind !== 'addTrack' && patch.kind !== 'setDuration' && patch.kind !== 'setVersion' && patch.kind !== 'setClips') {
         const ref = 'trackRef' in patch ? patch.trackRef : patch.cueRef;
         const index = buildObjectIndex(context.snapshot);
         const object = index.byRef.get(ref);
@@ -796,6 +799,15 @@ export class AuthoringService {
   async entrySceneSet(changeId: string, input: EntrySceneSetInput): Promise<ServiceResult<unknown>> {
     return this.withOpenChange(changeId, async (context) => {
       const result = await applyEntrySceneSet(context.session, input, { sha256: async (text) => hashText(text) });
+      return { ...metadataForChange(context.session), result };
+    });
+  }
+
+  async stageConfigPatch(changeId: string, input: StageConfigPatchInput): Promise<ServiceResult<unknown>> {
+    return this.withOpenChange(changeId, async context => {
+      const assets = await withProjectLeaseRetry(this.leaseManager, context.storage.rootIdentity,
+        async () => buildAssetCatalog(assetPathsFromFiles(await context.storage.listFiles()), context.snapshot));
+      const result = await applyStageConfigPatch(context.session, input, { sha256: async text => hashText(text) }, assets);
       return { ...metadataForChange(context.session), result };
     });
   }
@@ -1107,7 +1119,8 @@ export class AuthoringService {
     return this.withOpenChange(changeId, async (context) => {
       const index = buildObjectIndex(context.snapshot);
       const assetPaths = assetPathsFromFiles(await context.storage.listFiles());
-      const assetCatalog = buildAssetCatalog(assetPaths, context.snapshot);
+      const assetFacts = await context.storage.inspectFileFacts(assetPaths, stagePinnedSourcePaths(context.snapshot.config));
+      const assetCatalog = buildAssetCatalog(assetFacts, context.snapshot);
       const validation = validateSnapshot(context.snapshot, index, { assetCatalog, timelineReferenceScope: 'complete' });
       const evidence = validationEvidence(context.session.record.baseRevision, changeId, context.session.record.workingRevision, validation);
       await context.store.writeEvidence(changeId, evidence.evidenceId, evidence);

@@ -287,15 +287,15 @@ export class RendererFacade {
         if (!method) this.#missing('assets', 'registerBackground');
         await method.call(this.#stage, key, source, format);
       },
-      registerPortrait: async (charId, costume, expression, source, format) => {
+      registerPortrait: async (charId, costume, expression, source, format, sourcePath) => {
         this.#ensureActive('assets', 'registerPortrait');
         if (this.#assetRegistry) {
-          await this.#assetRegistry.registerPortrait(charId, costume, expression, source, format);
+          await this.#assetRegistry.registerPortrait(charId, costume, expression, source, format, sourcePath);
           return;
         }
         const method = this.#stage.registerPortrait;
         if (!method) this.#missing('assets', 'registerPortrait');
-        await method.call(this.#stage, charId, costume, expression, source, format);
+        await method.call(this.#stage, charId, costume, expression, source, format, sourcePath);
       },
       registerAvatar: async (key, source, format) => {
         this.#ensureActive('assets', 'registerAvatar');
@@ -344,6 +344,7 @@ export class RendererFacade {
     };
 
     const world: WorldCommands = {
+      applyStage: (command) => this.#callWorld('applyStage', this.#worldPort?.applyStage, this.#stage.applyStage, command),
       setBackground: (key) => this.#callWorld('setBackground', this.#worldPort?.setBackground, this.#stage.setBackground, key),
       setPortrait: (key, view) => this.#callWorld('setPortrait', this.#worldPort?.setPortrait, this.#stage.setPortrait, key, view),
       removePortrait: (key) => this.#callWorld('removePortrait', this.#worldPort?.removePortrait, this.#stage.removePortrait, key),
@@ -776,6 +777,7 @@ export class RendererFacade {
     this.commands = { assets, world, dialogue, menu, gallery, system, loading, preferences, presentation };
 
     const worldQueries: WorldQueries = {
+      inspectStage: () => this.#worldPort?.inspectStage?.() ?? null,
       captureThumbnail: () => {
         this.#ensureQueryActive('world', 'captureThumbnail');
         if (this.#worldPort) return this.#worldPort.captureThumbnail();

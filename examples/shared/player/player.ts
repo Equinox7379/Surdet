@@ -5,6 +5,7 @@
 import {
   compileScene,
   resolveProjectPortraits,
+  readProjectStage,
   type CharacterPortraits,
   Interpreter,
   SceneRegistry,
@@ -88,6 +89,7 @@ export interface PlayerProject {
   /** Stable package name; changing the display title must not change save ownership. */
   id: string;
   config: {
+    stage?: unknown;
     title?: string;
     entryScene: string;
     variables: Record<string, unknown>;
@@ -228,6 +230,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   let playerShell: PlayerShellController | null = null;
   const performanceMonitor = new RenderPerformanceMonitor();
   const runtime = await createRendererRuntime({
+    stage: readProjectStage(gameConfig),
     audio,
     typewriter,
     backlog,
@@ -572,7 +575,8 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
       } else if (kind === 'portrait' && IMG.test(fname)) {
         const bindings = portraitBindings.filter(value => value.sourcePath === `content/assets/${rel}`);
         for (const binding of bindings) {
-          await assets.registerPortrait(binding.role, binding.outfit, binding.expression, url, format);
+          await assets.registerPortrait(binding.role, binding.outfit, binding.expression, url, format,
+            readProjectStage(gameConfig)?.portraits[`${binding.role}:${binding.outfit}`]?.sources[binding.expression] ? binding.sourcePath : undefined);
         }
         return bindings.length > 0;
       } else if (kind === 'avatar' && IMG.test(fname)) {
