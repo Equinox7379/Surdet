@@ -22,7 +22,7 @@ import { WorldEffectsController, type ShakeDirection, type TransitionName } from
 import type { TimelineFrameEvent } from '../../timeline-player.js';
 import type { FrameRequestHandler, PortraitView } from '../../types.js';
 import type { ProjectStage, StageCommand, StageLayerDefinition, StagePose, StageGeometryPolicy, StageSource, StageInspection } from '../../stage-geometry.js';
-import { StageMotionController, prepareStageMotions, type StageMotionSnapshot, type StageProperty, type StageValues } from '../../stage-motion.js';
+import { StageMotionController, prepareStageMotions, lerpColor, type StageMotionSnapshot, type StageProperty, type StageValues } from '../../stage-motion.js';
 
 export interface WorldPresentationSnapshot {
   version: 1 | 2;
@@ -200,19 +200,6 @@ function makeFallbackPortraitTexture(charId: string, costume: string, expression
   ctx.quadraticCurveTo(cx, headY + headRy * (expressionHash === 1 ? 0.68 : 0.62), cx + headRy * 0.12, headY + headRy * 0.58);
   ctx.stroke();
   return Texture.from(canvas);
-}
-
-function lerpColor(a: number, b: number, progress: number): number {
-  const ar = (a >> 16) & 0xff;
-  const ag = (a >> 8) & 0xff;
-  const ab = a & 0xff;
-  const br = (b >> 16) & 0xff;
-  const bg = (b >> 8) & 0xff;
-  const bb = b & 0xff;
-  const r = Math.round(ar + (br - ar) * progress);
-  const g = Math.round(ag + (bg - ag) * progress);
-  const blue = Math.round(ab + (bb - ab) * progress);
-  return ((r & 0xff) << 16) | ((g & 0xff) << 8) | (blue & 0xff);
 }
 
 function finiteNumber(value: unknown): value is number {
@@ -490,12 +477,26 @@ export class WorldLayer implements WorldProjectionPort {
     const view = this.#portraitViews.get(key), sprite = this.#portraitSprites.get(key);
     if (!view || !sprite) throw new Error(`舞台对象不存在：${key}`);
     if (view.pose) return { ...view.pose };
-    return { x: sprite.x, y: sprite.y, scale: 1, facing: 'right', opacity: sprite.alpha, z: sprite.zIndex,
+    return { x: sprite.x, y: sprite.y, scale: 1, facing: 'right', opacity: this.#portraitTweens.some(tween => tween.key === key) ? 1 : sprite.alpha, z: sprite.zIndex,
       baseHeight: Math.max(1, sprite.height), anchorX: .5, anchorY: 1 };
   }
 
+  #promotePortrait(key: string): void {
+    const view = this.#portraitViews.get(key), sprite = this.#portraitSprites.get(key);
+    if (!view || !sprite || view.pose) return;
+    const pose = this.#readPose(key);
+    const frame = { x: 0, y: 0, width: sprite.texture.width, height: sprite.texture.height };
+    this.#portraitViews.set(key, { ...view, pose, frame });
+    this.#portraitFrames.set(sprite, frame);
+    for (const tween of this.#portraitTweens) if (tween.key === key && tween.oldView) {
+      const oldFrame = { x: 0, y: 0, width: tween.old.texture.width, height: tween.old.texture.height };
+      tween.oldView = { ...tween.oldView, pose: { ...pose }, frame: oldFrame };
+      this.#portraitFrames.set(tween.old, oldFrame);
+    }
+  }
+
   #explicitPoseValues(modifiers: ReadonlyMap<string, string>, pose: StagePose): StageValues {
-    const names = new Set<StageProperty>();
+    const names = new Set<keyof StagePose>();
     if (modifiers.has('pos')) {
       names.add('x');
       if (Object.prototype.hasOwnProperty.call(this.#effectiveStage().positions, modifiers.get('pos')!)) names.add('y');
@@ -619,19 +620,28 @@ export class WorldLayer implements WorldProjectionPort {
   #clearStageLayers(): void { for (const id of [...this.#stageLayers.keys()]) this.#removeStageLayer(id); }
 
   #readStageProperty(target: string, property: StageProperty): number | string {
+    if (target === 'screen:fade') return this.fadeOverlay.alpha;
+    if (target === 'screen:tint') return property === 'color' ? Number(this.#tintOverlay.tint) : this.#tintOverlay.alpha;
     if (target === 'camera') {
       if (property === 'x') return this.#cameraPanX;
       if (property === 'y') return this.#cameraPanY;
       if (property === 'scale') return this.worldContainer.scale.x;
       throw new Error(`相机不支持 ${property}`);
     }
-    if (target.startsWith('portrait:')) return this.#readPose(target.slice(9))[property];
+    if (target.startsWith('portrait:') && property !== 'color') return this.#readPose(target.slice(9))[property];
     const layer = this.#stageLayers.get(target.slice(6));
     const value = layer?.definition[property as keyof StageLayerDefinition];
     if (typeof value !== 'number') throw new Error(`图层对象或属性不存在：${target}.${property}`);
     return value;
   }
   #writeStageProperties(target: string, patch: StageValues): void {
+    if (target === 'screen:fade') { this.fadeOverlay.alpha = Number(patch.opacity); return; }
+    if (target === 'screen:tint') {
+      if (patch.opacity !== undefined) this.#tintOverlay.alpha = Number(patch.opacity);
+      if (patch.color !== undefined) this.#tintOverlay.tint = Number(patch.color);
+      this.#tintOverlay.visible = this.#tintOverlay.alpha > .001;
+      return;
+    }
     if (target === 'camera') {
       if (patch.x !== undefined) this.#cameraPanX = Number(patch.x);
       if (patch.y !== undefined) this.#cameraPanY = Number(patch.y);
@@ -639,7 +649,9 @@ export class WorldLayer implements WorldProjectionPort {
       this.#setWorldBasePosition(); return;
     }
     if (target.startsWith('portrait:')) {
-      const key = target.slice(9), view = this.#portraitViews.get(key);
+      const key = target.slice(9);
+      this.#promotePortrait(key);
+      const view = this.#portraitViews.get(key);
       if (!view) return;
       const pose = this.#geometry().validateStagePose({ ...this.#readPose(key), ...patch });
       const next = { ...view, pose };
@@ -647,6 +659,7 @@ export class WorldLayer implements WorldProjectionPort {
       const sprite = this.#portraitSprites.get(key);
       if (sprite) this.#projectPortraitPose(sprite, next);
       for (const tween of this.#portraitTweens) if (tween.key === key) {
+        if (tween.oldView) tween.oldView = { ...tween.oldView, pose: { ...pose } };
         this.#projectPortraitPose(tween.old, next); this.#projectPortraitPose(tween.neu, next);
         const p = 1 - tween.remain / tween.dur;
         tween.old.alpha = pose.opacity * (1 - p); tween.neu.alpha = pose.opacity * p;
@@ -673,7 +686,7 @@ export class WorldLayer implements WorldProjectionPort {
     if (this.#disposed) return;
     const texture = this.#assets.resolvePortrait(view.charId, view.costume, view.expression)
       ?? this.#assets.getOrCreatePortrait(`${view.charId}:${view.costume}:${view.expression}`, () => makeFallbackPortraitTexture(view.charId, view.costume, view.expression));
-    const previous = this.#portraitViews.get(key);
+    let previous = this.#portraitViews.get(key);
     if (view.pose || previous?.pose) {
       const pose = this.#geometry().validateStagePose(view.pose ?? previous!.pose);
       const profile = this.#stage?.portraits[`${view.charId}:${view.costume}`];
@@ -686,6 +699,10 @@ export class WorldLayer implements WorldProjectionPort {
       const frame = this.#geometry().validateStageFrame(view.frame ?? profile?.expressions[view.expression]
         ?? { x: 0, y: 0, width: texture.width, height: texture.height }, texture.width, texture.height);
       view = { ...view, pose, frame };
+    }
+    if (view.pose && previous && !previous.pose) {
+      this.#promotePortrait(key);
+      previous = this.#portraitViews.get(key);
     }
     this.#invalidatePreparation();
     this.#requestFrame();
@@ -723,7 +740,7 @@ export class WorldLayer implements WorldProjectionPort {
     this.#portraitSprites.set(key, next);
     const dur = view.pose ? presentationDuration(260, this.#presentation) : 260;
     this.#portraitTweens.push({ key, old: existing, neu: next, remain: dur, dur,
-      ...(view.pose && previous ? { oldView: JSON.parse(JSON.stringify(previous)) as PortraitView } : {}) });
+      ...(previous ? { oldView: JSON.parse(JSON.stringify(previous)) as PortraitView } : {}) });
     this.#ensureEffectRegistration();
   }
 
@@ -873,9 +890,20 @@ export class WorldLayer implements WorldProjectionPort {
   #applyOwnedTimelineFrame(event: TimelineFrameEvent): boolean {
     const cue = event.cue, target = event.target ?? '';
     const identity = `${event.runId}/${event.cueId ?? 0}`;
+    if (event.track === 'screen' && (cue.action === 'fade' || cue.action === 'tint')) {
+      if (this.#stageMotions.isCueCancelled(identity)) return true;
+      if (cue.action === 'tint' && !this.#stageMotions.timelineTarget(identity)) {
+        this.#tintRemain = 0;
+        if (this.#tintOverlay.alpha <= .001) this.#tintOverlay.tint = Number(cue.color);
+      }
+      this.#stageMotions.timeline(identity, `screen:${cue.action}`, {
+        opacity: Number(cue.alpha), ...(cue.action === 'tint' ? { color: Number(cue.color) } : {}),
+      }, event.progress, event.source);
+      return true;
+    }
     // Legacy files retain their old pixel/layout interpretation until a new
     // pose or an explicit stage configuration opts this target into the new model.
-    if (!this.#stage && event.definitionVersion !== 2 && !this.#stageMotions.hasState
+    if (!this.#stage && event.definitionVersion !== 2 && !this.#stageMotions.hasSpatialState
       && !this.#actorKeys(target).some(key => this.#portraitViews.get(key)?.pose) && this.#stageLayers.size === 0) return false;
     const mods = new Map<string, string>();
     for (const name of ['x', 'y', 'scale', 'opacity', 'z', 'facing', 'baseHeight', 'anchorX', 'anchorY', 'distance'] as const)
@@ -1082,7 +1110,7 @@ export class WorldLayer implements WorldProjectionPort {
         transitions: {
           ...(this.#backgroundTransition?.oldKey ? { background: { oldKey: this.#backgroundTransition.oldKey,
             remain: this.#backgroundTransition.remain, duration: this.#backgroundTransition.dur } } : {}),
-          portraits: this.#portraitTweens.filter(tween => tween.oldView).map(tween => ({ key: tween.key,
+          portraits: this.#portraitTweens.filter(tween => tween.oldView && this.#portraitViews.get(tween.key)?.pose).map(tween => ({ key: tween.key,
             oldView: JSON.parse(JSON.stringify(tween.oldView)) as PortraitView, remain: tween.remain, duration: tween.dur })),
         } } : {}),
       activeSpeakerId: this.#activeSpeakerId,
@@ -1523,7 +1551,7 @@ export class WorldLayer implements WorldProjectionPort {
         layers.push(layer);
       }
     }
-    const motions = extended ? prepareStageMotions(raw.motions, new Set(['camera',
+    const motions = extended ? prepareStageMotions(raw.motions, new Set(['camera', 'screen:fade', 'screen:tint',
       ...portraits.map(value => `portrait:${value.key}`), ...layers.map(value => `layer:${value.id}`)])) : undefined;
     // Resolve every texture before touching visible state. A failure here leaves the old projection intact.
     if (typeof raw.backgroundKey === 'string') this.#resolveBackground(raw.backgroundKey);

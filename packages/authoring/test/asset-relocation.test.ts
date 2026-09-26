@@ -16,6 +16,62 @@ const hasher: TextHasher = {
   sha256: async (text) => createHash('sha256').update(text, 'utf8').digest('hex'),
 };
 
+it.each(['portrait:rin:coat', 'rin:coat'])('renames the actual pose target %s in scenes and quoted-arrow choices, for single and batch plans', async poseTarget => {
+  const sourcePath = 'content/assets/portrait/rin_coat_normal.png', targetPath = 'content/assets/portrait/kei_coat_normal.png';
+  const before = `@scene start\r\n@show rin:coat normal @x=100\r\n@pose ${poseTarget} @x=500\r\n@choice\r\n  原文 portrait:rin:coat [if:" -> " == " -> "] -> @pose ${poseTarget} x=700 @goto end\r\n@label end\r\n@end\r\n`;
+  const expected = before.replace('@show rin:coat', '@show kei:coat').replaceAll(`@pose ${poseTarget}`, `@pose ${poseTarget.replace('rin', 'kei')}`);
+  const options = { files: { 'game.config.json': '{"entryScene":"start"}', 'content/scenario/start.gal': before },
+    assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath };
+  for (const result of [await planProjectAssetRelocation(await makeInput(options), hasher),
+    await planProjectAssetRelocationBatch(await makeBatchInput({ ...options, items: [{ itemId: 'actor', sourcePath, targetPath }] }), hasher)]) {
+    expect(result.plan.blockers).toEqual([]);
+    expect(result.textChanges.find(file => file.path === 'content/scenario/start.gal')!.afterText).toBe(expected);
+  }
+});
+
+it.each(['hero', 'rin:coat'])('keeps explicit scene instance %s separate from a renamed resource', async id => {
+  const sourcePath = 'content/assets/portrait/rin_coat_normal.png', targetPath = 'content/assets/portrait/kei_coat_normal.png';
+  const before = `@scene start\n@show rin:coat normal @id=${id}\n@pose portrait:${id} @x=500\n@end\n`;
+  const options = { files: { 'content/scenario/start.gal': before }, assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath };
+  for (const result of [await planProjectAssetRelocation(await makeInput(options), hasher),
+    await planProjectAssetRelocationBatch(await makeBatchInput({ ...options, items: [{ itemId: 'actor', sourcePath, targetPath }] }), hasher)]) {
+    if (id === 'hero') {
+      expect(result.plan.blockers).toEqual([]);
+      expect(result.textChanges.find(file => file.path.endsWith('/start.gal'))!.afterText).toBe(before.replace('@show rin:coat', '@show kei:coat'));
+    } else {
+      expect(result.plan.blockers.some(blocker => blocker.code === 'ASSET_RELOCATION_OPAQUE_REFERENCE')).toBe(true);
+      expect(result.textChanges).toEqual([]);
+    }
+  }
+});
+
+it.each(['explicit-track', 'clip-binding'])('rejects ambiguous %s identities before single or batch publication', async kind => {
+  const sourcePath = 'content/assets/portrait/rin_coat_normal.png', targetPath = 'content/assets/portrait/kei_coat_normal.png';
+  const definition = kind === 'explicit-track'
+    ? { version: 2, id: 'shot', durationMs: 0, tracks: [{ kind: 'portrait', target: 'rin:coat', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'show', source: 'rin:coat', expression: 'normal' }] }] }
+    : { version: 2, id: 'shot', durationMs: 1, tracks: [], clips: [{ timelineId: 'child', atMs: 0, bindings: { 'rin:coat': 'hero' } }] };
+  const options = { files: { 'content/scenario/start.gal': '@scene start\n@end\n', 'content/timelines/shot.json': JSON.stringify(definition) },
+    assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath };
+  for (const result of [await planProjectAssetRelocation(await makeInput(options), hasher),
+    await planProjectAssetRelocationBatch(await makeBatchInput({ ...options, items: [{ itemId: 'actor', sourcePath, targetPath }] }), hasher)]) {
+    expect(result.plan.blockers.some(blocker => blocker.code === 'ASSET_RELOCATION_OPAQUE_REFERENCE')).toBe(true);
+    expect(result.textChanges).toEqual([]);
+  }
+});
+
+it('keeps the portrait prefix for a complete bare-role batch but rejects a partial group rename', async () => {
+  const sourcePath = 'content/assets/portrait/rin_coat_normal.png', targetPath = 'content/assets/portrait/kei_coat_normal.png';
+  const second = 'content/assets/portrait/rin_coat_smile.png';
+  const before = '@scene start\n@show rin:coat normal\n@pose portrait:rin @x=500\n@end\n';
+  const options = { files: { 'content/scenario/start.gal': before }, assets: [{ path: sourcePath, bytes: 1 }, { path: second, bytes: 1 }], sourcePath, targetPath };
+  const partial = await planProjectAssetRelocationBatch(await makeBatchInput({ ...options, items: [{ itemId: 'one', sourcePath, targetPath }] }), hasher);
+  expect(partial.plan.blockers.length).toBeGreaterThan(0); expect(partial.textChanges).toEqual([]);
+  const full = await planProjectAssetRelocationBatch(await makeBatchInput({ ...options, items: [{ itemId: 'one', sourcePath, targetPath },
+    { itemId: 'two', sourcePath: second, targetPath: 'content/assets/portrait/kei_coat_smile.png' }] }), hasher);
+  expect(full.plan.blockers).toEqual([]);
+  expect(full.textChanges.find(file => file.path.endsWith('/start.gal'))!.afterText).toBe(before.replaceAll('rin', 'kei'));
+});
+
 it('moves explicit portrait source paths without changing logical slots and rejects conflicting slot renames', async () => {
   const sourcePath = 'content/assets/portrait/lynn_uniform_normal.png';
   const targetPath = 'content/assets/portrait/cast/lynn_uniform_normal.png';
