@@ -71,6 +71,50 @@ async function harness(stageConfig: ProjectStage | null = config()) {
 }
 
 describe('Stage composition through Core, Controller and the real World projection', () => {
+  it.each([0, 100, 300])('roundtrips legacy-to-pose expression changes at %sms without losing visibility', async elapsed => {
+    const a = await harness(null), b = await harness(null);
+    try {
+      const source = '@show rin:coat normal @left\n第一句。\n@show rin:coat smile @x=400\n第二句。\n@end';
+      a.load(source); b.load(source); a.interpreter.advance(); a.controller.update(elapsed);
+      const saved = JSON.parse(JSON.stringify(a.interpreter.saveSnapshot()));
+      b.interpreter.loadSnapshot(saved);
+      expect(b.world.snapshotPresentation()).toEqual(a.world.snapshotPresentation());
+      for (const h of [a, b]) h.controller.update(300);
+      expect(b.pose()).toMatchObject({ x: 400, opacity: 1 });
+      expect(b.sprites().find(sprite => sprite.texture === b.smile)!.alpha).toBe(1);
+    } finally { a.dispose(); b.dispose(); }
+  });
+
+  it('promotes an ongoing legacy crossfade without treating its current alpha as semantic opacity', async () => {
+    const a = await harness(null), b = await harness(null);
+    try {
+      const source = '@show rin:coat normal @left\n第一句。\n@show rin:coat smile\n@pose rin:coat @x=400\n第二句。\n@end';
+      a.load(source); b.load(source); a.interpreter.advance(); a.controller.update(100);
+      expect(a.pose().opacity).toBe(1);
+      expect(a.world.snapshotPresentation().transitions!.portraits).toHaveLength(1);
+      b.interpreter.loadSnapshot(JSON.parse(JSON.stringify(a.interpreter.saveSnapshot())));
+      expect(b.world.snapshotPresentation()).toEqual(a.world.snapshotPresentation());
+      for (const h of [a, b]) h.controller.update(200);
+      expect(b.sprites().find(sprite => sprite.texture === b.smile)!.alpha).toBe(1);
+    } finally { a.dispose(); b.dispose(); }
+  });
+
+  it.each(['fade', 'tint'] as const)('restores screen %s without repeating progress and continues the original trajectory', async action => {
+    const a = await harness(), b = await harness();
+    try {
+      const definition: TimelineDefinition = { version: 2, id: 'screen', durationMs: 1000, tracks: [{ kind: 'screen', cues: [
+        { atMs: 0, durationMs: 1000, easing: 'linear', action, alpha: 1, ...(action === 'tint' ? { color: 0x33aa55 } : {}) },
+      ] }] };
+      for (const h of [a, b]) { h.timelines.register(definition); h.load('@timeline screen @blocking\n完成。\n@end'); }
+      a.controller.update(400);
+      const saved = JSON.parse(JSON.stringify(a.interpreter.saveSnapshot()));
+      const value = (h: typeof a) => action === 'fade' ? h.world.snapshotPresentation().fadeAlpha : h.world.snapshotPresentation().tint.alpha;
+      for (let i = 0; i < 2; i++) { b.interpreter.loadSnapshot(saved); expect(value(b)).toBeCloseTo(.4, 10); }
+      for (const h of [a, b]) h.controller.update(250);
+      expect(value(b)).toBeCloseTo(value(a), 10);
+      expect(b.interpreter.status).toBe('awaiting-timer');
+    } finally { a.dispose(); b.dispose(); }
+  });
   it('places two independent actors, preserves scale/facing/opacity and leaves the camera untouched', async () => {
     const h = await harness();
     try {
@@ -84,6 +128,87 @@ describe('Stage composition through Core, Controller and the real World projecti
       expect(rin.alpha).toBeCloseTo(.7);
       expect(h.world.snapshotPresentation().version).toBe(2);
     } finally { h.dispose(); }
+  });
+
+  it('keeps remaining legacy movement when opacity alone opts a moving actor into pose', async () => {
+    const a = await harness(null), b = await harness(null);
+    try {
+      const source = '@show rin:coat normal @left\n正文。\n@end';
+      for (const h of [a, b]) {
+        h.load(source); h.world.movePortrait('rin:coat', 'right', 1000); h.controller.update(250);
+        h.world.applyStage({ type: 'pose', target: 'rin:coat', modifiers: { opacity: '.8' } });
+      }
+      const saved = JSON.parse(JSON.stringify(a.interpreter.saveSnapshot()));
+      b.interpreter.loadSnapshot(saved);
+      for (const h of [a, b]) h.controller.update(300);
+      expect(b.pose()).toEqual(a.pose());
+      for (const h of [a, b]) h.controller.update(450);
+      expect(b.pose()).toMatchObject({ x: 960, opacity: .8 });
+    } finally { a.dispose(); b.dispose(); }
+  });
+
+  it.each([1, 2] as const)('restores overlapping nonlinear screen cues in timeline v%s at start, middle and end', async version => {
+    const a = await harness(null), b = await harness(null);
+    try {
+      const definition: TimelineDefinition = { version, id: 'screen-overlap', durationMs: 1500, tracks: [{ kind: 'screen', cues: [
+        { atMs: 0, durationMs: 1000, easing: 'inOutSine', action: 'fade', alpha: 1 },
+        { atMs: 200, durationMs: 1000, easing: 'outCubic', action: 'fade', alpha: .2 },
+        { atMs: 0, durationMs: 1000, easing: 'linear', action: 'tint', color: 0x33aa55, alpha: .8 },
+        { atMs: 200, durationMs: 1000, easing: 'inOutCubic', action: 'tint', color: 0xaa2277, alpha: .3 },
+      ] }] };
+      for (const h of [a, b]) { h.timelines.register(definition); h.load('@timeline screen-overlap @blocking\n完成。\n@end'); }
+      const state = (h: typeof a) => { const s = h.world.snapshotPresentation(); return { alpha: s.fadeAlpha, tint: s.tint }; };
+      for (const delta of [0, 400, 250, 550]) {
+        a.controller.update(delta);
+        const saved = JSON.parse(JSON.stringify(a.interpreter.saveSnapshot()));
+        for (let i = 0; i < 2; i++) { b.interpreter.loadSnapshot(saved); expect(state(b)).toEqual(state(a)); }
+        a.controller.update(10); b.controller.update(10); expect(state(b)).toEqual(state(a));
+      }
+      for (const h of [a, b]) expect(h.controller.advance()).toBe(true);
+      expect(state(b)).toEqual(state(a));
+      expect(state(b)).toEqual({ alpha: .2, tint: { color: 0xaa2277, alpha: .3 } });
+    } finally { a.dispose(); b.dispose(); }
+  });
+
+  it('rejects missing or mismatched screen origins before altering the current game', async () => {
+    const a = await harness(null), b = await harness(null);
+    try {
+      const definition: TimelineDefinition = { version: 2, id: 'screen', durationMs: 1000, tracks: [{ kind: 'screen', cues: [
+        { atMs: 0, durationMs: 1000, easing: 'linear', action: 'fade', alpha: 1 },
+      ] }] };
+      for (const h of [a, b]) { h.timelines.register(definition); h.load('@timeline screen @blocking\n完成。\n@end'); }
+      a.controller.update(400); b.controller.update(100);
+      const saved = JSON.parse(JSON.stringify(a.interpreter.saveSnapshot()));
+      const current = () => { const { meta: _meta, ...snapshot } = b.interpreter.saveSnapshot()!; return snapshot; };
+      const before = current();
+      for (const fault of ['missing', 'target', 'legacy']) {
+        const bad = JSON.parse(JSON.stringify(saved));
+        if (fault === 'missing') bad.presentation.payload.stage.motions.timelines = [];
+        else if (fault === 'target') bad.presentation.payload.stage.motions.timelines[0][1].to.opacity = .5;
+        else bad.presentation.payload.stage = { version: 1, portraits: [], backgroundKey: null, cameraScale: 1,
+          cameraPan: { x: 0, y: 0 }, fadeAlpha: .4, tint: { color: 0, alpha: 0 }, particleKind: null };
+        expect(() => b.interpreter.loadSnapshot(bad)).toThrow(/screen effect/);
+        expect(current()).toEqual(before);
+      }
+    } finally { a.dispose(); b.dispose(); }
+  });
+
+  it('pauses a restored screen cue and skips from mid-cue to the authoritative value', async () => {
+    const a = await harness(null), b = await harness(null);
+    try {
+      const definition: TimelineDefinition = { version: 2, id: 'screen-skip', durationMs: 1000, tracks: [{ kind: 'screen', cues: [
+        { atMs: 0, durationMs: 1000, easing: 'inOutCubic', action: 'tint', alpha: .8, color: 0xaa22bb },
+      ] }] };
+      for (const h of [a, b]) { h.timelines.register(definition); h.load('@timeline screen-skip @blocking\n完成。\n@end'); }
+      a.controller.update(400); b.interpreter.loadSnapshot(JSON.parse(JSON.stringify(a.interpreter.saveSnapshot())));
+      const saved = b.world.snapshotPresentation().tint;
+      b.controller.setPresentationPaused(true); b.controller.update(500);
+      expect(b.world.snapshotPresentation().tint).toEqual(saved);
+      b.controller.setPresentationPaused(false);
+      expect(b.controller.advance()).toBe(true);
+      expect(b.world.snapshotPresentation().tint).toEqual({ color: 0xaa22bb, alpha: .8 });
+      expect(b.interpreter.status).toBe('awaiting-advance');
+    } finally { a.dispose(); b.dispose(); }
   });
 
   it('changes differently sized/trimmed expressions without moving or resizing the calibrated visible frame', async () => {

@@ -2,7 +2,7 @@ import { validStageSource, type StageSource } from '@surdet/core';
 import type { TimelineEasing } from '@surdet/core';
 import { ease } from './timeline-player.js';
 
-export type StageProperty = 'x' | 'y' | 'scale' | 'opacity' | 'z' | 'facing' | 'baseHeight' | 'anchorX' | 'anchorY';
+export type StageProperty = 'x' | 'y' | 'scale' | 'opacity' | 'z' | 'facing' | 'baseHeight' | 'anchorX' | 'anchorY' | 'color';
 export type StageValues = Partial<Record<StageProperty, number | string>>;
 interface Motion {
   source?: StageSource;
@@ -18,12 +18,13 @@ export interface StageMotionSnapshot {
   cancelled?: string[];
   origins?: [string, StageProperty, StageSource][];
 }
-const properties: readonly StageProperty[] = ['x', 'y', 'scale', 'opacity', 'z', 'facing', 'baseHeight', 'anchorX', 'anchorY'];
+const properties: readonly StageProperty[] = ['x', 'y', 'scale', 'opacity', 'z', 'facing', 'baseHeight', 'anchorX', 'anchorY', 'color'];
 const easings: readonly TimelineEasing[] = ['linear', 'inOutSine', 'outCubic', 'inOutCubic'];
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 function validateValue(target: string, property: StageProperty, value: unknown): void {
   const layer = target.startsWith('layer:'), camera = target === 'camera';
+  if (target.startsWith('screen:') ? property !== 'opacity' && !(target === 'screen:tint' && property === 'color') : property === 'color') throw new Error(`Unsupported screen property ${target}.${property}`);
   if (camera && !['x', 'y', 'scale'].includes(property) || layer && !['x', 'y', 'scale', 'opacity', 'z'].includes(property)) throw new Error(`Unsupported stage property ${target}.${property}`);
   if (property === 'facing') {
     if (value !== 'left' && value !== 'right') throw new Error('Invalid facing');
@@ -31,11 +32,16 @@ function validateValue(target: string, property: StageProperty, value: unknown):
   }
   const limits: Record<Exclude<StageProperty, 'facing'>, [number, number]> = {
     x: [camera ? -2000 : -100_000, camera ? 2000 : 100_000], y: [camera ? -2000 : -100_000, camera ? 2000 : 100_000],
-    scale: [camera ? .25 : .01, camera ? 4 : 16], opacity: [0, 1], z: [-32768, 32767], baseHeight: [1, 20_000], anchorX: [0, 1], anchorY: [0, 1],
+    scale: [camera ? .25 : .01, camera ? 4 : 16], opacity: [0, 1], z: [-32768, 32767], baseHeight: [1, 20_000], anchorX: [0, 1], anchorY: [0, 1], color: [0, 0xffffff],
   };
   const range = limits[property];
   if (typeof value !== 'number' || !Number.isFinite(value) || value < range[0] || value > range[1]
-    || property === 'z' && !Number.isInteger(value)) throw new Error(`Stage property outside bounds: ${target}.${property}`);
+    || (property === 'z' || property === 'color') && !Number.isInteger(value)) throw new Error(`Stage property outside bounds: ${target}.${property}`);
+}
+
+export function lerpColor(a: number, b: number, progress: number): number {
+  const channel = (shift: number) => Math.round(((a >> shift) & 255) + (((b >> shift) & 255) - ((a >> shift) & 255)) * progress);
+  return (channel(16) << 16) | (channel(8) << 8) | channel(0);
 }
 
 /** Only interpolation/ownership lives here. The World owner retains the single current pose. */
@@ -50,6 +56,7 @@ export class StageMotionController {
     private readonly write: (target: string, patch: StageValues) => void) {}
   get active(): boolean { return this.#direct.length > 0; }
   get hasState(): boolean { return this.#owners.size > 0 || this.#timelines.size > 0 || this.#cancelled.size > 0; }
+  get hasSpatialState(): boolean { return [...this.#owners.keys()].some(target => !target.startsWith('screen:')) || this.#cancelled.size > 0; }
 
   #prepare(target: string, to: StageValues, duration = 0, easing: TimelineEasing = 'linear', source?: StageSource): Motion {
     if (source && !validStageSource(source)) throw new Error('Invalid stage source');
@@ -83,7 +90,8 @@ export class StageMotionController {
     for (const property of Object.keys(motion.to) as StageProperty[]) {
       if (owners?.get(property) !== motion.token) continue;
       const to = motion.to[property]!, from = motion.from[property]!;
-      patch[property] = property === 'facing' || property === 'z' ? to : Number(from) + (Number(to) - Number(from)) * progress;
+      patch[property] = property === 'color' ? lerpColor(Number(from), Number(to), progress)
+        : property === 'facing' || property === 'z' ? to : Number(from) + (Number(to) - Number(from)) * progress;
     }
     if (Object.keys(patch).length) this.write(motion.target, patch);
   }

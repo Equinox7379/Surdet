@@ -1,4 +1,4 @@
-import { findChoiceArrow, projectPortraitOverrides, splitOutsideQuotes } from '@surdet/core';
+import { decodeStageToken, findChoiceArrow, projectPortraitOverrides, splitOutsideQuotes } from '@surdet/core';
 import type {
   ProjectAssetFileFact,
   ProjectAssetKind,
@@ -467,6 +467,13 @@ function addJsonOpaqueBlockers(
   }
 }
 
+function conflictsWithRenamedPortraitInstance(id: unknown, source: ProjectAssetPathDescriptor, target: ProjectAssetPathDescriptor): boolean {
+  if (source.kind !== 'portrait' || source.key === target.key || typeof id !== 'string') return false;
+  const fromRole = roleAndOutfit(source.key).role, toRole = roleAndOutfit(target.key).role;
+  return id === source.key || id === target.key || fromRole !== toRole
+    && [fromRole, toRole].some(role => id === role || id.startsWith(`${role}:`));
+}
+
 function sceneRewrite(
   file: ProjectFile,
   source: ProjectAssetPathDescriptor,
@@ -509,11 +516,14 @@ function sceneRewrite(
       }
     } else if (source.kind === 'portrait' && (parsed.name === 'hide' || parsed.name === 'mov' || parsed.name === 'pose')) {
       const rawKey = args[0]?.trim() ?? '';
-      if (rawKey.includes(':') && rawKey === source.key && target.key !== source.key) {
-        addChange(0, `${parsed.name}.target`, rawKey, target.key);
-      } else if (!rawKey.includes(':') && rawKey === sourcePortrait.role && targetPortrait.role !== sourcePortrait.role) {
+      const portraitPrefix = parsed.name === 'pose' && rawKey.startsWith('portrait:') ? 'portrait:' : '';
+      const key = portraitPrefix ? rawKey.slice(portraitPrefix.length) : rawKey;
+      if (parsed.name === 'pose' && !portraitPrefix && key.startsWith('layer:')) return raw;
+      if (key.includes(':') && key === source.key && target.key !== source.key) {
+        addChange(0, `${parsed.name}.target`, rawKey, portraitPrefix + target.key);
+      } else if (!key.includes(':') && key === sourcePortrait.role && targetPortrait.role !== sourcePortrait.role) {
         if (options.allowBareRoleChange) {
-          addChange(0, `${parsed.name}.target`, rawKey, targetPortrait.role);
+          addChange(0, `${parsed.name}.target`, rawKey, portraitPrefix + targetPortrait.role);
         } else {
           addBlocker(
             blockers,
@@ -569,6 +579,15 @@ function timelineRewrite(
   const replacements: JsonReplacement[] = [];
   const knownPaths = new Set<string>();
   const tracks = Array.isArray(root.tracks) ? root.tracks : [];
+  for (const value of tracks) if (isRecord(value) && value.kind === 'portrait'
+    && conflictsWithRenamedPortraitInstance(value.target, source, target)
+    && Array.isArray(value.cues) && value.cues.some(cue => isRecord(cue) && typeof cue.source === 'string')) {
+    addBlocker(blockers, 'ASSET_RELOCATION_OPAQUE_REFERENCE', '素材改名与显式时间轴实例身份重叠，不能猜测改写目标。', file.path);
+  }
+  for (const clip of Array.isArray(root.clips) ? root.clips : []) if (isRecord(clip) && isRecord(clip.bindings)
+    && [...Object.keys(clip.bindings), ...Object.values(clip.bindings)].some(id => conflictsWithRenamedPortraitInstance(id, source, target))) {
+    addBlocker(blockers, 'ASSET_RELOCATION_OPAQUE_REFERENCE', '素材改名涉及片段目标重绑定，请先明确实例与素材身份。', file.path);
+  }
   const sourcePortrait = roleAndOutfit(source.key);
   const targetPortrait = roleAndOutfit(target.key);
   tracks.forEach((trackValue, trackIndex) => {
@@ -903,6 +922,12 @@ export async function planProjectAssetRelocation(
       addBlocker(blockers, 'ASSET_RELOCATION_PORTRAIT_NAME_INVALID', '源立绘名称不符合“角色_服装_表情”结构，不能推断其引用。', source.path);
     }
     if (source.kind === 'portrait' && target !== null && (source.key !== target.key || source.variant !== target.variant)) {
+      for (const scene of input.snapshot.scenes) for (const instruction of scene.compiled.instructions) {
+        if (instruction.op === 'instr' && instruction.name === 'show' && instruction.modifiers.has('id')
+          && conflictsWithRenamedPortraitInstance(decodeStageToken(instruction.modifiers.get('id')!), source, target)) {
+          addBlocker(blockers, 'ASSET_RELOCATION_OPAQUE_REFERENCE', '素材改名与显式舞台实例 ID 重叠，不能猜测改写目标。', scene.path, instruction.line);
+        }
+      }
       const mappings = projectPortraitOverrides(input.snapshot.config);
       const sourceRole = source.key.split(':')[0];
       const targetRole = target.key.split(':')[0];
@@ -1214,8 +1239,9 @@ function batchReferenceMoveIds(
   move: NormalizedBatchMove,
   item: ProjectAssetRelocationReferenceChange,
 ): string[] {
-  if (item.field === 'hide.target' || item.field === 'mov.target' || item.field === 'portrait.target') {
-    return item.before.includes(':')
+  if (/(?:^|\.)(?:hide|mov|pose|portrait)\.target$/.test(item.field)) {
+    const before = item.field.endsWith('pose.target') && item.before.startsWith('portrait:') ? item.before.slice(9) : item.before;
+    return before.includes(':')
       ? batchMoveIdsForKey(moves, move)
       : batchMoveIdsForRole(moves, move);
   }

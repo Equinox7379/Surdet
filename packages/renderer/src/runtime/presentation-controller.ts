@@ -20,6 +20,7 @@ import { FadeTween } from '../transitions.js';
 import type { AudioHandle, FrameRequestHandler, PortraitView } from '../types.js';
 import { NULL_AUDIO } from '../types.js';
 import { TimelinePlayer, type TimelineFrameEvent, type TimelinePlayerSnapshot } from '../timeline-player.js';
+import type { StageMotionSnapshot } from '../stage-motion.js';
 import { RendererCommandError, RendererError } from '../api/renderer-errors.js';
 import type { RendererPluginHost } from '../plugin-host.js';
 import type { ShakeDirection } from '../world-effects-controller.js';
@@ -190,6 +191,20 @@ export function preparePresentationRestore(
       player,
       events: player.eventsAtCursor(),
     });
+  }
+  // Old saves without screen origins cannot faithfully resume a nonzero cursor.
+  // Reject in the shared preflight, before either Core or the live World is changed.
+  const motions = isRecord(stage) && isRecord(stage.motions) ? stage.motions as unknown as StageMotionSnapshot : undefined;
+  for (const timeline of timelines) for (const event of timeline.events) {
+    if (event.track !== 'screen' || (event.cue.action !== 'fade' && event.cue.action !== 'tint')) continue;
+    const identity = `${timeline.id}/${event.cueId}`;
+    const motion = motions?.timelines.find(([id]) => id === identity)?.[1];
+    if (motions?.cancelled?.includes(identity)) continue;
+    if (!motion && event.progress > 0 && event.progress < 1) throw invalidPresentation('Saved screen effect is missing its original interpolation state');
+    if (motion && (motion.target !== `screen:${event.cue.action}` || motion.to.opacity !== event.cue.alpha
+      || (event.cue.action === 'tint' ? motion.to.color !== event.cue.color : motion.to.color !== undefined))) {
+      throw invalidPresentation('Saved screen effect differs from its timeline');
+    }
   }
   return {
     stage,
