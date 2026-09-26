@@ -25,7 +25,9 @@ import { ProjectMutationNoticeStore } from './project-mutation-notice-store.js';
 import { loadProjectCoordinationBaseline } from './project-coordination-baseline.js';
 import { validateAssetSourceFormat } from './asset-source-format.js';
 
-export type ImageImportCapability = 'asset.sources' | 'asset.import.stage' | 'asset.import.inspect' | 'asset.import.commit' | 'asset.import.recover';
+export type ImageImportCapability = 'asset.sources' | 'asset.import.stage' | 'asset.import.inspect' | 'asset.import.commit' | 'asset.import.recover'
+  | 'asset.relocation.replace' | 'asset.relocation.plan' | 'asset.relocation.inspect' | 'asset.relocation.commit'
+  | 'asset.relocation.cancel' | 'asset.relocation.recover' | 'asset.relocation.undo';
 export interface AuthorizedImageSource {
   sourceId: string;
   root: string;
@@ -132,9 +134,54 @@ export class AgentImageImportService {
         const options = { textHasher: { sha256: async (text: string) => hash(text) }, assertLeaseHeld: () => lease.assertHeld(), mutationCoordinator: coordinator };
         const authority = new ProjectAssetImportAuthority(paths, store, { ...options, limits });
         // Register the same durable recovery participants as the Editor authority.
-        new ProjectAssetRelocationAuthority(paths, new AssetRelocationStore(paths), store, options);
+        const relocationStore = new AssetRelocationStore(paths);
+        const relocation = new ProjectAssetRelocationAuthority(paths, relocationStore, store, options);
         new ProjectSceneLifecycleAuthority(paths, { ...options, recoverOnReadinessCheck: false });
         const operationId = input['operationId'] as string;
+        if (capability.startsWith('asset.relocation.')) {
+          if (capability === 'asset.relocation.inspect') return { ...await relocation.query(operationId) };
+          await assertHumanWorkspaceAllowsAgentCommit(new HumanWorkspaceStore({ dataRoot: this.manager.dataRoot }), projectRoot);
+          if (capability === 'asset.relocation.replace') {
+            const source = input['source'] as { sourceId: string; path: string; sha256: string };
+            const checked = await readSource(sourceFor(sources, source.sourceId), source.path);
+            if (hash(checked) !== source.sha256) throw new AuthoringOperationError('ASSET_SOURCE_CHANGED', '替换来源内容已变化，请重新读取 asset.sources');
+            return { ...await relocation.planReplacement({ operationId, targetPath: input['targetPath'] as string,
+              sourceId: source.sourceId, sourcePath: source.path, sha256: source.sha256 }, checked) };
+          }
+          if (capability === 'asset.relocation.plan') {
+            return { ...await relocation.plan({ operationId, moves: input['moves'] as { sourcePath: string; targetPath: string }[] }) };
+          }
+          const existing = await relocation.query(operationId);
+          if (capability !== 'asset.relocation.undo' && existing.plan.planFingerprint !== input['planFingerprint']) {
+            throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '整理计划指纹不匹配，请读取原操作。');
+          }
+          if (capability === 'asset.relocation.cancel') return { ...await relocation.cancel(operationId) };
+          await coordinator.assertOtherReady('asset-relocation');
+          const settled = capability === 'asset.relocation.commit'
+            ? await relocation.commit(operationId, { planFingerprint: input['planFingerprint'] as string })
+            : capability === 'asset.relocation.undo'
+              ? await relocation.undo(operationId, { receiptId: input['receiptId'] as string, receiptFingerprint: input['receiptFingerprint'] as string })
+              : await relocation.recover(operationId, { action: input['action'] as 'resume' | 'rollback' });
+          let coordination: Record<string, unknown> = { status: 'unchanged' };
+          if (['COMMITTED', 'ROLLED_BACK', 'UNDONE'].includes(settled.operation.status)) {
+            try {
+              const record = await relocationStore.read(operationId);
+              const baseline = await loadProjectCoordinationBaseline(await NodeProjectStorage.open(projectRoot));
+              const changedPaths = [...new Set([
+                ...(record?.request.moves.flatMap(move => [move.sourcePath, move.targetPath]) ?? []),
+                ...settled.plan.referenceChanges.map(change => change.sourcePath),
+              ])];
+              const notice = await new ProjectMutationNoticeStore({ dataRoot: this.manager.dataRoot }).record(projectRoot, {
+                projectRevision: baseline.projectRevision, coordinationRevision: baseline.coordinationRevision,
+                initiator: 'external-agent', operationId, changedPaths,
+              }, () => lease.assertHeld());
+              coordination = { status: 'written', mutationSequence: notice.sequence };
+            } catch {
+              coordination = { status: 'warning', message: '整理结果已落盘，工作区通知暂不可用；请重新读取项目。' };
+            }
+          }
+          return { ...settled, coordination };
+        }
         await authority.list();
         if (capability === 'asset.import.stage') {
           return this.stage(authority, store, input as unknown as AgentImageStageRequest, sources);

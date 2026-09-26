@@ -264,6 +264,7 @@ async function openRuntime(options: Required<Pick<AssetImportAuthorityVitePlugin
         return response;
       }),
       verifyOperationToken: (operationId, token) => authority.verifyOperationToken(operationId, token),
+      relocationReplace: (request, bytes) => relocation.planReplacement(request, bytes),
       relocationPlan: (request) => relocation.plan(request),
       relocationList: () => mutationContext.run(() => relocation.list()),
       relocationQuery: (operationId) => mutationContext.run(() => relocation.query(operationId)),

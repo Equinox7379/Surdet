@@ -231,7 +231,8 @@ function capabilityAvailability(
   } else if (capability.id === 'change.begin' && activeChangeId !== undefined) {
     availability = 'state-blocked';
     reason = '当前 session 已有 active change';
-  } else if (activeChangeId !== undefined && ['asset.import.stage', 'asset.import.commit', 'asset.import.recover'].includes(capability.id)) {
+  } else if (activeChangeId !== undefined && (['asset.import.stage', 'asset.import.commit', 'asset.import.recover'].includes(capability.id)
+    || capability.id.startsWith('asset.relocation.') && capability.id !== 'asset.relocation.inspect')) {
     availability = 'state-blocked';
     reason = '先导入素材并刷新项目事实，再创建剧情 change';
   } else if (capability.id === 'composition.execute' && activeRecord !== undefined && activeRecord.integration === undefined) {
@@ -607,7 +608,7 @@ export class AgentPortSession {
     if (assetRecoveryRequired) {
       for (const capability of capabilities) {
         if (capability.availability === 'available'
-          && ['asset.import.stage', 'asset.import.commit', 'change.commit'].includes(capability.id)) {
+          && ['asset.import.stage', 'asset.import.commit', 'asset.relocation.plan', 'asset.relocation.replace', 'asset.relocation.commit', 'change.commit'].includes(capability.id)) {
           capability.availability = 'state-blocked';
           capability.reason = '素材操作存在未解决的恢复屏障，请先检查原操作并明确恢复';
         }

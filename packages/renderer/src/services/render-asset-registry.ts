@@ -31,6 +31,7 @@ export interface RenderAssetDiagnosticSnapshot {
 type AssetOwnership = 'caller' | 'loaded' | 'generated';
 
 interface AssetSlot {
+  readonly sourceIdentity?: { path: string; sha256: string };
   readonly texture: Texture;
   readonly ownership: AssetOwnership;
   readonly source?: string;
@@ -81,6 +82,7 @@ export class RenderAssetRegistry {
   #fontFaces = new Map<RendererFontRole, { face: FontFace; family: string }>();
   #fontFamilies: Record<RendererFontRole, string> = { ...DEFAULT_RENDERER_FONT_FAMILIES };
   #disposed = false;
+  #verifiedBlobUrls = new Set<string>();
 
   constructor(options: RenderAssetRegistryOptions = {}) {
     this.#lifecycle = options.lifecycle ?? new RenderLifecycle();
@@ -101,8 +103,9 @@ export class RenderAssetRegistry {
     expression: string,
     source: RenderAssetSource,
     format?: string,
+    sourcePath?: string,
   ): Promise<void> {
-    await this.#register(this.#portraits, `${charId}:${costume}:${expression}`, source, format);
+    await this.#register(this.#portraits, `${charId}:${costume}:${expression}`, source, format, sourcePath);
   }
 
   async registerAvatar(key: string, source: RenderAssetSource, format?: string): Promise<void> {
@@ -115,6 +118,11 @@ export class RenderAssetRegistry {
 
   resolvePortrait(charId: string, costume: string, expression: string): Texture | null {
     return this.#portraits.get(`${charId}:${costume}:${expression}`)?.texture ?? null;
+  }
+
+  resolvePortraitIdentity(charId: string, costume: string, expression: string): import('@surdet/core').StageImageSource | null {
+    const slot = this.#portraits.get(`${charId}:${costume}:${expression}`);
+    return slot?.sourceIdentity ? { ...slot.sourceIdentity, width: slot.texture.width, height: slot.texture.height } : null;
   }
 
   resolveAvatar(key: string): Texture | null {
@@ -247,13 +255,14 @@ export class RenderAssetRegistry {
     if (this.#ownsLifecycle) this.#lifecycle.dispose();
   }
 
-  async #register(map: AssetMap, key: string, source: RenderAssetSource, format?: string): Promise<void> {
+  async #register(map: AssetMap, key: string, source: RenderAssetSource, format?: string, sourcePath?: string): Promise<void> {
     const token = this.#generation.token();
     let requests = this.#registrations.get(map);
     if (!requests) { requests = new Map(); this.#registrations.set(map, requests); }
     const request = {};
     requests.set(key, request);
     if (typeof source !== 'string') {
+      if (sourcePath) throw new Error('Pinned calibration requires verified image bytes, not a caller-supplied Texture');
       this.#commit(map, key, { texture: source, ownership: 'caller' });
       requests.delete(key);
       return;
@@ -266,9 +275,29 @@ export class RenderAssetRegistry {
       const release = this.#sourceReleases.get(source);
       if (release) await release.promise;
       if (!token.current) return;
-      const texture = await this.#load(source, format);
-      if (token.current && requests.get(key) === request) this.#commit(map, key, { texture, ownership: 'loaded', source });
-      else if ((this.#sourceRefs.get(source) ?? 0) === 0) await this.#unloadSource(source);
+      let actualSource = source;
+      let sourceIdentity: AssetSlot['sourceIdentity'];
+      if (sourcePath) {
+        const response = await fetch(source, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`校准来源图片读取失败：${sourcePath}`);
+        const body = await response.arrayBuffer();
+        if (!body.byteLength || body.byteLength > 128 * 1024 * 1024) throw new Error('校准图片大小超出支持范围');
+        const digest = await crypto.subtle.digest('SHA-256', body);
+        sourceIdentity = { path: sourcePath, sha256: [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('') };
+        if (!token.current || requests.get(key) !== request) return;
+        // Decode precisely the bytes hashed above. A later file edit cannot
+        // race the digest or reuse a stale Pixi cache entry under the old URL.
+        actualSource = URL.createObjectURL(new Blob([body], { type: response.headers.get('content-type') ?? 'application/octet-stream' }));
+        this.#verifiedBlobUrls.add(actualSource);
+      }
+      try {
+        const texture = await this.#load(actualSource, format);
+        if (token.current && requests.get(key) === request) this.#commit(map, key, { texture, ownership: 'loaded', source: actualSource, ...(sourceIdentity ? { sourceIdentity } : {}) });
+        else if ((this.#sourceRefs.get(actualSource) ?? 0) === 0) await this.#unloadSource(actualSource);
+      } catch (error) {
+        if (this.#verifiedBlobUrls.delete(actualSource)) URL.revokeObjectURL(actualSource);
+        throw error;
+      }
     })();
     this.#sourceLoads.set(source, pending);
     const settled = (): void => {
@@ -348,7 +377,7 @@ export class RenderAssetRegistry {
   #unloadSource(source: string, retry = false): Promise<void> {
     const previous = this.#sourceReleases.get(source);
     if (previous && (!retry || !previous.failed)) return previous.promise;
-    const promise = (async () => { await this.#unload([source]); })();
+    const promise = (async () => { await this.#unload([source]); if (this.#verifiedBlobUrls.delete(source)) URL.revokeObjectURL(source); })();
     const release = { promise, failed: false };
     this.#sourceReleases.set(source, release);
     // Observe rejection for synchronous lifecycle callers, while preserving the

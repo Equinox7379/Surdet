@@ -1,6 +1,6 @@
 import * as crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { AuthoringOperationError, parsePreviewPublishInput, parsePreviewContentTarget, HUMAN_WORKSPACE_DIRTY_SCOPES, HUMAN_WORKSPACE_BUSY_REASONS,
+import { AGENT_IMAGE_MAX_BYTES, AuthoringOperationError, parsePreviewPublishInput, parsePreviewContentTarget, HUMAN_WORKSPACE_DIRTY_SCOPES, HUMAN_WORKSPACE_BUSY_REASONS,
   HUMAN_WORKSPACE_BLOCKED_REASONS } from '@surdet/authoring';
 import { EditorWorkspaceAuthorityError, type EditorWorkspaceAuthority, type EditorWorkspaceStateInput,
   type ActiveEditorWriteInput } from '../editor-workspace-authority/editor-workspace-authority.js';
@@ -28,6 +28,7 @@ import {
   type UndoOperationRequest,
   type UndoOperationResponse,
   type AssetRelocationDetailResponse,
+  type AssetReplacementInput,
   type CommitAssetRelocationRequest,
   type ListAssetRelocationsResponse,
   type PlanAssetRelocationRequest,
@@ -116,6 +117,7 @@ export interface AssetImportAuthorityHttpTarget {
   recover(operationId: string, request: RecoverOperationRequest): Promise<RecoverOperationResponse>;
   undo(operationId: string, request: UndoOperationRequest): Promise<UndoOperationResponse>;
   verifyOperationToken(operationId: string, operationToken: string): void;
+  relocationReplace?(request: AssetReplacementInput, bytes: Uint8Array): Promise<AssetRelocationDetailResponse>;
   relocationPlan?(request: PlanAssetRelocationRequest): Promise<AssetRelocationDetailResponse>;
   relocationList?(): Promise<ListAssetRelocationsResponse>;
   relocationQuery?(operationId: string): Promise<AssetRelocationDetailResponse>;
@@ -140,7 +142,7 @@ type Route = {
   kind: 'status' | 'challenge-create' | 'challenge-confirm' | 'binding-revoke'
     | 'operation-create' | 'operation-list' | 'upload' | 'plan' | 'seal'
     | 'commit' | 'cancel' | 'operation-query' | 'resume' | 'recover' | 'undo'
-    | 'relocation-plan' | 'relocation-list' | 'relocation-query' | 'relocation-resume'
+    | 'relocation-replace' | 'relocation-plan' | 'relocation-list' | 'relocation-query' | 'relocation-resume'
     | 'relocation-commit' | 'relocation-cancel' | 'relocation-recover' | 'relocation-undo'
     | 'scene-plan' | 'scene-commit' | 'workspace';
   workspaceAction?: 'heartbeat' | 'snapshot' | 'begin' | 'publish' | 'renew' | 'finish' | 'abort' | 'revoke' | 'preview' | 'preview-sources' | 'preview-content';
@@ -618,6 +620,7 @@ function parseRoute(url: string): Route | null {
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/binding/revoke`) return { kind: 'binding-revoke', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/operations`) return { kind: 'operation-create', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/operations/query`) return { kind: 'operation-list', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
+  if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/replace`) return { kind: 'relocation-replace', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: true };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/plan`) return { kind: 'relocation-plan', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/relocations/query`) return { kind: 'relocation-list', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/scenes/plan`) return { kind: 'scene-plan', method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
@@ -685,7 +688,7 @@ async function isAllowedTerminalReplay(authority: AssetImportAuthorityHttpTarget
   }
 }
 
-async function readJsonBody(request: IncomingMessage, maxBytes: number, timeoutMs: number): Promise<unknown> {
+async function readJsonBody(request: IncomingMessage, maxBytes: number, timeoutMs: number, raw = false): Promise<unknown> {
   const length = headerValue(request, 'content-length');
   if (length !== undefined) {
     if (!/^(?:0|[1-9][0-9]*)$/.test(length) || !Number.isSafeInteger(Number(length))) {
@@ -721,6 +724,7 @@ async function readJsonBody(request: IncomingMessage, maxBytes: number, timeoutM
       done = true;
       cleanup();
       try {
+        if (raw) { resolve(Buffer.concat(chunks)); return; }
         const text = Buffer.concat(chunks).toString('utf8');
         if (text.length === 0) throw new AssetImportAuthorityError('INVALID_REQUEST', '请求正文不能为空');
         resolve(JSON.parse(text));
@@ -1014,9 +1018,25 @@ export function createAssetImportAuthorityHttpHandler(
           data = { operation: summary(undone.operation), undoReceipt: undone.undoReceipt };
           break;
         }
+        case 'relocation-replace':
         case 'relocation-plan': {
-          if (options.authority.relocationPlan === undefined) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '素材整理服务尚未就绪');
-          const planned = await options.authority.relocationPlan(parseRelocationPlan(body));
+          let replacement: AssetRelocationDetailResponse | undefined;
+          if (route.kind === 'relocation-replace') {
+            if (!options.authority.relocationReplace) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '替换服务未接入');
+            const header = headerValue(request, 'x-surdet-replacement');
+            if (!header || header.length > 8192) throw new AssetImportAuthorityError('INVALID_REQUEST', '替换元数据缺失或过长');
+            let object: Record<string, unknown>;
+            try { object = exactObject(JSON.parse(decodeURIComponent(header)), ['operationId', 'targetPath', 'sourcePath', 'sha256']); }
+            catch { throw new AssetImportAuthorityError('INVALID_REQUEST', '替换元数据无效'); }
+            const input: AssetReplacementInput = { operationId: requireUuid(object.operationId, 'operationId'),
+              targetPath: requireProjectRelativePath(object.targetPath, 'targetPath'), sourceId: 'browser-selected-file',
+              sourcePath: requireProjectRelativePath(object.sourcePath, 'sourcePath'), sha256: requireSha256(object.sha256, 'sha256') };
+            const bytes = await readJsonBody(request, AGENT_IMAGE_MAX_BYTES, 30_000, true);
+            if (!Buffer.isBuffer(bytes)) throw new AssetImportAuthorityError('INVALID_REQUEST', '替换文件字节无效');
+            replacement = await options.authority.relocationReplace(input, bytes);
+          }
+          if (options.authority.relocationPlan === undefined && !replacement) throw new AssetImportAuthorityError('AUTHORITY_UNAVAILABLE', '素材整理服务尚未就绪');
+          const planned = replacement ?? await options.authority.relocationPlan!(parseRelocationPlan(body));
           const operationToken = crypto.randomBytes(32).toString('hex');
           const expiresAt = now() + 30 * 60_000;
           operationBindings.set(operationToken, {

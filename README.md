@@ -7,7 +7,7 @@ Surdet 是一个数据驱动的桌面 Galgame 引擎，也是一套面向外部�
 ## 核心能力
 
 - **剧本与运行时**：类型化变量、分支/调用/标签、存档快照、可定位错误和确定性模拟证据。
-- **表现层**：背景、立绘、时间轴、转场、对话、选择肢、Gallery、设置和桌面 Player Shell。
+- **表现层**：独立人物姿态、可校准舞台、多层场景与视差、可复用时间轴片段，以及转场、对话、选择肢、Gallery、设置和桌面 Player Shell。
 - **创作层**：共享 `@surdet/authoring` 语义、CLI、可视化 Editor、对象级差异和因果影响。
 - **Agent Port**：机器可读 capability registry、MCP 薄适配、observe/stage/apply 权限、fresh evidence 与 delivery capsule。
 - **可靠性边界**：原子项目变更、恢复日志、Windows 非撕裂替换、存档备份与显式恢复。
@@ -50,11 +50,13 @@ Agent Port 的正式入口为：
 node packages/cli/dist/agent-port/main.js --project <项目目录> --policy stage
 ```
 
-接入外部已准备好的图片时，启动参数可追加 `--asset-source <图片目录绝对路径>`（可重复）。只开放这些实际目录内的普通文件，不接受任意路径、链接跳转或下载地址。`--asset-import-data-root <导入数据目录>` 指向现有素材 authority 的独立数据区；与绑定同一项目的 Editor 使用相同目录。未显式传入时沿用 `SURDET_EDITOR_ASSET_IMPORT_DATA_ROOT`，再缺省则使用本机原素材 authority 默认数据区。
+接入外部已准备好的素材时，启动参数可追加 `--asset-source <素材目录绝对路径>`（可重复）。只开放这些实际目录内的普通文件，不接受任意路径、链接跳转或下载地址。`--asset-import-data-root <导入数据目录>` 指向现有素材 authority 的独立数据区；与绑定同一项目的 Editor 使用相同目录。未显式传入时沿用 `SURDET_EDITOR_ASSET_IMPORT_DATA_ROOT`，再缺省则使用本机原素材 authority 默认数据区。
 
-Agent 通过 `asset.sources` 发现授权来源、列目录并读取文件摘要，随后用 `asset.import.stage` 暂存和封存导入。首版支持 PNG、JPEG、WebP 的背景、立绘、头像，单张最多 32 MiB、每次最多 32 张且合计不超过 128 MiB。立绘命名继续使用 `角色_服装_表情`，实际编排标识以 `project.assets` 返回的 `key`、`timelineTarget`、`expression` 为准。
+Agent 通过 `asset.sources` 发现授权来源、列目录并读取文件摘要，随后用 `asset.import.stage` 暂存和封存导入。支持 PNG/JPEG/WebP 图片、WAV/OGG/MP3 声音、MP4/WebM 视频、TTF/OTF/WOFF2 字体及 UTF-8 许可证/说明；每文件最多 32 MiB、每批 32 项且合计不超过 128 MiB，许可文本另限 1 MiB。入口检查文件格式，不保证任意编码均可在目标环境播放。立绘自动发现继续使用 `角色_服装_表情`，实际编排标识以 `project.assets` 返回的 `key`、`timelineTarget`、`expression` 为准。详细格式、用法与限制见 [AI 指南](docs/AI-GUIDE.md)。
 
-`stage` 不写项目，`asset.import.commit` 和 `asset.import.recover` 需要启动时明确选择 `--policy apply`，并遵守现有项目锁与草稿保护。收到不确定响应后，用 `asset.import.inspect` 查询原 `operationId`：可继续的上传重试原暂存请求；若进程中断留下上传恢复屏障，检查错误中的 `recoveryAction=discard-unpublished`，用原 `operationId` 与返回的 `manifestFingerprint` 调用 `asset.import.recover`，安全放弃该次未封存上传，收到 `ROLLED_BACK` 后再用新编号导入。该恢复不会写项目素材，无法确认归属的暂存文件仍保留并报错。已封存的来源和目标不可替换；发布中断继续用原 `planFingerprint` 恢复，返回 `ROLLED_BACK` 不等于导入成功。修正未封存计划的文件名可以使用同一操作编号。导入完成后先重新读取项目和素材事实，再 `change.begin` 创建剧情变更；不把导入塞入现有候选，也不开放项目素材删除、移动或撤销。
+`stage` 不写项目，`asset.import.commit` 和 `asset.import.recover` 需要启动时明确选择 `--policy apply`，并遵守现有项目锁与草稿保护。收到不确定响应后，用 `asset.import.inspect` 查询原 `operationId`：可继续的上传重试原暂存请求；若进程中断留下上传恢复屏障，检查错误中的 `recoveryAction=discard-unpublished`，用原 `operationId` 与返回的 `manifestFingerprint` 调用 `asset.import.recover`，安全放弃该次未封存上传，收到 `ROLLED_BACK` 后再用新编号导入。该恢复不会写项目素材，无法确认归属的暂存文件仍保留并报错。已封存的来源和目标不可替换；发布中断继续用原 `planFingerprint` 恢复，返回 `ROLLED_BACK` 不等于导入成功。修正未封存计划的文件名可以使用同一操作编号。导入完成后先重新读取项目和素材事实，再 `change.begin` 创建剧情变更；不把导入塞入现有候选，也不开放任意素材删除。
+
+现有素材移动/改名用 `asset.relocation.plan`，同路径内容替换用 `asset.relocation.replace`；先核对计划和实际引用，再在 apply 会话发布。它们复用已有整理事务、恢复和撤销，不借导入覆盖旧文件，不进入剧情 change；Editor 素材详情提供同一入口。
 
 客户端超时不表示服务端已经停止。`asset.import.inspect` 包含持久状态协调，仍需同会话排队和项目租约；长调用期间可先用不经过该调用队列的 `session.describe` 查看会话与租约状态，再查询原操作。进程退出后，现有 15 秒租约窗口内可能返回 `PROJECT_BUSY`，窗口结束后再查询、按结果恢复；不要因等待创建替代编号或手动删除锁、恢复屏障。
 
@@ -87,7 +89,9 @@ Editor 和 Agent Port 必须绑定同一个项目；若自定义了 `SURDET_AGEN
 
 播放后通过公开 `runtime.read-preview` 能力读取实际观察，先核对返回的内容身份、版本和 `status`，再定位返修对象。观察中的运行和表现事实不能替代截图。页面的“回到上次位置”沿已记录的真实选择重新播放；选择或目标不再匹配时会停下，需正常重选。试玩不批准、不写回，也不会保存或丢弃来源草稿。
 
-当前 Authoring 合同为 `2.15.0`，direct 草稿支持 `scene.rename` 同步改名引用、`scene.move` 按章节整理、`project.player-config.patch` 配置字体，以及 `character.ensure.portraits` 绑定角色服装／表情的实际图片；字体许可证可作为 `license` 与素材同批导入。完整差异与获授权写回仍走原事务。新 stage 候选会在操作写入前检查缺失依赖和对象单元互引环：按错误中的 `issues` 先建立被引用对象或选择基线已解析素材，再重试；互相创建空场景不能解除互引环。`session.describe.candidateReadiness` 与 `change.diff.compositionReadiness` 只说明已记录的组合事实是否完整，不替代最终 validation、simulation、runtime 和 delivery capsule 检查。旧变更缺少操作时点事实时须新建候选，已封存的 v2 capsule 继续可读。
+当前 Authoring 合同为 `2.16.0`，direct 草稿支持 `scene.rename` 同步改名引用、`scene.move` 按章节整理、`project.player-config.patch` 配置字体，以及 `character.ensure.portraits` 绑定角色服装／表情的实际图片；字体许可证可作为 `license` 与素材同批导入。完整差异与获授权写回仍走原事务。新 stage 候选会在操作写入前检查缺失依赖和对象单元互引环：按错误中的 `issues` 先建立被引用对象或选择基线已解析素材，再重试；互相创建空场景不能解除互引环。`session.describe.candidateReadiness` 与 `change.diff.compositionReadiness` 只说明已记录的组合事实是否完整，不替代最终 validation、simulation、runtime 和 delivery capsule 检查。旧变更缺少操作时点事实时须新建候选，已封存的 v2 capsule 继续可读。
+
+新舞台通过 `project.inspect.stageConfig` 读取、`project.stage-config.patch` 在 direct 草稿修改；旧项目不必启用。人物姿态、环境图层和有限复用片段走原场景/时间轴能力；candidate 可引用基线配置，但不能伴随改写舞台配置。Editor 临时摆放确认后才进入普通草稿，校准/构图参与原撤销与保存全部，工作预览消费未保存版本，不将临时画面冒充封存结果。
 
 已有纯文本/CSV 稿件可先通过只读 `script.import.preview` 映射列与角色、核对逐行问题，再用原 `scene.create` 创建新草稿；Editor 的“导入剧本”与其共享同一转换，不覆盖原场景、不执行导入文字中的指令。批量搜索替换先预览全部差异，确认后仍走原撤销与保存。
 

@@ -56,7 +56,10 @@
 | 指令 | 示例 | 状态 | 说明 |
 |---|---|---|---|
 | `@bg` | `@bg castle_hall.day` | ✅ | 切换背景 |
-| `@show` | `@show lynn:armor despair @ left` | ✅ | 显示立绘（角色:服装 表情）。位置修饰符：`@pos=值` 优先于裸 `@ left`/`@ right`/`@ center`；其余修饰符（如 `@ effect`）渲染层未消费，lint 报 W003 |
+| `@show` | `@show lynn:armor despair @ left` | ✅ | 显示立绘（角色:服装 表情）。旧位置语义保留；新舞台支持 `@pos`、`@distance`、`@x/@y`、`@scale`、`@facing`、`@opacity`、`@z` 和 `@instance`，显式值覆盖预设。未知修饰符仍报 W003 |
+| `@pose` | `@pose lynn:armor 600 @x=780 @scale=1.2` | ✅ | 独立角色变换，时长可省略，默认立即生效；不移动相机，省略的属性保留 |
+| `@layer` | `@layer rail rail_image @band=foreground @parallax=1.2` | ✅ | 显示独立环境/前景图层；`@layer rail @off` 移除，`@pose layer:rail 600 @x=80` 修改姿态 |
+| `@stage` | `@stage dock` | ✅ | 使用项目 `stage.compositions` 的构图；背景/图层省略保留、null/空数组明确清除，人物和相机按 keepActors/resetCamera 处理 |
 | `@hide` | `@hide lynn` | ✅ | 隐藏立绘 |
 | `@voice` | `@voice lynn_001` | ✅ | 播放语音 |
 | `@bgm` / `@se` | `@bgm tense_01` | ✅ | 音乐 / 音效 |
@@ -79,6 +82,8 @@
 | `@transition` | `@transition fade 600` | ✅ | 预设切景转场，支持 fade、slide-left、slide-right、circle |
 
 ### 时间轴演出
+
+版本 1 保持原合同。版本 2 增加角色 `pose`、图层轨道及可复用 `clips`；片段有限重复、引用、目标重绑定与展开预算由 Core 验证。项目舞台坐标、图片校准、指令覆盖规则及 v2 示例见 [AI 指南：舞台创作](AI-GUIDE.md)。这些能力经共享 Player、Editor 与 Authoring 消费，不要求修改游戏入口源码。
 
 时间轴是可选的 JSON 演出层，不替换现有 `@bg`、`@show`、`@mov` 等指令。场景使用时间轴前，在项目中创建同名文件：
 

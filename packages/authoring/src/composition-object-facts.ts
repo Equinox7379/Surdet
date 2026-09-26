@@ -26,6 +26,7 @@ export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, has
   }));
   return [
     { objectRef: 'config:characters', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.config['characters'] ?? {})) },
+    { objectRef: 'config:stage', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.config.stage ?? null)) },
     { objectRef: 'config:fonts', expectedFingerprint: await hasher.sha256(stableStringify(resolveProjectFontPaths(snapshot.config))) },
     { objectRef: 'config:portraits', expectedFingerprint: await hasher.sha256(stableStringify(projectPortraitOverrides(snapshot.config))) },
     ...snapshot.scenes.map((scene) => ({ objectRef: `scene:${scene.id}`, expectedFingerprint: scene.file.sha256 })),
@@ -44,7 +45,7 @@ export function resolvedCompositionAssetRefs(assetPaths: readonly string[], snap
   const usablePaths = new Set(usable.map(item => item.sourcePath));
   return [...new Set([
     ...catalog.backgrounds.filter((asset) => asset.resolved && usablePaths.has(asset.sourcePath)).map((asset) => backgroundAssetRef(asset.key)),
-    ...catalog.portraits.filter((asset) => asset.resolved && usablePaths.has(asset.sourcePath)).map((asset) => portraitAssetRef(asset.role!, asset.outfit!, asset.expression!)),
+    ...catalog.portraits.filter((asset) => asset.resolved).map((asset) => portraitAssetRef(asset.role!, asset.outfit!, asset.expression!)),
     ...catalog.avatars.filter((asset) => asset.resolved && usablePaths.has(asset.sourcePath)).map((asset) => avatarAssetRef(asset.key)),
     ...usable.flatMap(item => {
       if (item.kind === 'font') return [`asset:font:${item.sourcePath}`];

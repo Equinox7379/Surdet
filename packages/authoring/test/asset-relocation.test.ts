@@ -453,11 +453,11 @@ describe('reference-aware project asset relocation planner', () => {
         code: 'ASSET_RELOCATION_RESERVED_KEY',
       },
       {
-        name: 'implicit gallery fallback',
+        name: 'invalid gallery source type',
         sourcePath: 'content/assets/bg/memory.png',
         targetPath: 'content/assets/bg/memory_new.png',
         assets: [{ path: 'content/assets/bg/memory.png', bytes: 1 }],
-        galleryText: '{"cgs":[{"id":"memory","name":"回忆"}]}\n',
+        galleryText: '{"cgs":[{"id":"memory","name":"回忆","src":null}]}\n',
         opaqueFiles: undefined,
         code: 'ASSET_RELOCATION_OPAQUE_REFERENCE',
       },
@@ -897,3 +897,115 @@ describe('reference-aware project asset relocation planner', () => {
     expect(result.textChanges).toEqual([]);
   });
 });
+
+
+for (const channel of ['bgm', 'ambience', 'se', 'voice', 'video'] as const) {
+  it(`relocates only supported ${channel} consumers across scene, choice, timeline and gallery`, async () => {
+    const oldKey = '旧 媒体';
+    const newKey = '新 媒体';
+    const channels = ['bgm', 'ambience', 'se', 'voice', 'video'];
+    const sourcePath = `content/assets/${channel}/${oldKey}.${channel === 'video' ? 'webm' : 'WAV'}`;
+    const targetPath = sourcePath.replace(oldKey, newKey);
+    const before = '\uFEFF@scene start\r\n' + channels.map(name => `@${name} "${oldKey}"`).join('\r\n')
+      + `\r\n@ambience off\r\n@choice\r\n 继续 [if:" -> " == " -> "] -> ${channel === 'video' ? '' : `@${channel} "${oldKey}" `}@goto end\r\n@label end\r\n@end\r\n`;
+    const timeline = { version: 1, id: 'music', durationMs: 100, tracks: [
+      { kind: 'audio', cues: ['bgm', 'se', 'voice'].map(action => ({ atMs: 0, durationMs: 0, easing: 'linear', action, key: oldKey })) },
+    ] };
+    const gallery = JSON.stringify({ cgs: [], music: [{ id: 'album', name: oldKey, src: oldKey }], texts: [] });
+    const options = { files: { 'game.config.json': '{"entryScene":"start"}', 'content/scenario/start.gal': before,
+      'content/timelines/music.json': JSON.stringify(timeline) },
+      assets: channels.map(name => ({ path: `content/assets/${name}/${oldKey}.${name === 'video' ? 'webm' : 'WAV'}`, bytes: 1 })),
+      sourcePath, targetPath, galleryText: gallery, assetDirectories: channels.map(name => `content/assets/${name}`) };
+    for (const prepared of [await planProjectAssetRelocation(await makeInput(options), hasher),
+      await planProjectAssetRelocationBatch(await makeBatchInput({ ...options, items: [{ itemId: 'media', sourcePath, targetPath }] }), hasher)]) {
+      expect(prepared.plan.blockers).toEqual([]);
+      const after = prepared.textChanges.find(file => file.path.endsWith('start.gal'))!.afterText;
+      expect(after).toBe(before.replaceAll(`@${channel} "${oldKey}"`, `@${channel} "${newKey}"`));
+      const changedTimeline = prepared.textChanges.find(file => file.path.endsWith('music.json'));
+      if (['bgm', 'se', 'voice'].includes(channel)) {
+        const cues = JSON.parse(changedTimeline!.afterText).tracks[0].cues;
+        expect(cues.map((cue: { action: string; key: string }) => cue.key)).toEqual(['bgm', 'se', 'voice'].map(action => action === channel ? newKey : oldKey));
+      } else expect(changedTimeline).toBeUndefined();
+      const changedGallery = prepared.textChanges.find(file => file.path.endsWith('gallery.json'));
+      if (channel === 'bgm') expect(JSON.parse(changedGallery!.afterText).music[0]).toEqual({ id: 'album', name: oldKey, src: newKey });
+      else expect(changedGallery).toBeUndefined();
+    }
+  });
+}
+
+it('rewrites modern and shadowed legacy font full paths, including a same-name directory move and simultaneous swap', async () => {
+  const a = 'content/assets/fonts/甲/正文.TTF', b = 'content/assets/fonts/乙/正文.TTF';
+  const config = { entryScene: 'start', font: a, fonts: { body: a, title: b, ui: '' }, untouched: { keep: true } };
+  const options = { files: { 'game.config.json': '\uFEFF' + JSON.stringify(config) + '\r\n' },
+    assets: [{ path: a, bytes: 1 }, { path: b, bytes: 1 }],
+    items: [{ itemId: 'a', sourcePath: a, targetPath: b }, { itemId: 'b', sourcePath: b, targetPath: a }],
+    assetDirectories: ['content/assets/fonts/甲', 'content/assets/fonts/乙'] };
+  const swapped = await planProjectAssetRelocationBatch(await makeBatchInput(options), hasher);
+  expect(swapped.plan.blockers).toEqual([]);
+  const changed = swapped.textChanges.find(file => file.path === 'game.config.json')!.afterText;
+  expect(JSON.parse(changed.replace(/^\uFEFF/, ''))).toEqual({ ...config, font: b, fonts: { body: b, title: a, ui: '' } });
+  expect(changed.startsWith('\uFEFF')).toBe(true); expect(changed.endsWith('\r\n')).toBe(true);
+  const moved = await planProjectAssetRelocation(await makeInput({ ...options, assets: [{ path: a, bytes: 1 }],
+    files: { 'game.config.json': JSON.stringify({ font: a, fonts: { body: a } }) }, sourcePath: a, targetPath: b }), hasher);
+  expect(moved.plan.blockers).toEqual([]);
+  expect(JSON.parse(moved.textChanges[0]!.afterText)).toEqual({ font: b, fonts: { body: b } });
+});
+
+it('materializes gallery media sources without renaming collection identity or unlock commands', async () => {
+  for (const [directory, field] of [['bg', 'cgs'], ['bgm', 'music']] as const) {
+    const sourcePath = `content/assets/${directory}/night.${directory === 'bg' ? 'png' : 'wav'}`;
+    const targetPath = sourcePath.replace('night.', 'dawn.');
+    const source = `@scene start\n@unlock_${directory === 'bg' ? 'cg' : 'music'} night\n@end\n`;
+    const options = { files: { 'game.config.json': '{"entryScene":"start"}', 'content/scenario/start.gal': source },
+      assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath,
+      galleryText: JSON.stringify({ cgs: [], music: [], [field]: [{ id: 'night', name: 'night', custom: 'keep' }] }),
+      assetDirectories: [`content/assets/${directory}`] };
+    for (const result of [await planProjectAssetRelocation(await makeInput(options), hasher),
+      await planProjectAssetRelocationBatch(await makeBatchInput({ ...options, items: [{ itemId: 'one', sourcePath, targetPath }] }), hasher)]) {
+      expect(result.plan.blockers).toEqual([]);
+      expect(result.textChanges.some(file => file.path.endsWith('.gal'))).toBe(false);
+      expect(JSON.parse(result.textChanges[0]!.afterText)[field][0]).toEqual({ id: 'night', name: 'night', custom: 'keep', src: 'dawn' });
+    }
+  }
+});
+
+it('keeps stop sentinels and unknown structured resource references protected', async () => {
+  const sourcePath = 'content/assets/ambience/off.wav', targetPath = 'content/assets/ambience/waves.wav';
+  const options = { files: { 'content/scenario/start.gal': '@scene start\n@ambience off\n@end\n' },
+    assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath, assetDirectories: ['content/assets/ambience'] };
+  const moved = await planProjectAssetRelocation(await makeInput(options), hasher);
+  expect(moved.plan.blockers).toEqual([]); expect(moved.textChanges).toEqual([]);
+  const reserved = await planProjectAssetRelocation(await makeInput({ ...options, assets: [{ path: targetPath, bytes: 1 }], sourcePath: targetPath, targetPath: sourcePath }), hasher);
+  expect(reserved.plan.blockers.some(b => b.code === 'ASSET_RELOCATION_RESERVED_KEY')).toBe(true);
+  const font = 'content/assets/fonts/a.ttf';
+  for (const config of [{ fonts: { body: font, futureRole: font } }, { characters: { rin: { name: 'Rin', customTexture: font } } }]) {
+    const blocked = await planProjectAssetRelocation(await makeInput({ files: { 'game.config.json': JSON.stringify(config) },
+      assets: [{ path: font, bytes: 1 }], sourcePath: font, targetPath: 'content/assets/fonts/b.ttf', assetDirectories: ['content/assets/fonts'] }), hasher);
+    expect(blocked.plan.blockers.some(b => b.code === 'ASSET_RELOCATION_OPAQUE_REFERENCE')).toBe(true);
+    expect(blocked.textChanges).toEqual([]);
+  }
+});
+
+for (const quote of ['"', "'"]) {
+  it(`preserves condition arrows and rewrites actual choice media with ${quote} strings in single and batch plans`, async () => {
+    const condition = `${quote} -> @bg night ${quote} == ${quote} -> @bg night ${quote}`;
+    const before = `﻿@scene start
+@choice
+  Keep [if:${condition}] -> @bg night @goto end
+@label end
+@end
+`;
+    const after = before.replace('] -> @bg night', '] -> @bg dawn');
+    const options = { files: { 'game.config.json': '{"entryScene":"start"}', 'content/scenario/start.gal': before },
+      assets: [{ path: 'content/assets/bg/night.png', bytes: 1 }],
+      sourcePath: 'content/assets/bg/night.png', targetPath: 'content/assets/bg/dawn.png' };
+    const single = await planProjectAssetRelocation(await makeInput(options), hasher);
+    const batch = await planProjectAssetRelocationBatch(await makeBatchInput({ ...options,
+      items: [{ itemId: 'one', sourcePath: options.sourcePath, targetPath: options.targetPath }] }), hasher);
+    for (const result of [single, batch]) {
+      expect(result.plan.blockers).toEqual([]);
+      expect(result.textChanges.find(file => file.path === 'content/scenario/start.gal')?.afterText).toBe(after);
+      expect(result.plan.referenceChanges.some(reference => reference.line === 3)).toBe(true);
+    }
+  });
+}

@@ -1,3 +1,4 @@
+import { patchStageSourceLine } from './stage-source-patch.js';
 import { collectConfigSceneRoots, compileScene, isValidSceneId, Lexer, Parser, findChoiceArrow, splitOutsideQuotes, parseInlineInstructions, resolveProjectFontPaths, type AstBlock } from '@surdet/core';
 import {
   insertLinesAfter,
@@ -169,8 +170,7 @@ function renderConditionBlock(
 
 function sceneIdFromTarget(target: string): string | undefined {
   if (target.startsWith('label:')) return /^label:([^.]+)\./.exec(target)?.[1];
-  const match = /^scene:([^/]+)\//.exec(target);
-  return match?.[1];
+  return /^scene:([^/]+)\//.exec(target)?.[1];
 }
 
 function lineNumberFromTarget(target: string): number | undefined {
@@ -205,7 +205,8 @@ function defaultEol(lines: readonly SceneDocumentLine[]): Exclude<SceneEol, ''> 
 }
 
 function operationTarget(patch: ScenePatchOperation): string {
-  return patch.kind === 'insertAfter' ? patch.anchor : patch.target;
+  if (patch.kind === 'insertAfter') return patch.anchor;
+  return patch.target;
 }
 
 function patchLineIndex(lines: readonly SceneDocumentLine[], patch: ScenePatchOperation): number {
@@ -575,6 +576,7 @@ export async function applySceneCreate(change: ChangeSession, input: SceneCreate
       result: { sceneId: input.sceneId, path },
       compositionDraft: await buildSceneOperationCompositionDraft({
         capabilityId: 'scene.create', sceneId: input.sceneId, path, afterText: text,
+        stageConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').stage,
         characters: sceneCharacters(record.workingFiles), fontPaths: resolveProjectFontPaths(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')), hasher,
       }),
       workingFiles: { ...record.workingFiles, [path]: text },
@@ -806,7 +808,8 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
         result: { path, line: startLine, kind: patch.kind },
         compositionDraft: await buildSceneOperationCompositionDraft({
           capabilityId: 'scene.patch', sceneId, path, beforeText: source, afterText: text,
-          characters: sceneCharacters(record.workingFiles), fontPaths: resolveProjectFontPaths(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')), hasher,
+          stageConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').stage,
+        characters: sceneCharacters(record.workingFiles), fontPaths: resolveProjectFontPaths(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')), hasher,
         }),
         workingFiles: { ...record.workingFiles, [path]: text },
       };
@@ -822,6 +825,10 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
       nextLines = [...lines];
       nextLines[index] = materializeInput(replacement, current.eol || defaultEol(lines));
       nextLines[index]!.eol = current.eol;
+    } else if (patch.kind === 'patchStageProperties') {
+      if (current.kind !== 'instr' && current.kind !== 'choice-option') throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '舞台来源不是指令或选择项');
+      const raw = patchStageSourceLine(source, path, sceneId, index + 1, current.raw, patch.instructionIndex, patch.values);
+      nextLines = [...lines]; nextLines[index] = { ...current, raw };
     } else if (patch.kind === 'replaceInstruction') {
       if (current.kind !== 'instr' || !REPLACEABLE_SCENE_INSTRUCTIONS.some((name) => name === current.name)) {
         throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `replaceInstruction 目标必须是可替换的单条场景指令（${REPLACEABLE_SCENE_INSTRUCTIONS.join('、')}）`);
@@ -859,6 +866,7 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
       result: { path, line: index + 1, kind: patch.kind },
       compositionDraft: await buildSceneOperationCompositionDraft({
         capabilityId: 'scene.patch', sceneId, path, beforeText: source, afterText: text,
+        stageConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').stage,
         characters: sceneCharacters(record.workingFiles), fontPaths: resolveProjectFontPaths(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')), hasher,
       }),
       workingFiles: { ...record.workingFiles, [path]: text },

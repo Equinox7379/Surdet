@@ -1,3 +1,5 @@
+import { installStagePreviewBridge } from './stage-preview-bridge.js';
+import { readProjectStage, stageConfigurationKey, type ProjectStage } from '@surdet/core';
 /**
  * 预览运行器（M8）：iframe 内嵌精简 runner —— core 编译 + Interpreter + RendererRuntime。
  * 预览源 = 编辑器内存中的剧本文本（未保存也能预览，postMessage 传入）；
@@ -69,6 +71,7 @@ interface PreviewConfigs {
 }
 
 interface LoadPayload {
+  stage?: unknown;
   sceneId: string;
   /** Parent request identity rejects late messages from a superseded reload. */
   traceId?: string;
@@ -129,6 +132,8 @@ let appliedAssetUrls: string[] = [];
 const previewGeneration = new PreviewGeneration();
 let runtimeLifecycle: PreviewRuntimeLifecycle<RendererRuntime> | null = null;
 let previewDisposed = false;
+let previewStageConfig: ProjectStage | null = null;
+let stageBridge: ReturnType<typeof installStagePreviewBridge> | null = null;
 
 interface ActivePreviewTrace {
   traceId: string;
@@ -390,7 +395,8 @@ function makePreviewSaveStorage(getProjectKey: () => string): SaveStorage {
   };
 }
 
-async function boot(): Promise<void> {
+async function boot(stageConfig: ProjectStage | null = null, announce = true): Promise<void> {
+  previewStageConfig = stageConfig;
   const performanceMonitor = new RenderPerformanceMonitor();
   bus = new EventBus<CoreEventMap>();
   const settings = new SettingsStore(makePreviewSettingsStorage());
@@ -399,6 +405,7 @@ async function boot(): Promise<void> {
   const root = document.getElementById('preview-root');
   runtimeLifecycle = new PreviewRuntimeLifecycle({
     createRuntime: () => createRendererRuntime({
+      stage: stageConfig,
       audio: previewAudio,
       typewriter,
       backlog: new Backlog(),
@@ -418,6 +425,7 @@ async function boot(): Promise<void> {
   const previewLifecycle = runtimeLifecycle;
   const activeRuntime = runtime;
   const { commands, queries, controller, canvas } = activeRuntime;
+  stageBridge = installStagePreviewBridge(activeRuntime, previewLifecycle, () => { activePreviewTrace = null; });
   const dialogue = commands.dialogue;
   const menu = commands.menu;
   const system = commands.system;
@@ -918,7 +926,7 @@ async function boot(): Promise<void> {
     }, 0);
   });
 
-  window.parent.postMessage({ type: 'surdet-preview-ready' }, '*');
+  if (announce) window.parent.postMessage({ type: 'surdet-preview-ready' }, '*');
 }
 
 async function releaseAppliedAssetUrls(): Promise<void> {
@@ -973,7 +981,8 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<vo
     ...assets.portraits.map((asset) => register(
       asset.image.buffer,
       asset.image.mime,
-      (url) => rendererAssets.registerPortrait(asset.charId, asset.costume, asset.expression, url, asset.image.mime),
+      (url) => rendererAssets.registerPortrait(asset.charId, asset.costume, asset.expression, url, asset.image.mime,
+        previewStageConfig?.portraits[`${asset.charId}:${asset.costume}`]?.sources[asset.expression] ? asset.image.sourcePath : undefined),
       asset.configured ? asset.image.sourcePath : undefined,
     )),
     ...(assets.avatars ?? []).map((asset) => register(
@@ -1001,6 +1010,17 @@ function invalidatePreviewSession(): void {
 }
 
 async function load(p: LoadPayload): Promise<void> {
+  stageBridge?.reset();
+  try {
+    const nextStage = readProjectStage({ stage: p.stage });
+    if (stageConfigurationKey(nextStage) !== stageConfigurationKey(previewStageConfig)) {
+      invalidatePreviewSession();
+      await releaseAppliedAssetUrls();
+      releaseAppliedFontUrls();
+      const oldCanvas = runtime?.canvas; runtimeLifecycle?.dispose(); oldCanvas?.remove(); runtime = null;
+      await boot(nextStage, false);
+    }
+  } catch (error) { showError(`舞台配置无法载入：${error instanceof Error ? error.message : String(error)}`); return; }
   const activeRuntime = runtime;
   if (previewDisposed || !bus || !activeRuntime) return;
   const { commands, queries, controller } = activeRuntime;

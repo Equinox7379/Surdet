@@ -119,8 +119,10 @@ function addSceneObjects(
     // Like timeline assets, these are referenced identities, not proof that a
     // physical file is resolved. The catalog and candidate guard own that fact.
     if (reference.kind.endsWith('-asset') && !objects.some(object => object.objectRef === reference.objectRef)) {
+      // Asset identity belongs in the index, but must not masquerade as the
+      // source-line object. Patch callers select the instruction/text object by
+      // source.raw, while asset facts remain navigable through their own ref.
       addObject(objects, { kind: 'asset', semanticId: reference.objectRef, objectRef: reference.objectRef,
-        source: sourceOf(scene.path, reference.source.line, scene.document[reference.source.line - 1]?.raw ?? ''),
         references: [], referencedBy: [] }, candidates);
     }
   }
@@ -201,6 +203,18 @@ function addSceneObjects(
       lineObjects.set(lineNumber, object);
       addLineReferences(textRef, lineNumber);
     }
+  }
+
+  // Publish exact compiled positions for stage edits, including multiple inline
+  // instructions on one choice row. Authors must not derive these from line numbers.
+  for (const instruction of scene.compiled.instructions) {
+    if (instruction.op !== 'instr' || !['show', 'pose', 'layer'].includes(instruction.name)) continue;
+    const object = lineObjects.get(instruction.line);
+    if (!object || !['instruction', 'choice-option'].includes(object.kind)) continue;
+    const details = (object.details ?? { stageInstructions: [] }) as { stageInstructions: unknown[] };
+    details.stageInstructions.push({ instructionIndex: instruction.index, name: instruction.name,
+      args: [...instruction.args], modifiers: Object.fromEntries(instruction.modifiers) });
+    object.details = details;
   }
 
   // Structural objects are derived from the same Core parser facts as compilation.

@@ -2,6 +2,8 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {
+  buildAssetCatalog, describeProjectAssetPath, isProjectAssetFormatSupported, PROJECT_ASSET_RELOCATION_KINDS, AGENT_IMAGE_MAX_BYTES,
+  type ProjectAssetRelocationBatchPlan,
   fingerprintProjectAssetRelocationInventory,
   fingerprintProjectAssetRelocationOpaqueScan,
   isSnapshotPath,
@@ -13,6 +15,7 @@ import {
   type ProjectFile,
   type TextHasher,
 } from '@surdet/authoring';
+import { validateAssetSourceFormat } from '../authoring/asset-source-format.js';
 import { NodeProjectStorage } from '../authoring/node-project-storage.js';
 import { syncFileAndParent, syncParentDirectories } from '../authoring/node-durable-file.js';
 import {
@@ -32,6 +35,7 @@ import {
   type AssetImportAuthorityPaths,
   type AssetImportFileIdentity,
   type AssetRelocationDetailResponse,
+  type AssetReplacementInput,
   type AssetRelocationFileEvidence,
   type AssetRelocationReceipt,
   type AssetRelocationRequest,
@@ -237,12 +241,12 @@ async function projectFileEvidence(
 
 async function writeExclusiveText(
   file: string,
-  text: string,
+  text: string | Uint8Array,
   expectedSha256: string,
   expectedIdentity?: AssetRelocationFileEvidence,
   mode = 0o600,
 ): Promise<AssetRelocationFileEvidence> {
-  const bytes = Buffer.from(text, 'utf8');
+  const bytes = typeof text === 'string' ? Buffer.from(text, 'utf8') : Buffer.from(text);
   const actual = crypto.createHash('sha256').update(bytes).digest('hex');
   if (actual !== expectedSha256) throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '准备文本指纹不一致');
   let created = false;
@@ -537,6 +541,202 @@ export class ProjectAssetRelocationAuthority {
     return { roots, files: files.sort((left, right) => left.path.localeCompare(right.path)) };
   }
 
+  /** Prepare a same-path byte replacement within the existing relocation journal.
+   * Source adapters own permission to read bytes; this authority independently
+   * checks the target, exact source digest/format, immutable staging and recovery. */
+  async planReplacement(input: AssetReplacementInput, supplied: Uint8Array): Promise<AssetRelocationDetailResponse> {
+    const operationId = requireUuid(input.operationId, 'operationId');
+    if (!input.sourceId || typeof input.sourceId !== 'string' || typeof input.sourcePath !== 'string'
+      || !input.sourcePath || input.sourcePath.includes('\\') || input.sourcePath.split('/').some(part => !part || part === '.' || part === '..')
+      || path.isAbsolute(input.sourcePath) || !SHA256.test(input.sha256)) throw new AssetImportAuthorityError('INVALID_REQUEST', '替换来源身份无效');
+    if (!(supplied instanceof Uint8Array) || supplied.byteLength <= 0 || supplied.byteLength > AGENT_IMAGE_MAX_BYTES)
+      throw new AssetImportAuthorityError('IMPORT_LIMIT_EXCEEDED', '替换素材大小超出限制');
+    const bytes = Buffer.from(supplied);
+    if (crypto.createHash('sha256').update(bytes).digest('hex') !== input.sha256) throw new AssetImportAuthorityError('IMPORT_UPLOAD_MISMATCH', '替换来源字节与摘要不符');
+    const descriptor = describeProjectAssetPath(input.targetPath);
+    if (!descriptor || descriptor.path !== input.targetPath || descriptor.invalidName
+      || !PROJECT_ASSET_RELOCATION_KINDS.includes(descriptor.kind) || !isProjectAssetFormatSupported(descriptor.kind, descriptor.format)
+      || extensionOf(input.sourcePath) !== descriptor.format) throw new AssetImportAuthorityError('IMPORT_TARGET_UNSAFE', '原位替换需要准确、同格式、已支持的项目素材路径');
+    validateAssetSourceFormat(bytes, input.targetPath);
+    const request: AssetRelocationRequest = { operationId, moves: [{ sourcePath: input.targetPath, targetPath: input.targetPath }],
+      sourcePath: input.targetPath, targetPath: input.targetPath,
+      replacement: { sourceId: input.sourceId, sourcePath: input.sourcePath, sha256: input.sha256 } };
+    return this.serialize(operationId, () => this.mutationCoordinator.run('asset-relocation', async () => {
+      let record = await this.store.read(operationId);
+      if (record !== null) {
+        if (!sameJson(record.request, request)) throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '此操作号对应另一项整理或替换');
+        if (record.journal.status !== 'PLANNED') return this.detail(record);
+      } else {
+        if ((await this.store.list()).some(item => !TERMINAL.has(item.journal.status))) throw new AssetImportAuthorityError('PROJECT_BUSY', '已有素材操作尚未结束');
+        await this.assertLeaseHeld(); await assertAssetImportProjectRootIdentity(this.paths);
+        const storage = await NodeProjectStorage.open(this.paths.projectRoot);
+        const snapshot = await loadProjectSnapshot(storage, this.textHasher);
+        const assetFiles = await storage.inspectFileFacts((await storage.listFiles()).filter(file => file.startsWith('content/assets/')));
+        const evidence = await projectFileEvidence(this.paths, input.targetPath);
+        if (!evidence) throw new AssetImportAuthorityError('IMPORT_PLAN_STALE', '原位替换目标不存在');
+        const fact = assetFiles.find(file => file.path === input.targetPath);
+        if (!fact) throw new AssetImportAuthorityError('IMPORT_PLAN_STALE', '替换目标不在当前素材清单');
+        fact.sha256 = evidence.sha256;
+        const gallery = await storage.exists('content/config/gallery.json') ? JSON.parse((await storage.readText('content/config/gallery.json')).text.replace(/^\uFEFF/, '')) : undefined;
+        const catalog = buildAssetCatalog(assetFiles, snapshot, { gallery });
+        const item = catalog.intelligence.items.find(item => item.physical && item.sourcePath === input.targetPath);
+        // Replacement addresses this exact file, not the automatic logical slot.
+        // Another file sharing its inferred key does not make this path ambiguous.
+        if (!item || item.issues.some(issue => ['ASSET_NAME_INVALID', 'ASSET_FORMAT_UNSUPPORTED'].includes(issue)))
+          throw new AssetImportAuthorityError('IMPORT_PLAN_BLOCKED', '替换目标存在歧义或不受支持');
+        const parent = await safeProjectParent(this.paths, input.targetPath);
+        const baseline = { source: { path: input.targetPath, ...evidence.identity, sha256: evidence.sha256 },
+          target: { path: input.targetPath, state: 'exists' as const },
+          targetDirectory: { path: path.posix.dirname(input.targetPath), ...await assetImportDirectoryIdentity(parent.parent) },
+          assetInventoryFingerprint: await fingerprintProjectAssetRelocationInventory(assetFiles, this.textHasher) };
+        const opaque = await this.opaqueScan(storage);
+        const scannedFiles = [...snapshot.files, ...opaque.files].map(file => ({ path: file.path, sha256: file.sha256 })).sort((a, b) => a.path.localeCompare(b.path));
+        const facts = { beforeSha256: evidence.sha256, afterSha256: input.sha256, bytes: bytes.length,
+          sourceId: input.sourceId, sourcePath: input.sourcePath, noChange: evidence.sha256 === input.sha256, references: item.references };
+        const moveId = 'replacement-0000';
+        const semantics = { schemaVersion: 2 as const, operationId, projectRevision: snapshot.revision, status: 'ready' as const,
+          source: descriptor, target: descriptor, moves: [{ moveId, source: descriptor, target: descriptor }],
+          affectedAssetCount: facts.noChange ? 0 : 1, affectedReferenceCount: 0, affectedFileCount: 0, referenceChanges: [], blockers: [], replacement: facts };
+        const planFingerprint = await this.textHasher.sha256(stableStringify({ ...semantics, scannedFiles, baseline }));
+        const plan: ProjectAssetRelocationBatchPlan = { ...semantics, planFingerprint, planId: `relocation-batch-plan-${planFingerprint.slice(0, 32)}` };
+        const backupRelativePath = relativeWorkspacePath(operationId, 'backup', 'source-0000.bin');
+        record = await this.store.create({ schemaVersion: 2, request, plan, scannedFiles, binaryBaseline: baseline, binaryBaselines: [baseline], textFiles: [],
+          replacement: { preparedRelativePath: relativeWorkspacePath(operationId, 'prepared', 'replacement.bin'), preparedIdentity: null },
+          journal: { schemaVersion: 1, operationId, journalVersion: 1, status: 'PLANNED', recoveryPhase: null,
+            binaryState: 'SOURCE', binaryBackupRelativePath: backupRelativePath, binaryBackupIdentity: null, binaryTargetIdentity: null,
+            binaryItems: [{ moveId, sourcePath: input.targetPath, targetPath: input.targetPath, state: 'SOURCE', backupRelativePath, backupIdentity: null, targetIdentity: null }],
+            textStates: [], textResultIdentities: [], updatedAt: this.timestamp() }, receipt: null, undoReceipt: null });
+        await this.fault('after_plan_record_before_workspace');
+      }
+      await createAssetRelocationProjectWorkspace(this.paths, operationId);
+      const replacement = record.replacement!;
+      const preparedIdentity = await writeExclusiveText(absoluteAssetImportProjectPath(this.paths, replacement.preparedRelativePath), bytes,
+        input.sha256, replacement.preparedIdentity ?? undefined);
+      if (!sameJson(preparedIdentity, replacement.preparedIdentity)) record = await this.update(record, { replacement: { ...replacement, preparedIdentity } });
+      return this.detail(record);
+    }));
+  }
+
+  private async checkReplacementPrepared(record: AssetRelocationStoredOperation): Promise<AssetRelocationFileEvidence> {
+    await assertAssetImportProjectRootIdentity(this.paths);
+    await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
+    const replacement = record.replacement!;
+    if (!replacement.preparedIdentity) throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '替换准备文件身份尚未确认；保留原操作并检查');
+    const actual = relocationEvidence(await stableBinaryEvidence(absoluteAssetImportProjectPath(this.paths, replacement.preparedRelativePath)));
+    if (!sameFileIdentity(actual, replacement.preparedIdentity) || actual.sha256 !== record.request.replacement!.sha256)
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '替换准备字节已经变化');
+    const parent = await safeProjectParent(this.paths, record.request.targetPath);
+    if (!sameDirectoryNodeIdentity(await assetImportDirectoryIdentity(parent.parent), record.binaryBaseline.targetDirectory))
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '替换目标父目录已经变化');
+    return actual;
+  }
+
+  private replacementNoChange(record: AssetRelocationStoredOperation): boolean {
+    return record.plan.schemaVersion === 2 && record.plan.replacement?.noChange === true;
+  }
+
+  private async continueReplacement(recordInput: AssetRelocationStoredOperation): Promise<AssetRelocationStoredOperation> {
+    let record = recordInput;
+    const operationId = record.request.operationId, relative = record.request.targetPath;
+    const prepared = await this.checkReplacementPrepared(record);
+    const baseline = record.binaryBaseline.source;
+    if (this.replacementNoChange(record)) {
+      const current = await projectFileEvidence(this.paths, relative);
+      if (!current || !sameFileIdentity(current.identity, baseline) || current.sha256 !== baseline.sha256)
+        return this.enterRecovery(operationId, 'commit', '相同内容替换检查期间原目标发生变化');
+      record = await this.updateBinaryItem(record, 0, 'TARGET', { backupIdentity: relocationEvidence(current), targetIdentity: relocationEvidence(current) });
+      return this.finishCommit(record);
+    }
+    let item = record.journal.binaryItems[0]!;
+    const backup = absoluteAssetImportProjectPath(this.paths, item.backupRelativePath);
+    if (item.state === 'SOURCE') {
+      record = await this.updateBinaryItem(record, 0, 'BACKUP_INTENT'); item = record.journal.binaryItems[0]!;
+      await this.fault('after_binary_backup_intent');
+    }
+    if (item.state === 'BACKUP_INTENT') {
+      const current = await projectFileEvidence(this.paths, relative);
+      if (!current || !sameFileIdentity(current.identity, baseline) || current.sha256 !== baseline.sha256)
+        return this.enterRecovery(operationId, 'commit', '备份前原位替换目标已经变化');
+      if (!await fileExists(backup)) { await fs.link(absoluteAssetImportProjectPath(this.paths, relative), backup); await syncFileAndParent(backup); }
+      const saved = relocationEvidence(await stableBinaryEvidence(backup));
+      if (!sameFileIdentity(saved, baseline) || saved.sha256 !== baseline.sha256) return this.enterRecovery(operationId, 'commit', '原位替换备份身份不一致');
+      await this.fault('after_binary_backup_before_journal');
+      record = await this.updateBinaryItem(record, 0, 'BACKUP', { backupIdentity: saved }); item = record.journal.binaryItems[0]!;
+    }
+    if (item.state === 'BACKUP') {
+      record = await this.updateBinaryItem(record, 0, 'TARGET_INTENT'); item = record.journal.binaryItems[0]!;
+      await this.fault('after_target_link_intent');
+    }
+    if (item.state === 'TARGET_INTENT') {
+      await this.checkReplacementPrepared(record);
+      const saved = relocationEvidence(await stableBinaryEvidence(backup));
+      if (!sameFileIdentity(saved, baseline) || saved.sha256 !== baseline.sha256) return this.enterRecovery(operationId, 'commit', '替换前旧字节备份已变化');
+      await this.fault('before_target_publish');
+      // The same durable no-clobber file publisher used by structured references.
+      const published = await this.replaceTextDurably(relative, record.replacement!.preparedRelativePath, baseline, baseline.sha256, prepared.sha256,
+        item.targetIdentity, `replacement-${operationId}`);
+      await this.fault('after_target_link_before_journal');
+      record = await this.updateBinaryItem(record, 0, 'TARGET', { targetIdentity: published });
+    }
+    return this.finishCommit(record);
+  }
+
+  private async restoreReplacement(recordInput: AssetRelocationStoredOperation, undo: boolean): Promise<AssetRelocationStoredOperation> {
+    let record = recordInput;
+    const operationId = record.request.operationId, relative = record.request.targetPath;
+    const baseline = record.binaryBaseline.source;
+    let item = record.journal.binaryItems[0]!;
+    const intent = undo ? 'UNDO_INTENT' as const : 'ROLLBACK_INTENT' as const;
+    if (!undo && record.journal.status !== 'ROLLING_BACK') record = await this.update(record, { journal: { status: 'ROLLING_BACK', recoveryPhase: 'rollback' } });
+    const prepared = await this.checkReplacementPrepared(record);
+    let restored: AssetRelocationFileEvidence;
+    if (this.replacementNoChange(record)) restored = { ...baseline };
+    else {
+      const target = absoluteAssetImportProjectPath(this.paths, relative);
+      const backup = absoluteAssetImportProjectPath(this.paths, item.backupRelativePath);
+      const old = await fileExists(backup) ? relocationEvidence(await stableBinaryEvidence(backup)) : null;
+      if (old && (!sameFileIdentity(old, baseline) || old.sha256 !== baseline.sha256)) return this.enterRecovery(operationId, undo ? 'undo' : 'rollback', '旧素材备份已被更改');
+      let current = await projectFileEvidence(this.paths, relative);
+      if (current && sameFileIdentity(current.identity, baseline) && current.sha256 === baseline.sha256) restored = relocationEvidence(current);
+      else {
+        if (!old) return this.enterRecovery(operationId, undo ? 'undo' : 'rollback', '缺少原位替换旧素材备份');
+        const nonce = `${undo ? 'undo' : 'rollback'}-replacement-${operationId}`;
+        if (current !== null && (!sameFileIdentity(current.identity, prepared) || current.sha256 !== prepared.sha256))
+          return this.enterRecovery(operationId, undo ? 'undo' : 'rollback', '第三方素材更改受到保护，拒绝覆盖');
+        if (current === null) {
+          // A target may be absent only in a proven durable displacement window.
+          const forward = path.join(path.dirname(target), `.surdet-relocation-replacement-${operationId}.previous`);
+          const reverse = path.join(path.dirname(target), `.surdet-relocation-${nonce}.previous`);
+          const proofPath = item.state === intent ? reverse : !undo && item.state === 'TARGET_INTENT' ? forward : null;
+          const proof = proofPath && await fileExists(proofPath) ? await stableBinaryEvidence(proofPath) : null;
+          const expected = proofPath === forward ? baseline : prepared;
+          if (!proof || !sameFileIdentity(proof.identity, expected) || proof.sha256 !== expected.sha256)
+            return this.enterRecovery(operationId, undo ? 'undo' : 'rollback', '缺失目标不属于可证明的替换中断窗口');
+          await fs.link(backup, target); await syncFileAndParent(target);
+          current = await projectFileEvidence(this.paths, relative);
+          if (!current || !sameFileIdentity(current.identity, old) || current.sha256 !== old.sha256)
+            return this.enterRecovery(operationId, undo ? 'undo' : 'rollback', '原素材恢复身份不一致');
+          await removeOwnedExactFile(proofPath!, relocationEvidence(proof));
+          restored = relocationEvidence(current);
+        } else {
+          record = await this.updateBinaryItem(record, 0, intent);
+          await this.fault(undo ? 'after_undo_target_intent' : 'after_rollback_target_intent');
+          restored = await this.replaceTextDurably(relative, item.backupRelativePath, prepared, prepared.sha256, baseline.sha256, null, nonce);
+        }
+      }
+    }
+    record = await this.updateBinaryItem(record, 0, undo ? 'UNDONE' : 'ROLLED_BACK', { targetIdentity: null });
+    if (undo && record.undoReceipt === null) {
+      const semantic = { schemaVersion: 1 as const, undoReceiptId: crypto.randomUUID(), operationId, receiptId: record.receipt!.receiptId,
+        sourcePath: relative, targetPath: relative, sourceIdentity: restored,
+        moves: [{ moveId: item.moveId, sourcePath: relative, targetPath: relative, sourceIdentity: restored }], restoredTextFiles: [], undoneAt: this.timestamp() };
+      record = await this.update(record, { undoReceipt: { ...semantic, undoReceiptFingerprint: await this.textHasher.sha256(stableStringify(semantic)) } });
+    }
+    record = await this.update(record, { journal: { status: undo ? 'UNDONE' : 'ROLLED_BACK', recoveryPhase: null } });
+    await this.barrierStore.resolveRelocationBarriers(operationId);
+    return record;
+  }
+
   private async capture(request: AssetRelocationRequest): Promise<CapturedPlan> {
     await this.assertLeaseHeld();
     await assertAssetImportProjectRootIdentity(this.paths);
@@ -765,6 +965,14 @@ export class ProjectAssetRelocationAuthority {
   }
 
   private async assertFresh(record: AssetRelocationStoredOperation): Promise<void> {
+    if (record.replacement) {
+      await this.checkReplacementPrepared(record);
+      const target = await projectFileEvidence(this.paths, record.request.targetPath);
+      if (!target || !sameFileIdentity(target.identity, record.binaryBaseline.source) || target.sha256 !== record.binaryBaseline.source.sha256)
+        throw new AssetImportAuthorityError('IMPORT_PLAN_STALE', '原位替换目标字节或身份已变化');
+      await this.assertRecoveryReferencesFresh(record);
+      return;
+    }
     const captured = await this.capture(record.request);
     if (captured.prepared.plan.status !== 'ready'
       || captured.prepared.plan.planFingerprint !== record.plan.planFingerprint
@@ -811,6 +1019,9 @@ export class ProjectAssetRelocationAuthority {
 
   private async removePlannedWorkspace(record: AssetRelocationStoredOperation): Promise<void> {
     await assertAssetImportProjectRootIdentity(this.paths);
+    // Prepared replacement bytes are retained as operation-owned recovery
+    // material. Cancellation never removes unknown or incompletely sealed data.
+    if (record.replacement) return;
     const workspaceRoot = path.join(this.paths.relocationWorkspace, record.request.operationId);
     const rootStat = await fs.lstat(workspaceRoot).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
@@ -1147,6 +1358,13 @@ export class ProjectAssetRelocationAuthority {
   }
 
   private async verifyCommittedFiles(record: AssetRelocationStoredOperation): Promise<void> {
+    if (record.replacement) {
+      const target = await projectFileEvidence(this.paths, record.request.targetPath);
+      const expected = record.journal.binaryItems[0]!.targetIdentity;
+      if (!target || !expected || target.sha256 !== record.request.replacement!.sha256 || !sameFileIdentity(target.identity, expected))
+        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '原位替换结果字节或身份不一致');
+      return;
+    }
     const targetPaths = new Set(record.journal.binaryItems.map((item) => portableFold(item.targetPath)));
     for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
       const item = record.journal.binaryItems[index]!;
@@ -1230,7 +1448,7 @@ export class ProjectAssetRelocationAuthority {
         const baseline = record.binaryBaselines[index]!;
         const target = await projectFileEvidence(this.paths, item.targetPath);
         if (target === null || item.targetIdentity === null
-          || target.sha256 !== baseline.source.sha256
+          || target.sha256 !== (record.request.replacement?.sha256 ?? baseline.source.sha256)
           || !sameFileIdentity(target.identity, item.targetIdentity)) {
           return this.enterRecovery(record.request.operationId, 'commit', `完成回执缺少可信目标素材：${item.targetPath}`);
         }
@@ -1287,6 +1505,7 @@ export class ProjectAssetRelocationAuthority {
   }
 
   private async continueCommit(recordInput: AssetRelocationStoredOperation): Promise<AssetRelocationStoredOperation> {
+    if (recordInput.replacement) return this.continueReplacement(recordInput);
     let record = recordInput;
     await this.verifyWorkspaceTexts(record);
     record = await this.moveSourceToBackup(record);
@@ -1297,6 +1516,7 @@ export class ProjectAssetRelocationAuthority {
   }
 
   private async continueRollback(recordInput: AssetRelocationStoredOperation): Promise<AssetRelocationStoredOperation> {
+    if (recordInput.replacement) return this.restoreReplacement(recordInput, false);
     let record = recordInput;
     if (record.journal.status !== 'ROLLING_BACK') {
       record = await this.update(record, { journal: { status: 'ROLLING_BACK', recoveryPhase: 'rollback' } });
@@ -1444,6 +1664,7 @@ export class ProjectAssetRelocationAuthority {
     return this.serialize(operationId, () => this.mutationCoordinator.run('asset-relocation', async () => {
       let record = await this.store.read(operationId);
       if (record === null) throw new AssetImportAuthorityError('IMPORT_OPERATION_NOT_FOUND', '素材整理操作不存在');
+      if (record.plan.planFingerprint !== request.planFingerprint) throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '计划指纹不匹配');
       if (record.journal.status === 'COMMITTED') {
         await this.verifyTerminalResolution(operationId);
         await this.barrierStore.resolveRelocationBarriers(operationId);
@@ -1477,6 +1698,19 @@ export class ProjectAssetRelocationAuthority {
 
   private async preflightUndo(record: AssetRelocationStoredOperation): Promise<void> {
     if (record.receipt === null) throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', '成功回执缺失，不能撤销');
+    if (record.replacement) {
+      if (this.replacementNoChange(record)) return;
+      const before = await projectFileEvidence(this.paths, record.request.targetPath);
+      if (!before || !sameFileIdentity(before.identity, record.receipt.targetIdentity) || before.sha256 !== record.request.replacement!.sha256)
+        throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', '替换后的目标已经变化，不会覆盖外部修改');
+      await this.checkReplacementPrepared(record);
+      const old = await stableBinaryEvidence(absoluteAssetImportProjectPath(this.paths, record.journal.binaryItems[0]!.backupRelativePath));
+      const target = await projectFileEvidence(this.paths, record.request.targetPath);
+      if (!sameFileIdentity(old.identity, record.binaryBaseline.source) || old.sha256 !== record.binaryBaseline.source.sha256
+        || !target || !sameFileIdentity(target.identity, record.receipt.targetIdentity) || target.sha256 !== record.request.replacement!.sha256)
+        throw new AssetImportAuthorityError('IMPORT_UNDO_BLOCKED_CHANGED', '原位替换目标或旧字节已变化，不能撤销');
+      return;
+    }
     try {
       await assertAssetRelocationProjectWorkspace(this.paths, record.request.operationId);
       const targetPaths = new Set(record.journal.binaryItems.map((item) => portableFold(item.targetPath)));
@@ -1512,6 +1746,7 @@ export class ProjectAssetRelocationAuthority {
   }
 
   private async continueUndo(recordInput: AssetRelocationStoredOperation): Promise<AssetRelocationStoredOperation> {
+    if (recordInput.replacement) return this.restoreReplacement(recordInput, true);
     let record = recordInput;
     for (let index = record.textFiles.length - 1; index >= 0; index--) {
       const file = record.textFiles[index]!;
@@ -1673,6 +1908,7 @@ export class ProjectAssetRelocationAuthority {
     return this.serialize(operationId, () => this.mutationCoordinator.run('asset-relocation', async () => {
       let record = await this.store.read(operationId);
       if (record === null) throw new AssetImportAuthorityError('IMPORT_OPERATION_NOT_FOUND', '素材整理操作不存在');
+      if (record.receipt?.receiptId !== request.receiptId || record.receipt?.receiptFingerprint !== request.receiptFingerprint) throw new AssetImportAuthorityError('IMPORT_OPERATION_CONFLICT', '撤销回执不匹配');
       if (record.journal.status === 'UNDONE') {
         await this.verifyTerminalResolution(operationId);
         await this.barrierStore.resolveRelocationBarriers(operationId);

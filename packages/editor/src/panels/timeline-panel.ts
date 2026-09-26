@@ -1,3 +1,5 @@
+import { resolveTimelineDefinition } from '@surdet/core';
+import { createObjectCue, timelineActionsForVersion } from '../timeline-model.js';
 import type { TimelineCue, TimelineDefinition, TimelineEasing, TimelineTrack, TimelineTrackKind } from '@surdet/core';
 import { state, h, setStatus } from '../state.js';
 import type { TimelineCueSelection } from '../state.js';
@@ -219,6 +221,15 @@ function commit(
     restoreTimelineFocus(focusKey);
     return;
   }
+  if (next.version === 2) {
+    try {
+      resolveTimelineDefinition(next, id => {
+        if (id === next.id) return next;
+        const matches = state.timelines.filter(entry => entry.id === id);
+        return matches.length === 1 ? parseTimelineText(matches[0]!.text).definition ?? undefined : undefined;
+      });
+    } catch (error) { setStatus(`未修改时间轴：${error instanceof Error ? error.message : String(error)}`, false, 6000); return; }
+  }
   if (nextText === active.entry.text) return;
   pushTimelineSnapshot(active.entry.id, active.entry.text, historySelection);
   active.entry.text = nextText;
@@ -267,15 +278,15 @@ function selectInput(
   return select;
 }
 
-type ResourceTrackKind = 'background' | 'portrait' | 'audio';
+type ResourceTrackKind = 'background' | 'portrait' | 'audio' | 'layer';
 
 function isResourceTrackKind(kind: TimelineTrackKind): kind is ResourceTrackKind {
-  return kind === 'background' || kind === 'portrait' || kind === 'audio';
+  return kind === 'background' || kind === 'portrait' || kind === 'audio' || kind === 'layer';
 }
 
 function resourceChoicesFor(kind: ResourceTrackKind, action: string): TimelineAssetChoice[] {
   return timelineAssetChoices(state.dirAssets).filter((choice) => {
-    if (choice.kind !== kind) return false;
+    if (choice.kind !== (kind === 'layer' ? 'background' : kind)) return false;
     if (kind !== 'audio') return true;
     return choice.sourceKind === action;
   });
@@ -365,7 +376,7 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
   easing.dataset.timelineFocus = 'inspector-easing';
   easing.onchange = () => updateCue(selection, (next) => { next.easing = easing.value as TimelineCue['easing']; });
   common.appendChild(field('缓动', easing));
-  const actions = TIMELINE_ACTIONS[track.kind];
+  const actions = timelineActionsForVersion(track.kind, definition.version);
   const action = selectInput(actions, cue.action, (option) => timelineActionLabel(track.kind, option));
   action.dataset.timelineFocus = 'inspector-action';
   common.appendChild(field('动作', action));
@@ -406,9 +417,10 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
     const selectedChoice = replacementResource && replacementResource.value !== ''
       ? replacementChoices[Number(replacementResource.value)]
       : undefined;
-    const draft = isResourceTrackKind(track.kind)
-      ? selectedChoice ? createResourceCue(track.kind, action.value, selectedChoice) : null
-      : createNeutralCue(track.kind, action.value);
+    const draft = (track.kind === 'portrait' || track.kind === 'layer') && ['pose', 'hide'].includes(action.value)
+      ? createObjectCue(track.kind, action.value, track.target)
+      : isResourceTrackKind(track.kind) ? selectedChoice ? createResourceCue(track.kind, action.value, selectedChoice) : null
+        : createNeutralCue(track.kind, action.value);
     if (!draft) {
       setStatus('请选择与动作匹配的项目素材', false, 5000);
       return;
@@ -477,6 +489,33 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
       };
       customPosition.onchange = applyCustomPosition;
       payload.appendChild(customPositionField);
+    }
+  }
+  if (definition.version === 2 && (track.kind === 'portrait' || track.kind === 'layer') && ['show', 'pose', 'move'].includes(cue.action)) {
+    payload.append(h('p', 'hint', '留空表示不接管该属性；只修改明确填写的数值，其他动画属性继续运行。'));
+    for (const [key, label, min, max, step] of [
+      ['x', '横坐标', -100000, 100000, '1'], ['y', '纵坐标', -100000, 100000, '1'],
+      ['scale', '独立缩放', .01, 16, '.01'], ['opacity', '透明度', 0, 1, '.01'], ['z', '层内顺序', -32768, 32767, '1'],
+    ] as const) {
+      const control = numberInput(typeof cue[key] === 'number' ? cue[key] as number : 0, min, max);
+      control.value = cue[key] === undefined ? '' : String(cue[key]); control.step = step; control.placeholder = '保持当前值';
+      control.dataset.timelineFocus = `inspector-stage-${key}`;
+      control.onchange = () => { if (!control.isConnected) return; updateCue(selection, next => {
+        if (control.value.trim() === '') delete next[key]; else next[key] = Number(control.value);
+      }); };
+      payload.append(field(label, control));
+    }
+    if (track.kind === 'portrait') {
+      const facing = selectInput(['', 'left', 'right'], typeof cue.facing === 'string' ? cue.facing : '', value => value === '' ? '保持朝向' : value === 'left' ? '向左' : '向右');
+      facing.onchange = () => { if (facing.isConnected) updateCue(selection, next => { if (facing.value) next.facing = facing.value; else delete next.facing; }); };
+      payload.append(field('朝向', facing));
+      const distance = textInput(typeof cue.distance === 'string' ? cue.distance : '', '命名距离（留空不修改）');
+      distance.onchange = () => { if (distance.isConnected) updateCue(selection, next => { if (distance.value) next.distance = distance.value; else delete next.distance; }); };
+      payload.append(field('距离方案', distance));
+    } else if (cue.action === 'show') {
+      const band = selectInput(['environment', 'foreground'], String(cue.band ?? 'environment'), value => value === 'foreground' ? '人物前方' : '人物后方');
+      band.onchange = () => { if (band.isConnected) updateCue(selection, next => { next.band = band.value; }); };
+      payload.append(field('图层区域', band)); setNumber('平移视差', 'parallax', 0, 2, '.01');
     }
   }
   if (track.kind === 'camera') {
@@ -633,7 +672,7 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
   definition.tracks.forEach((track, trackIndex) => {
     const row = h('div', 'timeline-track-row');
     const head = h('div', 'timeline-track-head');
-    const kind = selectInput(TIMELINE_TRACKS, track.kind, (option) => timelineTrackLabel(option as TimelineTrackKind));
+    const kind = selectInput(definition.version === 1 ? TIMELINE_TRACKS.filter(kind => kind !== 'layer') : TIMELINE_TRACKS, track.kind, (option) => timelineTrackLabel(option as TimelineTrackKind));
     kind.dataset.timelineFocus = `track-${trackIndex}-kind`;
     kind.title = '轨道类型';
     kind.onchange = () => {
@@ -669,8 +708,8 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
       head.append(h('span', 'timeline-track-target', track.target));
     }
     const addAction = selectInput(
-      TIMELINE_ACTIONS[track.kind],
-      TIMELINE_ACTIONS[track.kind][0]!,
+      timelineActionsForVersion(track.kind, definition.version),
+      timelineActionsForVersion(track.kind, definition.version)[0]!,
       (option) => timelineActionLabel(track.kind, option),
     );
     addAction.dataset.timelineFocus = `track-${trackIndex}-add-action`;
@@ -698,9 +737,10 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
       const selectedChoice = addResource && addResource.value !== ''
         ? addChoices[Number(addResource.value)]
         : undefined;
-      const draft = isResourceTrackKind(track.kind)
-        ? selectedChoice ? createResourceCue(track.kind, addAction.value, selectedChoice) : null
-        : createNeutralCue(track.kind, addAction.value);
+      const draft = (track.kind === 'portrait' || track.kind === 'layer') && ['pose', 'hide'].includes(addAction.value)
+        ? createObjectCue(track.kind, addAction.value, track.target)
+        : isResourceTrackKind(track.kind) ? selectedChoice ? createResourceCue(track.kind, addAction.value, selectedChoice) : null
+          : createNeutralCue(track.kind, addAction.value);
       if (!draft) {
         setStatus('请先选择与动作匹配的项目素材', false, 5000);
         return;
@@ -839,6 +879,41 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
   parent.appendChild(canvas);
 }
 
+function renderClipEditor(definition: TimelineDefinition): HTMLElement {
+  const section = document.createElement('details');
+  section.className = 'timeline-clip-editor';
+  section.append(h('summary', '', `引用片段（${definition.clips?.length ?? 0}）`));
+  section.append(h('p', 'hint', '引用项目中的时间轴定义，不复制内容。目标重绑定只改变舞台实例，不改变立绘素材。'));
+  const baseline = activeDefinition()?.entry.text;
+  const current = () => section.isConnected && state.currentTimeline === definition.id && activeDefinition()?.entry.text === baseline;
+  const names = state.timelines.filter(entry => entry.id !== definition.id && parseTimelineText(entry.text).definition).map(entry => entry.id);
+  for (const [index, clip] of (definition.clips ?? []).entries()) {
+    const row = h('div', 'timeline-inspector-grid');
+    const name = selectInput([...new Set([clip.timelineId, ...names])], clip.timelineId);
+    name.onchange = () => { if (current()) commit(next => { next.clips![index]!.timelineId = name.value; }); };
+    row.append(field('片段定义', name));
+    for (const [key, label, fallback, min, max] of [['atMs', '开始（毫秒）', 0, 0, 600000], ['repeat', '次数', 1, 1, 100], ['gapMs', '间隔（毫秒）', 0, 0, 600000]] as const) {
+      const input = numberInput(clip[key] ?? fallback, min, max);
+      input.onchange = () => { if (current()) commit(next => { next.clips![index]![key] = Number(input.value); }); };
+      row.append(field(label, input));
+    }
+    const bindings = document.createElement('textarea'); bindings.rows = 2; bindings.value = JSON.stringify(clip.targets ?? {}, null, 2);
+    bindings.setAttribute('aria-label', `片段 ${index + 1} 的目标重绑定`);
+    const apply = h('button', '', '应用目标重绑定');
+    apply.onclick = () => {
+      if (!current()) return;
+      try { const value: unknown = JSON.parse(bindings.value); commit(next => { next.clips![index]!.targets = value as Record<string, string>; }); }
+      catch (error) { setStatus(`目标映射未应用：${error instanceof Error ? error.message : String(error)}`, false); }
+    };
+    const remove = h('button', '', '移除引用'); remove.onclick = () => { if (current()) commit(next => { next.clips!.splice(index, 1); }); };
+    row.append(field('目标映射（原实例到本次实例）', bindings), apply, remove); section.append(row);
+  }
+  const choice = selectInput(names, names[0] ?? ''); choice.setAttribute('aria-label', '添加引用片段');
+  const add = h('button', '', '添加引用'); add.disabled = names.length === 0;
+  add.onclick = () => { if (current() && choice.value) commit(next => { (next.clips ??= []).push({ timelineId: choice.value, atMs: 0 }); }); };
+  section.append(choice, add); return section;
+}
+
 function renderWorkbench(parent: HTMLElement, definition: TimelineDefinition): void {
   const view = timelineViewState(definition.id);
   timelineZoom = view.zoom;
@@ -865,7 +940,7 @@ function renderWorkbench(parent: HTMLElement, definition: TimelineDefinition): v
   viewControls.append(fit, zoomOut, zoomValue, zoomIn);
   toolbar.appendChild(viewControls);
   const trackControls = h('div', 'timeline-track-controls');
-  const addKind = selectInput(TIMELINE_TRACKS, 'screen', (option) => timelineTrackLabel(option as TimelineTrackKind));
+  const addKind = selectInput(definition.version === 1 ? TIMELINE_TRACKS.filter(kind => kind !== 'layer') : TIMELINE_TRACKS, 'screen', (option) => timelineTrackLabel(option as TimelineTrackKind));
   addKind.dataset.timelineFocus = 'add-track-kind';
   addKind.setAttribute('aria-label', '新轨道类型');
   const addTrack = h('button', undefined, '＋ 添加轨道');
@@ -878,6 +953,11 @@ function renderWorkbench(parent: HTMLElement, definition: TimelineDefinition): v
   trackControls.append(addKind, addTrack);
   toolbar.appendChild(trackControls);
   main.appendChild(toolbar);
+  if (definition.version === 1) {
+    const upgrade = h('button', '', '启用独立变换与引用片段');
+    upgrade.onclick = () => { if (upgrade.isConnected) commit(next => { next.version = 2; }); };
+    main.append(upgrade);
+  } else main.append(renderClipEditor(definition));
   const scroll = h('div', 'timeline-scroll');
   const rootWidth = rootContainer?.getBoundingClientRect().width || 1280;
   const sideBudget = rootWidth <= 800 ? 40 : rootWidth <= 1024 ? 488 : 560;

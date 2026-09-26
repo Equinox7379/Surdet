@@ -8,12 +8,12 @@
  *  - 名词表导入/导出；审计面板一键加变体入口（addTerminologyVariant）
  */
 import { state, h, setStatus } from '../state.js';
-import { projectPortraitOverrides } from '@surdet/core';
+import { projectPortraitOverrides, readProjectStage } from '@surdet/core';
 import { assertConfigSourcesReadable, configSourceError, configSourcePath, parseConfigSource, type ConfigSourceName } from '../config-source.js';
 import { assetPathForHandle, assertProjectWriteUnlocked, readProjectSourceText, runProjectWriteOperation, writeProjectText } from '../project-io.js';
 import { editorWorkspaceStatus } from '../editor-workspace.js';
 import { AuthoringOperationError, parseProjectConfigDocument, renameConfigReferences, renameGalleryLabel } from '@surdet/authoring';
-import { commitCharacterTable, type CharacterTableEditRow } from '../authoring-project-storage.js';
+import { commitCharacterTable, commitStageConfiguration, type CharacterTableEditRow } from '../authoring-project-storage.js';
 import {
   VAR_TYPES, parseVariablesToRows, rowsToVariables, applyVariablesToConfig,
   parseAchievementsToRows, rowsToAchievements, collectReferencedVars,
@@ -47,7 +47,8 @@ export type ConfigSectionId =
   | 'growth'
   | 'events'
   | 'gallery'
-  | 'terminology';
+  | 'terminology'
+  | 'stage';
 
 export interface ConfigDraftInspection {
   dirty: boolean;
@@ -81,7 +82,7 @@ function configDescriptor(id: ConfigSectionId): ConfigSectionDescriptor {
 }
 
 function sectionSource(id: ConfigSectionId): ConfigSourceName {
-  return id === 'characters' || id === 'variables' ? 'gameConfig' : id;
+  return id === 'characters' || id === 'variables' || id === 'stage' ? 'gameConfig' : id;
 }
 
 function renderConfigWorkspace(root: HTMLElement): void {
@@ -172,6 +173,10 @@ let evRows: EventsRows | null = null;
 let grRows: GrowthRows | null = null;
 let gaRows: GalleryRows | null = null;
 let termRows: TerminologyTableRows | null = null;
+// The stage form lives beside the preview but shares project draft ownership,
+// save-all, switching guards and history with the existing configuration forms.
+let stageDraft: string | null = null;
+let stageSourceBaseline: string | undefined;
 let configSessionRevision = 0;
 let configSessionLoaded = false;
 const configBaselines: Partial<Record<ConfigSectionId, string>> = {};
@@ -196,6 +201,7 @@ function serializeConfigSection(sectionId: ConfigSectionId): string {
     case 'events': return JSON.stringify(ensureEvRows());
     case 'gallery': return JSON.stringify(ensureGaRows());
     case 'terminology': return JSON.stringify(ensureTermRows());
+    case 'stage': return JSON.stringify(readStageConfigDraft());
   }
 }
 
@@ -230,7 +236,67 @@ export function inspectConfigDraftState(): ConfigDraftInspection {
       dirtySections.push(descriptor.id);
     }
   }
+  if (configBaselines.stage !== undefined && configBaselines.stage !== serializeConfigSection('stage')) dirtySections.push('stage');
   return { dirty: dirtySections.length > 0, dirtySections };
+}
+
+export function readStageConfigDraft(): string {
+  if (stageDraft === null) {
+    const value = parseConfigObj().stage ?? null;
+    stageSourceBaseline = JSON.stringify(value);
+    stageDraft = JSON.stringify(value ?? { version: 1, design: { width: 1280, height: 720 }, positions: {}, distances: {}, portraits: {}, compositions: {} }, null, 2);
+    configBaselines.stage = JSON.stringify(stageDraft);
+  }
+  return stageDraft;
+}
+
+export function editStageConfigDraft(text: string, coalesce = false): void {
+  assertProjectWriteUnlocked();
+  if (state.reviewWorkspace || state.reviewPreviewReadOnly || state.projectLoading) throw new Error('当前项目不可编辑舞台配置。');
+  if (readStageConfigDraft() === text) return;
+  pushConfigHistory(coalesce);
+  stageDraft = text;
+  configSessionLoaded = true;
+}
+
+/** Working preview only. The source-writing transaction still reads the saved
+ * configuration, so a draft cannot silently become its own disk baseline. */
+export function previewStageConfigText(source: string): string {
+  if (stageDraft === null || configBaselines.stage === JSON.stringify(stageDraft)) return source;
+  const config = parseProjectConfigDocument(source || '{}');
+  const stage: unknown = JSON.parse(stageDraft);
+  readProjectStage({ stage });
+  if (stage === null) delete config.stage; else config.stage = stage;
+  return JSON.stringify(config);
+}
+
+export function reloadStageConfigDraft(): string {
+  // Explicitly discard only the stage draft, retaining other configuration edits.
+  const value = parseConfigObj().stage ?? null;
+  const text = JSON.stringify(value ?? { version: 1 }, null, 2);
+  editStageConfigDraft(text);
+  stageSourceBaseline = JSON.stringify(value);
+  configBaselines.stage = JSON.stringify(text);
+  notifyConfigDraftStateChanged();
+  return text;
+}
+
+export async function saveStageConfigDraftUnlocked() {
+  assertProjectWriteUnlocked();
+  assertConfigSaveReady('gameConfig');
+  const submitted = readStageConfigDraft(), revision = configSessionRevision;
+  if (JSON.stringify(parseConfigObj().stage ?? null) !== stageSourceBaseline) throw new Error('舞台来源配置已经变化，请保留草稿并重新核对。');
+  const value: unknown = JSON.parse(submitted);
+  if (value !== null && (typeof value !== 'object' || Array.isArray(value))) throw new Error('舞台配置必须是对象或 null。');
+  const result = await commitStageConfiguration(value as Record<string, unknown> | null, state.gameConfigText);
+  if (revision === configSessionRevision) {
+    stageSourceBaseline = JSON.stringify(result.after);
+    markConfigSectionSaved('stage', submitted, revision);
+    // Undo changes only the draft, never pretends a completed disk write did not happen.
+    for (const snapshot of [...configHist.past, ...configHist.future]) snapshot.gameConfigText = result.text;
+    requestValidateHook();
+  }
+  return result;
 }
 
 /** 打开配置页时从盘上重读源文件；失败保持显式错误，不冒充旧值仍有效。 */
@@ -311,6 +377,7 @@ interface ConfigSnapshot {
   grRows: GrowthRows | null;
   gaRows: GalleryRows | null;
   termRows: TerminologyTableRows | null;
+  stageDraft: string | null;
   gameConfigText: string;
 }
 
@@ -325,6 +392,8 @@ function clearConfigRowsAndHistory(): void {
   grRows = null;
   gaRows = null;
   termRows = null;
+  stageDraft = null;
+  stageSourceBaseline = undefined;
   configSessionLoaded = false;
   for (const sectionId of Object.keys(configBaselines) as ConfigSectionId[]) delete configBaselines[sectionId];
   configHist.past = [];
@@ -343,7 +412,7 @@ function clone<T>(v: T): T {
 }
 
 function takeConfigSnapshot(): ConfigSnapshot {
-  return { ...clone({ charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows }), gameConfigText: state.gameConfigText };
+  return { ...clone({ charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows, stageDraft }), gameConfigText: state.gameConfigText };
 }
 
 /** Rebase live rows, clean baselines and undo/redo together; never save unrelated edits. */
@@ -431,6 +500,7 @@ function restoreConfigSnapshot(snap: ConfigSnapshot): void {
   grRows = clone(snap.grRows);
   gaRows = clone(snap.gaRows);
   termRows = clone(snap.termRows);
+  stageDraft = snap.stageDraft;
   state.gameConfigText = snap.gameConfigText; // 内存态同步回退（磁盘不回滚，与行模型同语义）
   rerenderConfig();
 }
@@ -708,10 +778,29 @@ async function saveVariables(): Promise<void> {
 function renderCharactersSection(): HTMLElement {
   const { sec, ops } = sectionShell('characters');
   const rows = ensureCharRows();
-  if (rows.length === 0) {
-    sec.appendChild(h('div', 'config-empty', '暂无角色。创建角色后，可在这里维护显示名称与头像。'));
-    return sec;
-  }
+  const revision = configSessionRevision;
+  const createFields = h('div', 'config-scalars');
+  const newId = h('input', 'mono'); newId.placeholder = '角色 ID'; newId.setAttribute('aria-label', '新角色 ID');
+  const newName = h('input'); newName.placeholder = '显示名称'; newName.setAttribute('aria-label', '新角色显示名称');
+  const addCharacter = h('button', '', '添加角色'); addCharacter.type = 'button';
+  const canCreate = () => {
+    if (!createFields.isConnected || createFields.closest('[inert]') || configSessionRevision !== revision
+      || charRows !== rows || state.projectLoading || state.reviewPreviewReadOnly) return false;
+    try { assertProjectWriteUnlocked(); return true; }
+    catch (error) { setStatus(error instanceof Error ? error.message : String(error), false); return false; }
+  };
+  addCharacter.onclick = () => {
+    if (!canCreate()) return;
+    const id = newId.value.trim(), name = newName.value.trim();
+    if (!id || !name) { setStatus('请填写角色 ID 与显示名称。', false); return; }
+    if (rows.some(row => row.id === id)) { setStatus(`角色 ID 已存在：${id}`, false); return; }
+    pushConfigHistory(false);
+    rows.push({ id, name, avatar: '', portraits: [], create: true });
+    rerenderConfig();
+  };
+  createFields.append(newId, newName, addCharacter);
+  sec.append(createFields, h('p', 'hint', '添加后先保存在角色表草稿中；点击保存角色表才写入项目。已有角色 ID 不在这里改名或删除。'));
+  if (rows.length === 0) sec.appendChild(h('div', 'config-empty', '暂无角色。填写 ID 与显示名称后添加首个角色。'));
   const table = h('table', 'config-table') as HTMLTableElement;
   const thead = h('thead');
   const hr = h('tr');
@@ -727,13 +816,22 @@ function renderCharactersSection(): HTMLElement {
     const tr = h('tr');
     const tdId = h('td', 'mono', row.id);
     tdId.title = '角色 ID 是语义身份（speaker/因果/avatar 引用键），暂不支持在编辑器改名';
+    if (row.create) {
+      const cancel = h('button', '', '取消新增'); cancel.type = 'button';
+      cancel.setAttribute('aria-label', `取消新增角色 ${row.id}`);
+      cancel.onclick = () => {
+        if (!cancel.isConnected || !canCreate() || rows[i] !== row || !row.create) return;
+        pushConfigHistory(false); rows.splice(i, 1); rerenderConfig();
+      };
+      tdId.append(h('span', 'hint', ' 未保存'), cancel);
+    }
     tr.appendChild(tdId);
     const tdName = h('td');
     const name = h('input');
     name.value = row.name;
     name.placeholder = '角色在界面中显示的名称';
     name.setAttribute('aria-label', `${row.id} 的显示名称`);
-    name.oninput = () => { pushConfigHistory(true); rows[i]!.name = name.value; };
+    name.oninput = () => { if (!canCreate() || rows[i] !== row || !name.isConnected) return; pushConfigHistory(true); row.name = name.value; };
     tdName.appendChild(name);
     tr.appendChild(tdName);
     const tdAvatar = h('td');
@@ -741,7 +839,7 @@ function renderCharactersSection(): HTMLElement {
     avatar.value = row.avatar;
     avatar.placeholder = '留空可清除头像';
     avatar.setAttribute('aria-label', `${row.id} 的头像素材`);
-    avatar.oninput = () => { pushConfigHistory(true); rows[i]!.avatar = avatar.value; };
+    avatar.oninput = () => { if (!canCreate() || rows[i] !== row || !avatar.isConnected) return; pushConfigHistory(true); row.avatar = avatar.value; };
     tdAvatar.appendChild(avatar);
     tr.appendChild(tdAvatar);
     const tdPortraits = h('td');
@@ -831,6 +929,20 @@ async function saveCharactersUnlocked(): Promise<boolean> {
   }
   try {
     const result = await commitCharacterTable(submittedRows);
+    if (sessionRevision === configSessionRevision) {
+      const created = submittedRows.filter(row => row.create);
+      const promote = (list: CharacterTableEditRow[] | null, restoreMissing: boolean) => {
+        if (!list) return;
+        for (const submitted of created) {
+          const current = list.find(row => row.id === submitted.id);
+          if (current) delete current.create;
+          else if (restoreMissing) { const copy = clone(submitted); delete copy.create; list.push(copy); }
+        }
+      };
+      promote(rows, true);
+      for (const snap of [...configHist.past, ...configHist.future]) promote(snap.charRows, true);
+      for (const row of submittedRows) delete row.create;
+    }
     if (result.changed === 0) {
       markConfigSectionSaved('characters', submittedRows, sessionRevision);
       setStatus('角色表无改动', true, 4000);
@@ -1354,6 +1466,10 @@ export async function saveDirtyConfigSections(): Promise<ConfigSaveOutcome> {
     let ok = false;
     try {
       switch (section) {
+        case 'stage':
+          await saveStageConfigDraftUnlocked();
+          ok = true;
+          break;
         case 'characters':
           ok = await saveCharactersUnlocked();
           break;

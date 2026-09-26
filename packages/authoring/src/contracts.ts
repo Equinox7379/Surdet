@@ -237,13 +237,14 @@ export type SceneBlockInput =
 
 /** 单行可替换的场景指令；结构入口、音频/视频及 call/return 等流程边界不在此列。 */
 export const REPLACEABLE_SCENE_INSTRUCTIONS = [
-  'bg', 'show', 'hide', 'wait',
+  'bg', 'show', 'hide', 'pose', 'layer', 'stage', 'wait',
   'set', 'mod', 'goto', 'jump',
   'fadein', 'fadeout', 'shake', 'flash', 'zoom', 'wipe', 'transition',
   'particle', 'mov', 'tint', 'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'timeline',
 ] as const;
 
 export type ScenePatchOperation =
+  | { kind: 'patchStageProperties'; target: string; expectedFingerprint: string; instructionIndex: number; values: import('./stage-source-patch.js').StageEditableValues }
   | { kind: 'renameLabel'; target: string; expectedFingerprint: string; name: string }
   | { kind: 'removeLabel'; target: string; expectedFingerprint: string }
   | { kind: 'replaceText'; target: string; expectedFingerprint: string; speaker?: string; value: string }
@@ -310,10 +311,11 @@ export interface VariablePatchInitialInput {
 }
 
 /** Authoring track kinds; the historical public type name is retained. */
-export type Wave2TrackKind = 'background' | 'portrait' | 'camera' | 'screen' | 'particle' | 'audio';
+export type Wave2TrackKind = 'background' | 'portrait' | 'camera' | 'screen' | 'particle' | 'audio' | 'layer';
 
 /** Actions supported by the shared Core timeline validator. */
 export type Wave2Action =
+  | 'pose'
   | 'set'
   | 'show'
   | 'hide'
@@ -337,6 +339,16 @@ export interface TimelineCueInput {
   durationMs: number;
   easing: string;
   action: Wave2Action;
+  source?: string;
+  opacity?: number;
+  facing?: 'left' | 'right';
+  z?: number;
+  baseHeight?: number;
+  anchorX?: number;
+  anchorY?: number;
+  distance?: string;
+  band?: 'environment' | 'foreground';
+  parallax?: number;
   key?: string;
   expression?: string;
   configured?: true;
@@ -358,6 +370,8 @@ export interface TimelineCreateInput {
 }
 
 export type TimelinePatchOperation =
+  | { kind: 'setVersion'; expectedFingerprint: string; version: 2 }
+  | { kind: 'setClips'; expectedFingerprint: string; clips: import('@surdet/core').TimelineClip[] }
   | { kind: 'addTrack'; expectedFingerprint: string; trackKind: Wave2TrackKind; target?: string }
   | { kind: 'removeTrack'; expectedFingerprint: string; trackRef: string }
   | { kind: 'setDuration'; expectedFingerprint: string; durationMs: number }
@@ -453,6 +467,8 @@ export interface ProjectAssetIssue {
 }
 
 export interface ProjectAssetItem {
+  /** Present only when the adapter verified current file bytes, never guessed from metadata. */
+  sha256?: string;
   /** 物理文件使用 `file:<project-relative-path>`；缺失引用使用稳定 `missing:<kind>:<key>`。 */
   assetId: string;
   kind: ProjectAssetKind;
@@ -564,8 +580,20 @@ export interface ProjectAssetRelocationMove {
   target: ProjectAssetPathDescriptor;
 }
 
+export interface ProjectAssetReplacementFacts {
+  beforeSha256: string;
+  afterSha256: string;
+  bytes: number;
+  sourceId: string;
+  sourcePath: string;
+  noChange: boolean;
+  /** Informational current users; their paths/keys are not rewritten by replacement. */
+  references: ProjectAssetReference[];
+}
+
 export interface ProjectAssetRelocationBatchPlan {
   schemaVersion: 2;
+  replacement?: ProjectAssetReplacementFacts;
   operationId: string;
   planId: string;
   planFingerprint: string;

@@ -1,3 +1,4 @@
+import { readProjectStage } from '@surdet/core';
 import { projectPortraitOverrides, resolveProjectPortraits, resolveProjectFontPaths, type GenericInstr } from '@surdet/core';
 import type {
   ProjectAssetFileFact,
@@ -273,6 +274,16 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
     }
   }
 
+  let stage: ReturnType<typeof readProjectStage> = null;
+  try { stage = readProjectStage(snapshot.config); } catch { /* project validation owns the structural issue */ }
+  for (const [id, composition] of Object.entries(stage?.compositions ?? {})) {
+    if (composition.background != null) add('background', composition.background, { referenceId: `stage:${id}:background`, sourceKind: 'config', sourceLabel: `舞台构图 ${id} · 背景`, sourcePath: 'game.config.json' });
+    for (const layer of composition.layers ?? []) add('background', layer.key, { referenceId: `stage:${id}:layer:${layer.id}`, sourceKind: 'config', sourceLabel: `舞台构图 ${id} · ${layer.band} ${layer.id}`, sourcePath: 'game.config.json' });
+  }
+  for (const [target, profile] of Object.entries(stage?.portraits ?? {})) {
+    for (const expression of new Set([...Object.keys(profile.expressions), ...Object.keys(profile.sources)])) add('portrait', target,
+      { referenceId: `stage:portrait:${target}:${expression}`, sourceKind: 'config', sourceLabel: `舞台校准 ${target} · ${expression}`, sourcePath: 'game.config.json' }, expression);
+  }
   const player = asRecord(snapshot.config.player);
   for (const portrait of projectPortraitOverrides(snapshot.config)) {
     add('portrait', `${portrait.role}:${portrait.outfit}`, {
@@ -325,6 +336,7 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
       });
       switch (generic.name) {
         case 'bg': add('background', first, ref('bg')); break;
+        case 'layer': if (!generic.modifiers.has('off')) add('background', generic.args[1], ref('layer')); break;
         case 'show': {
           const decoded = first === undefined ? undefined : dequoteAssetToken(first).trim();
           add('portrait', decoded && !decoded.includes(':') ? `${decoded}:normal` : decoded, ref('show'), generic.args[1] ?? 'normal');
@@ -382,12 +394,12 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
           sourcePath: timeline.path,
           objectRef: `timeline:${timelineId}/track:${trackIndex}/cue:${cueIndex}`,
         };
-        if (track.kind === 'background' && cue.action === 'set') {
+        if (track.kind === 'background' && cue.action === 'set' || track.kind === 'layer' && cue.action === 'show') {
           add('background', typeof cue.key === 'string' ? cue.key : undefined, base);
         } else if (track.kind === 'audio' && (cue.action === 'bgm' || cue.action === 'se' || cue.action === 'voice')) {
           add(cue.action === 'bgm' ? 'music' : cue.action === 'se' ? 'sound-effect' : 'voice', typeof cue.key === 'string' ? cue.key : undefined, base);
         } else if (track.kind === 'portrait') {
-          const rawTarget = typeof track.target === 'string' ? track.target : undefined;
+          const rawTarget = definition?.version === 2 && typeof cue.source === 'string' ? cue.source : typeof track.target === 'string' ? track.target : undefined;
           if (cue.action === 'show' || cue.action === 'expression') {
             const normalizedTarget = rawTarget && !rawTarget.includes(':') ? `${rawTarget}:normal` : rawTarget;
             add(
@@ -573,6 +585,8 @@ export function buildProjectAssetIntelligence(
   }
 
   for (const item of items) {
+    const sourceFact = item.physical ? files.find(file => file.path === item.sourcePath) : undefined;
+    if (sourceFact?.sha256 !== undefined) item.sha256 = sourceFact.sha256;
     item.references.sort(referenceOrder);
     item.issues.sort(issueOrder);
     const command = mediaAssetCommand(item.kind);

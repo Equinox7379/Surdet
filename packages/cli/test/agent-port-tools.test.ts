@@ -79,6 +79,50 @@ describe('Surdet Agent Port MCP tool projection', () => {
     for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   });
 
+  it('authors and repairs a stage from public reads without guessing compiled instruction indices', async () => {
+    const { session, client, server } = await connected('stage');
+    const sourceConfig = fs.readFileSync(path.join(session.projectRoot, 'game.config.json'), 'utf8');
+    const call = async (name: string, args: Record<string, unknown> = {}) => {
+      const response = await client.callTool({ name, arguments: args });
+      expect(response.isError, textContent(response)).not.toBe(true);
+      return (response.structuredContent as any).result;
+    };
+    try {
+      const portrait = path.join(session.projectRoot, 'content/assets/portrait/rin_coat_normal.svg');
+      fs.mkdirSync(path.dirname(portrait), { recursive: true });
+      fs.writeFileSync(portrait, '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="200"/>');
+      const begun = await call('surdet_change_begin', { compositionMode: 'direct' });
+      const before = await call('surdet_project_inspect', { view: 'working' });
+      expect(before.stageConfig.value).toBeNull();
+      await call('surdet_project_stage_config_patch', { operationId: 'stage-preset', expectedFingerprint: before.stageConfig.fingerprint,
+        patch: { version: 1, positions: { pier: { x: 500, y: 690 } }, distances: { close: 1.4 } } });
+      expect((await call('surdet_project_inspect', { view: 'project' })).stageConfig.value).toBeNull();
+      expect((await call('surdet_project_inspect', { view: 'working' })).stageConfig.effective.positions.pier.x).toBe(500);
+      const stale = await client.callTool({ name: 'surdet_project_stage_config_patch', arguments: {
+        operationId: 'stale-stage-preset', expectedFingerprint: before.stageConfig.fingerprint, patch: { positions: {} },
+      } });
+      expect(stale.structuredContent).toMatchObject({ ok: false, error: { code: 'OBJECT_REF_STALE' } });
+      await call('surdet_scene_create', { operationId: 'stage-scene', sceneId: 'stage_demo', blocks: [
+        { kind: 'instruction', name: 'show', args: ['rin:coat', 'normal'], modifiers: { pos: 'pier', scale: '1.2' } },
+        { kind: 'text', value: '同一舞台草稿。' },
+      ] });
+      const scene = await call('surdet_object_inspect', { view: 'working', objectRef: 'scene:stage_demo' });
+      const objects = await Promise.all(scene.childRefs.map((objectRef: string) => call('surdet_object_inspect', { view: 'working', objectRef })));
+      const show = objects.find(value => value.kind === 'instruction' && value.source.raw.includes('@show'));
+      expect(show.details?.stageInstructions).toEqual([expect.objectContaining({ name: 'show', instructionIndex: expect.any(Number) })]);
+      await call('surdet_scene_patch', { operationId: 'stage-scene-pose', patch: { kind: 'patchStageProperties',
+        target: show.objectRef, expectedFingerprint: show.fingerprint, instructionIndex: show.details.stageInstructions[0].instructionIndex,
+        values: { x: 710, facing: 'left' } } });
+      const changed = await call('surdet_object_inspect', { view: 'working', objectRef: 'scene:stage_demo', fragment: {} });
+      expect(changed.fragment.lines.some((line: { text: string }) => line.text.includes('@x=710') && line.text.includes('@facing=left'))).toBe(true);
+      const opened = await NodeChangeStore.openByChangeId(begun.changeId);
+      expect(opened!.record.workingRevision).toBe(3);
+      expect(opened!.record.operations).not.toHaveProperty('stale-stage-preset');
+      expect(fs.readFileSync(path.join(session.projectRoot, 'game.config.json'), 'utf8')).toBe(sourceConfig);
+      expect(fs.existsSync(path.join(session.projectRoot, 'content/scenario/stage_demo.gal'))).toBe(false);
+    } finally { await client.close(); await server.close(); await session.close(); }
+  });
+
   it('projects each registry definition into one typed MCP tool', () => {
     for (const definition of AUTHORING_CAPABILITY_REGISTRY) {
       const tool = projectCapabilityTool(definition);
@@ -141,11 +185,13 @@ describe('Surdet Agent Port MCP tool projection', () => {
     if (policy === 'stage') {
       expect(names).not.toContain('surdet_change_commit');
       expect(names).not.toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
-      expect(names).toHaveLength(43);
+      for (const action of ['commit', 'recover', 'undo'] as const) expect(names).not.toContain(nativeCapabilityToMcpTool(`asset.relocation.${action}`));
+      expect(names).toHaveLength(48);
    }
    if (policy === 'apply') {
      expect(names).toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
-      expect(names).toHaveLength(47);
+      for (const action of ['commit', 'recover', 'undo'] as const) expect(names).toContain(nativeCapabilityToMcpTool(`asset.relocation.${action}`));
+      expect(names).toHaveLength(55);
    }
    const described = await client.callTool({ name: 'surdet_session_describe', arguments: {} });
     expect(described.isError).not.toBe(true);
@@ -153,7 +199,7 @@ describe('Surdet Agent Port MCP tool projection', () => {
     const capabilities = await client.callTool({ name: 'surdet_capabilities_describe', arguments: {} });
     expect(capabilities.isError).not.toBe(true);
     expect((capabilities.structuredContent as any).ok).toBe(true);
-    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(45);
+    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(53);
     expect(names).not.toContain('surdet_review_write_decision');
     expect(names).not.toContain('surdet_review_approve');
     if (policy === 'stage') {

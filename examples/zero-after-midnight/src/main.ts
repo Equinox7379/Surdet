@@ -5,6 +5,7 @@
 import {
   compileScene,
   resolveProjectPortraits,
+  readProjectStage,
   Interpreter,
   SceneRegistry,
   EventBus,
@@ -257,6 +258,7 @@ async function main(): Promise<void> {
   let lastRendererError: DebugErrorValue | null = null;
   const performanceMonitor = new RenderPerformanceMonitor();
   const runtime = await createRendererRuntime({
+    stage: readProjectStage(gameConfig),
     audio,
     typewriter,
     backlog,
@@ -730,7 +732,8 @@ async function main(): Promise<void> {
       } else if (kind === 'portrait' && IMG.test(fname)) {
         const bindings = portraitBindings.filter(value => value.sourcePath === `content/assets/${rel}`);
         for (const binding of bindings) {
-          await assets.registerPortrait(binding.role, binding.outfit, binding.expression, url, fname.split('.').pop());
+          await assets.registerPortrait(binding.role, binding.outfit, binding.expression, url, fname.split('.').pop(),
+            readProjectStage(gameConfig)?.portraits[`${binding.role}:${binding.outfit}`]?.sources[binding.expression] ? binding.sourcePath : undefined);
         }
         return bindings.length > 0;
       } else if (kind === 'avatar' && IMG.test(fname)) {

@@ -318,8 +318,16 @@ export interface AssetRelocationFileEvidence extends AssetImportFileIdentity {
   sha256: string;
 }
 
+export interface AssetReplacementInput {
+  operationId: string;
+  targetPath: string;
+  sourceId: string;
+  sourcePath: string;
+  sha256: string;
+}
 export interface AssetRelocationRequest {
   operationId: string;
+  replacement?: { sourceId: string; sourcePath: string; sha256: string };
   moves: AssetRelocationMoveRequest[];
   /** 单素材兼容投影；始终等于 moves[0]。 */
   sourcePath: string;
@@ -406,7 +414,11 @@ export interface AssetRelocationUndoReceipt {
 }
 
 export interface AssetRelocationStoredOperation {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
+  replacement?: {
+    preparedRelativePath: string;
+    preparedIdentity: AssetRelocationFileEvidence | null;
+  };
   request: AssetRelocationRequest;
   plan: ProjectAssetRelocationPlan | ProjectAssetRelocationBatchPlan;
   scannedFiles: ProjectAssetRelocationScannedFile[];

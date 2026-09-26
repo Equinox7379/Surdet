@@ -50,6 +50,71 @@ async function requestFor(session: Awaited<ReturnType<typeof openAgentPortSessio
   return { operationId: crypto.randomUUID(), items: [{ itemId: crypto.randomUUID(), sourceId, sourcePath: 'night.png', sha256: file.sha256, kind, fileName }] };
 }
 
+it('relocation is reachable through real MCP with stage/apply boundaries, exact receipts and reversible source edits', async () => {
+  const f = await fixture();
+  const sourcePath = 'content/assets/bgm/旧 声音.wav', targetPath = 'content/assets/bgm/新 声音.wav';
+  await fs.mkdir(path.dirname(path.join(f.projectRoot, sourcePath)), { recursive: true });
+  await fs.writeFile(path.join(f.projectRoot, sourcePath), wav);
+  const scenePath = path.join(f.projectRoot, 'content/scenario/start.gal');
+  const before = '@scene start\n@bgm "旧 声音"\n旁白：播放。\n@end\n';
+  await fs.writeFile(scenePath, before);
+  const stage = await f.open('stage');
+  const operationId = crypto.randomUUID();
+  const ready = result(await stage.invoke('asset.relocation.plan', { operationId, moves: [{ sourcePath, targetPath }] }));
+  expect(ready.plan.status).toBe('ready');
+  expect(await fs.readFile(scenePath, 'utf8')).toBe(before);
+  expect(await fs.readFile(path.join(f.projectRoot, sourcePath))).toEqual(wav);
+  const commit = { operationId, planFingerprint: ready.plan.planFingerprint };
+  expect(await stage.invoke('asset.relocation.commit', commit)).toMatchObject({ ok: false, error: { code: 'POLICY_BLOCKED' } });
+  await stage.close();
+  const session = await f.open('apply');
+  const server = createAgentPortServer(session);
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'relocation-author', version: '1.0.0' });
+  await server.connect(st); await client.connect(ct);
+  try {
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const response = await client.callTool({ name, arguments: args });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      return result(response.structuredContent);
+    };
+    expect((await client.listTools()).tools.some(tool => tool.name === 'surdet_asset_relocation_commit')).toBe(true);
+    const observed = await call('surdet_asset_relocation_inspect', { operationId });
+    expect(observed.plan.planFingerprint).toBe(ready.plan.planFingerprint);
+    const stale = await client.callTool({ name: 'surdet_asset_relocation_commit', arguments: { ...commit, planFingerprint: '0'.repeat(64) } });
+    expect(stale.structuredContent).toMatchObject({ ok: false, error: { code: 'IMPORT_OPERATION_CONFLICT' } });
+    const done = await call('surdet_asset_relocation_commit', commit);
+    expect(done.operation.status).toBe('COMMITTED');
+    expect(done.coordination.status).toBe('written');
+    expect((await call('surdet_asset_relocation_commit', commit)).receipt).toEqual(done.receipt);
+    expect(await fs.readFile(scenePath, 'utf8')).toBe(before.replace('旧 声音', '新 声音'));
+    expect(await fs.readFile(path.join(f.projectRoot, targetPath))).toEqual(wav);
+    const undone = await call('surdet_asset_relocation_undo', { operationId, receiptId: done.receipt.receiptId, receiptFingerprint: done.receipt.receiptFingerprint });
+    expect(undone.operation.status).toBe('UNDONE');
+    expect(await fs.readFile(scenePath, 'utf8')).toBe(before);
+    expect(await fs.readFile(path.join(f.projectRoot, sourcePath))).toEqual(wav);
+    result(await session.invoke('change.begin', { intent: 'no asset source writes inside a story draft', compositionMode: 'direct' }));
+    expect(await session.invoke('asset.relocation.plan', { operationId: crypto.randomUUID(), moves: [{ sourcePath, targetPath }] })).toMatchObject({ ok: false, error: { code: 'SESSION_STATE_INVALID' } });
+  } finally { await client.close(); await server.close(); await session.close(); }
+});
+
+it('relocation cancel ends only an unpublished exact plan and never grants observe write permission', async () => {
+  const f = await fixture();
+  const sourcePath = 'content/assets/bg/night.png', targetPath = 'content/assets/bg/dawn.png';
+  await fs.mkdir(path.dirname(path.join(f.projectRoot, sourcePath)), { recursive: true });
+  await fs.writeFile(path.join(f.projectRoot, sourcePath), png);
+  const session = await f.open('stage'), observe = await f.open('observe');
+  try {
+    const operationId = crypto.randomUUID(), input = { operationId, moves: [{ sourcePath, targetPath }] };
+    expect(await observe.invoke('asset.relocation.plan', input)).toMatchObject({ ok: false, error: { code: 'POLICY_BLOCKED' } });
+    const ready = result(await session.invoke('asset.relocation.plan', input));
+    const cancelled = result(await session.invoke('asset.relocation.cancel', { operationId, planFingerprint: ready.plan.planFingerprint }));
+    expect(cancelled.operation.status).toBe('CANCELLED');
+    expect(await fs.readFile(path.join(f.projectRoot, sourcePath))).toEqual(png);
+    expect(await fs.stat(path.join(f.projectRoot, targetPath)).catch(() => null)).toBeNull();
+  } finally { await session.close(); await observe.close(); }
+});
+
 it('public inspect of an unknown operation is read-only; a registered recovery barrier is visible in session discovery', async () => {
   const f = await fixture();
   const observe = await f.open('observe');
@@ -692,3 +757,43 @@ it('rechecks runtime keys after files are verified but before a receipt exists, 
     expect(recovered.receipt.files[0].fileIdentity.inode).toBe(publication!.files[0]!.finalIdentity!.inode);
   } finally { await session.close(); }
 });
+
+
+it('replacement public MCP prepares permitted source bytes and uses the original apply/undo with no reference rewrite', async () => {
+  const f = await fixture();
+  const targetPath = 'content/assets/bgm/wind.wav';
+  await fs.mkdir(path.dirname(path.join(f.projectRoot, targetPath)), { recursive: true });
+  const before = Buffer.from(wav), after = Buffer.from(wav); after.writeInt16LE(1500, 44);
+  await fs.writeFile(path.join(f.projectRoot, targetPath), before);
+  await fs.writeFile(path.join(f.source, 'new-wind.wav'), after);
+  const scene = '@scene start\n@bgm wind\n保持原键。\n@end\n';
+  await fs.writeFile(path.join(f.projectRoot, 'content/scenario/start.gal'), scene);
+  const stage = await f.open('stage'), observe = await f.open('observe');
+  const sourceId = result(await stage.invoke('asset.sources', {})).roots[0].sourceId;
+  const sha256 = crypto.createHash('sha256').update(after).digest('hex');
+  const request = { operationId: crypto.randomUUID(), targetPath, source: { sourceId, path: 'new-wind.wav', sha256 } };
+  try {
+    expect(await observe.invoke('asset.relocation.replace', request)).toMatchObject({ ok: false, error: { code: 'POLICY_BLOCKED' } });
+    expect(await stage.invoke('asset.relocation.replace', { ...request, source: { ...request.source, sourceId: 'ungranted' } })).toMatchObject({ ok: false, error: { code: 'ASSET_SOURCE_FORBIDDEN' } });
+    expect(await stage.invoke('asset.relocation.replace', { ...request, source: { ...request.source, sha256: '0'.repeat(64) } })).toMatchObject({ ok: false, error: { code: 'ASSET_SOURCE_CHANGED' } });
+    const ready = result(await stage.invoke('asset.relocation.replace', request));
+    expect(ready.plan.replacement.afterSha256).toBe(sha256);
+    expect(await fs.readFile(path.join(f.projectRoot, targetPath))).toEqual(before);
+    expect(await stage.invoke('asset.relocation.commit', { operationId: request.operationId, planFingerprint: ready.plan.planFingerprint })).toMatchObject({ ok: false, error: { code: 'POLICY_BLOCKED' } });
+    await stage.close();
+    const apply = await f.open('apply');
+    const server = createAgentPortServer(apply), [ct, st] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'replacement-regression', version: '1' });
+    await server.connect(st); await client.connect(ct);
+    try {
+      expect((await client.listTools()).tools.some(tool => tool.name === 'surdet_asset_relocation_replace')).toBe(true);
+      const committed = result((await client.callTool({ name: 'surdet_asset_relocation_commit', arguments: { operationId: request.operationId, planFingerprint: ready.plan.planFingerprint } })).structuredContent);
+      expect(committed.operation.status).toBe('COMMITTED'); expect(committed.coordination.status).toBe('written');
+      expect(await fs.readFile(path.join(f.projectRoot, targetPath))).toEqual(after);
+      expect(await fs.readFile(path.join(f.projectRoot, 'content/scenario/start.gal'), 'utf8')).toBe(scene);
+      const undone = result((await client.callTool({ name: 'surdet_asset_relocation_undo', arguments: { operationId: request.operationId,
+        receiptId: committed.receipt.receiptId, receiptFingerprint: committed.receipt.receiptFingerprint } })).structuredContent);
+      expect(undone.operation.status).toBe('UNDONE'); expect(await fs.readFile(path.join(f.projectRoot, targetPath))).toEqual(before);
+    } finally { await client.close(); await server.close(); await apply.close(); }
+  } finally { await stage.close(); await observe.close(); }
+}, 30_000);

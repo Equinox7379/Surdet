@@ -2,12 +2,13 @@ import { validateTimeline, type TimelineCue, type TimelineDefinition, type Timel
 import type { TimelineAssetChoice } from './timeline-presentation.js';
 
 export const TIMELINE_TRACKS: readonly TimelineTrackKind[] = [
-  'background', 'portrait', 'camera', 'screen', 'particle', 'audio',
+  'background', 'portrait', 'camera', 'screen', 'particle', 'audio', 'layer',
 ];
 
 export const TIMELINE_ACTIONS: Record<TimelineTrackKind, readonly string[]> = {
   background: ['set'],
-  portrait: ['show', 'hide', 'move', 'expression'],
+  portrait: ['show', 'hide', 'move', 'expression', 'pose'],
+  layer: ['show', 'hide', 'pose'],
   camera: ['zoom', 'pan', 'shake'],
   screen: ['fade', 'tint', 'flash', 'wipe'],
   particle: ['start', 'stop'],
@@ -61,7 +62,7 @@ export function createTimeline(id: string): TimelineDefinition {
 }
 
 export function createTrack(kind: TimelineTrackKind): TimelineTrack {
-  return { kind, cues: [] };
+  return { kind, ...(kind === 'layer' ? { target: 'layer1' } : {}), cues: [] };
 }
 
 export interface TimelineCueDraft {
@@ -83,10 +84,14 @@ export function createNeutralCue(
 }
 
 export function createResourceCue(
-  kind: 'background' | 'portrait' | 'audio',
+  kind: 'background' | 'portrait' | 'audio' | 'layer',
   action: string,
   choice: TimelineAssetChoice,
 ): TimelineCueDraft | null {
+  if (kind === 'layer') {
+    if (choice.kind !== 'background' || choice.sourceKind !== 'bg' || action !== 'show') return null;
+    return { cue: cue('show', { key: choice.key, band: 'environment', opacity: 1, parallax: 1 }) };
+  }
   if (choice.kind !== kind || !TIMELINE_ACTIONS[kind].includes(action)) return null;
   if (kind === 'background') {
     return choice.sourceKind === 'bg' && action === 'set'
@@ -124,4 +129,13 @@ export function easingPath(easing: TimelineEasing, samples = 20): string {
     const y = 24 - easingValue(easing, index / (count - 1)) * 20 - 2;
     return `${index === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(' ');
+}
+
+/** Actions that target a live object do not invent a texture reference. */
+export function createObjectCue(kind: 'portrait' | 'layer', action: string, target: string | undefined): TimelineCueDraft | null {
+  if (!target?.trim() || (action !== 'pose' && action !== 'hide')) return null;
+  return { cue: cue(action, action === 'pose' ? { x: 640 } : {}) };
+}
+export function timelineActionsForVersion(kind: TimelineTrackKind, version: 1 | 2): readonly string[] {
+  return version === 1 ? TIMELINE_ACTIONS[kind].filter(action => action !== 'pose') : TIMELINE_ACTIONS[kind];
 }

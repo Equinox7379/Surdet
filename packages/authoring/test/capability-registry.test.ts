@@ -8,16 +8,16 @@ import {
   type AuthoringCapabilityId,
 } from '../src/index.js';
 describe('authoring capability registry', () => {
-  it('is the single complete 45-capability contract', () => {
-    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(45);
-    expect(new Set(AUTHORING_CAPABILITY_IDS).size).toBe(45);
+  it('is the single complete 53-capability contract', () => {
+    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(53);
+    expect(new Set(AUTHORING_CAPABILITY_IDS).size).toBe(53);
     expect(AUTHORING_CAPABILITY_IDS).toEqual([
       'capabilities.describe', 'project.inspect', 'project.assets', 'project.gallery', 'script.import.preview',
-      'asset.sources', 'asset.import.stage', 'asset.import.inspect', 'asset.import.commit', 'asset.import.recover', 'object.inspect',
+      'asset.sources', 'asset.import.stage', 'asset.import.inspect', 'asset.import.commit', 'asset.import.recover', 'asset.relocation.replace', 'asset.relocation.plan', 'asset.relocation.inspect', 'asset.relocation.commit', 'asset.relocation.cancel', 'asset.relocation.recover', 'asset.relocation.undo', 'object.inspect',
       'change.begin', 'scene.create', 'scene.remove', 'scene.rename', 'scene.move', 'scene.patch', 'variable.ensure', 'variable.patch-initial',
       'character.ensure', 'character.remove', 'timeline.create', 'timeline.patch',
       'gallery.cg.create', 'gallery.cg.patch',
-      'project.entry-scene.set', 'project.player-config.patch', 'project.validate', 'project.simulate',
+      'project.entry-scene.set', 'project.player-config.patch', 'project.stage-config.patch', 'project.validate', 'project.simulate',
       'runtime.run-from', 'runtime.read-trace', 'runtime.read-preview', 'change.diff', 'change.commit',
       'change.rollback', 'change.recovery.inspect', 'change.recovery.execute',
       'composition.compare', 'composition.plan', 'composition.inspect', 'composition.execute',
@@ -33,7 +33,7 @@ describe('authoring capability registry', () => {
 
   it('maps native ids to unique stable MCP tool names', () => {
     const names = AUTHORING_CAPABILITY_IDS.map(nativeCapabilityToMcpTool);
-    expect(new Set(names).size).toBe(45);
+    expect(new Set(names).size).toBe(53);
     expect(nativeCapabilityToMcpTool('project.entry-scene.set'))
       .toBe('surdet_project_entry_scene_set');
     expect(nativeCapabilityToMcpTool('runtime.run-from'))
@@ -102,7 +102,7 @@ describe('authoring capability registry', () => {
     const patch = getCapabilityDefinition('scene.patch').inputSchema as Record<string, any>;
     const variants = patch.properties.patch.oneOf as Array<Record<string, any>>;
     expect(variants.map((variant) => variant.properties.kind.const)).toEqual([
-      'replaceText', 'replaceInstruction', 'insertAfter', 'replaceChoiceOption',
+      'patchStageProperties', 'replaceText', 'replaceInstruction', 'insertAfter', 'replaceChoiceOption',
       'replaceChoiceGroup', 'replaceConditionBlock', 'removeObject', 'renameLabel', 'removeLabel',
     ]);
     const choice = variants.find((variant) => variant.properties.kind.const === 'replaceChoiceGroup')!;
@@ -118,12 +118,14 @@ describe('authoring capability registry', () => {
     const definition = create.inputSchema.properties as Record<string, any>;
     const timeline = definition.definition as Record<string, any>;
     expect(timeline.properties.durationMs).toMatchObject({ type: 'integer', minimum: 0, maximum: 600000 });
-    expect(timeline.properties.tracks).toMatchObject({ minItems: 1 });
+    expect(timeline.properties.tracks).toMatchObject({ type: 'array' });
+    expect(timeline.properties.version.enum).toEqual([1, 2]);
+    expect(timeline.properties.clips).toMatchObject({ type: 'array', maxItems: 256 });
     const track = timeline.properties.tracks.items as Record<string, any>;
-    expect(track.properties.kind.enum).toEqual(['background', 'portrait', 'camera', 'screen', 'particle', 'audio']);
+    expect(track.properties.kind.enum).toEqual(['background', 'portrait', 'camera', 'screen', 'particle', 'audio', 'layer']);
     const cue = track.properties.cues.items as Record<string, any>;
     expect(cue.properties.action.enum).toEqual([
-      'set', 'show', 'hide', 'move', 'expression', 'zoom', 'pan', 'shake',
+      'pose', 'set', 'show', 'hide', 'move', 'expression', 'zoom', 'pan', 'shake',
       'fade', 'tint', 'flash', 'wipe', 'start', 'stop', 'bgm', 'se', 'voice',
     ]);
     expect(cue.properties).toEqual(expect.objectContaining({
@@ -135,7 +137,7 @@ describe('authoring capability registry', () => {
     const patch = getCapabilityDefinition('timeline.patch').inputSchema.properties as Record<string, any>;
     const variants = patch.patch.oneOf as Array<Record<string, any>>;
     expect(variants.map((variant) => variant.properties.kind.const)).toEqual([
-      'addTrack', 'setDuration', 'removeTrack', 'setTrackTarget', 'insertCue', 'replaceCue', 'removeCue',
+      'setVersion', 'setClips', 'addTrack', 'setDuration', 'removeTrack', 'setTrackTarget', 'insertCue', 'replaceCue', 'removeCue',
     ]);
     expect(variants.find((variant) => variant.properties.kind.const === 'setDuration')?.properties.durationMs)
       .toMatchObject({ type: 'integer', minimum: 0, maximum: 600000 });
@@ -160,7 +162,7 @@ describe('authoring capability registry', () => {
 
 describe('wave 5 composition capabilities', () => {
   it('retains the four composition entries in the complete registry', () => {
-    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(45);
+    expect(AUTHORING_CAPABILITY_IDS).toHaveLength(53);
     expect(getCapabilityDefinition('composition.compare').minimumPolicy).toBe('observe');
     expect(getCapabilityDefinition('composition.plan').sideEffects).toContain('change-store-write');
     expect(getCapabilityDefinition('composition.execute').minimumPolicy).toBe('stage');

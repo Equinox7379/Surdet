@@ -13,7 +13,7 @@ vi.mock('../src/project-io.js', () => ({
     return handle;
   },
 }));
-vi.mock('../src/authoring-project-storage.js', () => ({ commitCharacterTable: vi.fn() }));
+vi.mock('../src/authoring-project-storage.js', () => ({ commitCharacterTable: vi.fn(), commitStageConfiguration: vi.fn() }));
 
 class FakeElement {
   readonly tagName: string;
@@ -144,7 +144,9 @@ const {
   renderConfig,
   resetConfigSession,
   saveDirtyConfigSections,
+  readStageConfigDraft, editStageConfigDraft, saveStageConfigDraftUnlocked, previewStageConfigText,
 } = await import('../src/panels/config.js');
+const { commitStageConfiguration } = await import('../src/authoring-project-storage.js');
 
 async function renderFixture(): Promise<FakeElement> {
   state.configReadErrors = {};
@@ -180,6 +182,65 @@ afterEach(() => {
 });
 
 describe('configuration draft state', () => {
+  it('keeps stage edits across workbench remounts and shares dirty, undo and redo without writing source', async () => {
+    await renderFixture();
+    const original = readStageConfigDraft();
+    const next = JSON.stringify({ version: 1, distances: { close: 1.4 } });
+    editStageConfigDraft(next);
+    expect(inspectConfigDraftState()).toEqual({ dirty: true, dirtySections: ['stage'] });
+    expect(state.gameConfigText).toBe(INITIAL_GAME_CONFIG);
+    expect(JSON.parse(previewStageConfigText(state.gameConfigText)).stage.distances.close).toBe(1.4);
+    renderConfig(configRoot as unknown as HTMLElement);
+    expect(readStageConfigDraft()).toBe(next);
+    configUndo();
+    expect(readStageConfigDraft()).toBe(original);
+    expect(inspectConfigDraftState().dirty).toBe(false);
+    configRedo();
+    expect(readStageConfigDraft()).toBe(next);
+    resetConfigSession();
+    expect(readStageConfigDraft()).toBe(original);
+    expect(inspectConfigDraftState().dirty).toBe(false);
+  });
+
+  it('keeps invalid stage JSON and rejects a changed source without calling the writer', async () => {
+    await renderFixture();
+    vi.mocked(commitStageConfiguration).mockClear();
+    editStageConfigDraft('{');
+    expect(() => previewStageConfigText(state.gameConfigText)).toThrow();
+    await expect(saveStageConfigDraftUnlocked()).rejects.toThrow();
+    expect(readStageConfigDraft()).toBe('{');
+    editStageConfigDraft('{"version":1}');
+    state.gameConfigText = JSON.stringify({ ...JSON.parse(INITIAL_GAME_CONFIG), stage: { version: 1, distances: { changed: 2 } } });
+    await expect(saveStageConfigDraftUnlocked()).rejects.toThrow('舞台来源配置已经变化');
+    expect(commitStageConfiguration).not.toHaveBeenCalled();
+    expect(inspectConfigDraftState().dirty).toBe(true);
+  });
+
+  it('save-all submits the stage snapshot and retains newer input made while saving', async () => {
+    await renderFixture();
+    const submitted = '{"version":1,"distances":{"near":1.4}}';
+    editStageConfigDraft(submitted);
+    let finish!: () => void;
+    const waiting = new Promise<void>(resolve => { finish = resolve; });
+    vi.mocked(commitStageConfiguration).mockImplementationOnce(async (value, expected) => {
+      expect(value).toEqual(JSON.parse(submitted));
+      expect(expected).toBe(INITIAL_GAME_CONFIG);
+      await waiting;
+      state.gameConfigText = JSON.stringify({ ...JSON.parse(expected), stage: value });
+      return { text: state.gameConfigText, before: null, after: value };
+    });
+    const saving = saveDirtyConfigSections();
+    editStageConfigDraft('{"version":1,"distances":{"near":1.6}}');
+    finish();
+    await expect(saving).resolves.toEqual({ saved: 1, failures: 0, remainingDirty: true });
+    expect(JSON.parse(state.gameConfigText).stage.distances.near).toBe(1.4);
+    expect(JSON.parse(readStageConfigDraft()).distances.near).toBe(1.6);
+    configUndo();
+    expect(readStageConfigDraft()).toBe(submitted);
+    expect(JSON.parse(state.gameConfigText).stage.distances.near).toBe(1.4);
+    expect(inspectConfigDraftState().dirty).toBe(false);
+  });
+
   it('rebases gallery label rows/history without saving unrelated changes; dirty replay references prevent deletion', async () => {
     const root = await renderFixture();
     byText(root, '＋ 新增回想').click();

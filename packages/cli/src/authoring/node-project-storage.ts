@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { stagePinnedSourcePaths } from '@surdet/core';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import { syncFileAndParent, syncParentDirectories } from './node-durable-file.js';
@@ -181,13 +183,26 @@ export class NodeProjectStorage implements ProjectWriteStorage {
   }
 
   /** 只读文件元数据；不返回内容，且复用项目根/符号链接安全检查。 */
-  async inspectFileFacts(relativePaths: readonly string[]): Promise<ProjectAssetFileFact[]> {
+  async inspectFileFacts(relativePaths: readonly string[], pinned?: readonly string[]): Promise<ProjectAssetFileFact[]> {
+    let pins = pinned;
+    if (pins === undefined) {
+      try { pins = stagePinnedSourcePaths(JSON.parse((await this.readText('game.config.json')).text.replace(/^\uFEFF/, ''))); }
+      catch { pins = []; } // Existing configuration validation remains responsible for malformed input.
+    }
+    const hashed = new Set(pins);
     const paths = [...new Set(relativePaths)].sort((left, right) => left.localeCompare(right));
     return Promise.all(paths.map(async (relativePath) => {
       const absolute = await this.assertSafeTarget(relativePath);
       const stat = await fs.stat(absolute);
       if (!stat.isFile()) throw pathError(relativePath);
-      return { path: normalizeProjectPath(relativePath), bytes: stat.size };
+      let sha256: string | undefined;
+      if (hashed.has(relativePath)) {
+        const bytes = await fs.readFile(absolute);
+        const after = await fs.stat(await this.assertSafeTarget(relativePath));
+        if (stat.ino !== after.ino || stat.dev !== after.dev || stat.size !== after.size || stat.mtimeMs !== after.mtimeMs || bytes.length !== stat.size) throw pathError(relativePath);
+        sha256 = createHash('sha256').update(bytes).digest('hex');
+      }
+      return { path: normalizeProjectPath(relativePath), bytes: stat.size, ...(sha256 ? { sha256 } : {}) };
     }));
   }
 

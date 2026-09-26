@@ -1,3 +1,4 @@
+import { createStageGeometryPolicy } from './stage-geometry.js';
 import {
   Application,
   Container,
@@ -149,12 +150,15 @@ export class RendererStageHost {
   #loadingLayer: LoadingLayer;
   readonly #world: WorldLayer;
 
-  constructor(assetRegistry?: RenderAssetRegistry, lifecycle?: RenderLifecycle) {
+  constructor(assetRegistry?: RenderAssetRegistry, lifecycle?: RenderLifecycle, stage?: import('@surdet/core').ProjectStage | null) {
+    if (stage) { this.#w = stage.design.width; this.#h = stage.design.height; }
     this.#assetRegistry = assetRegistry ?? new RenderAssetRegistry();
     // 动态文本默认继承正文角色；标题与菜单在各自的构建点显式使用 title/ui 角色。
     TextStyle.defaultTextStyle.fontFamily = this.#fontFamilies.body;
     this.#uiLayer = new Container();
     this.#world = new WorldLayer({
+      stage,
+      stageGeometry: createStageGeometryPolicy(),
       width: this.#w,
       height: this.#h,
       assets: this.#assetRegistry,
@@ -385,8 +389,8 @@ export class RendererStageHost {
    * 注册真实立绘素材（按 角色:服装:表情 精确匹配）。之后 @show charId:costume 对应表情
    * 使用真实素材而非程序化占位。URL 通过 Pixi Assets 异步加载。
    */
-  async registerPortrait(charId: string, costume: string, expression: string, src: RenderAssetSource, format?: string): Promise<void> {
-    await this.#assetRegistry.registerPortrait(charId, costume, expression, src, format);
+  async registerPortrait(charId: string, costume: string, expression: string, src: RenderAssetSource, format?: string, sourcePath?: string): Promise<void> {
+    await this.#assetRegistry.registerPortrait(charId, costume, expression, src, format, sourcePath);
     await this.#world.refreshPortraitAsset(charId, costume, expression);
     this.#requestFrame();
   }
@@ -412,6 +416,8 @@ export class RendererStageHost {
   setPortraitFocus(characterId: string | null): void {
     this.#world.setPortraitFocus(characterId);
   }
+
+  applyStage(command: import('@surdet/core').StageCommand): void { this.#world.applyStage(command); }
 
   setBackground(key: string | null): void {
     this.#world.setBackground(key);

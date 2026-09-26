@@ -212,6 +212,14 @@ const sceneConditionPatchSchema: JsonSchema = strictObject({
 
 const scenePatchSchema: JsonSchema = {
   oneOf: [
+    strictObject({ kind: { const: 'patchStageProperties' }, target: stringSchema, expectedFingerprint: stringSchema,
+      instructionIndex: { type: 'integer', minimum: 0, description: 'Copy from the selected object.inspect details.stageInstructions entry; not a source line number. Inline choice rows may contain several entries.' }, values: { ...strictObject({
+        x: { type: 'number', minimum: -100000, maximum: 100000 }, y: { type: 'number', minimum: -100000, maximum: 100000 },
+        scale: { type: 'number', minimum: .01, maximum: 16 }, opacity: { type: 'number', minimum: 0, maximum: 1 },
+        z: { type: 'integer', minimum: -32768, maximum: 32767 }, facing: { enum: ['left', 'right'] },
+        baseHeight: { type: 'number', minimum: 1, maximum: 20000 }, anchorX: { type: 'number', minimum: 0, maximum: 1 }, anchorY: { type: 'number', minimum: 0, maximum: 1 },
+      }), minProperties: 1 },
+    }, ['kind', 'target', 'expectedFingerprint', 'instructionIndex', 'values']),
     strictObject({
       kind: { const: 'replaceText' },
       target: stringSchema,
@@ -275,41 +283,53 @@ const sceneSchemaDefinitions: Record<string, JsonSchema> = {
 };
 
 const timelineCueSchema = strictObject({
+  source: stringSchema,
+  opacity: { type: 'number', minimum: 0, maximum: 1 },
+  facing: { enum: ['left', 'right'] }, z: { type: 'integer', minimum: -32768, maximum: 32767 },
+  baseHeight: { type: 'number', minimum: 1, maximum: 20000 },
+  anchorX: { type: 'number', minimum: 0, maximum: 1 }, anchorY: { type: 'number', minimum: 0, maximum: 1 },
+  distance: stringSchema, band: { enum: ['environment', 'foreground'] }, parallax: { type: 'number', minimum: 0, maximum: 2 },
   atMs: { type: 'integer', minimum: 0 },
   durationMs: { type: 'integer', minimum: 0 },
   easing: { enum: ['linear', 'inOutSine', 'outCubic', 'inOutCubic'] },
-  action: { enum: ['set', 'show', 'hide', 'move', 'expression', 'zoom', 'pan', 'shake', 'fade', 'tint', 'flash', 'wipe', 'start', 'stop', 'bgm', 'se', 'voice'] },
+  action: { enum: ['pose', 'set', 'show', 'hide', 'move', 'expression', 'zoom', 'pan', 'shake', 'fade', 'tint', 'flash', 'wipe', 'start', 'stop', 'bgm', 'se', 'voice'] },
   key: { type: 'string', description: 'background or audio cue: copy the matching project.assets usage.timeline; audio keys are channel-specific' },
   expression: { type: 'string', description: 'portrait cue only: copy project.assets.portraits[].expression for the selected timelineTarget' },
   position: stringSchema,
   alpha: { type: 'number', minimum: 0, maximum: 1 },
   scale: { type: 'number', exclusiveMinimum: 0, description: 'camera zoom cue only: positive scale' },
-  x: { type: 'number', minimum: -2000, maximum: 2000, description: 'camera pan cue only' },
-  y: { type: 'number', minimum: -2000, maximum: 2000, description: 'camera pan cue only' },
+  x: { type: 'number', minimum: -100000, maximum: 100000, description: 'camera pan cue only' },
+  y: { type: 'number', minimum: -100000, maximum: 100000, description: 'camera pan cue only' },
   strength: { type: 'number', minimum: 0, maximum: 64, description: 'camera shake cue only' },
   color: { type: 'number', minimum: 0, maximum: 16777215, description: 'screen tint cue only: 0xRRGGBB number' },
   kind: { type: 'string', description: 'particle start cue only: preset kind' },
 }, ['atMs', 'durationMs', 'easing', 'action']);
 
 const timelineTrackSchema = strictObject({
-  kind: { enum: ['background', 'portrait', 'camera', 'screen', 'particle', 'audio'] },
+  kind: { enum: ['background', 'portrait', 'camera', 'screen', 'particle', 'audio', 'layer'] },
   target: { type: 'string', description: 'track target; for portrait copy project.assets.portraits[].timelineTarget' },
   cues: arrayOf(timelineCueSchema),
 }, ['kind', 'cues']);
 
+const timelineClipSchema = strictObject({ timelineId: stringSchema, atMs: { type: 'integer', minimum: 0, maximum: 600000 },
+  repeat: { type: 'integer', minimum: 1, maximum: 100 }, gapMs: { type: 'integer', minimum: 0, maximum: 600000 }, targets: stringMapSchema,
+}, ['timelineId', 'atMs']);
 const timelineDefinitionSchema = strictObject({
-  version: { const: 1 },
+  version: { enum: [1, 2] },
+  clips: { ...arrayOf(timelineClipSchema), maxItems: 256 },
   id: stringSchema,
   durationMs: { type: 'integer', minimum: 0, maximum: 600000 },
-  tracks: { ...arrayOf(timelineTrackSchema), minItems: 1 },
+  tracks: arrayOf(timelineTrackSchema),
 }, ['version', 'id', 'durationMs', 'tracks']);
 
 const timelinePatchSchema: JsonSchema = {
   oneOf: [
+    strictObject({ kind: { const: 'setVersion' }, expectedFingerprint: stringSchema, version: { const: 2 } }, ['kind', 'expectedFingerprint', 'version']),
+    strictObject({ kind: { const: 'setClips' }, expectedFingerprint: stringSchema, clips: { ...arrayOf(timelineClipSchema), maxItems: 256 } }, ['kind', 'expectedFingerprint', 'clips']),
     strictObject({
       kind: { const: 'addTrack' },
       expectedFingerprint: stringSchema,
-      trackKind: { enum: ['background', 'portrait', 'camera', 'screen', 'particle', 'audio'] },
+      trackKind: { enum: ['background', 'portrait', 'camera', 'screen', 'particle', 'audio', 'layer'] },
       target: stringSchema,
     }, ['kind', 'expectedFingerprint', 'trackKind']),
     strictObject({
@@ -394,6 +414,7 @@ const projectAssetReferenceSchema = strictObject({
   objectRef: stringSchema,
 }, ['referenceId', 'sourceKind', 'sourceLabel', 'sourcePath']);
 const projectAssetItemSchema = strictObject({
+  sha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
   assetId: stringSchema,
   kind: projectAssetKindSchema,
   key: stringSchema,
@@ -493,6 +514,7 @@ const playerConfigSchema = strictObject({ values: strictObject(playerConfigField
 
 const projectInspectionSchema = strictObject({
   playerConfig: playerConfigSchema,
+  stageConfig: strictObject({ value: { oneOf: [jsonObjectSchema, nullSchema] }, effective: { oneOf: [jsonObjectSchema, nullSchema] }, fingerprint: stringSchema }, ['value', 'effective', 'fingerprint']),
   view: readViewSchema,
   rootIdentity: stringSchema,
   revision: stringSchema,
@@ -885,7 +907,65 @@ const importDetailSchema = strictObject({
 }, ['operation', 'manifest', 'stagedItems', 'plan', 'receipt', 'undoReceipt']);
 const importDetailExample = { operation: { status: 'READY' }, manifest: {}, stagedItems: [], plan: {}, receipt: null, undoReceipt: null };
 
+const relocationDetailSchema = strictObject({
+  request: jsonObjectSchema, operation: jsonObjectSchema, plan: jsonObjectSchema,
+  receipt: { oneOf: [jsonObjectSchema, nullSchema] }, undoReceipt: { oneOf: [jsonObjectSchema, nullSchema] },
+  coordination: jsonObjectSchema, catalog: assetCatalogSchema,
+}, ['request', 'operation', 'plan', 'receipt', 'undoReceipt']);
+const relocationIdentitySchema = { type: 'string', pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' } as const;
+const relocationFingerprintSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' } as const;
+
 const definitions = {
+  assetRelocationReplace: {
+    inputSchema: strictObject({ operationId: relocationIdentitySchema, targetPath: stringSchema,
+      source: strictObject({ sourceId: stringSchema, path: stringSchema, sha256: relocationFingerprintSchema }, ['sourceId', 'path', 'sha256']),
+    }, ['operationId', 'targetPath', 'source']),
+    outputSchema: relocationDetailSchema,
+    example: { input: { operationId: '11111111-1111-4111-8111-111111111111', targetPath: 'content/assets/bg/pier.png', source: { sourceId: 'authorized-source', path: 'pier-new.png', sha256: '0'.repeat(64) } }, expectedResultShape: { request: {}, operation: {}, plan: {}, receipt: null, undoReceipt: null } },
+  },
+  stageConfigPatch: {
+    inputSchema: strictObject({ operationId: stringSchema, expectedFingerprint: stringSchema,
+      patch: { oneOf: [strictObject({ version: { const: 1 },
+        design: { oneOf: [strictObject({ width: { type: 'integer', minimum: 320, maximum: 7680 }, height: { type: 'integer', minimum: 240, maximum: 4320 } }, ['width', 'height']), nullSchema] },
+        positions: { oneOf: [jsonObjectSchema, nullSchema] }, distances: { oneOf: [jsonObjectSchema, nullSchema] },
+        portraits: { oneOf: [jsonObjectSchema, nullSchema] }, compositions: { oneOf: [jsonObjectSchema, nullSchema] },
+      }), nullSchema] },
+    }, ['operationId', 'expectedFingerprint', 'patch']),
+    outputSchema: strictObject({ stageConfig: strictObject({ value: { oneOf: [jsonObjectSchema, nullSchema] }, effective: { oneOf: [jsonObjectSchema, nullSchema] }, fingerprint: stringSchema }, ['value', 'effective', 'fingerprint']), diffEntry: diffEntrySchema }, ['stageConfig', 'diffEntry']),
+    example: { input: { operationId: 'op_stage', expectedFingerprint: 'copy-project-inspect-stageConfig-fingerprint', patch: { version: 1, design: { width: 1280, height: 720 } } }, expectedResultShape: { stageConfig: { value: {}, effective: {}, fingerprint: '...' }, diffEntry: {} } },
+  },
+  assetRelocationPlan: {
+    inputSchema: strictObject({ operationId: relocationIdentitySchema,
+      moves: { ...arrayOf(strictObject({ sourcePath: stringSchema, targetPath: stringSchema }, ['sourcePath', 'targetPath'])), minItems: 1, maxItems: 100 },
+    }, ['operationId', 'moves']),
+    outputSchema: relocationDetailSchema,
+    example: { input: { operationId: '11111111-1111-4111-8111-111111111111', moves: [{ sourcePath: 'content/assets/bgm/night.wav', targetPath: 'content/assets/bgm/dawn.wav' }] }, expectedResultShape: { request: {}, operation: {}, plan: {}, receipt: null, undoReceipt: null } },
+  },
+  assetRelocationInspect: {
+    inputSchema: strictObject({ operationId: relocationIdentitySchema }, ['operationId']),
+    outputSchema: relocationDetailSchema,
+    example: { input: { operationId: '11111111-1111-4111-8111-111111111111' }, expectedResultShape: { request: {}, operation: {}, plan: {}, receipt: null, undoReceipt: null } },
+  },
+  assetRelocationCommit: {
+    inputSchema: strictObject({ operationId: relocationIdentitySchema, planFingerprint: relocationFingerprintSchema }, ['operationId', 'planFingerprint']),
+    outputSchema: relocationDetailSchema,
+    example: { input: { operationId: '11111111-1111-4111-8111-111111111111', planFingerprint: '0'.repeat(64) }, expectedResultShape: { request: {}, operation: {}, plan: {}, receipt: {}, undoReceipt: null } },
+  },
+  assetRelocationCancel: {
+    inputSchema: strictObject({ operationId: relocationIdentitySchema, planFingerprint: relocationFingerprintSchema }, ['operationId', 'planFingerprint']),
+    outputSchema: relocationDetailSchema,
+    example: { input: { operationId: '11111111-1111-4111-8111-111111111111', planFingerprint: '0'.repeat(64) }, expectedResultShape: { request: {}, operation: {}, plan: {}, receipt: null, undoReceipt: null } },
+  },
+  assetRelocationRecover: {
+    inputSchema: strictObject({ operationId: relocationIdentitySchema, planFingerprint: relocationFingerprintSchema, action: { enum: ['resume', 'rollback'] } }, ['operationId', 'planFingerprint', 'action']),
+    outputSchema: relocationDetailSchema,
+    example: { input: { operationId: '11111111-1111-4111-8111-111111111111', planFingerprint: '0'.repeat(64), action: 'rollback' }, expectedResultShape: { request: {}, operation: {}, plan: {}, receipt: null, undoReceipt: null } },
+  },
+  assetRelocationUndo: {
+    inputSchema: strictObject({ operationId: relocationIdentitySchema, receiptId: stringSchema, receiptFingerprint: relocationFingerprintSchema }, ['operationId', 'receiptId', 'receiptFingerprint']),
+    outputSchema: relocationDetailSchema,
+    example: { input: { operationId: '11111111-1111-4111-8111-111111111111', receiptId: 'copy-the-real-receipt', receiptFingerprint: '0'.repeat(64) }, expectedResultShape: { request: {}, operation: {}, plan: {}, receipt: {}, undoReceipt: {} } },
+  },
   scriptImportPreview: {
     inputSchema: strictObject({ view: readViewSchema, format: { enum: ['text', 'csv'] }, source: stringSchema,
       textColumn: { type: 'integer', minimum: 0 }, speakerColumn: { oneOf: [{ type: 'integer', minimum: 0 }, nullSchema] },
@@ -1238,6 +1318,13 @@ export const AUTHORING_CAPABILITY_IDS = [
   'asset.import.inspect',
   'asset.import.commit',
   'asset.import.recover',
+  'asset.relocation.replace',
+  'asset.relocation.plan',
+  'asset.relocation.inspect',
+  'asset.relocation.commit',
+  'asset.relocation.cancel',
+  'asset.relocation.recover',
+  'asset.relocation.undo',
   'object.inspect',
   'change.begin',
   'scene.create',
@@ -1255,6 +1342,7 @@ export const AUTHORING_CAPABILITY_IDS = [
   'gallery.cg.patch',
   'project.entry-scene.set',
   'project.player-config.patch',
+  'project.stage-config.patch',
   'project.validate',
   'project.simulate',
   'runtime.run-from',
@@ -1312,6 +1400,14 @@ const mutateRepair = [
 const imageImportErrors = ["IMPORT_OPERATION_NOT_FOUND","IMPORT_OPERATION_CONFLICT","IMPORT_PLAN_BLOCKED","IMPORT_PLAN_STALE","IMPORT_PROJECT_STALE","IMPORT_TARGET_UNSAFE","IMPORT_TARGET_EXISTS","IMPORT_RECOVERY_REQUIRED","IMPORT_LIMIT_EXCEEDED","IMPORT_UPLOAD_BUSY","IMPORT_UPLOAD_TIMEOUT","IMPORT_UPLOAD_MISMATCH","IMPORT_AUTHORITY_NOT_READY","IMPORT_FILESYSTEM_UNSUPPORTED","IMPORT_PUBLICATION_FAILED","IMPORT_IO_FAILED","ASSET_SOURCE_FORBIDDEN","ASSET_SOURCE_CHANGED","ASSET_IMAGE_INVALID","ASSET_MEDIA_INVALID","PROJECT_BUSY","HUMAN_WORKSPACE_DIRTY","HUMAN_WORKSPACE_BUSY","HUMAN_WORKSPACE_STATE_CORRUPT","SESSION_STATE_INVALID","POLICY_BLOCKED"] as const;
 
 const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
+  'asset.relocation.replace': { title: 'Prepare same-path asset replacement', purpose: 'Prepare a byte replacement of one existing, exact same-format project asset while retaining its key/path, original license and structured references. Read the permitted source bytes/hash from asset.sources. This is not a move, ordinary import overwrite, or source publication. The original relocation commit/recover/undo APIs apply the exact plan after separate apply permission. No change is reported for identical content.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['no active story change', 'human workspaces clean', 'authorized local source and current SHA-256', 'exact existing target with supported unambiguous format'], possibleErrors: imageImportErrors, repairRecipes: ['Inspect the original operationId after interruption; do not prepare another replacement to hide uncertain state.', 'Changed targets and unowned files are preserved. Use the original receipts for recovery or undo.'] },
+  'project.stage-config.patch': { title: 'Patch stage configuration', purpose: 'Configure design coordinates, named positions/distances, character calibration and compositions. Read project.inspect.stageConfig for current value/effective defaults and fingerprint. Supplied top-level tables replace; missing tables retain; null clears a table, and patch:null removes the stage opt-in. No model, arbitrary JSON, source write or candidate configuration mutation.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['OPEN direct, not integration', 'current working stageConfig fingerprint', 'all configured assets resolve'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Read the complete current table before replacing it. Use project assets keys, not display names or guessed paths.', 'Validate and preview the working draft before separately authorized apply.'] },
+  'asset.relocation.plan': { title: 'Plan asset relocation', purpose: 'Prepare exact same-kind asset moves and structured reference edits using the existing authority. No source publication or replacement. Preserve explicit portrait slot restrictions. Review the full plan before apply.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['no active story change', 'use exact project.assets sourcePath and an existing target directory', 'human workspace is clean'], possibleErrors: imageImportErrors, repairRecipes: ['Inspect this operationId after an uncertain result.', 'A blocked plan does not authorize deletion or overwrite. Correct the source problem, cancel the old plan and prepare a distinct operation.'] },
+  'asset.relocation.inspect': { title: 'Inspect asset relocation', purpose: 'Read an existing authoritative plan, status and receipt. Does not publish source changes or confer permission to apply a plan.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read', 'change-store-write'], idempotency: 'idempotent', composable: false, preconditions: ['operationId identifies a plan in this project'], possibleErrors: imageImportErrors, repairRecipes: ['Continue using the same operationId, plan fingerprint and existing recovery state.'] },
+  'asset.relocation.commit': { title: 'Commit asset relocation', purpose: 'Explicitly apply the exact prepared move/reference batch. Recheck source, bytes, readers and recovery barriers; no clobber of unrelated targets.', minimumPolicy: 'apply', sideEffects: ['project-write', 'change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['no active story change', 'human workspace is clean', 'plan fingerprint matches'], possibleErrors: imageImportErrors, repairRecipes: ['Inspect the original operation after response loss. Never repeat an unknown write using a new identifier.'] },
+  'asset.relocation.cancel': { title: 'Cancel asset relocation plan', purpose: 'Cancel an unpublished plan and its owned preparation only. This is not an undo of published source files.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['no active story change', 'plan fingerprint matches', 'publication has not started'], possibleErrors: imageImportErrors, repairRecipes: ['Use explicit recovery for an interrupted publication, not cancel.'] },
+  'asset.relocation.recover': { title: 'Recover asset relocation', purpose: 'Resume or roll back the original authoritative batch. Unknown or changed files remain protected; do not treat a recovery-required response as success.', minimumPolicy: 'apply', sideEffects: ['project-write', 'change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['no active story change', 'human workspace is clean', 'original plan fingerprint matches'], possibleErrors: imageImportErrors, repairRecipes: ['Inspect and retain original journal and backups; resolve missing external permissions without changing receipt identities.'] },
+  'asset.relocation.undo': { title: 'Undo asset relocation', purpose: 'Restore all files and references owned by one completed relocation after checking the original receipt and every current file. It does not delete arbitrary unused assets.', minimumPolicy: 'apply', sideEffects: ['project-write', 'change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['no active story change', 'human workspace is clean', 'original receipt identity matches and current files have not drifted'], possibleErrors: imageImportErrors, repairRecipes: ['A changed target or edited source is preserved; never bypass undo preflight to force an old version.'] },
   'script.import.preview': { title: 'Preview script import', purpose: 'Read-only UTF-8 text or comma-separated CSV conversion. Review every row, warning and error; ready blocks contain dialogue only and can be copied to scene.create for a new draft. No file upload, instruction execution, character creation or source overwrite. CSV columns are zero-based; null speakerColumn explicitly means narration. speakerMap maps source names to chosen display names, including empty source/target for narration.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false, preconditions: ['source is decoded UTF-8 text supplied by the caller', 'working view requires the active change'], possibleErrors: ['INVALID_REQUEST', 'PROJECT_NOT_FOUND', 'PROJECT_INVALID', 'CHANGE_NOT_FOUND', 'PROJECT_IDENTITY_MISMATCH'], repairRecipes: ['Inspect returned columns and source line issues. Correct mappings or input, preview again, and only create a fresh scene when ready is true.', 'Use explicit view to select project or working character suggestions; never infer apply permission from a successful preview.'] },
   'scene.move': { title: 'Move scene to chapter', purpose: 'Move one unique scene to a relative chapter directory in a direct working change. Empty directory means content/scenario root. Keep the exact filename, scene ID, script bytes and references; pin a missing implicit entry to its former scene. No source publication, candidate composition or old-save migration.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['active change is OPEN and direct, not candidate/integration', 'copy source.path and full fingerprint from the same object.inspect view:working', 'target is different, unoccupied and inside content/scenario'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS', 'OBJECT_REF_STALE', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Re-read the scene after moving; unchanged source text does not mean the previous path is current.', 'Review both paths and any entry configuration in change.diff, play the working draft, then use separately authorized apply.', ...mutateRepair] },
   'scene.rename': { title: 'Rename scene', purpose: 'Rename one unique scene inside a direct working change. Preserve its directory and source layout; rewrite actual jump/call/choice targets plus existing entry, endings, gallery replay, events, growth and calendar scene fields atomically. Return every affected path and the new continuation identity. Not a source write, candidate operation or old-save migration.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['active change is OPEN and direct, not candidate/integration', 'copy full scene fingerprint from object.inspect view:working', 'new ID is distinct and unoccupied, including case-insensitive filenames'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_NOT_FOUND', 'OBJECT_AMBIGUOUS', 'OBJECT_REF_STALE', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Read the new sceneRef from continuation after renaming; old object refs must be refreshed.', 'Inspect affectedPaths/change.diff and play the working change before separately authorized apply.', 'Ambiguous quoted targets or malformed host configurations must be corrected before retry; no partial rewrite is persisted.', ...mutateRepair] },
@@ -1364,11 +1460,18 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
 
 function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition {
   const item = metadata[id];
-  const schema = definitions[id === 'project.player-config.patch' ? 'playerConfigPatch' : id === 'asset.sources' ? 'assetSources'
+  const schema = definitions[id === 'project.stage-config.patch' ? 'stageConfigPatch' : id === 'project.player-config.patch' ? 'playerConfigPatch' : id === 'asset.sources' ? 'assetSources'
     : id === 'project.gallery' ? 'gallery'
     : id === 'script.import.preview' ? 'scriptImportPreview'
     : id === 'gallery.cg.create' ? 'galleryCgCreate'
     : id === 'gallery.cg.patch' ? 'galleryCgPatch'
+    : id === 'asset.relocation.replace' ? 'assetRelocationReplace'
+    : id === 'asset.relocation.plan' ? 'assetRelocationPlan'
+    : id === 'asset.relocation.inspect' ? 'assetRelocationInspect'
+    : id === 'asset.relocation.commit' ? 'assetRelocationCommit'
+    : id === 'asset.relocation.cancel' ? 'assetRelocationCancel'
+    : id === 'asset.relocation.recover' ? 'assetRelocationRecover'
+    : id === 'asset.relocation.undo' ? 'assetRelocationUndo'
     : id === 'asset.import.stage' ? 'assetImportStage'
     : id === 'asset.import.inspect' ? 'assetImportInspect'
     : id === 'asset.import.commit' ? 'assetImportCommit'
