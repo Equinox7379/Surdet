@@ -7,6 +7,12 @@ import {
 } from '../src/composition-reference-analysis.js';
 
 describe('raw composition reference analysis', () => {
+  it.each(['"', "'"])('does not let an unclosed %s in prose consume media and scene dependencies', quote => {
+    const refs = analyzeSceneCompositionReferences({ sceneId: 'entry', path: 'content/scenario/entry.gal', characters: {},
+      text: `@scene entry\n@choice\n  未闭合的 ${quote}文案 [if:flag && " -> " == " -> "] -> @bg ${quote}night${quote} @jump accepted.entry @jump ignored\n@end` });
+    expect(refs.map(ref => ref.objectRef).sort()).toEqual(['asset:bg:night', 'scene:accepted', 'variable:flag']);
+    expect(refs.every(ref => ref.source.line === 3 && ref.source.optionIndex === 0)).toBe(true);
+  });
   it('keeps audio/video dependencies in scene and choice instructions, but not empty stops or ambience off', () => {
     const refs = analyzeSceneCompositionReferences({ sceneId: 'entry', path: 'content/scenario/entry.gal', characters: {},
       text: '@scene entry\n@bgm "同名 声音"\n@ambience "同名 声音"\n@video "片头 WEBM"\n@ambience off\n@bgm\n@choice\n  听听 -> @se "同名 声音" @voice "同名 声音" @goto done\n@label done\n@end\n' });

@@ -550,7 +550,7 @@ function sceneRewrite(
     if (line.kind === 'instr') lines[index] = { ...line, raw: rewrite(line.raw, index + 1) };
     if (line.kind !== 'choice-option') return;
     // 与 Core choice parser 使用同一箭头规则，指令分段复用其引号感知 lexer。
-    const arrow = findChoiceArrow(line.raw);
+    const arrow = findChoiceArrow(line.raw, { file: file.path, line: index + 1, col: 1 });
     if (!arrow) return;
     const end = arrow.end;
     const parts = splitOutsideQuotes(line.raw.slice(end), '@');

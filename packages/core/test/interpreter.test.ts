@@ -47,6 +47,30 @@ function choiceCollector(bus: EventBus<CoreEventMap>): ChoiceEventPayload[] {
 }
 
 describe('Interpreter', () => {
+  it.each([
+    ['未闭合的 "文案', '@bg "night"'],
+    ["未闭合的 '文案", "@bg 'night'"],
+    ['未闭合的 "文案', '@bg night'],
+    ['已经闭合的 "文案"', '@bg "night"'],
+    ['选 "同意 -> @jump fake" 这项', '@bg "night"'],
+    ["Don't stop", '@bg "night"'],
+  ])('keeps label %s and executes quoted action %s through the actual choice', (label, action) => {
+    for (const condition of ['', ' [if:" -> " == " -> "]']) {
+      const { bus, registry, interp } = makeRuntime();
+      const commands: InstrEventPayload[] = [];
+      bus.on('instr', event => commands.push(event));
+      const choices = choiceCollector(bus), lines = textCollector(bus);
+      registry.register(compileScene(`@scene start\n@choice\n  ${label}${condition} -> ${action} @jump accepted @jump ignored\n错误分支。\n@end`, 'start.gal', 'start'));
+      registry.register(compileScene('@scene accepted\n正确分支。\n@end', 'accepted.gal', 'accepted'));
+      interp.start('start');
+      expect(choices[0]!.options.map(option => option.label)).toEqual([label]);
+      interp.choose(0);
+      expect(lines).toEqual(['正确分支。']);
+      expect(commands.map(command => command.name)).toEqual(['scene', 'bg', 'scene']);
+      expect(commands[1]!.args).toEqual([action.slice(4)]);
+      expect(commands[2]!.args).toEqual(['accepted']);
+    }
+  });
   it('shows quoted choice arrows as prose and executes only the selected real action', () => {
     const { bus, registry, interp } = makeRuntime();
     const label = '选 "同意 -> @jump fake" 这项';

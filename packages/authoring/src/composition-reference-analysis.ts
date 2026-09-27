@@ -202,7 +202,7 @@ function analyzeChoiceOption(
 ): void {
   const source = sourceFor(path, line, blockIndex, optionIndex);
   const trimmed = raw.trimStart();
-  const arrow = findChoiceArrow(trimmed);
+  const arrow = findChoiceArrow(trimmed, { file: path, line, col: raw.length - trimmed.length + 1 });
   const arrowIndex = arrow?.index ?? -1;
   const arrowEnd = arrow?.end ?? -1;
   const labelPart = arrowIndex >= 0 ? trimmed.slice(0, arrowIndex) : trimmed;

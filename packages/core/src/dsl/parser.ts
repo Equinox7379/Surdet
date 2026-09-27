@@ -9,7 +9,7 @@ import {
 } from './ast.js';
 import { parseInlineInstructions } from './lexer.js';
 import { validateExpr } from './expr-parser.js';
-import type { InstructionToken, TextToken, Token } from './token.js';
+import { SourceError, type SourcePos, type InstructionToken, type TextToken, type Token } from './token.js';
 
 /** token 游标 */
 class TokenCursor {
@@ -328,7 +328,7 @@ export class Parser {
 
   #parseChoiceOption(textTok: TextToken): AstChoiceOption {
     const raw = textTok.raw.trimStart();
-    const arrow = findChoiceArrow(raw);
+    const arrow = findChoiceArrow(raw, textTok);
     const arrowIdx = arrow?.index ?? -1;
     const arrowEnd = arrow?.end ?? -1;
     const labelPart = arrowIdx >= 0 ? raw.slice(0, arrowIdx) : raw;
@@ -424,7 +424,38 @@ export class Parser {
 }
 
 /** Locate the exact choice action boundary for parser and source-preserving authoring. */
-export function findChoiceArrow(raw: string): { index: number; end: number } | null {
+export function findChoiceArrow(raw: string, source: SourcePos = pos('<choice>', 1, 1)): { index: number; end: number } | null {
+  const hasActions = (end: number): boolean => {
+    const actions = raw.slice(end).trim();
+    if (!actions.startsWith('@')) return false;
+    try { return parseInlineInstructions(actions, source.file, source.line, source.col + end).length > 0; }
+    catch (error) { if (!(error instanceof SourceError)) throw error; return false; }
+  };
+  // Complete prose quotes keep precedence. Only infer an unmatched prose quote
+  // when the ordinary boundary cannot produce a lexically complete action list.
+  const ordinary = scanChoiceArrow(raw, raw.length);
+  if (ordinary !== null && hasActions(ordinary.end)) return ordinary;
+  let found: { index: number; end: number } | null = null;
+  for (const match of raw.matchAll(/\s->(?=\s|$)/g)) {
+    const index = match.index;
+    const end = index + 3 + (index + 3 < raw.length ? 1 : 0);
+    if (!hasActions(end)) continue;
+    // Pair prose quotes only inside this possible label, not with quotes in
+    // its condition or action arguments. Conditions keep their own grammar.
+    const label = raw.slice(0, index);
+    const condition = /\[if:(.+?)\]\s*$/.exec(label);
+    if (scanChoiceArrow(raw, condition?.index ?? index)?.index !== index) continue;
+    if (found !== null) {
+      throw new DslError('S009', 'choice 文案与行内动作边界有歧义',
+        pos(source.file, source.line, source.col + index + 1), '请闭合文案引号，或用中文引号明确文案范围。');
+    }
+    found = { index, end };
+  }
+  // Preserve no-action prose and the existing diagnostics for malformed actions.
+  return found ?? ordinary;
+}
+
+function scanChoiceArrow(raw: string, labelEnd: number): { index: number; end: number } | null {
   let quote: '"' | "'" | null = null;
   let escaped = false;
   let inCondition = false;
@@ -454,7 +485,7 @@ export function findChoiceArrow(raw: string): { index: number; end: number } | n
     // Labels are prose: paired quotes protect literal arrows, while English
     // apostrophes and an unmatched quote remain ordinary label characters.
     if ((char === '"' || char === "'") && !(char === "'" && /[a-z0-9]/i.test(raw[i - 1] ?? ''))) {
-      for (let end = i + 1; end < raw.length; end++) {
+      for (let end = i + 1; end < labelEnd; end++) {
         if (raw[end] === '\\') { end++; continue; }
         if (raw[end] === char) { i = end; break; }
       }

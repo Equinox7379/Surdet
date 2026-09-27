@@ -105,8 +105,8 @@ describe('scene rename in an isolated direct draft', () => {
 });
 
 describe('Editor/authoring shared scene target visitor', () => {
-  it('keeps unfinished surrounding text, Unicode, quoted arrows and unknown instructions intact', () => {
-    const source = '// old\r\n@if true\r\n@custom "@jump old"\r\n@call old.entry\r\n@choice\r\n  中文 [if:" -> " == " -> "] -> @set x = "@jump old" @jump old @jump old.ignored\r\n';
+  it.each(['中文', '未闭合的 "文案', "未闭合的 '文案"])('keeps surrounding text %s and real quoted actions intact', label => {
+    const source = `// old\r\n@if true\r\n@custom "@jump old"\r\n@call old.entry\r\n@choice\r\n  ${label} [if:" -> " == " -> "] -> @set x = "@jump old" @jump old @jump old.ignored\r\n`;
     const result = visitSceneReferences(source, 'old', 'new');
     expect(result.count).toBe(2);
     expect(result.text).toBe(source.replace('@call old.entry', '@call new.entry').replace('@jump old @jump', '@jump new @jump'));
