@@ -25,7 +25,7 @@ export function buildAuthoringWorkbench(): AuthoringWorkbenchElements {
   const root = element('div', 'main-body authoring-workbench v4-authoring');
   root.dataset.editorRegion = 'authoring-workbench'; root.dataset.auxiliaryView = 'outline';
   root.dataset.outlineCollapsed = String(outlineCollapsed);
-  root.dataset.mobilePanel = 'editor'; root.style.setProperty('--v4-dock-width', dockWidth ? `${dockWidth}px` : '40%');
+  root.dataset.mobilePanel = 'editor'; root.style.setProperty('--v4-dock-width', dockWidth ? `${dockWidth}px` : '34%');
   root.style.setProperty('--studio-outline-width', `${outlineWidth}px`);
   const outline = element('aside', 'authoring-outline');
   outline.id = 'sidebar'; outline.dataset.editorRegion = 'outline'; outline.setAttribute('aria-label', '场景与素材目录');

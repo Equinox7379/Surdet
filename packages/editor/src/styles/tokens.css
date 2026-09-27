@@ -1,15 +1,15 @@
 :root {
   color-scheme: light;
 
-  --surdet-color-paper-0: #EEF0F3;
+  --surdet-color-paper-0: #F7F8FA;
   --surdet-color-paper-50: #FFFFFF;
-  --surdet-color-paper-100: #F3F4F6;
-  --surdet-color-ink-900: #282C34;
-  --surdet-color-ink-600: #606873;
+  --surdet-color-paper-100: #F3F5F8;
+  --surdet-color-ink-900: #303847;
+  --surdet-color-ink-600: #697588;
   --surdet-color-frame-900: #1D2326;
-  --surdet-color-line-300: #DDE1E6;
-  --surdet-color-line-600: #929AA6;
-  --surdet-color-rust-600: #9B4B35;
+  --surdet-color-line-300: #E5E9F0;
+  --surdet-color-line-600: #9AA8BC;
+  --surdet-color-accent-600: #526D9B;
   --surdet-color-provenance-600: #6F5A45;
   --surdet-color-success-600: #3F6851;
   --surdet-color-warning-600: #946426;
@@ -18,20 +18,20 @@
   --surdet-surface-app: var(--surdet-color-paper-0);
   --surdet-surface-panel: var(--surdet-color-paper-50);
   --surdet-surface-subtle: var(--surdet-color-paper-100);
-  --surdet-surface-selected: #ECEFF2;
+  --surdet-surface-selected: #EDF2FA;
   --surdet-text-primary: var(--surdet-color-ink-900);
   --surdet-text-secondary: var(--surdet-color-ink-600);
   --surdet-border-default: var(--surdet-color-line-300);
   --surdet-border-strong: var(--surdet-color-line-600);
-  --surdet-action-primary: var(--surdet-color-rust-600);
-  --surdet-focus-ring: #8F402F;
+  --surdet-action-primary: var(--surdet-color-accent-600);
+  --surdet-focus-ring: #526D9B;
   --surdet-state-provenance: var(--surdet-color-provenance-600);
   --surdet-state-success: var(--surdet-color-success-600);
   --surdet-state-warning: var(--surdet-color-warning-600);
   --surdet-state-danger: var(--surdet-color-danger-600);
   --surdet-state-readonly: var(--surdet-color-ink-600);
 
-  --surdet-font-ui: "Segoe UI", "Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  --surdet-font-ui: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
   --surdet-font-story: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", var(--surdet-font-ui);
   --surdet-font-mono: "Cascadia Mono", "Sarasa Mono SC", Consolas, monospace;
 
@@ -66,7 +66,7 @@
   --surdet-shell-chrome-text: var(--surdet-text-primary);
   --surdet-shell-chrome-muted: var(--surdet-text-secondary);
   --surdet-shell-chrome-surface: #FFFFFF;
-  --surdet-shell-chrome-selected: #E9ECF0;
+  --surdet-shell-chrome-selected: #EDF2FA;
   --surdet-shell-chrome-border: var(--surdet-border-default);
   --surdet-editor-nav-active-bg: var(--surdet-surface-selected);
   --surdet-editor-selection-outline: var(--surdet-border-strong);

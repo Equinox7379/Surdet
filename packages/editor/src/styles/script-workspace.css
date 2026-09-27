@@ -75,16 +75,16 @@
   grid-template-columns: 1fr 1fr;
   gap: 0;
   margin: 0;
-  border-bottom: 1px solid var(--surdet-border-default);
+  border: 0;
 }
 
 .side-tabs button.tab {
   min-height: 34px;
   border: 0;
-  border-right: 1px solid var(--surdet-border-default);
+  border-right: 0;
   border-radius: 0;
   padding: var(--surdet-space-8) var(--surdet-space-12);
-  background: var(--surdet-surface-panel);
+  background: transparent;
   color: var(--surdet-text-secondary);
   font-size: 0.8125rem;
   font-weight: 650;
@@ -104,10 +104,10 @@
   width: calc(100% - 24px);
   min-height: 30px;
   margin: 12px;
-  border: 1px solid var(--surdet-border-default);
+  border: 1px solid transparent;
   border-radius: var(--surdet-radius-tight);
-  background: var(--surdet-surface-panel);
-  color: var(--surdet-text-primary);
+  background: transparent;
+  color: var(--surdet-action-primary);
   font-weight: 650;
   padding: 5px var(--surdet-space-12);
   cursor: pointer;
@@ -124,7 +124,7 @@
 }
 
 .scene-group + .scene-group {
-  border-top: 1px solid var(--surdet-border-default);
+  margin-top: 16px;
 }
 
 .scene-group-heading,
@@ -148,8 +148,8 @@
   grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
   gap: 0;
-  width: calc(100% - 12px);
-  margin: 0 6px 2px;
+  width: calc(100% - 20px);
+  margin: 0 10px 8px;
 }
 
 .scene-item {
@@ -158,7 +158,7 @@
   align-items: center;
   gap: var(--surdet-space-8);
   width: 100%;
-  min-height: 40px;
+  min-height: 44px;
   margin: 0;
   padding: var(--surdet-space-8);
   border: 1px solid transparent;
@@ -175,7 +175,7 @@
 }
 
 .scene-item:hover {
-  border-color: var(--surdet-border-default);
+  border-color: transparent;
   background: var(--surdet-surface-subtle);
   color: var(--surdet-text-primary);
   transform: none;
@@ -211,7 +211,7 @@
 .scene-name {
   overflow: hidden;
   font-size: 0.8125rem;
-  font-weight: 680;
+  font-weight: 550;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -234,15 +234,14 @@
 }
 
 .scene-row-actions {
-  position: absolute;
-  right: 2px;
-  top: 2px;
-  bottom: 2px;
-  background: var(--surdet-shell-chrome-bg);
+  position: static;
+  min-height: 28px;
+  background: transparent;
+  padding: 0 4px 2px;
   display: flex;
   align-items: stretch;
   flex-direction: row;
-  justify-content: center;
+  justify-content: flex-end;
   gap: 1px;
   opacity: 0;
   pointer-events: none;
@@ -250,10 +249,10 @@
 .scene-row:hover .scene-row-actions, .scene-row:focus-within .scene-row-actions { opacity:1; pointer-events:auto; }
 
 .scene-row-action {
-  min-width: 42px;
-  min-height: 24px;
+  min-width: 36px;
+  min-height: 26px;
   margin: 0;
-  padding: 2px var(--surdet-space-8);
+  padding: 2px 5px;
   border: 1px solid transparent;
   border-radius: var(--surdet-radius-tight);
   background: transparent;

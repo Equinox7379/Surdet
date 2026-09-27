@@ -394,6 +394,32 @@
   line-height: 1.5;
 }
 
+#config-view .config-character-create {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 16px;
+  max-width: 720px;
+  margin-top: 28px;
+}
+
+#config-view .config-character-create .config-field {
+  flex: 1 1 160px;
+}
+
+#config-view .config-character-create input {
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: var(--surdet-surface-subtle);
+  color: var(--surdet-text-primary);
+  font-family: var(--surdet-font-ui);
+}
+
+#config-view.v4-config .config-character-create .config-row-add {
+  margin: 0;
+}
+
 /* ---- Tables ---- */
 
 #config-view .config-table-scroll {
@@ -500,10 +526,19 @@
   border-top: 1px solid var(--surdet-border-default);
 }
 
-#config-view .config-actions button {
+#config-view .config-actions button,
+#config-view .config-row-add,
+#config-view .config-row-delete {
   min-height: 38px;
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background-color: var(--surdet-surface-subtle);
+  color: var(--surdet-text-primary);
   font-size: 0.8125rem;
+  font-family: var(--surdet-font-ui);
   white-space: nowrap;
+  cursor: pointer;
 }
 
 #config-view .config-actions button.primary {
@@ -513,9 +548,10 @@
 }
 
 #config-view .config-actions button.primary:hover {
-  background-color: var(--surdet-shell-chrome-bg);
-  border-color: var(--surdet-shell-chrome-bg);
+  background-color: var(--surdet-action-primary);
+  border-color: var(--surdet-action-primary);
   color: var(--surdet-surface-panel);
+  filter: brightness(.92);
 }
 
 #config-view .config-empty,

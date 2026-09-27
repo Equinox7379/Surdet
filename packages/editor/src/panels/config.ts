@@ -779,10 +779,10 @@ function renderCharactersSection(): HTMLElement {
   const { sec, ops } = sectionShell('characters');
   const rows = ensureCharRows();
   const revision = configSessionRevision;
-  const createFields = h('div', 'config-scalars');
+  const createFields = h('div', 'config-character-create');
   const newId = h('input', 'mono'); newId.placeholder = '角色 ID'; newId.setAttribute('aria-label', '新角色 ID');
   const newName = h('input'); newName.placeholder = '显示名称'; newName.setAttribute('aria-label', '新角色显示名称');
-  const addCharacter = h('button', '', '添加角色'); addCharacter.type = 'button';
+  const addCharacter = h('button', 'config-row-add', '添加角色'); addCharacter.type = 'button';
   const canCreate = () => {
     if (!createFields.isConnected || createFields.closest('[inert]') || configSessionRevision !== revision
       || charRows !== rows || state.projectLoading || state.reviewPreviewReadOnly) return false;
@@ -798,7 +798,10 @@ function renderCharactersSection(): HTMLElement {
     rows.push({ id, name, avatar: '', portraits: [], create: true });
     rerenderConfig();
   };
-  createFields.append(newId, newName, addCharacter);
+  const idField = h('label', 'config-field'), nameField = h('label', 'config-field');
+  idField.append(h('span', undefined, '角色 ID'), newId);
+  nameField.append(h('span', undefined, '显示名称'), newName);
+  createFields.append(idField, nameField, addCharacter);
   sec.append(createFields, h('p', 'hint', '添加后先保存在角色表草稿中；点击保存角色表才写入项目。已有角色 ID 不在这里改名或删除。'));
   if (rows.length === 0) sec.appendChild(h('div', 'config-empty', '暂无角色。填写 ID 与显示名称后添加首个角色。'));
   const table = h('table', 'config-table') as HTMLTableElement;

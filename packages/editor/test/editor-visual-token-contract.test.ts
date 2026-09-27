@@ -44,15 +44,15 @@ const migratedCss = [tokensCss, componentsCss, appShellCss]
 describe('editor visual token contract', () => {
   it('declares the approved primitive color family exactly', () => {
     const expected = {
-      '--surdet-color-paper-0': '#eef0f3',
+      '--surdet-color-paper-0': '#f7f8fa',
       '--surdet-color-paper-50': '#ffffff',
-      '--surdet-color-paper-100': '#f3f4f6',
-      '--surdet-color-ink-900': '#282c34',
-      '--surdet-color-ink-600': '#606873',
+      '--surdet-color-paper-100': '#f3f5f8',
+      '--surdet-color-ink-900': '#303847',
+      '--surdet-color-ink-600': '#697588',
       '--surdet-color-frame-900': '#1d2326',
-      '--surdet-color-line-300': '#dde1e6',
-      '--surdet-color-line-600': '#929aa6',
-      '--surdet-color-rust-600': '#9b4b35',
+      '--surdet-color-line-300': '#e5e9f0',
+      '--surdet-color-line-600': '#9aa8bc',
+      '--surdet-color-accent-600': '#526d9b',
       '--surdet-color-provenance-600': '#6f5a45',
       '--surdet-color-success-600': '#3f6851',
       '--surdet-color-warning-600': '#946426',
@@ -69,13 +69,13 @@ describe('editor visual token contract', () => {
       '--surdet-surface-app': 'var(--surdet-color-paper-0)',
       '--surdet-surface-panel': 'var(--surdet-color-paper-50)',
       '--surdet-surface-subtle': 'var(--surdet-color-paper-100)',
-      '--surdet-surface-selected': '#eceff2',
+      '--surdet-surface-selected': '#edf2fa',
       '--surdet-text-primary': 'var(--surdet-color-ink-900)',
       '--surdet-text-secondary': 'var(--surdet-color-ink-600)',
       '--surdet-border-default': 'var(--surdet-color-line-300)',
       '--surdet-border-strong': 'var(--surdet-color-line-600)',
-      '--surdet-action-primary': 'var(--surdet-color-rust-600)',
-      '--surdet-focus-ring': '#8f402f',
+      '--surdet-action-primary': 'var(--surdet-color-accent-600)',
+      '--surdet-focus-ring': '#526d9b',
       '--surdet-state-provenance': 'var(--surdet-color-provenance-600)',
       '--surdet-state-success': 'var(--surdet-color-success-600)',
       '--surdet-state-warning': 'var(--surdet-color-warning-600)',
@@ -90,7 +90,7 @@ describe('editor visual token contract', () => {
 
   it('provides the approved typography, spacing, radius, focus, and motion scales', () => {
     expect(tokenValues.get('--surdet-font-ui')).toBe(
-      '"segoe ui", "microsoft yahei ui", "pingfang sc", "noto sans cjk sc", sans-serif',
+      '"microsoft yahei ui", "microsoft yahei", "segoe ui variable", "segoe ui", "pingfang sc", "noto sans cjk sc", sans-serif',
     );
     expect(tokenValues.get('--surdet-font-story')).toBe(
       '"noto serif cjk sc", "source han serif sc", "songti sc", var(--surdet-font-ui)',
