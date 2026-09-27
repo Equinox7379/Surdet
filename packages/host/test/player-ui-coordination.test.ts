@@ -19,6 +19,21 @@ const overlays: readonly Exclude<PlayerOverlay, 'none'>[] = [
 ];
 
 describe('public player UI coordination', () => {
+  it('notifies projections for committed transitions, failed-operation restoration and reset', () => {
+    const seen: PlayerUiSessionSnapshot[] = [];
+    const session = createPlayerUiSession({ base: 'game' }, () => seen.push(session.snapshot()));
+    session.openOverlay('save-load');
+    const origin = session.snapshot();
+    session.beginOperation('loading');
+    session.failOperation();
+    session.closeOverlay();
+    session.reset('title');
+    expect(seen.map(state => [state.base, state.overlay, state.operation])).toEqual([
+      ['game', 'save-load', 'idle'], ['game', 'save-load', 'loading'], ['game', 'save-load', 'idle'], ['game', 'none', 'idle'], ['title', 'none', 'idle'],
+    ]);
+    expect(seen[2]).toBe(origin);
+  });
+
   it('only consumes the current event turn, not a later click after keyboard activation', async () => {
     const gate = new PlayerInputGate();
     const session = createPlayerUiSession({ base: 'game' });

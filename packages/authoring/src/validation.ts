@@ -1,6 +1,7 @@
 import { validateProjectStageContent } from './stage-validation.js';
-import { resolveProjectTheme, resolveProjectTitleLogo } from '@surdet/core';
+import { resolveProjectTheme, resolveProjectTitleLogo, readProjectUi } from '@surdet/core';
 import { validateThemeAssetBindings } from './theme-operations.js';
+import { validateUiAssets } from './ui-operations.js';
 import {
   attachHints,
   checkChoiceSuspects,
@@ -443,6 +444,12 @@ export function validateSnapshot(
     if (options.assetCatalog) validateThemeAssetBindings(theme, logo, options.assetCatalog);
   } catch (error) {
     rawIssues.push({ severity: 'error', code: 'THEME_INVALID', text: error instanceof Error ? error.message : String(error), file: configPath, line: 1, col: 1 });
+  }
+  try {
+    const ui = readProjectUi(snapshot.config);
+    if (options.assetCatalog) validateUiAssets(ui, options.assetCatalog);
+  } catch (error) {
+    rawIssues.push({ severity: 'error', code: 'UI_INVALID', text: error instanceof Error ? error.message : String(error), file: configPath, line: 1, col: 1 });
   }
   attachHints(rawIssues);
   const issues = rawIssues.map((issue) => enrich(index, issue));

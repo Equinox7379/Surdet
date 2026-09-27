@@ -198,6 +198,16 @@ export class MenuLayer implements MenuProjectionPort {
     );
   }
 
+  setDeclarativeUiSuppression(pages: Partial<Record<import('@surdet/core').ProjectUiPageId, boolean>>): void {
+    for (const [page, layer] of [['title', this.#titleLayer], ['system-menu', this.#menuLayer], ['settings', this.#settingsLayer], ['save-load', this.#saveLoadLayer]] as const) {
+      // Keep semantic visibility for pause/restore queries, suppress only the drawing and input.
+      layer.renderable = !pages[page];
+      layer.accessibleChildren = !pages[page];
+      layer.interactiveChildren = !pages[page];
+    }
+    this.#requestFrame();
+  }
+
   setFrameRequest(handler: FrameRequestHandler | null): void {
     this.#frameRequest = handler;
     if (handler && this.needsUpdate) handler();

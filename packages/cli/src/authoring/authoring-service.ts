@@ -16,6 +16,7 @@ import {
   inspectPlayerConfig,
   inspectStageConfig, applyStageConfigPatch, type StageConfigPatchInput,
   inspectThemeConfig, applyThemeConfigPatch, type ThemeConfigPatchInput,
+  inspectUi, applyUiPatch, type UiPatchInput,
   applyPlayerConfigPatch,
   type PlayerConfigPatchInput,
   GALLERY_PATH,
@@ -625,6 +626,11 @@ export class AuthoringService {
       themeConfig: await inspectThemeConfig(snapshot.config, { sha256: async text => hashText(text) }) } };
   }
 
+  async projectUi(projectRoot: string, changeId?: string): Promise<ServiceResult<Awaited<ReturnType<typeof inspectUi>> & { view: 'project' | 'working' }>> {
+    const { snapshot, metadata, view } = await this.readProjectView(projectRoot, changeId, false);
+    return { ...metadata, result: { ...await inspectUi(snapshot.config, { sha256: async text => hashText(text) }), view } };
+  }
+
   async projectAssets(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof buildAssetCatalog> & { view: 'project' | 'working' }>> {
     const { snapshot, assetFiles, gallery, metadata, view } = await this.readProjectView(projectRoot, changeId, true);
     return {
@@ -827,6 +833,15 @@ export class AuthoringService {
       const assets = await withProjectLeaseRetry(this.leaseManager, context.storage.rootIdentity,
         async () => buildAssetCatalog(assetPathsFromFiles(await context.storage.listFiles())));
       const result = await applyThemeConfigPatch(context.session, input, { sha256: async text => hashText(text) }, assets);
+      return { ...metadataForChange(context.session), result };
+    });
+  }
+
+  async uiPatch(changeId: string, input: UiPatchInput): Promise<ServiceResult<unknown>> {
+    return this.withOpenChange(changeId, async context => {
+      const assets = await withProjectLeaseRetry(this.leaseManager, context.storage.rootIdentity,
+        async () => buildAssetCatalog(assetPathsFromFiles(await context.storage.listFiles())));
+      const result = await applyUiPatch(context.session, input, { sha256: async text => hashText(text) }, assets);
       return { ...metadataForChange(context.session), result };
     });
   }

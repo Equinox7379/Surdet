@@ -8,6 +8,12 @@ import {
   portraitSourcePaths,
   assertUniquePortraitBindings,
   readProjectStage,
+  readProjectUi,
+  projectUiAssetKeys,
+  type ProjectUiAction,
+  type ProjectUiBinding,
+  type ProjectUiContentSource,
+  type ProjectUiPageId,
   type CharacterPortraits,
   type CharacterVisuals,
   Interpreter,
@@ -55,13 +61,14 @@ import {
   GamepadPoller,
   RenderPerformanceMonitor,
   createRendererRuntime,
+  createProjectUiDom,
   createRendererTheme,
   AssetLoadQueue,
   actionForKeyboardEvent,
   rendererInputForGamepadAction,
   rendererInputForGameAction,
 } from '@surdet/renderer';
-import type { GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerProfile, AssetLoadJob, AssetPriority, LoadingProgress, GameAction, NumericSettingKey } from '@surdet/renderer';
+import type { GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerProfile, AssetLoadJob, AssetPriority, LoadingProgress, GameAction, NumericSettingKey, ProjectUiContext, ProjectUiDom, ProjectUiItem } from '@surdet/renderer';
 import { resolvePlayerTheme } from '@surdet/core';
 import {
   LocalStorageProfileStorage,
@@ -77,7 +84,7 @@ import {
   enterPlayerTitleSession,
   shouldRestoreInterfaceOnPointer,
 } from '@surdet/host';
-import type { HostStateAdapter, PlayerOverlay, PlayerShellController } from '@surdet/host';
+import type { HostStateAdapter, PlayerOverlay, PlayerShellController, PlayerShellSlotProvider, PlayerShellOpenRequest } from '@surdet/host';
 import { createSystemAdapters } from './system-adapters.js';
 import { ResolvedAudio } from '../resolved-audio.js';
 import { createSettingsStorage } from '../settings-storage.js';
@@ -102,6 +109,7 @@ export interface PlayerProject {
     fonts?: Partial<Record<'body' | 'title' | 'ui', string>>;
     player?: { subtitle?: string; titleBackground?: string; titleLogo?: string; endScenes?: readonly string[]; firstRunHint?: string };
     theme?: Record<string, unknown>;
+    ui?: unknown;
   };
   sceneFiles: Record<string, () => Promise<unknown>>;
   timelineFiles?: Record<string, unknown>;
@@ -133,8 +141,10 @@ export interface PlayerProject {
   resolveSceneUrl: (path: string) => string;
 }
 
-export async function startPlayer(project: PlayerProject): Promise<void> {
+export async function startPlayer(project: PlayerProject, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return;
   const gameConfig = project.config;
+  const workUi = readProjectUi(gameConfig);
   // Explicit host options remain authoritative; empty values intentionally clear
   // configuration. Missing fields fall back to content-independent defaults.
   const playerConfig = {
@@ -180,6 +190,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   const registry = new SceneRegistry();
   for (const [path, load] of Object.entries(sceneFiles)) {
     const src = (await load()) as string;
+    if (signal?.aborted) return;
     const id = path.split('/').pop()!.replace(/\.gal$/i, '');
     registry.register(compileScene(src, path, id));
   }
@@ -224,15 +235,18 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   const audioManager = new AudioManager();
   /** 音频素材地址映射（loadAssets 填充：素材键 → Blob/文件 URL） */
   const audioUrls = new Map<string, string>();
+  const backgroundUrls = new Map<string, string>();
   const audio: AudioHandle = new ResolvedAudio(audioManager, audioUrls);
 
   const settings = new SettingsStore(createSettingsStorage(project.id, browserPrefix));
   await settings.load();
+  if (signal?.aborted) { audioManager.dispose(); return; }
 
   // Backlog + Renderer v2 Runtime（设置投影：文本速度/自动停留/音量）
   const backlog = new Backlog();
   const typewriter = new Typewriter({ charsPerSecond: settings.settings.textSpeedCps });
-  const uiSession = createPlayerUiSession({ base: 'title' });
+  let uiDom: ProjectUiDom | null = null;
+  const uiSession = createPlayerUiSession({ base: 'title' }, () => uiDom?.refresh());
   let playerShell: PlayerShellController | null = null;
   const performanceMonitor = new RenderPerformanceMonitor();
   const runtime = await createRendererRuntime({
@@ -255,7 +269,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   });
   appEl.appendChild(runtime.canvas);
   runtime.resize();
-  const resizeHandler = (): void => runtime.resize();
+  const resizeHandler = (): void => { runtime.resize(); uiDom?.resize(); };
   window.addEventListener('resize', resizeHandler);
   const renderer = runtime.controller;
   const commands = runtime.commands;
@@ -268,6 +282,29 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   const loading = commands.loading;
   const presentation = commands.presentation;
   let activeSaveLoad: { mode: 'save' | 'load'; slots: SaveSlotView[] } | null = null;
+  let currentChoiceOptions: { index: number; label: string }[] = [];
+  const workUiOverrides: Partial<Record<'title' | 'system-menu' | 'save-load' | 'settings' | 'gallery' | 'backlog', PlayerShellSlotProvider>> = {};
+  const workProvider = (id: string, open: (request: PlayerShellOpenRequest) => void, close: () => void): PlayerShellSlotProvider => ({ id: `project-ui.${id}`, open, close });
+  if (workUi?.pages.title) workUiOverrides.title = workProvider('title', () => {
+    const view = titleView(); menu.showTitle(view.view, view.onSelect); uiDom?.show('title', uiContext('title'));
+  }, () => { uiDom?.hide('title'); menu.hideTitle(); });
+  if (workUi?.pages['system-menu']) workUiOverrides['system-menu'] = workProvider('system-menu', () => {
+    const view = systemMenuView(); menu.showSystemMenu(view.items, view.onSelect, view.onClose); uiDom?.show('system-menu', uiContext('system-menu'));
+  }, () => { uiDom?.hide('system-menu'); menu.hideSystemMenu(); });
+  if (workUi?.pages['save-load']) workUiOverrides['save-load'] = workProvider('save-load', request => {
+    if (request.slot !== 'save-load') return;
+    const view = saveLoadView(request.mode); menu.showSaveLoad(view.view, view.onSelect, view.onClose, view.options);
+    uiDom?.show('save-load', uiContext('save-load', request.mode));
+  }, () => { uiDom?.hide('save-load'); menu.hideSaveLoad(); });
+  if (workUi?.pages.settings) workUiOverrides.settings = workProvider('settings', () => {
+    const view = settingsView(); menu.showSettings(view.rows, view.onChange, view.onClose); uiDom?.show('settings', uiContext('settings'));
+  }, () => { uiDom?.hide('settings'); menu.hideSettings(); });
+  if (workUi?.pages.gallery) workUiOverrides.gallery = workProvider('gallery', () => {
+    const view = galleryView(); gallery.showGallery(view); uiDom?.show('gallery', uiContext('gallery'));
+  }, () => { uiDom?.hide('gallery'); gallery.hideGallery(); });
+  if (workUi?.pages.backlog) workUiOverrides.backlog = workProvider('backlog', () => {
+    const entries = queries.dialogue.backlogEntries(); dialogue.showBacklog(entries); uiDom?.show('backlog', uiContext('backlog'));
+  }, () => { uiDom?.hide('backlog'); dialogue.hideBacklog(); });
   const slots = createRendererPlayerShellSlots({
     renderer: { commands, queries },
     views: {
@@ -281,6 +318,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         query: queries.dialogue.backlogSearchQuery(),
       }),
     },
+    overrides: workUiOverrides,
   });
   playerShell = createPlayerShellController({
     slots,
@@ -554,7 +592,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
     const files = desktopAsset ? await desktopAsset.list() : Object.keys(project.assetFiles);
     // Validate effective bindings before concurrent loading can overwrite a key.
     // Count physical paths, not roles: one image may serve several UI purposes.
-    const themeImageKeys = new Set([playerConfig.titleLogo, ...Object.values(playerTheme.skins)].filter(Boolean));
+    const themeImageKeys = new Set([playerConfig.titleLogo, ...Object.values(playerTheme.skins), ...projectUiAssetKeys(workUi)].filter(Boolean));
     for (const key of themeImageKeys) {
       const matches = new Set(files.filter(rel => rel.split('/')[0]?.toLowerCase() === 'bg'
         && rel.split('/').at(-1)!.replace(/\.[^.]*$/, '') === key));
@@ -593,6 +631,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
       if (kind === 'bg' && IMG.test(fname)) {
         await assets.registerBackground(fname.replace(IMG, ''), url, format);
         loadedBackgrounds.add(fname.replace(IMG, ''));
+        backgroundUrls.set(fname.replace(IMG, ''), url);
         return true;
       } else if (kind === 'portrait' && IMG.test(fname)) {
         const path = `content/assets/${rel}`;
@@ -873,8 +912,192 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
     };
   }
 
+  const shownWorkPages = new Set<ProjectUiPageId>();
+  function showWorkPage(page: ProjectUiPageId): void {
+    if (!workUi?.pages[page] || shownWorkPages.has(page)) return;
+    uiDom?.show(page, uiContext(page));
+    shownWorkPages.add(page);
+  }
+  function hideWorkPage(page: ProjectUiPageId): void {
+    uiDom?.hide(page);
+    shownWorkPages.delete(page);
+  }
+  function syncStoryWorkUi(): void {
+    if (uiSnapshot().base !== 'game') return;
+    for (const page of ['hud', 'dialogue', 'toolbar'] as const) showWorkPage(page);
+    if (renderer.status === 'choice' && currentChoiceOptions.length > 0) showWorkPage('choices');
+    else hideWorkPage('choices');
+  }
+
+  function uiContext(page: ProjectUiPageId, mode?: 'save' | 'load'): ProjectUiContext {
+    return {
+      ...(mode ? { mode } : {}),
+      data(field) {
+        if (field === 'title') return titleView().view.title;
+        if (field === 'subtitle') return titleView().view.subtitle ?? '';
+        if (field === 'mode') return activeSaveLoad?.mode ?? '';
+        if (field === 'speaker' || field === 'dialogue') {
+          const dialogueProjection = queries.diagnostics.projectionSnapshot().dialogue;
+          return field === 'speaker' ? dialogueProjection?.speakerText ?? '' : dialogueProjection?.dialogText ?? '';
+        }
+        return '';
+      },
+      read(name, kind) { return kind === 'variable' ? store.get(name) : settings.settings[name as keyof GameSettings]; },
+      async write(binding: ProjectUiBinding, value) {
+        playerShell!.commands.consumePointer();
+        if (binding.kind === 'variable') { store.set(binding.name, value); return; }
+        const key = binding.name as keyof GameSettings;
+        const nextValue = key === 'skipStrategy' && typeof value === 'boolean' ? (value ? 1 : 0) : value;
+        await settings.update({ [key]: nextValue } as Partial<GameSettings>);
+        settings.apply(typewriter, audio);
+        renderer.setAutoWait(settings.settings.autoBaseDelayMs, settings.settings.autoPerCharMs);
+        refreshSettingsPanel();
+      },
+      bounds(binding) {
+        if (binding.kind === 'setting') {
+          const step = SETTING_STEPS.find(item => item.key === binding.name);
+          if (!step) throw new Error(`UI 设置项不支持滑条：${binding.name}`);
+          return { min: step.min, max: step.max, step: step.step };
+        }
+        const declaration = decls.find(item => item.name === binding.name);
+        if (!declaration || declaration.type !== 'number') throw new Error(`UI 变量不支持滑条：${binding.name}`);
+        return { min: declaration.min ?? 0, max: declaration.max ?? 100, step: 1 };
+      },
+      content(source: ProjectUiContentSource): ProjectUiItem[] {
+        if (source === 'save-slots') return (activeSaveLoad?.slots ?? []).map(slot => ({
+          id: slot.id, label: slot.label ?? (slot.empty ? `空槽位 ${slot.id}` : `槽位 ${slot.id}`),
+          description: slot.readError ?? (slot.updatedAt ? new Date(slot.updatedAt).toLocaleString() : ''),
+          date: slot.updatedAt ? new Date(slot.updatedAt).toLocaleString() : '',
+          empty: slot.empty, readError: slot.readError, backupAvailable: slot.backupAvailable,
+          disabled: activeSaveLoad?.mode === 'load' && (slot.empty || Boolean(slot.readError)),
+        }));
+        if (source === 'backlog') return queries.dialogue.backlogEntries().map((entry, index) => ({
+          id: String(index), label: entry.speaker ? `${entry.speaker}：${entry.text}` : entry.text,
+          description: entry.voice ? '点击重播语音' : undefined, disabled: !entry.voice,
+        }));
+        if (source === 'choices') return renderer.status === 'choice' ? currentChoiceOptions.map(option => ({ id: String(option.index), label: option.label })) : [];
+        if (source === 'settings') return settingsView().rows.map(row => ({ id: row.id, label: row.label, description: row.display, value: row.display }));
+        const views = galleryView();
+        const items = source === 'gallery-cgs' ? views.cgs : source === 'gallery-music' ? views.music : views.texts;
+        return items.map(item => ({ id: item.id, label: item.unlocked ? item.name : '???', disabled: !item.unlocked }));
+      },
+      async select(source, item, restore) {
+        if (source === 'save-slots') {
+          const selected = await selectWorkUiSave(activeSaveLoad?.mode ?? mode ?? 'load', item.id, restore);
+          if (selected) uiDom?.hide('save-load');
+          return selected;
+        }
+        if (source === 'choices') {
+          const accepted = renderer.dispatchInput({ type: 'choice.select', index: Number(item.id) });
+          if (accepted) hideWorkPage('choices');
+          return accepted;
+        }
+        if (source === 'backlog') { const voice = queries.dialogue.backlogEntries()[Number(item.id)]?.voice; if (voice) audio.playVoice(voice); return true; }
+        if (source === 'settings') { onSettingsChange(item.id, 1); return true; }
+        const views = galleryView();
+        if (source === 'gallery-music') {
+          const entry = views.music.find(value => value.id === item.id);
+          if (!entry?.unlocked) return false;
+          views.onPlayMusic?.(entry.id, entry.src);
+          return true;
+        }
+        if (source === 'gallery-texts') {
+          const entry = views.texts.find(value => value.id === item.id);
+          if (!entry?.unlocked) return false;
+          views.onReplayText?.(entry);
+          uiDom?.hide('gallery');
+          syncStoryWorkUi();
+          return true;
+        }
+        const entry = views.cgs.find(value => value.id === item.id);
+        if (!entry?.unlocked) return false;
+        uiDom?.showGalleryImage(entry.src ?? entry.id, entry.name);
+        return true;
+      },
+      action(action, item) { return performWorkUiAction(page, action, item); },
+    };
+  }
+
+  async function performWorkUiAction(page: ProjectUiPageId, action: ProjectUiAction, item?: ProjectUiItem): Promise<void> {
+    playerShell!.commands.consumePointer();
+    switch (action.kind) {
+      case 'start': await titleSelect('new'); syncStoryWorkUi(); return;
+      case 'continue': await titleSelect('continue'); syncStoryWorkUi(); return;
+      case 'close':
+      case 'back':
+        if (page === 'system-menu') onSystemMenuClose();
+        else if (page === 'save-load') closeSaveLoad();
+        else if (page === 'settings') closeSettings();
+        else if (page === 'gallery') closeGallery();
+        else if (page === 'backlog') openBacklog();
+        else throw new Error(`UI 页面 ${page} 没有返回操作`);
+        return;
+      case 'open':
+        if (action.page === 'system-menu') { openSystemMenu(); return; }
+        if (action.page === 'save-load') { await openSaveLoad(action.mode!, page === 'system-menu' ? 'system-menu' : uiSnapshot().base); return; }
+        if (action.page === 'settings') {
+          if (page === 'title') await titleSelect('settings');
+          else playerShell!.commands.open({ slot: 'settings', source: page === 'system-menu' ? 'system-menu' : 'game' });
+          return;
+        }
+        if (action.page === 'gallery') {
+          if (page === 'title') await titleSelect('gallery');
+          else if (page === 'system-menu') onSystemMenuSelect('gallery');
+          else openGallery();
+          return;
+        }
+        if (page === 'system-menu') onSystemMenuSelect('backlog');
+        else openBacklog();
+        return;
+      case 'save':
+      case 'load':
+        if (action.id ?? item?.id) {
+          const success = await selectWorkUiSave(action.kind, (action.id ?? item?.id)!);
+          if (success === undefined) return; // Author/player cancelled the confirmation.
+          if (!success) throw new Error(`${action.kind} 未完成，可重试或返回`);
+        } else await openSaveLoad(action.kind);
+        return;
+      case 'choice':
+        if (!renderer.dispatchInput({ type: 'choice.select', index: Number(action.id ?? item?.id) })) throw new Error('当前剧情选项不可用');
+        hideWorkPage('choices'); return;
+      case 'gallery-item':
+        if (!action.id && !item) throw new Error('鉴赏动作缺少条目 ID');
+        await uiContext(page).select(item?.source?.startsWith('gallery-') ? item.source : 'gallery-cgs',
+          { ...item, id: action.id ?? item!.id, label: item?.label ?? action.id! });
+        return;
+      case 'setting-step': onSettingsChange(action.name, action.direction); return;
+      case 'advance': renderer.dispatchInput({ type: 'advance' }); return;
+      case 'rollback': performRollback(); return;
+      case 'auto': onCommandRailSelect('auto'); return;
+      case 'skip': onCommandRailSelect('skip'); return;
+      case 'hide': onCommandRailSelect('hide'); return;
+    }
+  }
+
+  // Both authored buttons and list rows use the same ordinary slot projection,
+  // confirmation and existing Host transaction. No custom UI may silently overwrite.
+  async function selectWorkUiSave(mode: 'save' | 'load', slotId: string, restore = false): Promise<boolean | undefined> {
+    if (isUiBusy()) return false;
+    if (uiSnapshot().overlay !== 'save-load' || activeSaveLoad?.mode !== mode) {
+      await openSaveLoad(mode, uiSnapshot().overlay === 'system-menu' ? 'system-menu' : uiSnapshot().base);
+      if (activeSaveLoad?.mode !== mode || uiSnapshot().overlay !== 'save-load') return false;
+    }
+    const slots = await listPlayerSaveSlots(saves, browserSave, SLOT_IDS, mode);
+    const slot = slots.find(value => value.id === slotId);
+    if (!slot) throw new Error(`存档槽位不存在：${slotId}`);
+    if (restore) {
+      if (!slot.backupAvailable) return false;
+      if (!await uiDom?.confirm(`恢复槽位 ${slotId} 的备份并读取？当前进度将被替换。`)) return;
+      return restoreSaveLoad(slotId);
+    }
+    if (mode === 'load' && (slot.empty || slot.readError)) throw new Error(slot.readError ?? '此槽位没有存档');
+    if (mode === 'save' && !slot.empty && !await uiDom?.confirm(`覆盖槽位 ${slotId} 的现有存档？`)) return;
+    return selectSaveLoad(mode, slotId);
+  }
+
   /** 标题画面显示中；来源/返回由 PlayerShellController 持有。 */
   function showTitleScreen(): void {
+    for (const page of ['hud', 'dialogue', 'choices', 'toolbar'] as const) hideWorkPage(page);
     clearRollback();
     host.reset();
     // 标题页不是暂停菜单：冻结解释器并清空上一轮投影，避免隐藏剧情继续响应输入。
@@ -954,6 +1177,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         void window.surdetApp?.quit();
         break;
     }
+    syncStoryWorkUi();
   }
 
   if (project.hot) {
@@ -1124,6 +1348,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
     activeSaveLoad = null;
     clearCountedThisSession = false;
     refreshCommandRail();
+    syncStoryWorkUi();
   }
 
   async function selectSaveLoad(mode: 'save' | 'load', slotId: string): Promise<boolean> {
@@ -1355,6 +1580,11 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   const beforeUnloadHandler = (): void => { ownerTeardown.dispose(); };
   window.addEventListener('beforeunload', beforeUnloadHandler);
   ownerTeardown.trackListener(() => window.removeEventListener('beforeunload', beforeUnloadHandler));
+  if (signal) {
+    signal.addEventListener('abort', beforeUnloadHandler, { once: true });
+    ownerTeardown.trackListener(() => signal.removeEventListener('abort', beforeUnloadHandler));
+    if (signal.aborted) { ownerTeardown.dispose(); return; }
+  }
 
   // Ctrl 按住临时快进（松开恢复）
   let ctrlTempSkip = false;
@@ -1431,6 +1661,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   // 键位：Space/Enter 推进 · 方向键/数字键 选择 · Ctrl 临时快进 · X 全部跳过
   //       F5/F9 存读档 · A 自动 · S 快进 · L 文字记录 · H 隐藏界面 · G 鉴赏 · O 设置 · Esc 菜单 · [ ] 文本速度
   const keyboardHandler = (e: KeyboardEvent): void => {
+    if (uiDom?.ownsInput(e.target) && e.key !== 'Escape') return;
     if (isTitleScreen()) return;
     if (renderer.backlogOpen) {
       if (e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'KeyF') {
@@ -1587,8 +1818,31 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   ownerTeardown.trackListener(() => window.removeEventListener('unhandledrejection', unhandledRejectionHandler));
 
   // 启动：加载素材 → 标题画面（不再直进剧情）
-  await loadAssets();
+  try { await loadAssets(); }
+  catch (error) { ownerTeardown.dispose(); if (!signal?.aborted) throw error; return; }
+  if (ownerTeardown.disposed) return;
   commands.preferences.setTheme(playerTheme);
+  if (workUi) {
+    for (const key of projectUiAssetKeys(workUi)) if (!backgroundUrls.has(key)) throw new Error(`UI 图片不存在或格式不受支持：${key}`);
+    uiDom = createProjectUiDom({ canvas: runtime.canvas, document: workUi,
+      theme: playerTheme,
+      fontFamily: role => queries.preferences.fontFamily(role),
+      imageUrl: key => backgroundUrls.get(key),
+      titleBackgroundUrl: backgroundUrls.get(playerConfig.titleBackground),
+      isPageVisible: page => {
+        const state = uiSnapshot();
+        if (page === 'title') return state.base === 'title' && state.overlay === 'none';
+        if (['system-menu', 'save-load', 'settings', 'gallery', 'backlog'].includes(page)) return state.overlay === page;
+        return state.base === 'game' && state.overlay === 'none' && !state.interfaceHidden && !state.videoActive && queries.overlay.system().type === 'none';
+      },
+      onError: error => { console.error('[starter] 作品 UI 操作失败:', error); dialogue.showBanner(error instanceof Error ? error.message : String(error), 'tip'); },
+    });
+    commands.projectUi.setDefaultSuppression(Object.fromEntries(Object.keys(workUi.pages).map(page => [page, true])));
+    ownerTeardown.trackListener(() => uiDom?.dispose());
+    bus.on('text', () => { currentChoiceOptions = []; hideWorkPage('choices'); syncStoryWorkUi(); });
+    bus.on('choice', event => { currentChoiceOptions = event.options.map(option => ({ ...option })); syncStoryWorkUi(); uiDom?.refresh(); });
+    bus.on('stateReset', () => { currentChoiceOptions = []; hideWorkPage('choices'); });
+  }
   dialogue.showCommandRail([], onCommandRailSelect);
   refreshCommandRail();
   showTitleScreen();

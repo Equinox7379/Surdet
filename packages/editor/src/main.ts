@@ -85,6 +85,8 @@ import { bindV4Navigation, navigateMode, navigateTimeline } from './v4/ui.js';
 import { openProjectSearch } from './shell/project-search.js';
 import { workbenchIcon } from './shell/icons.js';
 import { renderAssetInsights, disposeV4SurfaceViews } from './v4/surfaces.js';
+import { disposeUiDesigner } from './ui-designer.js';
+import { disposeUiPlayerPreview } from './ui-player-preview.js';
 import './styles/v4-workbench.css';
 import { clearTimelineViewState, clearTimelineViewStates, renderTimelinePanel, selectTimelineCue, bindTimelineHooks } from './panels/timeline-panel.js';
 import { renderStatsPanel, bindStatsHooks } from './panels/stats-panel.js';
@@ -304,6 +306,8 @@ function closeCurrentProjectRuntime(): void {
   disposeScriptV4();
   disposePreviewPanel();
   disposeV4SurfaceViews();
+  disposeUiDesigner();
+  disposeUiPlayerPreview();
   invalidateAuthoringForProjectChange();
   resetAssetImportRuntime();
 }
@@ -1695,6 +1699,13 @@ bindFlowHooks({
   onDeleteScene: (sceneId) => { void runSceneLifecycleAction(() => deleteScene(sceneId)); },
 });
 bindConfigHooks({
+  stageSharedAssets: files => {
+    if (assetImportFileSetLocked()) throw new Error('当前素材导入尚未结束，请完成或取消后重试');
+    const added = assetImportWorkspace.addFiles(files);
+    for (const item of added) assetImportWorkspace.updateFile(item.itemId, { kind: /\.(?:ttf|otf|woff2)$/i.test(item.fileName) ? 'font' : 'background' });
+    assetImportWorkspace.setMessage('来自 UI 共享文件的依赖。保持文件名称，完成导入后再次导入该共享文件。');
+    assetImportPanelOpen = true; state.mainTab = 'assets'; renderMainArea();
+  },
   // 配置保存后重新调度校验（新变量/成就即刻参与 lint）
   requestValidate: () => { scheduleValidate(); scheduleAuthoringIndexRebuild(); },
   onDraftStateChanged: () => { refreshProjectBarProjection(); refreshPreviewSourceState(); },
@@ -1866,6 +1877,8 @@ function renderAll(): void {
   disposeScriptV4();
   disposePreviewPanel();
   disposeV4SurfaceViews();
+  disposeUiDesigner();
+  disposeUiPlayerPreview();
   appEl.innerHTML = '';
   const header = renderProjectBar(projectBarProjection(), {
     onOpenProject: () => { void openProjectSafely(); },
@@ -1937,6 +1950,8 @@ function renderMainArea(): void {
   disposeScriptV4();
   disposePreviewPanel();
   disposeV4SurfaceViews();
+  disposeUiDesigner();
+  disposeUiPlayerPreview();
   if (state.mainTab !== 'assets') {
     disposeAssetCenterPreview();
     disposeAssetCenterThumbnails();

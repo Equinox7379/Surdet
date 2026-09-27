@@ -31,6 +31,7 @@ async function seal(change: ChangeSession) {
         { objectRef: 'config:fonts', expectedFingerprint: sha('{}') },
         { objectRef: 'config:stage', expectedFingerprint: sha('null') },
         { objectRef: 'config:theme', expectedFingerprint: sha('{"theme":null,"titleLogo":null}') },
+        { objectRef: 'config:ui', expectedFingerprint: sha('null') },
         { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
         { objectRef: 'scene:A', expectedFingerprint: sha('@scene A\n旁白：开场。\n@end\n') },
       ],
@@ -337,25 +338,33 @@ describe('candidate operation-time facts', () => {
     expect(facts(change, 'timeline-duration').replayStatePreconditions).toEqual([
       { objectRef: 'timeline:authoring_timeline', expectedFingerprint: created.fingerprint },
       { objectRef: 'config:stage', expectedFingerprint: sha('null') },
+      { objectRef: 'config:fonts', expectedFingerprint: sha('{}') },
       { objectRef: 'config:theme', expectedFingerprint: sha('{"theme":null,"titleLogo":null}') },
+      { objectRef: 'config:ui', expectedFingerprint: sha('null') },
       { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
     ]);
     expect(facts(change, 'timeline-duration').replayStateRequirements).toEqual([
+      { objectRef: 'config:fonts', source: 'base', expectedFingerprint: sha('{}') },
       { objectRef: 'config:portraits', source: 'base', expectedFingerprint: sha('[]') },
       { objectRef: 'config:stage', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'config:theme', source: 'base', expectedFingerprint: sha('{"theme":null,"titleLogo":null}') },
+      { objectRef: 'config:ui', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'timeline:authoring_timeline', source: 'candidate', candidateOperationSequence: 0, expectedFingerprint: created.fingerprint },
     ]);
     expect(facts(change, 'timeline-target').replayStatePreconditions).toEqual([
       { objectRef: 'timeline:authoring_timeline', expectedFingerprint: durationPatch.fingerprint },
       { objectRef: 'config:stage', expectedFingerprint: sha('null') },
+      { objectRef: 'config:fonts', expectedFingerprint: sha('{}') },
       { objectRef: 'config:theme', expectedFingerprint: sha('{"theme":null,"titleLogo":null}') },
+      { objectRef: 'config:ui', expectedFingerprint: sha('null') },
       { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
     ]);
     expect(facts(change, 'timeline-target').replayStateRequirements).toEqual([
+      { objectRef: 'config:fonts', source: 'base', expectedFingerprint: sha('{}') },
       { objectRef: 'config:portraits', source: 'base', expectedFingerprint: sha('[]') },
       { objectRef: 'config:stage', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'config:theme', source: 'base', expectedFingerprint: sha('{"theme":null,"titleLogo":null}') },
+      { objectRef: 'config:ui', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'timeline:authoring_timeline', source: 'candidate', candidateOperationSequence: 1, expectedFingerprint: durationPatch.fingerprint },
     ]);
     expect(JSON.parse(change.record.workingFiles['content/timelines/authoring_timeline.json']!)).toMatchObject({

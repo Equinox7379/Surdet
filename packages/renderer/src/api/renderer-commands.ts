@@ -257,4 +257,5 @@ export interface RendererCommands {
   readonly loading: LoadingCommands;
   readonly preferences: PreferenceCommands;
   readonly presentation: PresentationCommands;
+  readonly projectUi: { setDefaultSuppression(pages: Partial<Record<import('@surdet/core').ProjectUiPageId, boolean>>): void };
 }

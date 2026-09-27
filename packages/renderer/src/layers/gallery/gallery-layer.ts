@@ -132,6 +132,13 @@ export class GalleryLayer implements GalleryProjectionPort {
     return readThemeProjection(this.#galleryLayer);
   }
 
+  setDeclarativeUiSuppression(suppressed: boolean): void {
+    this.#galleryLayer.renderable = !suppressed;
+    this.#galleryLayer.accessibleChildren = !suppressed;
+    this.#galleryLayer.interactiveChildren = !suppressed;
+    this.#requestFrame();
+  }
+
   setTheme(theme: RendererTheme): void {
     if (this.#disposed) return;
     const previous = this.#theme;

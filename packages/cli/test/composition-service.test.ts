@@ -165,6 +165,42 @@ describe('CompositionService compare/plan/dry-run', () => {
     expect(changed.comparison.status).toBe('review-only');
     expect(fs.readFileSync(path.join(fixture.projectRoot, 'game.config.json'), 'utf8')).toBe(JSON.stringify({ ...config, fonts: {} }));
   });
+  it('seals UI image, variable and font dependencies and invalidates a changed baseline UI', async () => {
+    const fixture = await setup('ui-baseline');
+    const fontPath = 'content/assets/fonts/ui.ttf';
+    for (const assetPath of [fontPath, 'content/assets/bg/paper.png']) {
+      fs.mkdirSync(path.dirname(path.join(fixture.projectRoot, assetPath)), { recursive: true });
+      fs.writeFileSync(path.join(fixture.projectRoot, assetPath), 'catalog metadata fixture');
+    }
+    const frame = { x: 0, y: 0, width: 100, height: 50 };
+    const config = { entryScene: 'start', variables: { trust: { type: 'number', initial: 0 } }, fonts: { ui: fontPath },
+      ui: { version: 1, pages: { hud: { id: 'root', type: 'container', frame, children: [
+        { id: 'art', type: 'image', frame, asset: 'paper' },
+        { id: 'value', type: 'text', frame, text: { kind: 'variable', name: 'trust' } },
+      ] } } } };
+    fs.writeFileSync(path.join(fixture.projectRoot, 'game.config.json'), JSON.stringify(config));
+    const refs = [];
+    for (const name of ['ui_one', 'ui_two']) {
+      const sealed = await sealCandidate(fixture.projectRoot, name, async session => {
+        expect((await session.invoke('scene.create', { operationId: name, sceneId: name, blocks: [{ kind: 'text', value: '界面基线。' }] })).ok).toBe(true);
+      });
+      refs.push(sealed.ref);
+    }
+    const compared = await fixture.service.compare(refs);
+    const operation = Object.values(compared.comparison.candidateManifests!)[0]!.operations[0]!;
+    expect(operation.requiredObjects).toEqual(expect.arrayContaining([
+      { objectRef: 'asset:bg:paper', source: 'base' }, { objectRef: 'variable:trust', source: 'base' },
+      { objectRef: `asset:font:${fontPath}`, source: 'base' },
+    ]));
+    expect(operation.replayStateRequirements).toContainEqual({ objectRef: 'config:ui', source: 'base', expectedFingerprint: await realHasher.sha256(stableStringify(config.ui)) });
+    expect((await planFromComparison(fixture, refs)).plan.dryRun.status).toBe('passed');
+    config.ui.pages.hud.frame = { ...frame, x: 20 };
+    const edited = JSON.stringify(config);
+    fs.writeFileSync(path.join(fixture.projectRoot, 'game.config.json'), edited);
+    expect((await fixture.service.compare(refs)).comparison.status).toBe('review-only');
+    expect(fs.readFileSync(path.join(fixture.projectRoot, 'game.config.json'), 'utf8')).toBe(edited);
+  });
+
   it('keeps two sealed versions of one change distinct and reserves one concurrent integration target', async () => {
     const fixture = await setup('sealed-version-identity');
     const session = await openAgentPortSession({ projectRoot: fixture.projectRoot, policy: 'stage' });

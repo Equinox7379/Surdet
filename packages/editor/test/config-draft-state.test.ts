@@ -70,6 +70,13 @@ class FakeElement {
     for (const child of children) this.appendChild(child);
   }
 
+  replaceChildren(...children: FakeElement[]): void {
+    this.ownText = '';
+    for (const child of this.children) child.parentElement = null;
+    this.children.splice(0);
+    this.append(...children);
+  }
+
   setAttribute(name: string, value: string): void {
     this.attributes.set(name, value);
     if (name.startsWith('data-')) this.dataset[name.slice(5)] = value;

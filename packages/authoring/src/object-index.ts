@@ -5,6 +5,7 @@ import type { ProjectSnapshot, ProjectSnapshotScene } from './project-snapshot.j
 import { GALLERY_PATH, readGalleryDocument, type GalleryCgEntry } from './gallery-operations.js';
 import { AuthoringOperationError } from './change-session.js';
 import { timelineIdFromPath } from './timeline-identity.js';
+import { PROJECT_UI_PAGES, readProjectUi, resolveProjectFontPaths, type ProjectUiNode } from '@surdet/core';
 import {
   analyzeCharacterCompositionReferences,
   analyzeSceneCompositionReferences,
@@ -395,6 +396,59 @@ function addConfigObjects(
   }
 }
 
+function addUiObjects(snapshot: ProjectSnapshot, objects: AuthoringObject[], candidates: Map<string, string[]>): void {
+  const rootRef = 'config:ui';
+  const raw = JSON.stringify(snapshot.config.ui ?? null);
+  addObject(objects, { kind: 'ui-config', semanticId: rootRef, objectRef: rootRef,
+    source: sourceOf('game.config.json', 1, raw), fingerprint: fingerprint(raw),
+    references: [], referencedBy: [], childRefs: [], details: snapshot.config.ui ?? null }, candidates);
+  let ui: ReturnType<typeof readProjectUi>;
+  try { ui = readProjectUi(snapshot.config); } catch { return; } // validateSnapshot owns the structural error.
+  if (!ui) return;
+  const fontPaths = resolveProjectFontPaths(snapshot.config);
+  const ensureAsset = (ref: string, nodeRaw: string): void => {
+    if (objects.some(object => object.objectRef === ref)) return;
+    addObject(objects, { kind: 'asset', semanticId: ref, objectRef: ref,
+      source: sourceOf('game.config.json', 1, nodeRaw), references: [], referencedBy: [] }, candidates);
+  };
+  const visit = (page: string, node: ProjectUiNode, parentRef: string): void => {
+    const ref = `ui:${node.id}`;
+    const nodeRaw = JSON.stringify(node);
+    addObject(objects, { kind: 'ui-node', semanticId: ref, objectRef: ref, parentRef,
+      source: sourceOf('game.config.json', 1, nodeRaw), fingerprint: fingerprint(nodeRaw),
+      references: [], referencedBy: [], childRefs: [], details: { page, node } }, candidates);
+    if (node.asset) {
+      const assetRef = `asset:bg:${node.asset}`;
+      ensureAsset(assetRef, nodeRaw);
+      addReferenceCandidate(candidates, ref, assetRef);
+      addReferenceCandidate(candidates, rootRef, assetRef);
+    }
+    for (const binding of [node.text, node.binding]) if (binding?.kind === 'variable') {
+      addReferenceCandidate(candidates, ref, `variable:${binding.name}`);
+      addReferenceCandidate(candidates, rootRef, `variable:${binding.name}`);
+    }
+    {
+      const path = fontPaths[node.style?.fontRole ?? 'ui'];
+      if (path) {
+        const assetRef = `asset:font:${path}`;
+        ensureAsset(assetRef, nodeRaw);
+        addReferenceCandidate(candidates, ref, assetRef);
+        addReferenceCandidate(candidates, rootRef, assetRef);
+      }
+    }
+    node.children?.forEach(child => visit(page, child, ref));
+  };
+  for (const page of PROJECT_UI_PAGES) {
+    const root = ui.pages[page];
+    if (!root) continue;
+    const pageRef = `ui:page:${page}`;
+    addObject(objects, { kind: 'ui-page', semanticId: pageRef, objectRef: pageRef, parentRef: rootRef,
+      source: sourceOf('game.config.json', 1, JSON.stringify(root)), fingerprint: fingerprint(JSON.stringify(root)),
+      references: [], referencedBy: [], childRefs: [], details: { page } }, candidates);
+    visit(page, root, pageRef);
+  }
+}
+
 function isRecordValue(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -526,6 +580,7 @@ export function buildObjectIndex(snapshot: ProjectSnapshot): ObjectIndex {
     }, candidates);
   }
   addConfigObjects(snapshot, objects, candidates);
+  addUiObjects(snapshot, objects, candidates);
   let cgs: GalleryCgEntry[] = [];
   try {
     cgs = readGalleryDocument(snapshot.files.find((file) => file.path === GALLERY_PATH)?.text).cgs;
@@ -550,7 +605,7 @@ export function buildObjectIndex(snapshot: ProjectSnapshot): ObjectIndex {
   const byRef = new Map(objects.map((object) => [object.objectRef, object]));
   for (const object of objects) {
     const parent = object.parentRef === undefined ? undefined : byRef.get(object.parentRef);
-    if (parent?.kind === 'scene' || parent?.kind === 'choice' || parent?.kind === 'condition' || parent?.kind === 'condition-branch') {
+    if (parent?.kind === 'scene' || parent?.kind === 'choice' || parent?.kind === 'condition' || parent?.kind === 'condition-branch' || parent?.kind === 'ui-config' || parent?.kind === 'ui-page' || parent?.kind === 'ui-node') {
       (parent.childRefs ??= []).push(object.objectRef);
     }
     const targets = candidates.get(object.objectRef) ?? [];

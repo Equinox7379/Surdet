@@ -154,6 +154,9 @@ export function describeAuthoringObject(object: AuthoringObject): AuthoringObjec
     character: '角色',
     'gallery-cg': 'CG',
     'entry-scene': '入口场景',
+    'ui-config': '作品界面',
+    'ui-page': '界面页面',
+    'ui-node': '界面组件',
   };
   const semanticName = object.kind === 'gallery-cg' ? object.objectRef.slice('gallery:cgs:'.length)
     : object.semanticId?.slice(object.semanticId.indexOf(':') + 1);

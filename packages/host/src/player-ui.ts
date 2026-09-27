@@ -183,9 +183,11 @@ function initialSnapshot(initial: PlayerUiSessionInitialState | undefined): Play
 export class PlayerUiSession {
   #snapshot: PlayerUiSessionSnapshot;
   #operationOrigin: PlayerUiSessionSnapshot | null = null;
+  readonly #onChange?: () => void;
 
-  constructor(initial?: PlayerUiSessionInitialState) {
+  constructor(initial?: PlayerUiSessionInitialState, onChange?: () => void) {
     this.#snapshot = initialSnapshot(initial);
+    this.#onChange = onChange;
   }
 
   snapshot(): PlayerUiSessionSnapshot {
@@ -314,6 +316,7 @@ export class PlayerUiSession {
       throw transitionError('fail-operation is missing its origin snapshot');
     }
     this.#snapshot = origin;
+    this.#onChange?.();
     return this.#snapshot;
   }
 
@@ -380,12 +383,13 @@ export class PlayerUiSession {
   #commit(snapshot: PlayerUiSessionSnapshot): PlayerUiSessionSnapshot {
     validateSnapshot(snapshot);
     this.#snapshot = freezeSnapshot(snapshot);
+    this.#onChange?.();
     return this.#snapshot;
   }
 }
 
-export function createPlayerUiSession(initial?: PlayerUiSessionInitialState): PlayerUiSession {
-  return new PlayerUiSession(initial);
+export function createPlayerUiSession(initial?: PlayerUiSessionInitialState, onChange?: () => void): PlayerUiSession {
+  return new PlayerUiSession(initial, onChange);
 }
 
 export function canAdvance(snapshot: PlayerUiSessionSnapshot): boolean {

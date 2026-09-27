@@ -27,6 +27,7 @@ export default defineConfig(({ mode }) => ({
       input: {
         main: fileURLToPath(new URL('index.html', import.meta.url)),
         preview: fileURLToPath(new URL('preview.html', import.meta.url)),
+        uiPreview: fileURLToPath(new URL('ui-preview.html', import.meta.url)),
         ...(mode === 'studio-examples'
           ? { studioExamples: fileURLToPath(new URL('studio-examples.html', import.meta.url)) }
           : {}),

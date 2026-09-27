@@ -322,6 +322,18 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
       sourcePath: 'game.config.json',
     });
   }
+  const uiPages = asRecord(asRecord(snapshot.config.ui)?.pages) ?? {};
+  const inspectUiNode = (page: string, node: unknown): void => {
+    const item = asRecord(node);
+    if (!item) return;
+    if (typeof item.asset === 'string') add('background', item.asset, {
+      referenceId: `ui:${String(item.id ?? page)}:asset`, sourceKind: 'config',
+      sourceLabel: `界面 ${page} · ${String(item.id ?? '图片')}`, sourcePath: 'game.config.json',
+      objectRef: typeof item.id === 'string' ? `ui:${item.id}` : 'config:ui',
+    });
+    if (Array.isArray(item.children)) item.children.forEach(child => inspectUiNode(page, child));
+  };
+  for (const [page, root] of Object.entries(uiPages)) inspectUiNode(page, root);
   const characters = asRecord(snapshot.config.characters) ?? {};
   for (const [id, declaration] of Object.entries(characters)) {
     const record = asRecord(declaration);

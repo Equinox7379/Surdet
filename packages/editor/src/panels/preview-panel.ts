@@ -18,7 +18,7 @@ export { normalizePreviewTraceMessage, type PreviewTraceMessage, type PreviewTra
 import { createEditorProjectStorage } from '../authoring-project-storage.js';
 import { assetPathForHandle } from '../project-io.js';
 import { editorPreviewPublisher, editorWorkspaceStatus } from '../editor-workspace.js';
-import { inspectConfigDraftState, previewStageConfigText, previewThemeConfigText, readStageConfigDraft, readThemeConfigDraft } from './config.js';
+import { inspectConfigDraftState, previewStageConfigText, previewThemeConfigText, previewUiConfigText, readUiConfigDraft, readStageConfigDraft, readThemeConfigDraft } from './config.js';
 import { previewTextHash, projectPreviewContent } from '../preview-content.js';
 import { previewCheckpointKey, readPreviewCheckpoint, writePreviewCheckpoint } from '../preview-checkpoints.js';
 import type { FontRole } from '@surdet/renderer';
@@ -67,6 +67,7 @@ function previewSourceKey(): string {
     config: state.gameConfigText,
     stageDraft: inspectConfigDraftState().dirtySections.includes('stage') ? readStageConfigDraft() : null,
     themeDraft: inspectConfigDraftState().dirtySections.includes('theme') ? readThemeConfigDraft() : null,
+    uiDraft: inspectConfigDraftState().dirtySections.includes('ui') ? readUiConfigDraft() : null,
     configs: state.configFiles,
     configReadErrors: state.configReadErrors,
     timelines: state.timelines.map((entry) => [entry.file, entry.text]),
@@ -776,7 +777,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     let assets: PreviewAssets;
     let requestConfigText: string;
     try {
-      requestConfigText = projected?.configText ?? previewThemeConfigText(previewStageConfigText(state.gameConfigText));
+      requestConfigText = projected?.configText ?? previewUiConfigText(previewThemeConfigText(previewStageConfigText(state.gameConfigText)));
       cachedFonts = await readProjectFonts(requestConfigText);
       assets = await readProjectImages(requestConfigText);
     }

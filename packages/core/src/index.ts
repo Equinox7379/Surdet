@@ -40,6 +40,7 @@ export * from './localization.js';
 export * from './project-stats.js';
 export * from './project-fonts.js';
 export * from './project-theme.js';
+export * from './project-ui.js';
 export * from './theme-tokens.js';
 export * from './stage.js';
 export { assertUniquePortraitBindings, parsePortraitFileName, projectPortraitOverrides, portraitSourcePaths, resolveProjectPortraits, type CharacterPortraits, type CharacterVisuals, type ProjectPortrait } from './project-portraits.js';

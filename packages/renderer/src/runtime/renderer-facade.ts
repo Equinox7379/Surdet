@@ -122,6 +122,7 @@ export interface RendererStagePort extends PresentationStage {
   restorePresentation?: (snapshot: unknown) => void;
   clearPresentation?: () => void;
   setTheme?: (theme: RendererTheme) => void;
+  setDeclarativeUiSuppression?: (pages: Partial<Record<import('@surdet/core').ProjectUiPageId, boolean>>) => void;
 }
 
 /** @internal Controller port with the old snapshot methods kept behind the facade. */
@@ -782,7 +783,8 @@ export class RendererFacade {
       },
     };
 
-    this.commands = { assets, world, dialogue, menu, gallery, system, loading, preferences, presentation };
+    this.commands = { assets, world, dialogue, menu, gallery, system, loading, preferences, presentation,
+      projectUi: { setDefaultSuppression: (pages) => this.#callStage('projectUi', 'setDefaultSuppression', this.#stage.setDeclarativeUiSuppression, pages) } };
 
     const worldQueries: WorldQueries = {
       isFadeActive: () => this.#worldPort?.isFadeActive?.() ?? this.#stage.isFadeActive?.() ?? false,
