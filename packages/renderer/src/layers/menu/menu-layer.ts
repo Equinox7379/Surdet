@@ -227,8 +227,9 @@ export class MenuLayer implements MenuProjectionPort {
     return this.#menuMotionRemain > 0 && this.#menuLayer.visible;
   }
 
-  update(deltaMs: number): void {
-    if (this.#disposed || !this.needsUpdate) return;
+  /** 推进入场动画；返回是否仍有待完成的菜单更新（供暂停期间的帧调度判断）。 */
+  update(deltaMs: number): boolean {
+    if (this.#disposed || !this.needsUpdate) return false;
     this.#menuMotionRemain = Math.max(0, this.#menuMotionRemain - deltaMs);
     const progress = 1 - this.#menuMotionRemain / this.#menuMotionDur;
     const eased = 1 - Math.pow(1 - progress, 3);
@@ -238,6 +239,7 @@ export class MenuLayer implements MenuProjectionPort {
       this.#menuLayer.alpha = 1;
       if (this.#menuPanel) this.#menuPanel.x = 0;
     }
+    return this.needsUpdate;
   }
 
   showTitle(view: TitleView, onSelect: (id: string) => void): void {
