@@ -4,7 +4,7 @@ vi.mock('../src/panels/calendar-map.js', () => ({ renderCalendarMap: vi.fn() }))
 vi.mock('../src/v4/surfaces.js', () => ({ enhanceConfigTables: vi.fn() }));
 vi.mock('../src/project-io.js', () => ({
   assertProjectWriteUnlocked: vi.fn(),
-  runProjectWriteOperation: (operation: () => Promise<unknown>) => operation(),
+  runProjectWriteOperation: vi.fn((operation: () => Promise<unknown>) => operation()),
   readProjectSourceText: async (handle: FileSystemFileHandle) => new TextDecoder('utf-8', { ignoreBOM: true }).decode(await (await handle.getFile()).arrayBuffer()),
   writeProjectText: async (_path: string, value: unknown, handle: { createWritable: () => Promise<{ write: (value: unknown) => Promise<void>; close: () => Promise<void> }> }) => {
     const writable = await handle.createWritable();
@@ -13,9 +13,11 @@ vi.mock('../src/project-io.js', () => ({
     return handle;
   },
 }));
-vi.mock('../src/authoring-project-storage.js', () => ({
+vi.mock('../src/authoring-project-storage.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/authoring-project-storage.js')>(),
   commitCharacterTable: vi.fn(),
   commitStageConfiguration: vi.fn(),
+  commitThemeConfiguration: vi.fn(),
   parseCharacterVisualsDraft: (_id: string, text: string) => JSON.parse(text),
 }));
 
@@ -155,8 +157,10 @@ const {
   resetConfigSession,
   saveDirtyConfigSections,
   readStageConfigDraft, editStageConfigDraft, saveStageConfigDraftUnlocked, previewStageConfigText,
+  readThemeConfigDraft, editThemeConfigDraft, saveThemeConfigDraftUnlocked, previewThemeConfigText,
 } = await import('../src/panels/config.js');
-const { commitStageConfiguration } = await import('../src/authoring-project-storage.js');
+const { commitStageConfiguration, commitThemeConfiguration } = await import('../src/authoring-project-storage.js');
+const { runProjectWriteOperation } = await import('../src/project-io.js');
 
 async function renderFixture(gameConfigText = INITIAL_GAME_CONFIG): Promise<FakeElement> {
   state.configReadErrors = {};
@@ -304,6 +308,82 @@ describe('configuration draft state', () => {
     expect(readStageConfigDraft()).toBe(submitted);
     expect(JSON.parse(state.gameConfigText).stage.distances.near).toBe(1.4);
     expect(inspectConfigDraftState().dirty).toBe(false);
+  });
+
+  it('keeps a theme draft in preview and undo/redo, then drops it on project switch', async () => {
+    const first = JSON.stringify({ ...JSON.parse(INITIAL_GAME_CONFIG),
+      theme: { colors: { accent: 0x123456 }, future: { keep: true } },
+      player: { titleLogo: 'old-logo', subtitle: 'still here' } });
+    await renderFixture(first);
+    const original = readThemeConfigDraft();
+    const next = JSON.stringify({ theme: { colors: { accent: 0x654321 } }, titleLogo: null });
+    editThemeConfigDraft(next);
+    expect(inspectConfigDraftState().dirtySections).toEqual(['theme']);
+    const preview = JSON.parse(previewThemeConfigText(first)) as Record<string, any>;
+    expect(preview.theme).toEqual({ colors: { accent: 0x654321 }, future: { keep: true } });
+    expect(preview.player).toEqual({ subtitle: 'still here' });
+    configUndo();
+    expect(readThemeConfigDraft()).toBe(original);
+    expect(inspectConfigDraftState().dirty).toBe(false);
+    configRedo();
+    expect(readThemeConfigDraft()).toBe(next);
+    resetConfigSession();
+    state.gameConfigText = JSON.stringify({ ...JSON.parse(INITIAL_GAME_CONFIG), theme: { colors: { accent: 7 } } });
+    expect(JSON.parse(readThemeConfigDraft()).theme.colors.accent).toBe(7);
+    expect(inspectConfigDraftState().dirty).toBe(false);
+  });
+
+  it('rejects malformed theme shapes and stale source without replacing the stored theme', async () => {
+    await renderFixture(JSON.stringify({ ...JSON.parse(INITIAL_GAME_CONFIG), theme: { colors: { accent: 7 } } }));
+    vi.mocked(commitThemeConfiguration).mockClear();
+    editThemeConfigDraft('{"theme":"bad","titleLogo":null}');
+    expect(() => previewThemeConfigText(state.gameConfigText)).toThrow(/theme|主题/);
+    await expect(saveThemeConfigDraftUnlocked()).rejects.toThrow(/theme|主题/);
+    expect(commitThemeConfiguration).not.toHaveBeenCalled();
+    editThemeConfigDraft('{"theme":{"colors":{"accent":8}},"titleLogo":null}');
+    state.gameConfigText = JSON.stringify({ ...JSON.parse(state.gameConfigText), theme: { colors: { accent: 9 } } });
+    await expect(saveThemeConfigDraftUnlocked()).rejects.toThrow('主题来源配置已经变化');
+    expect(commitThemeConfiguration).not.toHaveBeenCalled();
+    expect(inspectConfigDraftState().dirtySections).toEqual(['theme']);
+  });
+
+  it('saves a theme snapshot, preserves newer input, and reopens the saved version', async () => {
+    await renderFixture();
+    const submitted = '{"theme":{"colors":{"accent":7}},"titleLogo":null}';
+    editThemeConfigDraft(submitted);
+    let finish!: () => void;
+    const waiting = new Promise<void>(resolve => { finish = resolve; });
+    vi.mocked(commitThemeConfiguration).mockImplementationOnce(async (theme, titleLogo, expected) => {
+      expect(theme).toEqual({ colors: { accent: 7 } });
+      expect(titleLogo).toBeNull();
+      expect(expected).toBe(INITIAL_GAME_CONFIG);
+      await waiting;
+      state.gameConfigText = JSON.stringify({ ...JSON.parse(expected), theme });
+      return { text: state.gameConfigText, before: null, after: theme };
+    });
+    const saving = saveDirtyConfigSections();
+    editThemeConfigDraft('{"theme":{"colors":{"accent":8}},"titleLogo":null}');
+    finish();
+    await expect(saving).resolves.toEqual({ saved: 1, failures: 0, remainingDirty: true });
+    expect(JSON.parse(state.gameConfigText).theme.colors.accent).toBe(7);
+    configUndo();
+    expect(readThemeConfigDraft()).toBe(submitted);
+    expect(inspectConfigDraftState().dirty).toBe(false);
+    resetConfigSession();
+    await renderFixture(state.gameConfigText);
+    expect(JSON.parse(readThemeConfigDraft()).theme.colors.accent).toBe(7);
+  });
+
+  it('takes the project write lock for the theme save button and displays failures', async () => {
+    const root = await renderFixture();
+    editThemeConfigDraft('{"theme":{"colors":{"accent":7}},"titleLogo":null}');
+    vi.mocked(runProjectWriteOperation).mockClear();
+    vi.mocked(commitThemeConfiguration).mockRejectedValueOnce(new Error('fixture write failure'));
+    byText(root, '保存主题配置').click();
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(runProjectWriteOperation).toHaveBeenCalledTimes(1);
+    expect(root.textContent).toContain('fixture write failure');
+    expect(inspectConfigDraftState().dirtySections).toEqual(['theme']);
   });
 
   it('rebases gallery label rows/history without saving unrelated changes; dirty replay references prevent deletion', async () => {

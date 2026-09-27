@@ -25,7 +25,8 @@ const galleryText = JSON.stringify({
 const fixtureContents: Record<string, string> = {
   'game.config.json': JSON.stringify({
     entryScene: 'asset_probe',
-    player: { titleBackground: 'castle_hall' },
+    player: { titleBackground: 'castle_hall', titleLogo: 'castle_hall' },
+    theme: { dialogSkin: 'castle_hall', buttonSkin: 'castle_hall' },
     characters: { lynn: { name: '凛', avatar: 'lynn' } },
     variables: {},
   }),
@@ -188,6 +189,9 @@ describe('shared asset intelligence projection', () => {
         expect.objectContaining({ sourceKind: 'timeline', sourcePath: 'content/timelines/asset_intro.json' }),
         expect.objectContaining({ sourceKind: 'gallery', sourcePath: 'content/config/gallery.json' }),
         expect.objectContaining({ sourceKind: 'config', sourcePath: 'game.config.json', referenceId: 'config:player:titleBackground' }),
+        expect.objectContaining({ referenceId: 'config:player:titleLogo' }),
+        expect.objectContaining({ referenceId: 'config:theme:dialogSkin' }),
+        expect.objectContaining({ referenceId: 'config:theme:buttonSkin' }),
       ]),
     );
     expect(asset(result, 'content/assets/portrait/lynn_uniform_normal.png').references).toEqual(

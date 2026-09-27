@@ -62,6 +62,7 @@ import {
   rendererInputForGameAction,
 } from '@surdet/renderer';
 import type { GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerProfile, AssetLoadJob, AssetPriority, LoadingProgress, GameAction, NumericSettingKey } from '@surdet/renderer';
+import { resolvePlayerTheme } from '@surdet/core';
 import {
   LocalStorageProfileStorage,
   connectSystemRouter,
@@ -99,7 +100,8 @@ export interface PlayerProject {
     characters?: Record<string, { name?: string; avatar?: string; portraits?: CharacterPortraits; visuals?: CharacterVisuals }>;
     font?: string;
     fonts?: Partial<Record<'body' | 'title' | 'ui', string>>;
-    player?: { subtitle?: string; titleBackground?: string; endScenes?: readonly string[]; firstRunHint?: string };
+    player?: { subtitle?: string; titleBackground?: string; titleLogo?: string; endScenes?: readonly string[]; firstRunHint?: string };
+    theme?: Record<string, unknown>;
   };
   sceneFiles: Record<string, () => Promise<unknown>>;
   timelineFiles?: Record<string, unknown>;
@@ -138,6 +140,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
   const playerConfig = {
     subtitle: project.subtitle ?? gameConfig.player?.subtitle ?? '',
     titleBackground: project.titleBackground ?? gameConfig.player?.titleBackground ?? '',
+    titleLogo: project.titleLogo ?? gameConfig.player?.titleLogo ?? '',
     endScenes: project.endScenes ?? gameConfig.player?.endScenes ?? [],
     firstRunHint: project.firstRunHint ?? gameConfig.player?.firstRunHint ?? '',
   };
@@ -284,7 +287,9 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
     session: uiSession,
     onError: (error) => console.error('[starter] player shell operation failed:', error),
   });
-  commands.preferences.setTheme(createRendererTheme(project.theme));
+  // 显式 Player 参数 > game.config.json 主题 > 引擎默认。
+  const playerTheme = resolvePlayerTheme(gameConfig, project.theme);
+  commands.preferences.setTheme(playerTheme);
   dialogue.setSpeakerProfiles(speakerProfiles);
   settings.apply(typewriter, audio);
   // Observe the start before the presentation handler can synchronously finish a skipped video.
@@ -543,6 +548,8 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
 
   // ===== 素材管线：content/assets 约定 bg/<key>.png | portrait/<角色>_<服装>_<表情>.png | avatar/<角色>.png | bgm|se|voice/<key>.音频 =====
   async function loadAssets(): Promise<void> {
+    const loadedBackgrounds = new Set<string>();
+    const backgroundErrors = new Map<string, string>();
     const desktopAsset = window.surdetAsset;
     const files = desktopAsset ? await desktopAsset.list() : Object.keys(project.assetFiles);
     const portraitBindings = resolveProjectPortraits(gameConfig, files.map(rel => `content/assets/${rel}`));
@@ -577,6 +584,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
       const format = fname.split('.').pop()?.toLowerCase();
       if (kind === 'bg' && IMG.test(fname)) {
         await assets.registerBackground(fname.replace(IMG, ''), url, format);
+        loadedBackgrounds.add(fname.replace(IMG, ''));
         return true;
       } else if (kind === 'portrait' && IMG.test(fname)) {
         const path = `content/assets/${rel}`;
@@ -612,6 +620,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         else revoke?.();
       } catch (error) {
         revoke?.();
+        if (rel.split('/')[0]?.toLowerCase() === 'bg') backgroundErrors.set(rel.split('/').at(-1)!.replace(IMG, ''), error instanceof Error ? error.message : String(error));
         if (portraitBindings.some(binding => binding.configured && portraitSourcePaths(binding).includes(`content/assets/${rel}`))) {
           dialogue.showBanner(`角色立绘加载失败：content/assets/${rel} · ${error instanceof Error ? error.message : String(error)}`, 'tip');
         }
@@ -645,6 +654,9 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
       loading.showLoading(progress);
     });
     lastLoadingProgress = { ...finalProgress };
+    for (const key of [playerConfig.titleLogo, ...Object.values(playerTheme.skins)].filter(Boolean)) {
+      if (!loadedBackgrounds.has(key)) throw new Error(`作品主题图片未加载：${key}${backgroundErrors.has(key) ? ` · ${backgroundErrors.get(key)}` : '（素材不存在）'}`);
+    }
     // All source URLs are now retained; never wait for sibling jobs inside the bounded queue.
     for (const binding of portraitBindings) if (binding.visual) {
       await assets.registerPortraitVisual(binding.role, binding.outfit, binding.expression, binding.visual, visualSources);
@@ -776,7 +788,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         title: (gameConfig as { title?: string }).title ?? 'Surdet Game',
         subtitle: playerConfig.subtitle,
         backgroundKey: playerConfig.titleBackground,
-        logoKey: project.titleLogo,
+        logoKey: playerConfig.titleLogo || undefined,
         items: [
           { id: 'new', label: '开始游戏' },
           { id: 'continue', label: '继续游戏' },
@@ -1568,6 +1580,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
 
   // 启动：加载素材 → 标题画面（不再直进剧情）
   await loadAssets();
+  commands.preferences.setTheme(playerTheme);
   dialogue.showCommandRail([], onCommandRailSelect);
   refreshCommandRail();
   showTitleScreen();

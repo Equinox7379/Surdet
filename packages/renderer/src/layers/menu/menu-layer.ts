@@ -94,7 +94,7 @@ export class MenuLayer implements MenuProjectionPort {
   #frameRequest: FrameRequestHandler | null = null;
   #disposed = false;
   #theme: RendererTheme = DEFAULT_RENDERER_THEME;
-  readonly #surfacePaints = new WeakMap<Graphics, () => void>();
+  readonly #surfacePaints = new WeakMap<Container, () => void>();
 
   #titleLayer: Container;
   #titleHandler: ((id: string) => void) | null = null;
@@ -217,7 +217,7 @@ export class MenuLayer implements MenuProjectionPort {
     repaintThemeProjection(this.#settingsLayer, previous, theme);
     repaintThemeProjection(this.#saveLoadLayer, previous, theme);
     const repaintSurface = (node: Container): void => {
-      if (node instanceof Graphics) this.#surfacePaints.get(node)?.();
+      this.#surfacePaints.get(node)?.();
       for (const child of node.children) repaintSurface(child);
     };
     for (const layer of [this.#titleLayer, this.#endingLayer, this.#menuLayer, this.#settingsLayer, this.#saveLoadLayer]) repaintSurface(layer);
@@ -343,6 +343,7 @@ export class MenuLayer implements MenuProjectionPort {
       const center = item.secondary ? 70 : 142;
       const fontSizeRole = item.secondary ? 'captionSize' : 'bodySize';
       if (item.secondary) layer.addChild(this.#surface(rowX, rowY, width, 46, 'panel', 'panel'));
+      layer.addChild(this.#buttonSkin(rowX, rowY, width, 46));
       if (enabled) this.#titleTargets.push({ id: item.id, x: rowX, y: rowY, width, height: 46 });
       const frame = bindThemeGraphicsProjection(new Graphics(), ['accent']);
       const paintFocus = (active: boolean): void => {
@@ -495,7 +496,7 @@ export class MenuLayer implements MenuProjectionPort {
         style: { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.text, fontWeight: 'normal' } satisfies TextStyleOptions,
       }), { fill: 'text', fontSize: 'uiSize' });
       label.position.set(62, 14);
-      row.addChild(hover, marker, index, label);
+      row.addChild(this.#buttonSkin(0, 4, pw - 32, rowH - 8), hover, marker, index, label);
       bindPlayerControl(row, { label: item.label, width: pw - 32, height: rowH - 8, y: 4 });
       row.eventMode = 'static';
       row.cursor = 'pointer';
@@ -592,6 +593,7 @@ export class MenuLayer implements MenuProjectionPort {
       .fill({ color: this.#theme.colors.line, alpha: 0.32 }), ['line']));
     const close = bindThemeTextProjection(new PText({ text: '×', style: { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted', fontSize: 'headingSize' });
     close.position.set(px + pw - 52, py + 26);
+    layer.addChild(this.#buttonSkin(close.x - 10, close.y - 8, 48, 48));
     bindPlayerControl(close, { label: '关闭设置', width: 48, height: 48, x: -10, y: -8 });
     close.eventMode = 'static';
     close.cursor = 'pointer';
@@ -607,6 +609,7 @@ export class MenuLayer implements MenuProjectionPort {
     groups.forEach((item, index) => {
       const tab = new PText({ text: item.label, style: { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.textMuted, fontFamily: this.#fontFamily('ui') } });
       tab.position.set(px + 32 + index * 190, py + 102);
+      layer.addChild(this.#buttonSkin(tab.x - 8, tab.y - 6, 170, 40));
       bindThemeTextProjection(tab, { fill: 'textMuted', fontSize: 'uiSize' });
       bindPlayerControl(tab, { label: `${item.label}设置`, width: 170, height: 40, x: -8, y: -6 });
       if (item === group) {
@@ -647,12 +650,13 @@ export class MenuLayer implements MenuProjectionPort {
       }
       left.on('pointerdown', () => this.#settingsHandlers?.onChange(row.id, -1));
       right.on('pointerdown', () => this.#settingsHandlers?.onChange(row.id, 1));
-      controls.addChild(left, value, right);
+      controls.addChild(this.#buttonSkin(40, -3, 48, 48), this.#buttonSkin(218, -3, 48, 48), left, value, right);
       layer.addChild(controls);
     });
     if (pageCount > 1) {
       const pager = new PText({ text: `${this.#settingsPage + 1} / ${pageCount}　下一页`, style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.text } });
       pager.position.set(px + pw - 230, py + panelH - 48);
+      layer.addChild(this.#buttonSkin(pager.x, pager.y, 200, 40));
       bindThemeTextProjection(pager, { fill: 'text', fontSize: 'captionSize' });
       bindPlayerControl(pager, { label: '下一页设置', width: 200, height: 40 });
       pager.on('pointerdown', () => changePage(this.#settingsPage + 1 < pageCount ? 1 : -this.#settingsPage));
@@ -729,6 +733,7 @@ export class MenuLayer implements MenuProjectionPort {
     }), { fill: 'textMuted', fontSize: 'captionSize' })).position.set(255, 110);
     const close = bindThemeTextProjection(new PText({ text: '×', style: { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted', fontSize: 'headingSize' });
     close.position.set(this.#w - 106, 76);
+    layer.addChild(this.#buttonSkin(close.x - 10, close.y - 8, 48, 48));
     bindPlayerControl(close, { label: '关闭存读档', width: 48, height: 48, x: -10, y: -8 });
     close.eventMode = 'static';
     close.cursor = 'pointer';
@@ -774,7 +779,7 @@ export class MenuLayer implements MenuProjectionPort {
         .roundRect(1, 1, cardW - 2, cardH - 2, this.#theme.radius.md)
         .stroke({ width: 2, color: this.#theme.colors.accentSoft, alpha: 0.95 }), ['accentSoft']);
       marker.alpha = 0;
-      card.addChild(surface, hover, marker);
+      card.addChild(surface, this.#buttonSkin(0, 0, cardW, cardH), hover, marker);
       let textX = 28;
       if (slot.thumbnail) {
         const texture = this.#thumbTexture(slot.thumbnail);
@@ -817,6 +822,7 @@ export class MenuLayer implements MenuProjectionPort {
           style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.accentSoft, fontWeight: 'bold' } satisfies TextStyleOptions,
         }), { fill: 'accentSoft', fontSize: 'captionSize' });
         restore.position.set(cardW - 210, 80);
+        card.addChild(this.#buttonSkin(restore.x - 4, restore.y - 4, 204, 34));
         bindPlayerControl(restore, { label: `恢复槽位 ${slot.id} 的备份并读取`, width: 204, height: 34, x: -4, y: -4 });
         restore.eventMode = 'static';
         restore.cursor = 'pointer';
@@ -957,6 +963,7 @@ export class MenuLayer implements MenuProjectionPort {
       for (const [label, direction, x] of [['上一页', -1, 90], ['下一页', 1, this.#w - 210]] as const) {
         const pager = bindThemeTextProjection(new PText({ text: label, style: { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.text } }), { fill: 'text', fontSize: 'uiSize' });
         pager.position.set(x, this.#h - 54);
+        layer.addChild(this.#buttonSkin(pager.x, pager.y, 120, 40));
         const enabled = direction < 0 ? this.#saveLoadPage > 0 : this.#saveLoadPage + 1 < pageCount;
         bindPlayerControl(pager, { label: `${label}存档`, width: 120, height: 40, enabled });
         pager.alpha = enabled ? 1 : this.#theme.opacity.disabled;
@@ -1048,7 +1055,7 @@ export class MenuLayer implements MenuProjectionPort {
         .stroke({ width: 1.5, color: this.#theme.colors.line }), ['line']);
       const text = bindThemeTextProjection(new PText({ text: label, style: { fontSize: this.#theme.typography.uiSize, fill: index === 1 ? this.#theme.colors.danger : this.#theme.colors.text } }), { fill: index === 1 ? 'danger' : 'text', fontSize: 'uiSize' });
       text.anchor.set(0.5); text.position.set(128, 24);
-      button.addChild(border, text);
+      button.addChild(this.#buttonSkin(0, 0, 256, 48), border, text);
       bindPlayerControl(button, { label, width: 256, height: 48 });
       button.on('pointerover', () => { border.alpha = 1; this.#requestFrame(); });
       button.on('pointerout', () => { border.alpha = 0.5; this.#requestFrame(); });
@@ -1059,7 +1066,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#requestFrame();
   }
 
-  #surface(x: number, y: number, width: number, height: number, color: keyof RendererTheme['colors'], opacity: keyof RendererTheme['opacity'], radius?: keyof RendererTheme['radius'], border = false): Graphics {
+  #surface(x: number, y: number, width: number, height: number, color: keyof RendererTheme['colors'], opacity: keyof RendererTheme['opacity'], radius?: keyof RendererTheme['radius'], border = false): Graphics | Sprite {
     const graphic = bindThemeGraphicsProjection(new Graphics(), border ? [color, 'line'] : [color]);
     const paint = (): void => {
       if (border) {
@@ -1075,6 +1082,27 @@ export class MenuLayer implements MenuProjectionPort {
     this.#surfacePaints.set(graphic, paint);
     paint();
     return graphic;
+  }
+
+  #buttonSkin(x: number, y: number, width: number, height: number): Container {
+    const holder = new Container();
+    holder.eventMode = 'none';
+    let sprite: Sprite | undefined;
+    const paint = (): void => {
+      const key = this.#theme.skins.buttonSkin;
+      const texture = key ? this.#assets.resolveBackground(key) : null;
+      if (!texture) { if (sprite) sprite.visible = false; return; }
+      if (!sprite) { sprite = new Sprite(texture); holder.addChild(sprite); }
+      sprite.texture = texture;
+      sprite.visible = true;
+      sprite.position.set(x, y);
+      sprite.width = width;
+      sprite.height = height;
+      sprite.alpha = this.#theme.opacity.surface;
+    };
+    this.#surfacePaints.set(holder, paint);
+    paint();
+    return holder;
   }
 
   #saveLoadMessage(message: string): void {

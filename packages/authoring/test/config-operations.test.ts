@@ -11,6 +11,8 @@ import {
   type ChangeSession,
   type ProjectWriteStorage,
   type TextHasher,
+  applyThemeConfigPatch,
+  inspectThemeConfig,
 } from '../src/index.js';
 import {
   applyCharacterEnsure,
@@ -63,6 +65,45 @@ async function open(): Promise<{ change: ChangeSession; repo: InMemoryChangeRepo
   change.record.workingFiles['game.config.json'] = baseConfig;
   return { change, repo };
 }
+
+describe('theme configuration validation', () => {
+  it('reads defaults, validates assets, resets fields and preserves unrelated config', async () => {
+    const { change } = await open();
+    change.record.composition = { ...change.record.composition!, mode: 'direct' };
+    const initial = await inspectThemeConfig(JSON.parse(baseConfig), hasher);
+    expect(initial.effective.tokens.colors?.accent).toBe(0x203e88);
+    expect(initial.sources['colors.accent']).toBe('default');
+    const input = { operationId: 'theme', expectedFingerprint: initial.fingerprint, patch: { colors: { accent: 123 }, dialogSkin: 'paper', titleLogo: 'logo' } };
+    const before = structuredClone(change.record);
+    await expect(applyThemeConfigPatch(change, input, hasher, buildAssetCatalog([]))).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(change.record).toEqual(before);
+    const assets = buildAssetCatalog(['content/assets/bg/paper.png', 'content/assets/bg/logo.png']);
+    const result = await applyThemeConfigPatch(change, input, hasher, assets);
+    expect(result.themeConfig.sources['colors.accent']).toBe('project');
+    expect(JSON.parse(change.record.workingFiles['game.config.json']!).characters).toEqual(JSON.parse(baseConfig).characters);
+    await expect(applyThemeConfigPatch(change, { ...input, operationId: 'stale' }, hasher, assets)).rejects.toMatchObject({ code: 'OBJECT_REF_STALE' });
+    const cleared = await applyThemeConfigPatch(change, { operationId: 'clear', expectedFingerprint: result.themeConfig.fingerprint, patch: null }, hasher, assets);
+    expect(cleared.themeConfig.value).toBeNull();
+    expect(cleared.themeConfig.titleLogo).toBe('logo');
+  });
+
+  it('rejects candidate theme mutations without altering business records', async () => {
+    const { change } = await open();
+    change.record.composition = { ...change.record.composition!, mode: 'candidate' };
+    const before = structuredClone(change.record);
+    await expect(applyThemeConfigPatch(change, { operationId: 'theme', expectedFingerprint: '', patch: { dialogSkin: '' } }, hasher, buildAssetCatalog([]))).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
+    expect(change.record).toEqual(before);
+  });
+
+  it.each([{ opacity: { panel: 2 } }, { colors: { invented: 123 } }, { typography: { bodySize: -2 } }])('rejects invalid runtime tokens without changing the draft: %j', async patch => {
+    const { change } = await open();
+    change.record.composition = { ...change.record.composition!, mode: 'direct' };
+    const before = structuredClone(change.record);
+    const current = await inspectThemeConfig(JSON.parse(baseConfig), hasher);
+    await expect(applyThemeConfigPatch(change, { operationId: 'bad-theme', expectedFingerprint: current.fingerprint, patch }, hasher, buildAssetCatalog([]))).rejects.toBeDefined();
+    expect(change.record).toEqual(before);
+  });
+});
 
 describe('character.ensure', () => {
   it('writes visual definitions with all image dependencies and rejects missing parts/candidate mutation atomically', async () => {

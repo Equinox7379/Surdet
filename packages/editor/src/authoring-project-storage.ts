@@ -1,5 +1,5 @@
-import { projectPortraitOverrides, readProjectStage, stagePinnedSourcePaths, type CharacterVisuals } from '@surdet/core';
-import { inspectStageConfig, applyStageConfigPatch, parseProjectConfigDocument } from '@surdet/authoring';
+import { projectPortraitOverrides, readProjectStage, resolvePlayerTheme, resolveProjectFontPaths, stagePinnedSourcePaths, THEME_TOKEN_GROUPS, type CharacterVisuals } from '@surdet/core';
+import { inspectStageConfig, applyStageConfigPatch, inspectThemeConfig, applyThemeConfigPatch, inspectPlayerConfig, applyPlayerConfigPatch, type PlayerConfigPatchInput, parseProjectConfigDocument } from '@surdet/authoring';
 import {
   AuthoringOperationError,
   InMemoryChangeRepository,
@@ -398,4 +398,162 @@ export async function commitStageConfiguration(stageValue: Record<string, unknow
   if (state.dirHandle !== root || state.handles.gameConfig !== handle || state.dirName !== name) throw new Error('原项目配置已写入，但当前项目已切换；没有覆盖当前项目内存。');
   state.gameConfigText = actual;
   return { text: actual, before: before.value, after: result.stageConfig.value };
+}
+
+const EDITOR_THEME_FIELDS = [...THEME_TOKEN_GROUPS, 'dialogSkin', 'buttonSkin', 'dialogHeightRatio', 'dialogMarginX', 'dialogMarginBottom'] as const;
+const editorThemeFieldSet = new Set<string>(EDITOR_THEME_FIELDS);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export interface ThemeEditorDraft {
+  theme: Record<string, unknown> | null;
+  titleLogo: string | null;
+  playerConfig?: Pick<PlayerConfigPatchInput['patch'], 'font' | 'fonts' | 'titleBackground'>;
+}
+
+/** The JSON form owns only documented theme fields and player.titleLogo. */
+export function parseThemeEditorDraft(text: string): ThemeEditorDraft {
+  const raw: unknown = JSON.parse(text);
+  if (!isRecord(raw)) throw new Error('主题配置必须是对象。');
+  for (const key of Object.keys(raw)) {
+    if (!['theme', 'titleLogo', 'font', 'fonts', 'titleBackground'].includes(key)) throw new Error(`主题草稿不支持字段：${key}`);
+  }
+  const theme = raw['theme'] ?? null;
+  if (theme !== null && !isRecord(theme)) throw new Error('theme 必须是对象或 null。');
+  const titleLogo = raw['titleLogo'] ?? null;
+  if (titleLogo !== null && typeof titleLogo !== 'string') throw new Error('titleLogo 必须是字符串或 null。');
+  const playerConfig: NonNullable<ThemeEditorDraft['playerConfig']> = {};
+  for (const key of ['font', 'titleBackground'] as const) if (Object.hasOwn(raw, key)) {
+    const value = raw[key];
+    if (value !== null && typeof value !== 'string') throw new Error(`${key} 必须是字符串或 null。`);
+    playerConfig[key] = value;
+  }
+  if (Object.hasOwn(raw, 'fonts')) {
+    const value = raw['fonts'];
+    if (value !== null && !isRecord(value)) throw new Error('fonts 必须是字体角色对象或 null。');
+    if (isRecord(value)) for (const [role, path] of Object.entries(value)) {
+      if (!['body', 'title', 'ui'].includes(role) || (path !== null && typeof path !== 'string')) throw new Error(`字体角色或路径无效：${role}`);
+    }
+    playerConfig.fonts = value as NonNullable<ThemeEditorDraft['playerConfig']>['fonts'];
+  }
+  return { theme, titleLogo, playerConfig };
+}
+
+/** Project a complete Editor draft while retaining source fields outside its ownership. */
+export function projectThemeEditorDraft(config: Record<string, unknown>, draft: ThemeEditorDraft): Record<string, unknown> {
+  if (draft.theme !== null && !isRecord(draft.theme)) throw new Error('theme 必须是对象或 null。');
+  if (draft.titleLogo !== null && typeof draft.titleLogo !== 'string') throw new Error('titleLogo 必须是字符串或 null。');
+  const projected = { ...config };
+  if (draft.theme === null) {
+    delete projected['theme'];
+  } else {
+    const sourceTheme = isRecord(config['theme']) ? config['theme'] : {};
+    const nextTheme = { ...sourceTheme };
+    for (const [key, value] of Object.entries(draft.theme)) {
+      if (!editorThemeFieldSet.has(key) && (!Object.hasOwn(sourceTheme, key) || stableStringify(sourceTheme[key]) !== stableStringify(value))) {
+        throw new Error(`主题字段 ${key} 不属于当前编辑器表单，请保留来源值。`);
+      }
+    }
+    for (const key of EDITOR_THEME_FIELDS) {
+      if (Object.hasOwn(draft.theme, key) && draft.theme[key] !== null) nextTheme[key] = draft.theme[key];
+      else delete nextTheme[key];
+    }
+    if (Object.keys(nextTheme).length > 0) projected['theme'] = nextTheme;
+    else delete projected['theme'];
+  }
+  const playerRaw = config['player'];
+  if (playerRaw !== undefined && !isRecord(playerRaw)) throw new Error('game.config.json.player 必须是对象。');
+  const player = isRecord(playerRaw) ? { ...playerRaw } : {};
+  for (const field of ['font', 'fonts', 'titleBackground'] as const) if (Object.hasOwn(draft.playerConfig ?? {}, field)) {
+    const value = draft.playerConfig![field];
+    const target = field === 'titleBackground' ? player : projected;
+    if (value === null) delete target[field];
+    else if (field === 'fonts' && isRecord(value)) target[field] = Object.fromEntries(Object.entries(value).filter(([, path]) => path !== null));
+    else target[field] = value;
+  }
+  if (draft.titleLogo === null) delete player['titleLogo'];
+  else player['titleLogo'] = draft.titleLogo;
+  if (Object.keys(player).length > 0) projected['player'] = player;
+  else delete projected['player'];
+  resolvePlayerTheme(projected);
+  resolveProjectFontPaths(projected);
+  return projected;
+}
+
+/** Narrow theme writer: translate a complete Editor form to shared field patches
+ * in one direct transaction, preserving unrelated project fields. */
+export async function commitThemeConfiguration(themeValue: Record<string, unknown> | null, titleLogo: string | null | undefined, expectedConfigText: string, playerConfig: ThemeEditorDraft['playerConfig'] = {}): Promise<{ text: string; before: unknown; after: unknown }> {
+  const root = state.dirHandle, handle = state.handles.gameConfig;
+  const name = state.dirName;
+  if (!root || !handle || state.reviewWorkspace !== null || state.reviewPreviewReadOnly || state.projectLoading)
+    throw new Error('主题配置只可保存到当前可写项目，不能改写审阅结果。');
+  if (state.gameConfigText !== expectedConfigText) throw new Error('配置已经改变，请刷新主题配置。');
+  const beforeConfig = parseProjectConfigDocument(expectedConfigText || '{}');
+  const draft: ThemeEditorDraft = { theme: themeValue, playerConfig, titleLogo: titleLogo === undefined
+    ? ((isRecord(beforeConfig['player']) && typeof beforeConfig['player']['titleLogo'] === 'string') ? beforeConfig['player']['titleLogo'] : null)
+    : titleLogo };
+  const projected = projectThemeEditorDraft(beforeConfig, draft);
+  const editorStorage = createEditorProjectStorage();
+  const snapshot = await loadProjectSnapshot(editorStorage, editorStorage);
+  const assetFiles = state.dirAssets.flatMap(asset => {
+    const sourcePath = asset.sourcePath ?? (asset.handle ? assetPathForHandle(asset.handle) : undefined);
+    return sourcePath ? [{ path: sourcePath, bytes: asset.bytes }] : [];
+  });
+  if (state.dirHandle !== root || state.handles.gameConfig !== handle || state.dirName !== name || state.gameConfigText !== expectedConfigText) throw new Error('主题读取期间项目已变化。');
+  const before = await inspectThemeConfig(beforeConfig, editorStorage);
+  const session = await beginChange(snapshot, new InMemoryChangeRepository());
+  session.record.composition = { ...session.record.composition!, mode: 'direct' };
+  const patch: Record<string, unknown> = {};
+  const sourceTheme = isRecord(beforeConfig['theme']) ? beforeConfig['theme'] : {};
+  const nextTheme = isRecord(projected['theme']) ? projected['theme'] : null;
+  if (nextTheme !== null) {
+    for (const key of EDITOR_THEME_FIELDS) {
+      const oldHas = Object.hasOwn(sourceTheme, key), nextHas = Object.hasOwn(nextTheme, key);
+      if (oldHas !== nextHas || (oldHas && stableStringify(sourceTheme[key]) !== stableStringify(nextTheme[key]))) {
+        patch[key] = nextHas ? nextTheme[key] : null;
+      }
+    }
+  }
+  const projectedLogo = draft.titleLogo;
+  if (before.titleLogo !== projectedLogo) patch.titleLogo = projectedLogo;
+  const catalog = buildAssetCatalog(assetFiles, snapshot, { gallery: state.configFiles.gallery });
+  let playerChanged = false;
+  if (Object.keys(playerConfig).length > 0) {
+    const beforePlayer = await inspectPlayerConfig(beforeConfig, editorStorage);
+    const playerPatch = { ...playerConfig };
+    if (playerPatch.fonts !== undefined && playerPatch.fonts !== null) playerPatch.fonts = { body: null, title: null, ui: null, ...playerPatch.fonts };
+    await applyPlayerConfigPatch(session, { operationId: crypto.randomUUID(), expectedFingerprint: beforePlayer.fingerprint, patch: playerPatch }, editorStorage, catalog);
+    playerChanged = true;
+  }
+  let result;
+  if (nextTheme === null && before.value !== null) {
+    result = await applyThemeConfigPatch(session,
+      { operationId: crypto.randomUUID(), expectedFingerprint: before.fingerprint, patch: null }, editorStorage, catalog);
+  }
+  if (Object.keys(patch).length > 0) {
+    result = await applyThemeConfigPatch(session,
+      { operationId: crypto.randomUUID(), expectedFingerprint: result?.themeConfig.fingerprint ?? before.fingerprint, patch }, editorStorage, catalog);
+  }
+  if (!result && !playerChanged) return { text: expectedConfigText, before: before.value, after: before.value };
+  const afterTheme = result ? result.themeConfig.value : before.value;
+  const text = session.record.workingFiles['game.config.json']!;
+  const validationStorage: ProjectStorage = { ...editorStorage,
+    readText: async path => { if (path === 'game.config.json') return { path, text, bytes: bytesOf(text), sha256: await editorStorage.sha256(text) }; return editorStorage.readText(path); } };
+  const changedSnapshot = await loadProjectSnapshot(validationStorage, editorStorage);
+  const validation = validateSnapshot(changedSnapshot, buildObjectIndex(changedSnapshot), { assetCatalog: buildAssetCatalog(assetFiles, changedSnapshot, { gallery: state.configFiles.gallery }) });
+  if (!validation.ok) throw new Error(validation.issues.filter(issue => issue.severity === 'error').map(issue => issue.text).join('\n'));
+  await recordValidation(session, { evidenceId: `editor-theme-${crypto.randomUUID()}`, errors: 0 });
+  const sceneHandles = new Map<string, FileSystemFileHandle>();
+  for (const scene of state.scenes.values()) if (scene.handle) sceneHandles.set(scenarioPath(scene), scene.handle);
+  const committed = await commitChange(session, new EditorWriteStorage(editorStorage, handle, sceneHandles));
+  const actual = committed.files.includes('game.config.json') ? session.record.workingFiles['game.config.json'] : undefined;
+  if (actual === undefined) {
+    if (text === expectedConfigText) return { text, before: before.value, after: afterTheme };
+    throw new Error('主题配置事务未返回已写入正文。');
+  }
+  if (state.dirHandle !== root || state.handles.gameConfig !== handle || state.dirName !== name) throw new Error('原项目配置已写入，但当前项目已切换；没有覆盖当前项目内存。');
+  state.gameConfigText = actual;
+  return { text: actual, before: before.value, after: afterTheme };
 }

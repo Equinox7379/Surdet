@@ -4,6 +4,7 @@ import { getCurrentPreviewTrace, renderPreviewPanel } from '../src/panels/previe
 import { state } from '../src/state.js';
 import * as workspace from '../src/editor-workspace.js';
 import { previewTextHash } from '../src/preview-content.js';
+import { editThemeConfigDraft, readThemeConfigDraft, resetConfigSession } from '../src/panels/config.js';
 
 // This suite verifies replay/source publication, not the independently tested
 // stage inspector DOM. Preserve the real mounting and disposal contract.
@@ -123,6 +124,8 @@ const originalState = {
   reviewWorkspace: state.reviewWorkspace,
   scenes: state.scenes,
   gameConfigText: state.gameConfigText,
+  dirAssets: state.dirAssets,
+  configReadErrors: state.configReadErrors,
 };
 
 afterEach(() => {
@@ -137,9 +140,101 @@ afterEach(() => {
   state.reviewWorkspace = originalState.reviewWorkspace;
   state.scenes = originalState.scenes;
   state.gameConfigText = originalState.gameConfigText;
+  state.dirAssets = originalState.dirAssets;
+  state.configReadErrors = originalState.configReadErrors;
+  resetConfigSession();
 });
 
 describe('timeline preview replay', () => {
+  it('sends the edited theme to the actual preview load and rejects invalid drafts before posting', async () => {
+    vi.stubGlobal('document', documentStub);
+    vi.stubGlobal('window', {
+      addEventListener: vi.fn((type: string, listener: (event: MessageEvent) => void) => {
+        if (type === 'message') previewMessageListener = listener;
+      }),
+    });
+    resetConfigSession();
+    state.current = 'intro.gal';
+    state.dirName = 'theme-preview';
+    state.dirHandle = null;
+    state.dirAssets = [];
+    state.reviewWorkspace = null;
+    state.previewTimelineId = null;
+    state.configReadErrors = {};
+    state.gameConfigText = JSON.stringify({ entryScene: 'intro', variables: {}, player: { subtitle: 'keep' } });
+    state.scenes = new Map([['intro.gal', {
+      id: 'intro', file: 'intro.gal', text: '@scene intro\n@end', eol: '\n', dirty: false, handle: null,
+    }]]);
+    const container = new FakeElement('div');
+    renderPreviewPanel(container as unknown as HTMLElement);
+    const frame = container.querySelector('iframe')!;
+    previewMessageListener!({ data: { type: 'surdet-preview-ready' }, source: frame.contentWindow } as unknown as MessageEvent);
+    await vi.waitFor(() => expect(postedPreviewMessages).toHaveLength(1));
+
+    state.dirAssets = [{ key: 'logo', kind: 'bg', isImage: true, sourcePath: 'content/assets/bg/logo.svg', handle: {
+      getFile: async () => new File(['<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'], 'logo.svg', { type: 'image/svg+xml' }),
+    } as unknown as FileSystemFileHandle }];
+    editThemeConfigDraft('{"theme":{"colors":{"accent":1193046}},"titleLogo":"logo"}');
+    container.findButton('重新播放')!.onclick?.();
+    await vi.waitFor(() => expect(postedPreviewMessages).toHaveLength(2));
+    const config = (postedPreviewMessages[1] as { payload: { gameConfig: Record<string, any> } }).payload.gameConfig;
+    expect(config.theme.colors.accent).toBe(1193046);
+    expect(config.player).toEqual({ subtitle: 'keep', titleLogo: 'logo' });
+
+    editThemeConfigDraft('{"theme":"bad","titleLogo":null}');
+    container.findButton('重新播放')!.onclick?.();
+    await vi.waitFor(() => expect(container.textContent).toMatch(/theme|主题/));
+    expect(postedPreviewMessages).toHaveLength(2);
+    editThemeConfigDraft('{"theme":{"dialogSkin":"missing-paper"},"titleLogo":null}');
+    container.findButton('重新播放')!.onclick?.();
+    await vi.waitFor(() => expect(container.textContent).toContain('missing-paper'));
+    expect(postedPreviewMessages).toHaveLength(2);
+    resetConfigSession();
+  });
+
+  it('aborts a pending preview read when the theme draft changes before publication', async () => {
+    vi.stubGlobal('document', documentStub);
+    vi.stubGlobal('window', {
+      addEventListener: vi.fn((type: string, listener: (event: MessageEvent) => void) => {
+        if (type === 'message') previewMessageListener = listener;
+      }),
+    });
+    let started!: () => void, release!: () => void;
+    const readStarted = new Promise<void>(resolve => { started = resolve; });
+    const readReleased = new Promise<void>(resolve => { release = resolve; });
+    const fileHandle = { getFile: async () => {
+      started();
+      await readReleased;
+      return new File([new Uint8Array([1, 2, 3])], 'font.ttf');
+    } };
+    resetConfigSession();
+    state.current = 'intro.gal';
+    state.dirName = 'theme-read-race';
+    state.dirHandle = { getFileHandle: async () => fileHandle } as unknown as FileSystemDirectoryHandle;
+    state.dirAssets = [];
+    state.reviewWorkspace = null;
+    state.previewTimelineId = null;
+    state.configReadErrors = {};
+    state.gameConfigText = JSON.stringify({ entryScene: 'intro', font: 'font.ttf', theme: { colors: { accent: 7 } } });
+    state.scenes = new Map([['intro.gal', {
+      id: 'intro', file: 'intro.gal', text: '@scene intro\n@end', eol: '\n', dirty: false, handle: null,
+    }]]);
+    readThemeConfigDraft();
+    editThemeConfigDraft('{"theme":{"colors":{"accent":8}},"titleLogo":null}');
+    const container = new FakeElement('div');
+    renderPreviewPanel(container as unknown as HTMLElement);
+    const frame = container.querySelector('iframe')!;
+    previewMessageListener!({ data: { type: 'surdet-preview-ready' }, source: frame.contentWindow } as unknown as MessageEvent);
+    await readStarted;
+    editThemeConfigDraft('{"theme":{"colors":{"accent":9}},"titleLogo":null}');
+    release();
+    await vi.waitFor(() => expect(container.textContent).toContain('读取素材期间内容或项目发生变化'));
+    expect(postedPreviewMessages).toHaveLength(0);
+    container.findButton('重新播放')!.onclick?.();
+    await vi.waitFor(() => expect(postedPreviewMessages).toHaveLength(1));
+    expect((postedPreviewMessages[0] as { payload: { gameConfig: Record<string, any> } }).payload.gameConfig.theme.colors.accent).toBe(9);
+  });
+
   it('keeps replay identity, excludes late events and waits for saved-observation invalidation', async () => {
     vi.stubGlobal('document', documentStub);
     vi.stubGlobal('window', {

@@ -1,5 +1,5 @@
 import { installStagePreviewBridge } from './stage-preview-bridge.js';
-import { readProjectStage, stageConfigurationKey, type ProjectStage } from '@surdet/core';
+import { readProjectStage, resolvePlayerTheme, resolveProjectTitleLogo, stageConfigurationKey, type ProjectStage } from '@surdet/core';
 /**
  * 预览运行器（M8）：iframe 内嵌精简 runner —— core 编译 + Interpreter + RendererRuntime。
  * 预览源 = 编辑器内存中的剧本文本（未保存也能预览，postMessage 传入）；
@@ -73,6 +73,7 @@ interface PreviewConfigs {
 
 interface LoadPayload {
   stage?: unknown;
+  gameConfig?: unknown;
   sceneId: string;
   /** Parent request identity rejects late messages from a superseded reload. */
   traceId?: string;
@@ -940,21 +941,24 @@ async function releaseAppliedAssetUrls(): Promise<void> {
 }
 
 /** 注册本轮预览的图片并等待 Assets.load 完成，确保首个 @bg/@show 不会先落占位纹理。 */
-async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<void> {
+async function applyPreviewAssets(assets: PreviewAssets | undefined, requiredBackgrounds: readonly string[] = []): Promise<void> {
+  for (const key of requiredBackgrounds) {
+    if (assets?.backgrounds.filter(asset => asset.key === key).length !== 1) throw new Error(`主题图片不存在或不唯一：${key}`);
+  }
   await releaseAppliedAssetUrls();
   const rendererAssets = runtime?.commands.assets;
   if (!assets || !rendererAssets) return;
   const urls: string[] = [];
   const audioEntries: { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; url: string; format: string; sourcePath?: string }[] = [];
   let configuredFailure: Error | undefined;
-  const register = async (buffer: ArrayBuffer, mime: string, fn: (url: string) => Promise<void>, requiredSource?: string): Promise<void> => {
+  const register = async (buffer: ArrayBuffer, mime: string, fn: (url: string) => Promise<void>, requiredSource?: string, label = '角色立绘'): Promise<void> => {
     const url = URL.createObjectURL(new Blob([buffer as unknown as BlobPart], { type: mime }));
     try {
       await fn(url);
       urls.push(url);
     } catch (err) {
       URL.revokeObjectURL(url);
-      if (requiredSource) configuredFailure ??= new Error(`角色立绘加载失败：${requiredSource} · ${err instanceof Error ? err.message : String(err)}`);
+      if (requiredSource) configuredFailure ??= new Error(`${label}加载失败：${requiredSource} · ${err instanceof Error ? err.message : String(err)}`);
       console.warn('[preview] 图片素材加载失败，回退占位：', err);
     }
   };
@@ -988,6 +992,8 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<vo
       asset.image.buffer,
       asset.image.mime,
       (url) => rendererAssets.registerBackground(asset.key, url, asset.image.mime),
+      requiredBackgrounds.includes(asset.key) ? asset.image.sourcePath ?? asset.key : undefined,
+      '主题图片',
     )),
     ...assets.portraits.map((asset) => register(
       asset.image.buffer,
@@ -1133,8 +1139,11 @@ async function load(p: LoadPayload): Promise<void> {
       : null;
     store = vs;
     registry = reg;
-    await applyPreviewAssets(p.assets);
+    const theme = resolvePlayerTheme(p.gameConfig ?? {});
+    const requiredThemeImages = [resolveProjectTitleLogo(p.gameConfig), ...Object.values(theme.skins)].filter((key): key is string => Boolean(key));
+    await applyPreviewAssets(p.assets, requiredThemeImages);
     if (previewDisposed) return;
+    commands.preferences.setTheme(theme);
     postPreviewDiagnostic({ generation, level: 'info', phase: 'assets', message: '素材加载完成', sceneId: p.sceneId });
     interp = new Interpreter(vs, bus!, reg, undefined, undefined, {
       snapshot: (): SystemSnapshots => ({
