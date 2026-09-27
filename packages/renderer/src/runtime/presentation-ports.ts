@@ -48,6 +48,7 @@ export interface PresentationStage extends
   resetFont?: () => void;
   releaseRegisteredAssetSources?: () => Promise<void>;
   captureThumbnail?: () => string | null;
+  isFadeActive?: () => boolean;
   validatePresentation?: (snapshot: unknown) => void;
   getFontFamily?: (role: RendererFontRole) => string;
   showVideo?: (source: string, onEnd: (failure?: Error) => void) => void;
@@ -158,6 +159,8 @@ export function createPresentationPorts(
     setPortrait: (key, view) => { if (options.worldLayer) options.worldLayer.setPortrait(key, view); else stage.setPortrait(key, view); },
     removePortrait: (key) => { if (options.worldLayer) options.worldLayer.removePortrait(key); else stage.removePortrait(key); },
     setFade: (alpha) => { if (options.worldLayer) options.worldLayer.setFade(alpha); else stage.setFade?.(alpha); },
+    fade: options.worldLayer?.fade ? (from, to, durationMs) => options.worldLayer!.fade!(from, to, durationMs)
+      : stage.fade ? (from, to, durationMs) => stage.fade!(from, to, durationMs) : undefined,
     shake: (durationMs = 400, strength = 8, direction = 'both') => { if (options.worldLayer) options.worldLayer.shake(durationMs, strength, direction); else stage.shake?.(durationMs, strength, direction); },
     transition: (name, durationMs) => options.worldLayer?.transition(name, durationMs) ?? stage.transition?.(name, durationMs) ?? false,
     flash: (durationMs = 300) => { if (options.worldLayer) options.worldLayer.flash(durationMs); else stage.flash?.(durationMs); },
@@ -293,6 +296,7 @@ export function createPresentationPorts(
 
   const queries: RendererQueries = {
     world: {
+      isFadeActive: () => options.worldLayer?.isFadeActive?.() ?? stage.isFadeActive?.() ?? false,
       inspectStage: () => options.worldLayer?.inspectStage?.() ?? null,
       captureThumbnail: () => options.worldLayer?.captureThumbnail() ?? stage.captureThumbnail?.() ?? null,
     },

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { compileScene, stageCommandFromInstruction, TimelineRegistry, type TimelineDefinition } from '@surdet/core';
 import {
   fingerprintProjectAssetRelocationInventory,
   fingerprintProjectAssetRelocationOpaqueScan,
@@ -29,9 +30,14 @@ it.each(['portrait:rin:coat', 'rin:coat'])('renames the actual pose target %s in
   }
 });
 
-it.each(['hero', 'rin:coat'])('keeps explicit scene instance %s separate from a renamed resource', async id => {
+it.each(['hero', 'rin:coat'].flatMap(id => [{ id, inline: false }, { id, inline: true }]))('keeps actual instance $id separate from resources (inline=$inline)', async ({ id, inline }) => {
   const sourcePath = 'content/assets/portrait/rin_coat_normal.png', targetPath = 'content/assets/portrait/kei_coat_normal.png';
-  const before = `@scene start\n@show rin:coat normal @id=${id}\n@pose portrait:${id} @x=500\n@end\n`;
+  const before = inline
+    ? `@scene start\n@choice\n  原文 [if:" -> " == " -> "] -> @show rin:coat normal instance=${id} @pose portrait:${id} x=500 @goto done\n@label done\n@end\n`
+    : `@scene start\n@show rin:coat normal @instance=${id}\n@pose portrait:${id} @x=500\n@end\n`;
+  const show = compileScene(before, 'start.gal', 'start').instructions.find(instruction => instruction.op === 'instr' && instruction.name === 'show')!;
+  if (show.op !== 'instr') throw new Error('Expected actual show instruction');
+  expect(stageCommandFromInstruction(show.name, show.args, show.modifiers)).toMatchObject({ type: 'show', instance: id });
   const options = { files: { 'content/scenario/start.gal': before }, assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath };
   for (const result of [await planProjectAssetRelocation(await makeInput(options), hasher),
     await planProjectAssetRelocationBatch(await makeBatchInput({ ...options, items: [{ itemId: 'actor', sourcePath, targetPath }] }), hasher)]) {
@@ -49,8 +55,13 @@ it.each(['explicit-track', 'clip-binding'])('rejects ambiguous %s identities bef
   const sourcePath = 'content/assets/portrait/rin_coat_normal.png', targetPath = 'content/assets/portrait/kei_coat_normal.png';
   const definition = kind === 'explicit-track'
     ? { version: 2, id: 'shot', durationMs: 0, tracks: [{ kind: 'portrait', target: 'rin:coat', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'show', source: 'rin:coat', expression: 'normal' }] }] }
-    : { version: 2, id: 'shot', durationMs: 1, tracks: [], clips: [{ timelineId: 'child', atMs: 0, bindings: { 'rin:coat': 'hero' } }] };
-  const options = { files: { 'content/scenario/start.gal': '@scene start\n@end\n', 'content/timelines/shot.json': JSON.stringify(definition) },
+    : { version: 2, id: 'shot', durationMs: 1, tracks: [], clips: [{ timelineId: 'child', atMs: 0, targets: { guest: 'rin:guest' } }] };
+  const child: TimelineDefinition = { version: 2, id: 'child', durationMs: 1, tracks: [{ kind: 'portrait', target: 'guest', cues: [
+    { atMs: 0, durationMs: 0, easing: 'linear', action: 'show', source: 'mio:coat', expression: 'normal', x: 100 },
+  ] }] };
+  const registry = new TimelineRegistry(); registry.register(child); registry.register(definition as TimelineDefinition);
+  expect(registry.get('shot')).toBeDefined();
+  const options = { files: { 'content/scenario/start.gal': '@scene start\n@end\n', 'content/timelines/shot.json': JSON.stringify(definition), 'content/timelines/child.json': JSON.stringify(child) },
     assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath };
   for (const result of [await planProjectAssetRelocation(await makeInput(options), hasher),
     await planProjectAssetRelocationBatch(await makeBatchInput({ ...options, items: [{ itemId: 'actor', sourcePath, targetPath }] }), hasher)]) {

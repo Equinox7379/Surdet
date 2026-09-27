@@ -1,4 +1,4 @@
-import { decodeStageToken, findChoiceArrow, projectPortraitOverrides, splitOutsideQuotes } from '@surdet/core';
+import { decodeStageToken, findChoiceArrow, projectPortraitOverrides, splitOutsideQuotes, stageCommandFromInstruction } from '@surdet/core';
 import type {
   ProjectAssetFileFact,
   ProjectAssetKind,
@@ -584,8 +584,8 @@ function timelineRewrite(
     && Array.isArray(value.cues) && value.cues.some(cue => isRecord(cue) && typeof cue.source === 'string')) {
     addBlocker(blockers, 'ASSET_RELOCATION_OPAQUE_REFERENCE', '素材改名与显式时间轴实例身份重叠，不能猜测改写目标。', file.path);
   }
-  for (const clip of Array.isArray(root.clips) ? root.clips : []) if (isRecord(clip) && isRecord(clip.bindings)
-    && [...Object.keys(clip.bindings), ...Object.values(clip.bindings)].some(id => conflictsWithRenamedPortraitInstance(id, source, target))) {
+  for (const clip of Array.isArray(root.clips) ? root.clips : []) if (isRecord(clip) && isRecord(clip.targets)
+    && [...Object.keys(clip.targets), ...Object.values(clip.targets)].some(id => conflictsWithRenamedPortraitInstance(id, source, target))) {
     addBlocker(blockers, 'ASSET_RELOCATION_OPAQUE_REFERENCE', '素材改名涉及片段目标重绑定，请先明确实例与素材身份。', file.path);
   }
   const sourcePortrait = roleAndOutfit(source.key);
@@ -923,8 +923,10 @@ export async function planProjectAssetRelocation(
     }
     if (source.kind === 'portrait' && target !== null && (source.key !== target.key || source.variant !== target.variant)) {
       for (const scene of input.snapshot.scenes) for (const instruction of scene.compiled.instructions) {
-        if (instruction.op === 'instr' && instruction.name === 'show' && instruction.modifiers.has('id')
-          && conflictsWithRenamedPortraitInstance(decodeStageToken(instruction.modifiers.get('id')!), source, target)) {
+        if (instruction.op !== 'instr' || instruction.name !== 'show') continue;
+        const command = stageCommandFromInstruction(instruction.name, instruction.args.map(decodeStageToken),
+          new Map([...instruction.modifiers].map(([name, value]) => [name, decodeStageToken(value)])));
+        if (command?.type === 'show' && conflictsWithRenamedPortraitInstance(command.instance, source, target)) {
           addBlocker(blockers, 'ASSET_RELOCATION_OPAQUE_REFERENCE', '素材改名与显式舞台实例 ID 重叠，不能猜测改写目标。', scene.path, instruction.line);
         }
       }

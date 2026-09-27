@@ -71,6 +71,145 @@ async function harness(stageConfig: ProjectStage | null = config()) {
 }
 
 describe('Stage composition through Core, Controller and the real World projection', () => {
+  it('does not promote legacy portrait layout just because a screen cue was cancelled', async () => {
+    const h = await harness(null);
+    try {
+      h.timelines.register({ version: 1, id: 'old-screen', durationMs: 1000, tracks: [{ kind: 'screen', cues: [
+        { atMs: 0, durationMs: 1000, easing: 'linear', action: 'fade', alpha: 1 },
+      ] }] });
+      h.timelines.register({ version: 1, id: 'old-portrait', durationMs: 1000, tracks: [{ kind: 'portrait', target: 'rin:coat', cues: [
+        { atMs: 0, durationMs: 1000, easing: 'linear', action: 'show', expression: 'normal', position: 'left' },
+      ] }] });
+      h.load('@timeline old-screen\n第一句。\n@stage off\n@timeline old-portrait\n第二句。\n@end');
+      h.controller.update(100); h.interpreter.advance(); h.controller.update(100);
+      expect(h.world.snapshotPresentation().portraits[0]!.view.pose).toBeUndefined();
+    } finally { h.dispose(); }
+  });
+  it.each(['fade', 'tint'] as const)('gives a later %s timeline ownership over an unfinished scene action', async action => {
+    const a = await harness(null), b = await harness(null);
+    try {
+      const definition: TimelineDefinition = { version: 2, id: 'later-screen', durationMs: 500, tracks: [{ kind: 'screen', cues: [
+        { atMs: 0, durationMs: 200, easing: 'linear', action, alpha: .3, ...(action === 'tint' ? { color: 0x336699 } : {}) },
+      ] }] };
+      const source = `${action === 'fade' ? '@fadeout 1000' : '@tint ff0000 1 1000'}\n第一句。\n@timeline later-screen\n第二句。\n@end`;
+      const read = (h: typeof a) => { const s = h.world.snapshotPresentation(); return action === 'fade' ? { alpha: s.fadeAlpha } : s.tint; };
+      for (const h of [a, b]) { h.timelines.register(definition); h.load(source); }
+      a.controller.update(400); a.interpreter.advance(); a.controller.update(50);
+      b.interpreter.loadSnapshot(JSON.parse(JSON.stringify(a.interpreter.saveSnapshot())));
+      expect(read(b)).toEqual(read(a));
+      for (const h of [a, b]) h.controller.update(150);
+      expect(read(b)).toEqual(read(a)); expect(read(b).alpha).toBeCloseTo(.3);
+      for (const h of [a, b]) h.controller.update(1000);
+      expect(read(b)).toEqual(read(a)); expect(read(b).alpha).toBeCloseTo(.3);
+    } finally { a.dispose(); b.dispose(); }
+  });
+
+  it('splits direct-screen time at cue boundaries and preserves unrelated screen properties', async () => {
+    const run = async (steps: number[]) => {
+      const h = await harness(null);
+      try {
+        h.timelines.register({ version: 2, id: 'boundary', durationMs: 600, tracks: [{ kind: 'screen', cues: [
+          { atMs: 200, durationMs: 400, easing: 'linear', action: 'fade', alpha: .8 },
+        ] }] });
+        h.load('@fadeout 1000\n@tint ff0000 1 1000\n@timeline boundary\n正文。\n@end');
+        for (const step of steps) h.controller.update(step);
+        const s = h.world.snapshotPresentation(); return { fade: s.fadeAlpha, tint: s.tint };
+      } finally { h.dispose(); }
+    };
+    expect(await run([600])).toEqual(await run([100, 100, 100, 100, 100, 100]));
+    expect(await run([600])).toMatchObject({ fade: .8, tint: { alpha: .6 } });
+  });
+
+  it('restores standalone scene fades, pauses, skips and rejects malformed direct states without mutation', async () => {
+    const a = await harness(null), b = await harness(null);
+    try {
+      for (const h of [a, b]) h.load('@fadeout 1000\n正文。\n@end');
+      a.controller.update(250); expect(a.world.snapshotPresentation().fadeAlpha).toBeCloseTo(.125);
+      const saved = JSON.parse(JSON.stringify(a.interpreter.saveSnapshot()));
+      b.interpreter.loadSnapshot(saved); expect(b.controller.canCaptureRollbackCheckpoint()).toBe(false);
+      expect(b.world.snapshotPresentation()).toEqual(a.world.snapshotPresentation());
+      b.controller.setPresentationPaused(true); b.controller.update(100);
+      expect(b.world.snapshotPresentation().fadeAlpha).toBeCloseTo(.125);
+      b.controller.setPresentationPaused(false); b.controller.update(250);
+      expect(b.world.snapshotPresentation().fadeAlpha).toBeCloseTo(.5);
+      const before = b.world.snapshotPresentation();
+      const broken = JSON.parse(JSON.stringify(saved)); broken.presentation.payload.stage.motions.direct[0].elapsed = -1;
+      expect(() => b.interpreter.loadSnapshot(broken)).toThrow(); expect(b.world.snapshotPresentation()).toEqual(before);
+      b.world.applyStage({ type: 'skip-motions' }); expect(b.world.snapshotPresentation().fadeAlpha).toBe(1);
+      expect(b.controller.canCaptureRollbackCheckpoint()).toBe(true);
+      b.interpreter.start('start'); b.controller.update(250); expect(b.world.snapshotPresentation().fadeAlpha).toBeCloseTo(.125);
+    } finally { a.dispose(); b.dispose(); }
+  });
+
+  it('lets direct setFade replace a timeline without taking tint ownership', async () => {
+    const h = await harness(null);
+    try {
+      h.timelines.register({ version: 2, id: 'two-screen-properties', durationMs: 1000, tracks: [{ kind: 'screen', cues: [
+        { atMs: 0, durationMs: 1000, easing: 'linear', action: 'fade', alpha: 1 },
+        { atMs: 0, durationMs: 1000, easing: 'linear', action: 'tint', alpha: 1, color: 0xff0000 },
+      ] }] });
+      h.load('@timeline two-screen-properties\n正文。\n@end'); h.controller.update(400); h.world.setFade(.2); h.controller.update(100);
+      expect(h.world.snapshotPresentation()).toMatchObject({ fadeAlpha: .2, tint: { alpha: .5 } });
+      h.interpreter.loadSnapshot(JSON.parse(JSON.stringify(h.interpreter.saveSnapshot())));
+      expect(h.world.snapshotPresentation()).toMatchObject({ fadeAlpha: .2, tint: { alpha: .5 } });
+    } finally { h.dispose(); }
+  });
+  it('rejects invalid fade commands before changing the current screen owner', async () => {
+    const h = await harness(null);
+    try {
+      h.load('@fadeout 1000\n正文。\n@end'); h.controller.update(250);
+      const before = h.world.snapshotPresentation();
+      for (const [from, to, duration] of [[0, 1, -1], [0, 1, NaN], [NaN, 1, 100], [0, NaN, 100]]) {
+        expect(() => h.world.fade(from!, to!, duration!)).toThrow();
+        expect(h.world.snapshotPresentation()).toEqual(before);
+      }
+      h.controller.update(250); expect(h.world.snapshotPresentation().fadeAlpha).toBeCloseTo(.5);
+    } finally { h.dispose(); }
+  });
+  it('lets tint off take opacity while a timeline keeps its color through restore', async () => {
+    const a = await harness(null), b = await harness(null);
+    try {
+      const definition: TimelineDefinition = { version: 2, id: 'color', durationMs: 1000, tracks: [{ kind: 'screen', cues: [
+        { atMs: 0, durationMs: 1000, easing: 'linear', action: 'tint', alpha: 1, color: 0x0000ff },
+      ] }] };
+      const source = '@tint ff0000 1 100\n初始红色。\n@timeline color\n第一句。\n@tint off 200\n第二句。\n@end';
+      for (const h of [a, b]) {
+        h.timelines.register(definition); h.load(source); h.controller.update(100); h.interpreter.advance(); h.controller.update(400);
+      }
+      const previousColor = a.world.snapshotPresentation().tint.color;
+      a.interpreter.advance(); a.controller.update(100); b.controller.update(100);
+      const before = a.world.snapshotPresentation();
+      expect(before.tint.alpha).toBeCloseTo(.5);
+      expect(before.tint.color).not.toBe(previousColor);
+      expect(before.tint.color).toBe(b.world.snapshotPresentation().tint.color);
+      b.interpreter.loadSnapshot(JSON.parse(JSON.stringify(a.interpreter.saveSnapshot())));
+      expect(b.world.snapshotPresentation()).toEqual(before);
+      for (const h of [a, b]) h.controller.update(100);
+      expect(b.world.snapshotPresentation()).toEqual(a.world.snapshotPresentation());
+      expect(b.world.snapshotPresentation().tint.alpha).toBe(0);
+    } finally { a.dispose(); b.dispose(); }
+  });
+  it.each(['fade', 'tint'] as const)('lets a later scene %s own the screen through save/load and completion', async action => {
+    const a = await harness(), b = await harness();
+    try {
+      const definition: TimelineDefinition = { version: 2, id: 'shared-screen', durationMs: 1000, tracks: [{ kind: 'screen', cues: [
+        { atMs: 0, durationMs: 1000, easing: 'linear', action, alpha: 1, ...(action === 'tint' ? { color: 0x33aa55 } : {}) },
+      ] }] };
+      const source = `@timeline shared-screen\n第一句。\n${action === 'fade' ? '@fadein 100' : '@tint off 100'}\n第二句。\n@end`;
+      for (const h of [a, b]) { h.timelines.register(definition); h.load(source); }
+      a.controller.update(400); a.interpreter.advance(); a.controller.update(50);
+      const value = (h: typeof a) => action === 'fade' ? h.world.snapshotPresentation().fadeAlpha : h.world.snapshotPresentation().tint.alpha;
+      const mid = value(a); expect(mid).toBeCloseTo(action === 'fade' ? .5 : .2);
+      b.interpreter.loadSnapshot(JSON.parse(JSON.stringify(a.interpreter.saveSnapshot())));
+      expect(value(b)).toBeCloseTo(mid);
+      for (const h of [a, b]) h.controller.update(50);
+      expect(value(a)).toBeCloseTo(0); expect(value(b)).toBeCloseTo(0);
+      b.interpreter.loadSnapshot(JSON.parse(JSON.stringify(a.interpreter.saveSnapshot())));
+      expect(value(b)).toBeCloseTo(0);
+      for (const h of [a, b]) h.controller.update(1);
+      expect(value(a)).toBeCloseTo(0); expect(value(b)).toBeCloseTo(0);
+    } finally { a.dispose(); b.dispose(); }
+  });
   it.each([0, 100, 300])('roundtrips legacy-to-pose expression changes at %sms without losing visibility', async elapsed => {
     const a = await harness(null), b = await harness(null);
     try {

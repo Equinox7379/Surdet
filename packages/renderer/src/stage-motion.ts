@@ -4,10 +4,11 @@ import { ease } from './timeline-player.js';
 
 export type StageProperty = 'x' | 'y' | 'scale' | 'opacity' | 'z' | 'facing' | 'baseHeight' | 'anchorX' | 'anchorY' | 'color';
 export type StageValues = Partial<Record<StageProperty, number | string>>;
+type MotionEasing = TimelineEasing | 'inOutQuad';
 interface Motion {
   source?: StageSource;
   token: number; target: string; from: StageValues; to: StageValues;
-  elapsed: number; duration: number; easing: TimelineEasing;
+  elapsed: number; duration: number; easing: MotionEasing;
 }
 export interface StageMotionSnapshot {
   version: 1;
@@ -19,7 +20,7 @@ export interface StageMotionSnapshot {
   origins?: [string, StageProperty, StageSource][];
 }
 const properties: readonly StageProperty[] = ['x', 'y', 'scale', 'opacity', 'z', 'facing', 'baseHeight', 'anchorX', 'anchorY', 'color'];
-const easings: readonly TimelineEasing[] = ['linear', 'inOutSine', 'outCubic', 'inOutCubic'];
+const easings: readonly MotionEasing[] = ['linear', 'inOutSine', 'outCubic', 'inOutCubic', 'inOutQuad'];
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 function validateValue(target: string, property: StageProperty, value: unknown): void {
@@ -55,14 +56,18 @@ export class StageMotionController {
   constructor(private readonly read: (target: string, property: StageProperty) => number | string,
     private readonly write: (target: string, patch: StageValues) => void) {}
   get active(): boolean { return this.#direct.length > 0; }
+  isActive(target: string): boolean {
+    return this.#direct.some(motion => motion.target === target && motion.elapsed < motion.duration
+      && (Object.keys(motion.to) as StageProperty[]).some(property => this.#owners.get(target)?.get(property) === motion.token));
+  }
   get hasState(): boolean { return this.#owners.size > 0 || this.#timelines.size > 0 || this.#cancelled.size > 0; }
-  get hasSpatialState(): boolean { return [...this.#owners.keys()].some(target => !target.startsWith('screen:')) || this.#cancelled.size > 0; }
+  get hasSpatialState(): boolean { return [...this.#owners.keys()].some(target => !target.startsWith('screen:')); }
 
-  #prepare(target: string, to: StageValues, duration = 0, easing: TimelineEasing = 'linear', source?: StageSource): Motion {
+  #prepare(target: string, to: StageValues, duration = 0, easing: MotionEasing = 'linear', source?: StageSource): Motion {
     if (source && !validStageSource(source)) throw new Error('Invalid stage source');
     const keys = Object.keys(to) as StageProperty[];
     if (!target || !keys.length || keys.some(key => !properties.includes(key))) throw new Error('Invalid stage motion target/properties');
-    if (!Number.isFinite(duration) || duration < 0 || duration > 600_000 || !easings.includes(easing)) throw new Error('Invalid stage motion timing');
+    if (!Number.isFinite(duration) || duration < 0 || duration > 600_000 && !target.startsWith('screen:') || !easings.includes(easing)) throw new Error('Invalid stage motion timing');
     const from: StageValues = {};
     for (const key of keys) {
       const value = to[key];
@@ -95,7 +100,7 @@ export class StageMotionController {
     }
     if (Object.keys(patch).length) this.write(motion.target, patch);
   }
-  start(target: string, to: StageValues, duration = 0, easing: TimelineEasing = 'linear', source?: StageSource): void {
+  start(target: string, to: StageValues, duration = 0, easing: MotionEasing = 'linear', source?: StageSource): void {
     const motion = this.#prepare(target, to, duration, easing, source);
     this.#claim(motion);
     this.#apply(motion, duration === 0 ? 1 : 0);
@@ -128,7 +133,8 @@ export class StageMotionController {
     if (!Number.isFinite(deltaMs) || deltaMs < 0) return;
     for (const motion of this.#direct) {
       motion.elapsed = Math.min(motion.duration, motion.elapsed + deltaMs);
-      this.#apply(motion, ease(motion.easing, motion.elapsed / motion.duration));
+      const t = motion.elapsed / motion.duration;
+      this.#apply(motion, motion.easing === 'inOutQuad' ? (t < .5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2) : ease(motion.easing, t));
     }
     this.#direct = this.#direct.filter(motion => motion.elapsed < motion.duration
       && (Object.keys(motion.to) as StageProperty[]).some(property => this.#owners.get(motion.target)?.get(property) === motion.token));
@@ -193,7 +199,7 @@ export function prepareStageMotions(value: unknown, targets: ReadonlySet<string>
     if (motion?.source !== undefined && !validStageSource(motion.source)) throw new Error('Invalid saved stage source');
     if (!motion || !targets.has(motion.target) || !Number.isSafeInteger(motion.token) || motion.token <= 0 || motion.token > raw.sequence!
       || !Number.isFinite(motion.elapsed) || !Number.isFinite(motion.duration) || motion.elapsed < 0 || motion.duration < 0
-      || motion.elapsed > motion.duration || motion.duration > 600_000 || !easings.includes(motion.easing)) throw new Error('Invalid saved motion');
+      || motion.elapsed > motion.duration || motion.duration > 600_000 && !motion.target.startsWith('screen:') || !easings.includes(motion.easing)) throw new Error('Invalid saved motion');
     for (const values of [motion.from, motion.to]) {
       if (!values || typeof values !== 'object' || Array.isArray(values)) throw new Error('Invalid saved motion values');
       for (const [key, value] of Object.entries(values)) {

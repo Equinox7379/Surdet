@@ -271,11 +271,10 @@ afterEach(async () => {
 });
 
 describe('project asset relocation authority', () => {
-  it('publishes and restores current-media bytes and their real consumers through the existing authority', async () => {
-    for (const [directory, extension, command] of [
+  it.each([
       ['bgm', 'wav', 'bgm'], ['ambience', 'ogg', 'ambience'], ['se', 'mp3', 'se'],
       ['voice', 'wav', 'voice'], ['video', 'webm', 'video'], ['fonts', 'ttf', ''], ['licenses', '', ''],
-    ] as const) {
+    ] as const)('publishes and restores %s bytes and its real consumers through the existing authority', async (directory, extension, command) => {
       const value = await fixture();
       const name = directory === 'licenses' ? 'OFL' : `旧 媒体.${extension}`;
       const next = directory === 'licenses' ? 'NOTICE' : `新 媒体.${extension}`;
@@ -305,7 +304,6 @@ describe('project asset relocation authority', () => {
       expect(await readFile(configPath, 'utf8')).toBe(config);
       expect(await readFile(absolute(value.projectRoot, scenePath), 'utf8')).toBe(scene);
       await expect(stat(absolute(value.projectRoot, target))).rejects.toMatchObject({ code: 'ENOENT' });
-    }
   });
 
   it('recovers an interrupted font/config publication without inventing a second journal', async () => {

@@ -11,6 +11,7 @@ import type { LayerThemeProjectionSnapshot } from '../theme-projection.js';
 import type { RenderLifecycleDiagnosticSnapshot } from '../lifecycle/render-lifecycle.js';
 
 export interface WorldQueries {
+  isFadeActive?(): boolean;
   inspectStage?(): import('@surdet/core').StageInspection | null;
   /** Expensive but read-only visual capture; does not change the visible stage. */
   captureThumbnail(): string | null;
