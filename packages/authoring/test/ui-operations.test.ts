@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { beginChange, InMemoryChangeRepository } from '../src/change-session.js';
 import { loadProjectSnapshot } from '../src/project-snapshot.js';
 import { buildAssetCatalog } from '../src/asset-catalog.js';
-import { applyUiPatch, inspectUi } from '../src/ui-operations.js';
+import { applyUiDocument, applyUiPatch, inspectUi } from '../src/ui-operations.js';
 import { buildObjectIndex } from '../src/object-index.js';
 import { validateSnapshot } from '../src/validation.js';
 
@@ -25,6 +25,32 @@ async function fixture() {
 }
 
 describe('project.ui direct working patch', () => {
+  it('uses the same permissions, fingerprint and final asset checks for a complete draft', async () => {
+    const { snapshot, change } = await fixture();
+    const assets = buildAssetCatalog([], snapshot);
+    const request = { operationId: 'document', expectedFingerprint: (await inspectUi(snapshot.config, hasher)).fingerprint,
+      value: { version: 1 as const, pages: { hud: root } } };
+    for (const mode of ['candidate', 'integration'] as const) {
+      change.record.composition!.mode = mode === 'candidate' ? 'candidate' : 'direct';
+      if (mode === 'integration') change.record.integration = {} as NonNullable<typeof change.record.integration>;
+      const before = JSON.stringify(change.record);
+      await expect(applyUiDocument(change, request, hasher, assets)).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
+      expect(JSON.stringify(change.record)).toBe(before);
+    }
+    delete change.record.integration;
+    change.record.composition!.mode = 'direct';
+    const before = JSON.stringify(change.record);
+    await expect(applyUiDocument(change, { ...request, expectedFingerprint: 'stale' }, hasher, assets)).rejects.toMatchObject({ code: 'OBJECT_REF_STALE' });
+    await expect(applyUiDocument(change, { ...request, value: { version: 1, pages: { hud: { id: root.id, frame: root.frame, type: 'image', asset: 'missing' } } } }, hasher, assets)).rejects.toMatchObject({ code: 'UI_INVALID' });
+    expect(JSON.stringify(change.record)).toBe(before);
+    const result = await applyUiDocument(change, request, hasher, assets);
+    expect(result.ui.value).toEqual(request.value);
+    expect(result.diffEntry.directChange).toEqual({ path: 'game.config.json', fields: ['ui.pages.hud'] });
+    const saved = JSON.stringify(change.record);
+    expect(await applyUiDocument(change, request, hasher, assets)).toEqual(result);
+    await expect(applyUiDocument(change, { ...request, value: null }, hasher, assets)).rejects.toMatchObject({ code: 'OPERATION_ID_CONFLICT' });
+    expect(JSON.stringify(change.record)).toBe(saved);
+  });
   it('edits one node with a stable identity, preserves project source and rejects stale or candidate writes atomically', async () => {
     const { snapshot, change } = await fixture();
     const assets = buildAssetCatalog([], snapshot);

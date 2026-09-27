@@ -54,4 +54,4 @@ export * from './review-preparation.js';
 
 export { inspectStageConfig, applyStageConfigPatch, validateStageAssetBindings, type StageConfigPatchInput } from './stage-operations.js';
 export { inspectThemeConfig, applyThemeConfigPatch, validateThemeAssetBindings, type ThemeConfigPatchInput, type ThemeConfigInspection } from './theme-operations.js';
-export { inspectUi, applyUiPatch, patchUiDocument, validateUiAssets, type UiPatchInput, type UiInspection, type UiPatch } from './ui-operations.js';
+export { inspectUi, applyUiPatch, applyUiDocument, patchUiDocument, validateUiAssets, type UiPatchInput, type UiDocumentInput, type UiInspection, type UiPatch } from './ui-operations.js';

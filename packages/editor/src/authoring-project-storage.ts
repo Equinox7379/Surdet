@@ -1,5 +1,5 @@
-import { projectPortraitOverrides, readProjectStage, readProjectUi, PROJECT_UI_PAGES, resolvePlayerTheme, resolveProjectFontPaths, stagePinnedSourcePaths, THEME_TOKEN_GROUPS, type CharacterVisuals, type ProjectUiDocument } from '@surdet/core';
-import { inspectStageConfig, applyStageConfigPatch, inspectThemeConfig, applyThemeConfigPatch, inspectUi, applyUiPatch, inspectPlayerConfig, applyPlayerConfigPatch, type PlayerConfigPatchInput, parseProjectConfigDocument } from '@surdet/authoring';
+import { projectPortraitOverrides, readProjectStage, readProjectUi, resolvePlayerTheme, resolveProjectFontPaths, stagePinnedSourcePaths, THEME_TOKEN_GROUPS, type CharacterVisuals, type ProjectUiDocument } from '@surdet/core';
+import { inspectStageConfig, applyStageConfigPatch, inspectThemeConfig, applyThemeConfigPatch, inspectUi, applyUiDocument, inspectPlayerConfig, applyPlayerConfigPatch, type PlayerConfigPatchInput, parseProjectConfigDocument } from '@surdet/authoring';
 import {
   AuthoringOperationError,
   InMemoryChangeRepository,
@@ -584,24 +584,8 @@ export async function commitUiConfiguration(value: ProjectUiDocument | null, exp
   const catalog = buildAssetCatalog(assetFiles, snapshot, { gallery: state.configFiles.gallery });
   const session = await beginChange(snapshot, new InMemoryChangeRepository());
   session.record.composition = { ...session.record.composition!, mode: 'direct' };
-  const changedPages = PROJECT_UI_PAGES.filter(page => stableStringify(before?.pages[page] ?? null) !== stableStringify(after?.pages[page] ?? null));
-  // Remove changed old pages first: a stable ID may legally move to another page
-  // in the final document, without conflicting with that page's old intermediate value.
-  for (const page of changedPages) {
-    if (!before?.pages[page]) continue;
-    const working = parseProjectConfigDocument(session.record.workingFiles['game.config.json']!);
-    const fingerprint = (await inspectUi(working, editorStorage)).fingerprint;
-    await applyUiPatch(session, { operationId: crypto.randomUUID(), expectedFingerprint: fingerprint,
-      patch: { type: 'page.remove', page } }, editorStorage, catalog);
-  }
-  for (const page of changedPages) {
-    if (!after?.pages[page]) continue;
-    const working = parseProjectConfigDocument(session.record.workingFiles['game.config.json']!);
-    const fingerprint = (await inspectUi(working, editorStorage)).fingerprint;
-    const rootNode = after?.pages[page];
-    await applyUiPatch(session, { operationId: crypto.randomUUID(), expectedFingerprint: fingerprint,
-      patch: rootNode ? { type: 'page.set', page, root: rootNode } : { type: 'page.remove', page } }, editorStorage, catalog);
-  }
+  const fingerprint = (await inspectUi(beforeConfig, editorStorage)).fingerprint;
+  await applyUiDocument(session, { operationId: crypto.randomUUID(), expectedFingerprint: fingerprint, value: after }, editorStorage, catalog);
   const text = session.record.workingFiles['game.config.json']!;
   const validationStorage: ProjectStorage = { ...editorStorage,
     readText: async path => path === 'game.config.json'
