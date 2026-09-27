@@ -11,7 +11,7 @@ describe('Timeline panel project-asset and freshness contract', () => {
   });
 
   it('stages resource cues from the real project inventory before committing', () => {
-    expect(panelSource).toContain('timelineAssetChoices(state.dirAssets)');
+    expect(panelSource).toContain('timelineAssetChoices(state.dirAssets, state.gameConfigText)');
     expect(panelSource).toContain('createResourceCue');
     expect(panelSource).toContain('当前项目没有可用素材');
     expect(panelSource).toMatch(/if \(!draft\)[\s\S]*return;[\s\S]*commit\(/);

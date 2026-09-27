@@ -40,4 +40,4 @@ export * from './localization.js';
 export * from './project-stats.js';
 export * from './project-fonts.js';
 export * from './stage.js';
-export { projectPortraitOverrides, resolveProjectPortraits, type CharacterPortraits, type ProjectPortrait } from './project-portraits.js';
+export { assertUniquePortraitBindings, parsePortraitFileName, projectPortraitOverrides, resolveProjectPortraits, type CharacterPortraits, type ProjectPortrait } from './project-portraits.js';

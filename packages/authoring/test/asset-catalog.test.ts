@@ -8,6 +8,14 @@ import {
 import { resolvedCompositionAssetRefs } from '../src/composition-object-facts.js';
 
 describe('shared asset catalog', () => {
+  it('keeps invalid automatic variants out of the valid slot while preserving their diagnostic', () => {
+    const valid = 'content/assets/portrait/rin_coat_smile.png', invalid = 'content/assets/portrait/rin_coat_smile_v2.png';
+    const catalog = buildAssetCatalog([valid, invalid]);
+    expect(catalog.portraits).toHaveLength(1);
+    expect(catalog.portraits[0]).toMatchObject({ sourcePath: valid, resolved: true });
+    expect(catalog.intelligence.items.find(item => item.sourcePath === invalid)?.issues).toContain('ASSET_NAME_INVALID');
+    expect(catalog.intelligence.summary.duplicateCount).toBe(0);
+  });
   it('projects configured slots, override conflicts, physical references and missing bindings consistently', () => {
     const old = 'content/assets/portrait/rin_uniform_normal.svg';
     const replacement = 'content/assets/portrait/art_coat_smile.svg';

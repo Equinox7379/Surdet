@@ -1,5 +1,5 @@
 import type { TimelineEasing, TimelineTrackKind } from '@surdet/core';
-import type { DirAsset } from './assets.js';
+import { projectPortraitAssets, type DirAsset } from './assets.js';
 
 export interface TimelineTick {
   valueMs: number;
@@ -81,10 +81,11 @@ export function timelineEasingLabel(easing: TimelineEasing): string {
   return EASING_LABELS[easing];
 }
 
-export function timelineAssetChoices(dirAssets: readonly DirAsset[]): TimelineAssetChoice[] {
+export function timelineAssetChoices(dirAssets: readonly DirAsset[], configText = '{}'): TimelineAssetChoice[] {
   const choices: TimelineAssetChoice[] = [];
+  const portraits = projectPortraitAssets(dirAssets, configText);
 
-  for (const asset of dirAssets) {
+  for (const asset of dirAssets.flatMap(asset => asset.kind === 'portrait' ? portraits.filter(portrait => portrait.sourcePath === asset.sourcePath) : [asset])) {
     if (asset.kind === 'bg') {
       choices.push({ kind: 'background', key: asset.key, sourceKind: 'bg' });
     } else if (asset.kind === 'portrait') {

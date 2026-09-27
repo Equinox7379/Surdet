@@ -102,7 +102,6 @@ export function buildAssetCatalog(
   }
   for (const portrait of portraitBindings) {
     const { role, outfit, expression, sourcePath } = portrait;
-    if (!portrait.configured && stemOf(sourcePath).split('_').length !== 3) continue;
     const item = intelligence.items.find(item => item.sourcePath === sourcePath);
     portraits.push({ ...portrait, kind: 'portrait', key: `${role}:${outfit}`, timelineTarget: `${role}:${outfit}`,
       format: extensionOf(sourcePath), resolved: !!item && item.physical && slotPaths.get(slotOf(portrait))?.size === 1

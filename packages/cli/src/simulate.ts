@@ -14,7 +14,7 @@ import { authoringDigest, collectTimelineFiles } from './timeline-loader.js';
 export interface SimulateOptions {
   /** 路径预算（缺省 500）：choice 组合是乘积增长，超预算停止展开新路径 */
   maxPaths?: number;
-  /** 单条路径步数上限（缺省 20000）：超出记"疑似死循环" */
+  /** 单条路径步数上限（缺省 20000）：超出如实标记 budgetExhausted，不伪造运行时异常。 */
   maxStepsPerPath?: number;
   /** 开局变量注入（宿主才能设置的变量，如 battleWon=true），值按 boolean/number/string 解析 */
   assume?: Record<string, string>;

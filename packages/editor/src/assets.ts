@@ -4,6 +4,9 @@
  * 浏览器目录句柄适配和“插入到当前剧本”的界面辅助，不再建立第二份素材索引。
  */
 
+import { parsePortraitFileName as parsePortraitIdentity, resolveProjectPortraits } from '@surdet/core';
+import { parseProjectConfigDocument } from '@surdet/authoring';
+
 export type AssetKind = 'bg' | 'portrait' | 'avatar' | 'bgm' | 'ambience' | 'se' | 'voice' | 'video' | 'font' | 'other' | 'cg' | 'music' | 'text';
 
 /** 目录扫描出的素材文件条目 */
@@ -77,13 +80,31 @@ export function kindOfDir(name: string): AssetKind | null {
   return DIR_KIND_MAP[name.toLowerCase()] ?? null;
 }
 
-const IMG_EXT = /\.(png|jpe?g|webp|gif|avif|svg)$/i;
+/** 物理扫描只识别完整三段命名；其他文件仍保留在素材目录供诊断与显式绑定。 */
+export function parsePortraitFileName(fname: string): { key: string; expr: string } | null {
+  const identity = parsePortraitIdentity(fname);
+  return identity ? { key: `${identity.role}:${identity.outfit}`, expr: identity.expression } : null;
+}
 
-/** 立绘文件名解析：`角色_服装_表情.ext` → key `角色:服装` + 表情（缺省 normal） */
-export function parsePortraitFileName(fname: string): { key: string; expr: string } {
-  const stem = fname.replace(IMG_EXT, '');
-  const seg = stem.split('_');
-  return { key: `${seg[0] ?? ''}:${seg[1] ?? 'normal'}`, expr: seg[2] ?? 'normal' };
+/** 快捷选图和静态排布与 Player 使用相同绑定，不把物理扫描键当作最终角色身份。 */
+export function projectPortraitAssets(assets: readonly DirAsset[], configText: string): DirAsset[] {
+  let bindings: ReturnType<typeof resolveProjectPortraits>;
+  try {
+    bindings = resolveProjectPortraits(parseProjectConfigDocument(configText || '{}'), assets.flatMap(asset => asset.sourcePath ? [asset.sourcePath] : []));
+  } catch {
+    // 配置错误仍由共享校验展示；不为坏配置提供可能写错剧本的猜测选项。
+    return [];
+  }
+  const counts = new Map<string, number>();
+  for (const binding of bindings) {
+    const slot = `${binding.role}:${binding.outfit}:${binding.expression}`;
+    counts.set(slot, (counts.get(slot) ?? 0) + 1);
+  }
+  return bindings.flatMap(binding => {
+    if (counts.get(`${binding.role}:${binding.outfit}:${binding.expression}`) !== 1) return [];
+    const asset = assets.find(asset => asset.sourcePath === binding.sourcePath && asset.isImage);
+    return asset ? [{ ...asset, key: `${binding.role}:${binding.outfit}`, kind: 'portrait' as const, expr: binding.expression }] : [];
+  });
 }
 
 /** 素材条目 → 点击插入的指令行（无法生成插入行的类型返回 null） */

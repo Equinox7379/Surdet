@@ -351,7 +351,9 @@ describe('Wave15 replaceInstruction through the CLI service and disk', () => {
       const patched = await call(connectedSession.client, 'scene.patch', patchInput);
       expect(patched.raw.isError).not.toBe(true);
       expect(patched.body.ok).toBe(true);
-      expect(patched.body.result).toEqual({ path: fixture.nestedScenePath, line: 2, kind: 'replaceInstruction' });
+      const current = (await call(connectedSession.client, 'project.inspect', { view: 'working' })).body;
+      expect(patched.body.result).toEqual({ path: fixture.nestedScenePath, line: 2, kind: 'replaceInstruction',
+        continuation: { sceneRef: 'scene:x', revision: current.result.revision, workingRevision: current.workingRevision } });
       expect(fs.readFileSync(sourcePath, 'utf8')).toBe(sourceBefore);
 
       const validated = await call(connectedSession.client, 'project.validate');

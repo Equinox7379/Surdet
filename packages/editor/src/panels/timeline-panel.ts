@@ -285,7 +285,7 @@ function isResourceTrackKind(kind: TimelineTrackKind): kind is ResourceTrackKind
 }
 
 function resourceChoicesFor(kind: ResourceTrackKind, action: string): TimelineAssetChoice[] {
-  return timelineAssetChoices(state.dirAssets).filter((choice) => {
+  return timelineAssetChoices(state.dirAssets, state.gameConfigText).filter((choice) => {
     if (choice.kind !== (kind === 'layer' ? 'background' : kind)) return false;
     if (kind !== 'audio') return true;
     return choice.sourceKind === action;

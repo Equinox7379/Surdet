@@ -5,6 +5,7 @@
 import {
   compileScene,
   resolveProjectPortraits,
+  assertUniquePortraitBindings,
   readProjectStage,
   Interpreter,
   SceneRegistry,
@@ -708,6 +709,7 @@ async function main(): Promise<void> {
     const webFiles = import.meta.glob('../content/assets/**/*', { query: '?url', import: 'default', eager: true });
     const files = desktopAsset ? await desktopAsset.list() : Object.keys(webFiles).map(p => p.replace('../content/assets/', ''));
     const portraitBindings = resolveProjectPortraits(gameConfig, files.map(rel => `content/assets/${rel}`));
+    assertUniquePortraitBindings(portraitBindings);
     for (const binding of portraitBindings) {
       if (binding.configured && !files.includes(binding.sourcePath.slice('content/assets/'.length))) {
         throw new Error(`角色立绘文件不存在：${binding.role}:${binding.outfit}:${binding.expression} → ${binding.sourcePath}`);

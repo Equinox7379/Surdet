@@ -1,4 +1,4 @@
-import { parseProjectStage, readProjectStage, resolveProjectPortraits } from '@surdet/core';
+import { assertUniquePortraitBindings, parseProjectStage, readProjectStage, resolveProjectPortraits } from '@surdet/core';
 import { parseProjectConfigDocument } from '@surdet/authoring';
 import { state } from './state.js';
 import { assetPathForHandle, runProjectWriteOperation } from './project-io.js';
@@ -101,6 +101,7 @@ export function createStageCalibrationPanel(onSaved: () => void, isEditable: () 
   };
   const readImage = async () => {
     if (!canUse()) return;
+    assertUniquePortraitBindings(bindings);
     const sequence = ++readSequence, binding = bindings[Number(select.value)]; if (!binding) throw new Error('当前项目没有可校准角色图片。');
     const asset = state.dirAssets.find(asset => (asset.sourcePath ?? (asset.handle ? assetPathForHandle(asset.handle) : undefined)) === binding.sourcePath);
     if (!asset?.handle) throw new Error('角色图片缺少实际读取句柄。');

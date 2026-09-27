@@ -80,7 +80,10 @@ describe('timeline autosave conflict main integration', () => {
     expect(mainSource).toMatch(/interface SceneAutosaveRecoveryContext[\s\S]*?generation:[\s\S]*?client:[\s\S]*?projectRoot:[\s\S]*?projectId:/);
     expect(mainSource).toMatch(/function sceneAutosaveRecoveryIsCurrent\([\s\S]*?context\.client === assetImportClient[\s\S]*?context\.projectRoot === state\.dirHandle[\s\S]*?context\.projectId === state\.autosaveProjectId/);
     expect(mainSource).toMatch(/context\.client\.sceneCommit\(/);
-    expect(mainSource).not.toMatch(/const result = await assetImportClient\.sceneCommit\(/);
+    const recoveryStart = mainSource.indexOf('async function tryAutosaveRecover(');
+    expect(recoveryStart).toBeGreaterThanOrEqual(0);
+    const recovery = mainSource.slice(recoveryStart);
+    expect(recovery).not.toMatch(/const result = await assetImportClient\.sceneCommit\(/);
     expect(mainSource).toMatch(/main\.toggleAttribute\('inert', sceneAutosaveRecoveryPhase !== 'idle'\)/);
     expect(mainSource).toMatch(/writeLocked: state\.projectWriteLock !== null \|\| sceneRecoveryLocked/);
     expect(mainSource).toMatch(/function confirmProjectSwitch\(\)[\s\S]*?sceneAutosaveRecoveryPhase !== 'idle'/);

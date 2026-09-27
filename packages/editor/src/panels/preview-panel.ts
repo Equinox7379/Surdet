@@ -21,7 +21,7 @@ import { inspectConfigDraftState, previewStageConfigText, readStageConfigDraft }
 import { previewTextHash, projectPreviewContent } from '../preview-content.js';
 import { previewCheckpointKey, readPreviewCheckpoint, writePreviewCheckpoint } from '../preview-checkpoints.js';
 import type { FontRole } from '@surdet/renderer';
-import { resolveProjectPortraits, resolveProjectFontPaths } from '@surdet/core';
+import { assertUniquePortraitBindings, resolveProjectPortraits, resolveProjectFontPaths } from '@surdet/core';
 import { normalizePreviewDiagnostic, type PreviewDiagnostic } from '../preview-diagnostics.js';
 import {
   dispatchPreviewTraceSelection,
@@ -319,6 +319,7 @@ async function readProjectImages(configText: string): Promise<PreviewAssets> {
     const path = asset.sourcePath ?? (asset.handle ? assetPathForHandle(asset.handle) : undefined);
     return path === undefined ? [] : [path];
   }));
+  assertUniquePortraitBindings(bindings);
   for (const asset of state.dirAssets) {
     if (!asset.handle) continue;
     try {

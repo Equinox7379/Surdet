@@ -5,6 +5,7 @@
 import {
   compileScene,
   resolveProjectPortraits,
+  assertUniquePortraitBindings,
   readProjectStage,
   type CharacterPortraits,
   Interpreter,
@@ -543,6 +544,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
     const desktopAsset = window.surdetAsset;
     const files = desktopAsset ? await desktopAsset.list() : Object.keys(project.assetFiles);
     const portraitBindings = resolveProjectPortraits(gameConfig, files.map(rel => `content/assets/${rel}`));
+    assertUniquePortraitBindings(portraitBindings);
     for (const binding of portraitBindings) {
       if (binding.configured && !files.includes(binding.sourcePath.slice('content/assets/'.length))) {
         throw new Error(`角色立绘文件不存在：${binding.role}:${binding.outfit}:${binding.expression} → ${binding.sourcePath}`);

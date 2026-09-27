@@ -463,9 +463,9 @@ async function walkAssetDir(
           // 预览句柄仍保留；文件事实缺失由共享投影如实表示为未测量。
         }
         if (assetKind === 'portrait') {
-          const { key, expr } = parsePortraitFileName(ent.name);
+          const identity = parsePortraitFileName(ent.name);
           target.push({
-            key, kind: assetKind, expr, handle: ent, isImage: IMG_RE.test(ent.name), sourcePath,
+            key: identity?.key ?? ent.name, kind: assetKind, ...(identity ? { expr: identity.expr } : {}), handle: ent, isImage: IMG_RE.test(ent.name), sourcePath,
             ...(bytes === undefined ? {} : { bytes }),
             ...(lastModified === undefined ? {} : { lastModified }),
           });

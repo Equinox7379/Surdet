@@ -16,6 +16,27 @@ const validPart = (value: string) => value.length > 0 && value.trim() === value 
 const slot = (portrait: ProjectPortrait) => `${portrait.role}:${portrait.outfit}:${portrait.expression}`;
 const compare = ([a]: [string, unknown], [b]: [string, unknown]) => a < b ? -1 : a > b ? 1 : 0;
 
+/** Automatic discovery has one identity grammar, shared with authoring diagnostics. */
+export function parsePortraitFileName(fileName: string): Pick<ProjectPortrait, 'role' | 'outfit' | 'expression'> | null {
+  if (Array.from(fileName).length > 120 || fileName.trim() !== fileName || /[\\/:*?"<>|\u0000-\u001f\u007f]/.test(fileName)) return null;
+  const parts = fileName.replace(/\.[^.]*$/, '').split('_');
+  if (parts.length !== 3 || parts.some(part => !validPart(part))) return null;
+  const [role, outfit, expression] = parts as [string, string, string];
+  return { role, outfit, expression };
+}
+
+/** A catalog may report ambiguous slots; a runtime must never choose one implicitly. */
+export function assertUniquePortraitBindings(bindings: readonly ProjectPortrait[]): void {
+  const paths = new Map<string, string>();
+  for (const binding of bindings) {
+    const identity = slot(binding), previous = paths.get(identity);
+    if (previous !== undefined && previous !== binding.sourcePath) {
+      throw new Error(`立绘绑定冲突：${identity}（${previous}、${binding.sourcePath}）。请在角色资料中明确绑定文件。`);
+    }
+    paths.set(identity, binding.sourcePath);
+  }
+}
+
 /** Only explicit mappings: stable config dependency, independent of display names and avatars. */
 export function projectPortraitOverrides(config: Record<string, unknown>): ProjectPortrait[] {
   const result: ProjectPortrait[] = [];
@@ -43,8 +64,8 @@ export function resolveProjectPortraits(config: Record<string, unknown>, paths: 
   const automatic: ProjectPortrait[] = [];
   for (const sourcePath of [...new Set(paths)].sort()) {
     if (!/^content\/assets\/portrait\//i.test(sourcePath) || sourcePath.includes('\\') || !image.test(sourcePath)) continue;
-    const [role, outfit = 'normal', expression = 'normal'] = sourcePath.split('/').at(-1)!.replace(image, '').split('_');
-    if (role) automatic.push({ role, outfit, expression, sourcePath });
+    const identity = parsePortraitFileName(sourcePath.split('/').at(-1)!);
+    if (identity) automatic.push({ ...identity, sourcePath });
   }
   const explicitSlots = new Set(overrides.map(slot));
   return [
