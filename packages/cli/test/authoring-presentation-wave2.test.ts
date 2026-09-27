@@ -82,13 +82,17 @@ describe('agent authoring presentation wave 2 CLI vertical slice', () => {
     const nightField = assetsBody.result.backgrounds.find((entry: any) => entry.key === 'night_field');
     expect(nightField).toEqual({
       kind: 'background', key: 'night_field', sourcePath: 'content/assets/bg/night_field.svg', format: 'svg', resolved: true,
+      usage: { scene: { kind: 'instruction', name: 'bg', args: ['"night_field"'] },
+        timeline: { kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'night_field' }] } },
     });
     const lynnNight = assetsBody.result.portraits.find((entry: any) => entry.expression === 'night');
     expect(lynnNight?.role).toBe('lynn');
     expect(lynnNight?.resolved).toBe(true);
     const inspect = runCli(['project', 'inspect', '--project', root, '--json'], env);
     expect(inspect.status).toBe(0);
-    expect(body(inspect).result.assets).toEqual(assetsBody.result);
+    const { view, ...catalog } = assetsBody.result;
+    expect(view).toBe('project'); expect(body(inspect).result.view).toBe(view);
+    expect(body(inspect).result.assets).toEqual(catalog);
 
     const begun = runCli(['change', 'begin', '--project', root, '--json'], env);
     expect(begun.status).toBe(0);

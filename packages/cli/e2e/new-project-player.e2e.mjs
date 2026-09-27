@@ -594,6 +594,8 @@ try {
   await prepareTestAudio();
   await prepareTestVideo();
   const main = await authorChapter(game);
+  // An invalid automatic name must not be decoded or overwrite the real normal expression.
+  await fs.writeFile(path.join(game, 'content/assets/portrait/lynn_coat_normal_backup.png'), 'not an image: unrelated backup');
   // Exercise native File reads and byte fingerprints, not a text-only mock.
   for (const file of ['game.config.json', 'content/scenario/第一章/邮局/post_office_visit.gal']) {
     const filePath = path.join(game, file);
@@ -612,6 +614,7 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/`); await waitTitle(page);
+  assert.equal(await page.evaluate(() => window.__surdetDebug.assetLoading.failed), 0);
   await page.getByRole('button', { name: '开始游戏', exact: true }).waitFor();
   assert.ok((await canvasTexts(page)).includes('风停之后'));
   assert.ok((await canvasTexts(page)).includes('一封信，两段航程'));

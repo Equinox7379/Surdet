@@ -1,6 +1,6 @@
 /** 编辑器素材交互适配器测试：插入行构造与目录命名约定。 */
 import { describe, expect, it } from 'vitest';
-import { galleryUnlockEntries, insertLineForAsset, parsePortraitFileName, kindOfDir } from '../src/assets.js';
+import { galleryUnlockEntries, insertLineForAsset, parsePortraitFileName, projectPortraitAssets, kindOfDir } from '../src/assets.js';
 import type { DirAsset } from '../src/assets.js';
 
 describe('insertLineForAsset（插入辅助）', () => {
@@ -38,6 +38,18 @@ describe('galleryUnlockEntries（鉴赏条目插入能力）', () => {
 });
 
 describe('素材目录约定助手', () => {
+  it('projects usable portrait slots instead of trusting scanner keys, including explicit bindings', () => {
+    const file = (name: string): DirAsset => ({ key: 'wrong:scan', expr: 'normal', kind: 'portrait', handle: null, isImage: true, sourcePath: `content/assets/portrait/${name}` });
+    const normal = file('lynn_uniform_normal.png'), duplicate = file('lynn_uniform_normal.webp'), backup = file('lynn_uniform_normal_backup.png');
+    expect(projectPortraitAssets([normal, backup], '{}')).toEqual([{ ...normal, key: 'lynn:uniform', expr: 'normal' }]);
+    expect(projectPortraitAssets([normal, duplicate, backup], '{}')).toEqual([]);
+    const config = JSON.stringify({ characters: { lynn: { portraits: { uniform: { normal: backup.sourcePath, smile: backup.sourcePath } } } } });
+    expect(projectPortraitAssets([normal, duplicate, backup], config)).toEqual([
+      { ...backup, key: 'lynn:uniform', expr: 'normal' }, { ...backup, key: 'lynn:uniform', expr: 'smile' },
+    ]);
+    expect(projectPortraitAssets([normal], '{')).toEqual([]);
+    expect(projectPortraitAssets([normal], config)).toEqual([]);
+  });
   it('kindOfDir 识别六类目录，未知目录返回 null', () => {
     expect(kindOfDir('bg')).toBe('bg');
     expect(kindOfDir('portrait')).toBe('portrait');
@@ -46,8 +58,9 @@ describe('素材目录约定助手', () => {
     expect(kindOfDir('AmBiEnCe')).toBe('ambience');
     expect(kindOfDir('random_dir')).toBeNull();
   });
-  it('parsePortraitFileName：角色_服装_表情 → 角色:服装 + 表情（缺段补 normal）', () => {
+  it('parsePortraitFileName uses the same exact three-part identity as the runtime', () => {
     expect(parsePortraitFileName('lynn_armor_despair.png')).toEqual({ key: 'lynn:armor', expr: 'despair' });
-    expect(parsePortraitFileName('lynn_uniform.jpg')).toEqual({ key: 'lynn:uniform', expr: 'normal' });
+    expect(parsePortraitFileName('lynn_uniform.jpg')).toBeNull();
+    expect(parsePortraitFileName('lynn_uniform_normal_backup.png')).toBeNull();
   });
 });

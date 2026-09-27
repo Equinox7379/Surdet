@@ -150,7 +150,7 @@ describe('NodeProjectStorage asset file facts', () => {
 });
 
 describe('AuthoringService asset projection', () => {
-  it('keeps project.assets and project.inspect.assets byte-equal without absolute root leakage', async () => {
+  it('keeps catalog contents equal and their enclosing views explicit without absolute root leakage', async () => {
     const root = makeRoot('surdet-node-asset-service-');
     const dataRoot = makeRoot('surdet-node-asset-service-data-');
     try {
@@ -166,7 +166,9 @@ describe('AuthoringService asset projection', () => {
 
       const assets = await service.projectAssets(root);
       const inspected = await service.inspectProject(root);
-      expect(inspected.result.assets).toEqual(assets.result);
+      const { view, ...catalog } = assets.result;
+      expect(view).toBe('project'); expect(inspected.result.view).toBe(view);
+      expect(inspected.result.assets).toEqual(catalog);
       expect(JSON.stringify(assets.result)).not.toContain(root);
       expect(JSON.stringify(inspected.result.assets)).not.toContain(root);
       for (const item of assets.result.intelligence.items) {

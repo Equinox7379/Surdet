@@ -14,6 +14,7 @@ const asset = (key: string, kind: DirAsset['kind'], expr?: string): DirAsset => 
   key,
   kind,
   ...(expr === undefined ? {} : { expr }),
+  ...(kind === 'portrait' ? { sourcePath: `content/assets/portrait/${key.replace(':', '_')}_${expr}.png` } : {}),
   handle: null,
   isImage: kind === 'bg' || kind === 'portrait',
 });
@@ -94,6 +95,17 @@ describe('Timeline 展示投影', () => {
       { kind: 'audio', key: 'lynn_01', sourceKind: 'voice' },
     ]);
     expect(timelineAssetChoices([])).toEqual([]);
+  });
+
+  it('offers explicit portrait slots and omits ambiguous automatic slots and backup names', () => {
+    const normal = asset('lynn:uniform', 'portrait', 'normal');
+    const duplicate = { ...normal, sourcePath: normal.sourcePath!.replace('.png', '.webp') };
+    const backup = { ...normal, sourcePath: normal.sourcePath!.replace('.png', '_backup.png') };
+    expect(timelineAssetChoices([normal, duplicate, backup])).toEqual([]);
+    const config = JSON.stringify({ characters: { lynn: { portraits: { uniform: { smile: backup.sourcePath } } } } });
+    expect(timelineAssetChoices([normal, duplicate, backup], config)).toEqual([
+      { kind: 'portrait', key: 'lynn:uniform', expression: 'smile', sourceKind: 'portrait' },
+    ]);
   });
 });
 

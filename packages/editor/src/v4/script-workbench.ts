@@ -2,6 +2,7 @@ import { state, h, setStatus, type SceneEntry } from '../state.js';
 import { setCurrentText } from '../history.js';
 import { parseScript, splitInstr, type LineModel } from '../model.js';
 import { decodeInstructionArgument, parseProjectConfigDocument } from '@surdet/authoring';
+import { projectPortraitAssets } from '../assets.js';
 import { disposePreviewPanel, renderPreviewPanel, refreshPreviewSourceState } from '../panels/preview-panel.js';
 import { allowedToEdit, button, disclosure, field, ImageScope, navigateMode } from './ui.js';
 import { renderTimelineSummary } from './timeline-summary.js';
@@ -46,6 +47,7 @@ export function installScriptV4(editor: HTMLElement, rerender: () => void): void
 
 export class ScriptWorkbench {
   readonly view: ViewState;
+  private get portraits() { return projectPortraitAssets(state.dirAssets, state.gameConfigText); }
   private readonly abort = new AbortController();
   private readonly inspector: HTMLElement;
   private readonly picture: HTMLElement;
@@ -400,7 +402,7 @@ export class ScriptWorkbench {
     if (line.kind === 'instr') {
       const { name, args } = splitInstr(line.raw);
       const source = name === 'bg' ? state.dirAssets.find((asset) => asset.kind === 'bg' && asset.key === decodeInstructionArgument(args[0] ?? ''))
-        : name === 'show' ? state.dirAssets.find((asset) => asset.kind === 'portrait' && asset.key === decodeInstructionArgument(args[0] ?? '') && (asset.expr ?? 'normal') === decodeInstructionArgument(args[1] ?? 'normal')) : undefined;
+        : name === 'show' ? this.portraits.find((asset) => asset.key === decodeInstructionArgument(args[0] ?? '') && asset.expr === decodeInstructionArgument(args[1] ?? 'normal')) : undefined;
       const previous = summary.querySelector<HTMLElement>('.v4-step-thumb');
       const imageKey = source?.sourcePath ?? '';
       let thumb = previous;
@@ -588,7 +590,7 @@ export class ScriptWorkbench {
       const { args } = splitInstr(line.raw);
       if (line.name === 'show') {
         const target = decodeInstructionArgument(args[0] ?? '');
-        const portraits = state.dirAssets.filter((asset) => asset.kind === 'portrait' && asset.handle !== null);
+        const portraits = this.portraits.filter((asset) => asset.handle !== null);
         const targets = [...new Set(portraits.map((asset) => asset.key))];
         const select = h('select');
         if (!targets.includes(target)) select.append(new Option(target || '尚未指定', target));
@@ -716,7 +718,7 @@ export class ScriptWorkbench {
       const control = button('', () => this.select(actor.line, true), `v4-stage-actor position-${actor.position}`);
       control.setAttribute('aria-label', `定位人物 ${actor.target} ${actor.expression}`);
       stage.append(control);
-      void this.stageImages.image(control, state.dirAssets.find((asset) => asset.kind === 'portrait' && asset.key === actor.target && (asset.expr ?? 'normal') === actor.expression), actor.target);
+      void this.stageImages.image(control, this.portraits.find((asset) => asset.key === actor.target && asset.expr === actor.expression), actor.target);
     }
     if (projection.dialogue) {
       const text = h('div', 'v4-stage-dialogue');
@@ -859,7 +861,7 @@ export class ScriptWorkbench {
     const input = (label: string, value = ''): HTMLInputElement => { const control = h('input'); control.value = value; body.append(field(label, control)); return control; };
     const selectAssets = (kind: string): void => {
       const select = h('select');
-      const entries = state.dirAssets.filter((asset) => asset.kind === kind && asset.handle !== null);
+      const entries = (kind === 'portrait' ? this.portraits : state.dirAssets).filter((asset) => asset.kind === kind && asset.handle !== null);
       select.append(new Option('请选择项目素材', ''));
       [...new Set(entries.map((asset) => asset.key))].forEach((key) => select.append(new Option(key, key)));
       body.append(field('素材', select));

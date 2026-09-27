@@ -241,8 +241,8 @@ describe('Agent Port gallery authoring', () => {
       expect(capsule.isError).not.toBe(true);
       const capsuleBody = envelope(capsule);
       expect(capsuleBody.ok).toBe(true);
-      expect(capsuleBody.result.composition.eligibility).toBe('ready');
-      expect(capsuleBody.result.composition.manifest.operations.map((operation: any) => operation.capabilityId)).toEqual(['gallery.cg.create', 'gallery.cg.patch']);
+      expect(capsuleBody.result.composition).toMatchObject({ eligibility: 'unavailable', reasons: [{ code: 'DIRECT_CHANGE' }] });
+      expect(capsuleBody.result.composition.manifest).toBeUndefined();
 
       const committed = await call(connectedSession.client, 'change.commit');
       expect(committed.body.ok).toBe(true);

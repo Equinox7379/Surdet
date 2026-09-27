@@ -773,6 +773,27 @@ export const v4WorkbenchCases: BrowserCase[] = [
     assert(!document.querySelector('[aria-label="lynn 第 2 项服装"]'), 'readonly mapping was added');
     state.reviewPreviewReadOnly = false;
   } },
+  { name: 'portrait pickers use unambiguous logical bindings, not backup filenames or scanner keys', run: async () => {
+    const scene = fixture();
+    const normal = state.dirAssets.find(asset => asset.expr === 'normal')!;
+    const backup = { ...normal, sourcePath: 'content/assets/portrait/lynn_uniform_normal_backup.svg' };
+    state.dirAssets.push(backup);
+    renderEditor(); control<HTMLButtonElement>('[data-step-summary="3"]').click();
+    assert(document.querySelectorAll('[aria-label="选择表情 normal"]').length === 1, 'backup became a second normal expression');
+    state.dirAssets.push({ ...normal, sourcePath: 'content/assets/portrait/lynn_uniform_normal.webp' });
+    renderEditor(); control<HTMLButtonElement>('[data-step-summary="3"]').click();
+    assert(!document.querySelector('[aria-label="选择表情 normal"]'), 'ambiguous expression remained selectable');
+    state.gameConfigText = JSON.stringify({ characters: { lynn: { portraits: { uniform: { normal: backup.sourcePath, smile: backup.sourcePath } } } } });
+    renderEditor(); control<HTMLButtonElement>('[data-step-summary="3"]').click();
+    assert(document.querySelectorAll('[aria-label="选择表情 normal"]').length === 1, 'explicit binding did not resolve the duplicate');
+    control<HTMLButtonElement>('[aria-label="选择表情 smile"]').click(); await tick();
+    assert(scene.text.includes('@show lynn:uniform smile'), 'explicit expression did not update the original instruction');
+    clickText('#script-v4-toolbar', '添加剧情'); input('.v4-insert-dialog > label select', 'show', 'change');
+    input('.v4-insert-fields [aria-label="素材"]', 'lynn:uniform', 'change');
+    const expressions = [...control<HTMLSelectElement>('.v4-insert-fields [aria-label="表情"]').options].map(option => option.value);
+    assert(expressions.includes('smile') && expressions.filter(value => value === 'normal').length === 1, 'insertion did not use the same bindings');
+    clickText('.v4-insert-dialog footer', '取消');
+  } },
   { name: 'stale inspector does not reinterpret a different instruction as a portrait', run: async () => {
     const scene = fixture(); control<HTMLButtonElement>('[data-step-summary="3"]').click();
     const old = control<HTMLButtonElement>('[aria-label="选择表情 despair"]');

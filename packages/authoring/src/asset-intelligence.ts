@@ -1,5 +1,5 @@
 import { readProjectStage } from '@surdet/core';
-import { projectPortraitOverrides, resolveProjectPortraits, resolveProjectFontPaths, type GenericInstr } from '@surdet/core';
+import { parsePortraitFileName, projectPortraitOverrides, resolveProjectPortraits, resolveProjectFontPaths, type GenericInstr } from '@surdet/core';
 import type {
   ProjectAssetFileFact,
   ProjectAssetIntelligence,
@@ -126,10 +126,9 @@ export function describeProjectAssetPath(input: string): ProjectAssetPathDescrip
       invalidName: invalidPath || !isProjectAssetFileNameSafe(fileName),
     };
   }
-  const portrait = stem.split('_');
+  const portrait = parsePortraitFileName(fileName);
   if (invalidPath || !isProjectAssetFileNameSafe(fileName)
-    || portrait.length !== 3
-    || portrait.some((segment) => segment.length === 0)) {
+    || portrait === null) {
     return {
       path: normalizedPath,
       directory: normalizedPath.slice(0, Math.max(0, normalizedPath.lastIndexOf('/'))),
@@ -140,7 +139,7 @@ export function describeProjectAssetPath(input: string): ProjectAssetPathDescrip
       invalidName: true,
     };
   }
-  const [role, outfit, expression] = portrait as [string, string, string];
+  const { role, outfit, expression } = portrait;
   return {
     path: normalizedPath,
     directory: normalizedPath.slice(0, Math.max(0, normalizedPath.lastIndexOf('/'))),

@@ -80,15 +80,16 @@ describe('simulateProject（无头自动模拟）', () => {
     expect(simulateProject(dir, { seed: 0 }).seed).toBe(0);
   });
 
-  it('无挂起点死循环：单路径步数上限兜底并如实报告', () => {
+  it('跨场景无出口循环耗尽步数预算，不伪造运行时异常或结局', () => {
     const dir = makeProject({
       'game.config.json': JSON.stringify({ entryScene: 'ch1' }),
       'content/scenario/ch1.gal': '@scene ch1\n@label start\n凛：甲。\n@jump ch2.start\n',
       'content/scenario/ch2.gal': '@scene ch2\n@label start\n凛：乙。\n@jump ch1.start\n',
     });
     const r = simulateProject(dir, { maxStepsPerPath: 500 });
-    expect(r.runtimeErrors.length).toBe(1);
-    expect(r.runtimeErrors[0]!.message).toMatch(/步数超过|死循环/);
+    expect(r.budgetExhausted).toBe(true);
+    expect(r.runtimeErrors).toEqual([]);
+    expect(r.endings).toEqual([]);
   });
 
   it('运行时错误收集：@exp 未接 GrowthSystem → 如实报告而非静默', () => {
