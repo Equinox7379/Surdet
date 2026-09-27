@@ -127,6 +127,10 @@ export function createPresentationPorts(
       }
       await stage.registerPortrait?.(charId, costume, expression, source, format, sourcePath);
     },
+    registerPortraitVisual: async (charId, costume, expression, definition, sources) => {
+      if (!options.assetRegistry) throw new Error('Dynamic portrait asset registry is not configured');
+      await options.assetRegistry.registerPortraitVisual(charId, costume, expression, definition, sources);
+    },
     registerVideo: async (key, source, sourcePath) => {
       if (!options.assetRegistry) throw new Error('Video asset registry is not configured');
       await options.assetRegistry.registerVideo(key, source, sourcePath);
@@ -174,6 +178,8 @@ export function createPresentationPorts(
     applyStage: options.worldLayer?.applyStage || stage.applyStage ? (command) => { if (options.worldLayer?.applyStage) options.worldLayer.applyStage(command); else stage.applyStage!(command); } : undefined,
     applyTimelineFrame: (event) => { if (options.worldLayer) options.worldLayer.applyTimelineFrame(event); else stage.applyTimelineFrame?.(event); },
     setPortraitFocus: (characterId) => { if (options.worldLayer) options.worldLayer.setPortraitFocus(characterId); else stage.setPortraitFocus?.(characterId); },
+    setPortraitSpeaking: (speaking) => { if (options.worldLayer) options.worldLayer.setPortraitSpeaking?.(speaking); else stage.setPortraitSpeaking?.(speaking); },
+    setPortraitSkipping: (skipping) => { if (options.worldLayer) options.worldLayer.setPortraitSkipping?.(skipping); else stage.setPortraitSkipping?.(skipping); },
   };
 
   const projectDialogue = (project: () => void): void => {

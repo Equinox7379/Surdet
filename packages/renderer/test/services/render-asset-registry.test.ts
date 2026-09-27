@@ -36,6 +36,53 @@ afterEach(() => {
 });
 
 describe('RenderAssetRegistry', () => {
+  it('registers all visual frames atomically and preserves ownership on dimension/load failure', async () => {
+    const { registry, unload } = registryHarness();
+    const a = 'content/assets/portrait/rin_parts_a.png', b = 'content/assets/portrait/rin_parts_b.png';
+    const definition = { version: 1 as const, kind: 'sequence' as const, loop: true, frames: [{ image: a, durationMs: 100 }, { image: b, durationMs: 100 }] };
+    const first = fakeTexture('first'), second = fakeTexture('second');
+    await registry.registerPortraitVisual('rin', 'coat', 'normal', definition, { [a]: { source: first }, [b]: { source: second } });
+    const registered = registry.resolvePortraitVisual('rin', 'coat', 'normal');
+    await expect(registry.registerPortraitVisual('rin', 'coat', 'normal', definition, { [a]: { source: first } })).rejects.toThrow('未提供');
+    const wrongSize = { ...second, width: 200 } as Texture;
+    await expect(registry.registerPortraitVisual('rin', 'coat', 'normal', definition, { [a]: { source: first }, [b]: { source: wrongSize } })).rejects.toThrow('画布');
+    expect(registry.resolvePortraitVisual('rin', 'coat', 'normal')).toBe(registered);
+    await registry.registerPortrait('rin', 'coat', 'normal', first);
+    expect(registry.resolvePortraitVisual('rin', 'coat', 'normal')).toBeNull();
+    expect(registry.resolvePortrait('rin', 'coat', 'normal')).toBe(first);
+    registry.dispose(); expect(first.destroy).not.toHaveBeenCalled(); expect(second.destroy).not.toHaveBeenCalled(); expect(unload).not.toHaveBeenCalled();
+  });
+
+  it('pins every decoded visual image in definition order and rejects late registration after replacement/release', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (source: string) => new Response(source, { status: 200, headers: { 'content-type': 'image/png' } })));
+    let id = 0;
+    vi.stubGlobal('URL', { createObjectURL: () => `blob:part-${++id}`, revokeObjectURL: vi.fn() });
+    const pending: Array<(texture: Texture) => void> = [];
+    const unload = vi.fn(async () => {});
+    const registry = new RenderAssetRegistry({ load: async () => new Promise(resolve => pending.push(resolve)), unload });
+    const a = 'content/assets/portrait/rin_parts_a.png', b = 'content/assets/portrait/rin_parts_b.png';
+    const definition = { version: 1 as const, kind: 'sequence' as const, loop: true, frames: [{ image: a, durationMs: 100 }, { image: b, durationMs: 100 }] };
+    const sources = { [a]: { source: 'a' }, [b]: { source: 'b' } };
+    const first = registry.registerPortraitVisual('rin', 'coat', 'normal', definition, sources);
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    pending[1]!(fakeTexture('b')); pending[0]!(fakeTexture('a')); await first;
+    const key = registry.resolvePortraitVisual('rin', 'coat', 'normal')!.key;
+    const repeat = registry.registerPortraitVisual('rin', 'coat', 'normal', definition, sources);
+    await vi.waitFor(() => expect(pending).toHaveLength(4));
+    pending[2]!(fakeTexture('a')); pending[3]!(fakeTexture('b')); await repeat;
+    expect(registry.resolvePortraitVisual('rin', 'coat', 'normal')!.key).toBe(key);
+    const late = registry.registerPortraitVisual('rin', 'coat', 'normal', definition, sources);
+    const cancelled = expect(late).rejects.toThrow('取消');
+    await vi.waitFor(() => expect(pending).toHaveLength(6));
+    const latest = fakeTexture('static'); await registry.registerPortrait('rin', 'coat', 'normal', latest);
+    pending[4]!(fakeTexture('a')); pending[5]!(fakeTexture('b')); await cancelled;
+    expect(registry.resolvePortraitVisual('rin', 'coat', 'normal')).toBeNull();
+    expect(registry.resolvePortrait('rin', 'coat', 'normal')).toBe(latest);
+    await registry.releaseRegisteredAssetSources();
+    expect(registry.diagnosticSnapshot().sources).toEqual([]);
+    expect(unload).toHaveBeenCalledTimes(6);
+    registry.dispose();
+  });
   it('registers video URLs without texture decoding and clears only on the owning asset boundary', async () => {
     const { registry, load, unload } = registryHarness();
     await registry.registerVideo('片头', 'blob:clip', 'content/assets/video/片头.webm');

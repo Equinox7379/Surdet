@@ -65,6 +65,30 @@ async function open(): Promise<{ change: ChangeSession; repo: InMemoryChangeRepo
 }
 
 describe('character.ensure', () => {
+  it('writes visual definitions with all image dependencies and rejects missing parts/candidate mutation atomically', async () => {
+    const { change } = await open();
+    change.record.composition = { ...change.record.composition!, mode: 'direct' };
+    const a = 'content/assets/portrait/lynn_parts_a.png', b = 'content/assets/portrait/lynn_parts_b.png';
+    const visuals = { uniform: { talk: { version: 1 as const, kind: 'sequence' as const, loop: true, frames: [{ image: a, durationMs: 50 }, { image: b, durationMs: 100 }] } } };
+    const input = { operationId: 'visuals', id: 'lynn', name: '凛', visuals, expectedFingerprint: await charactersFingerprint(JSON.parse(baseConfig), hasher) };
+    const before = structuredClone(change.record);
+    await expect(applyCharacterEnsure(change, input, hasher, undefined, buildAssetCatalog([a]))).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(change.record).toEqual(before);
+    const result = await applyCharacterEnsure(change, input, hasher, undefined, buildAssetCatalog([a, b]));
+    const config = JSON.parse(change.record.workingFiles['game.config.json']!);
+    expect(config.characters.lynn).toMatchObject({ name: '凛', avatar: 'lynn', visuals });
+    const snapshotWithConfig = { ...snapshot(), config };
+    const complete = buildAssetCatalog([a, b], snapshotWithConfig);
+    const visual = complete.portraits.find(item => item.expression === 'talk')!;
+    expect(visual).toMatchObject({ resolved: true, sourcePaths: [a, b], visual: visuals.uniform.talk });
+    const partial = buildAssetCatalog([a], snapshotWithConfig);
+    expect(partial.portraits.find(item => item.expression === 'talk')?.resolved).toBe(false);
+    expect(partial.intelligence.items.find(item => item.sourcePath === b)).toMatchObject({ physical: false, issues: ['ASSET_REFERENCE_MISSING'] });
+    change.record.composition.mode = 'candidate';
+    const candidateBefore = structuredClone(change.record);
+    await expect(applyCharacterEnsure(change, { ...input, operationId: 'candidate', visuals: null, expectedFingerprint: result.fingerprint }, hasher)).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
+    expect(change.record).toEqual(candidateBefore);
+  });
   it('replaces only explicit portraits in direct mode, preserves unknown data and rejects stale/missing inputs atomically', async () => {
     const { change } = await open();
     change.record.composition = { ...change.record.composition!, mode: 'direct' };

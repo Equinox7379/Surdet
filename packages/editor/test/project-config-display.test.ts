@@ -229,6 +229,74 @@ describe('character table editing through shared authoring semantics', () => {
     expect(JSON.parse(configDisk.read()).characters.lynn).toEqual(configured.characters.lynn);
   });
 
+  it('preserves omitted visuals and replaces or removes them through character.ensure', async () => {
+    const sourcePath = 'content/assets/portrait/visual-source.png';
+    const secondSourcePath = 'content/assets/portrait/visual-second.png';
+    const originalVisuals = {
+      uniform: {
+        normal: {
+          version: 1,
+          kind: 'sequence',
+          frames: [{ image: sourcePath, durationMs: 120 }, { image: secondSourcePath, durationMs: 120 }],
+          loop: true,
+        },
+      },
+    };
+    const custom = { keep: true };
+    const configured = {
+      ...CHARACTER_FIXTURE_CONFIG,
+      characters: { ...CHARACTER_FIXTURE_CONFIG.characters, lynn: { ...CHARACTER_FIXTURE_CONFIG.characters.lynn, custom, visuals: originalVisuals } },
+    };
+    const { configDisk } = installFixture(JSON.stringify(configured));
+    state.dirAssets = [
+      { key: 'visual:source', kind: 'portrait', isImage: true, handle: null, sourcePath },
+      { key: 'visual:second', kind: 'portrait', isImage: true, handle: null, sourcePath: secondSourcePath },
+    ];
+
+    await commitCharacterTable([{ id: 'lynn', name: '凛', avatar: 'lynn2', portraits: [] }]);
+    expect(JSON.parse(configDisk.read()).characters.lynn).toMatchObject({ visuals: originalVisuals, custom });
+
+    const replacement = {
+      uniform: {
+        talking: {
+          version: 1,
+          kind: 'layered',
+          layers: [{ id: 'mouth', images: { closed: sourcePath, open: secondSourcePath }, default: 'closed' }],
+        },
+      },
+    };
+    const row: CharacterTableEditRow = {
+      id: 'lynn', name: '凛', avatar: 'lynn2', portraits: [], visualsText: JSON.stringify(replacement),
+    };
+    await commitCharacterTable([row]);
+    expect(JSON.parse(configDisk.read()).characters.lynn).toMatchObject({ visuals: replacement, custom });
+
+    await commitCharacterTable([{ ...row, visualsText: 'null' }]);
+    const withoutVisuals = JSON.parse(configDisk.read()).characters.lynn;
+    expect(withoutVisuals).toMatchObject({ custom });
+    expect(withoutVisuals).not.toHaveProperty('visuals');
+  });
+
+  it('rejects invalid visuals JSON and definitions before changing the draft or disk', async () => {
+    const { configDisk } = installFixture(characterFixtureText());
+    const before = state.gameConfigText;
+    const invalidDrafts = [
+      '{',
+      JSON.stringify({ uniform: { normal: { version: 1, kind: 'sequence', frames: [], loop: true } } }),
+    ];
+    for (const visualsText of invalidDrafts) {
+      const row: CharacterTableEditRow = { id: 'lynn', name: '凛', avatar: 'lynn', visualsText };
+      await expect(commitCharacterTable([row])).rejects.toMatchObject({
+        code: 'VALIDATION_FAILED',
+        message: expect.stringContaining('分层 / 帧动画'),
+      });
+      expect(row.visualsText).toBe(visualsText);
+      expect(configDisk.writes).toHaveLength(0);
+      expect(configDisk.read()).toBe(characterFixtureText());
+      expect(state.gameConfigText).toBe(before);
+    }
+  });
+
   it('rejects duplicate, incomplete and missing portrait rows without changing disk or editor configuration', async () => {
     const { configDisk } = installFixture(characterFixtureText());
     const before = state.gameConfigText;

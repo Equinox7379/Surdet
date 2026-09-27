@@ -4,7 +4,7 @@
  * 浏览器目录句柄适配和“插入到当前剧本”的界面辅助，不再建立第二份素材索引。
  */
 
-import { parsePortraitFileName as parsePortraitIdentity, resolveProjectPortraits } from '@surdet/core';
+import { parsePortraitFileName as parsePortraitIdentity, portraitSourcePaths, resolveProjectPortraits, samplePortraitVisual } from '@surdet/core';
 import { parseProjectConfigDocument } from '@surdet/authoring';
 
 export type AssetKind = 'bg' | 'portrait' | 'avatar' | 'bgm' | 'ambience' | 'se' | 'voice' | 'video' | 'font' | 'other' | 'cg' | 'music' | 'text';
@@ -24,6 +24,8 @@ export interface DirAsset {
   /** File 元数据，不读取二进制内容。 */
   bytes?: number;
   lastModified?: number;
+  /** Default full-canvas layers for a logical dynamic portrait thumbnail. */
+  layers?: FileSystemFileHandle[];
 }
 
 /** 汇总后的素材清单条目 */
@@ -103,6 +105,11 @@ export function projectPortraitAssets(assets: readonly DirAsset[], configText: s
   return bindings.flatMap(binding => {
     if (counts.get(`${binding.role}:${binding.outfit}:${binding.expression}`) !== 1) return [];
     const asset = assets.find(asset => asset.sourcePath === binding.sourcePath && asset.isImage);
+    if (binding.visual) {
+      if (!portraitSourcePaths(binding).every(path => assets.some(item => item.sourcePath === path && item.isImage && item.handle))) return [];
+      const layers = samplePortraitVisual(binding.visual, 0, false, false).images.map(path => assets.find(item => item.sourcePath === path)!.handle!);
+      return asset ? [{ ...asset, key: `${binding.role}:${binding.outfit}`, kind: 'portrait' as const, expr: binding.expression, layers }] : [];
+    }
     return asset ? [{ ...asset, key: `${binding.role}:${binding.outfit}`, kind: 'portrait' as const, expr: binding.expression }] : [];
   });
 }

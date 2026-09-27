@@ -5,9 +5,11 @@
 import {
   compileScene,
   resolveProjectPortraits,
+  portraitSourcePaths,
   assertUniquePortraitBindings,
   readProjectStage,
   type CharacterPortraits,
+  type CharacterVisuals,
   Interpreter,
   SceneRegistry,
   EventBus,
@@ -94,7 +96,7 @@ export interface PlayerProject {
     title?: string;
     entryScene: string;
     variables: Record<string, unknown>;
-    characters?: Record<string, { name?: string; avatar?: string; portraits?: CharacterPortraits }>;
+    characters?: Record<string, { name?: string; avatar?: string; portraits?: CharacterPortraits; visuals?: CharacterVisuals }>;
     font?: string;
     fonts?: Partial<Record<'body' | 'title' | 'ui', string>>;
     player?: { subtitle?: string; titleBackground?: string; endScenes?: readonly string[]; firstRunHint?: string };
@@ -546,8 +548,8 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
     const portraitBindings = resolveProjectPortraits(gameConfig, files.map(rel => `content/assets/${rel}`));
     assertUniquePortraitBindings(portraitBindings);
     for (const binding of portraitBindings) {
-      if (binding.configured && !files.includes(binding.sourcePath.slice('content/assets/'.length))) {
-        throw new Error(`角色立绘文件不存在：${binding.role}:${binding.outfit}:${binding.expression} → ${binding.sourcePath}`);
+      for (const path of portraitSourcePaths(binding)) if (binding.configured && !files.includes(path.slice('content/assets/'.length))) {
+        throw new Error(`角色立绘文件不存在：${binding.role}:${binding.outfit}:${binding.expression} → ${path}`);
       }
     }
     const IMG = /\.(png|jpe?g|webp|gif|avif|svg)$/i;
@@ -566,6 +568,8 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
       // Pixi resolves its loader from the URL extension; the fragment does not affect the Blob fetch.
       return `${base}#${filename}`;
     };
+    const visualPaths = new Set(portraitBindings.filter(binding => binding.visual).flatMap(portraitSourcePaths));
+    const visualSources: Record<string, { source: string; format?: string }> = {};
     const register = async (rel: string, url: string): Promise<boolean> => {
       const parts = rel.split('/');
       const kind = (parts[0] ?? '').toLowerCase();
@@ -575,12 +579,14 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         await assets.registerBackground(fname.replace(IMG, ''), url, format);
         return true;
       } else if (kind === 'portrait' && IMG.test(fname)) {
-        const bindings = portraitBindings.filter(value => value.sourcePath === `content/assets/${rel}`);
+        const path = `content/assets/${rel}`;
+        if (visualPaths.has(path)) visualSources[path] = { source: url, format: fname.split('.').pop() };
+        const bindings = portraitBindings.filter(value => !value.visual && value.sourcePath === path);
         for (const binding of bindings) {
           await assets.registerPortrait(binding.role, binding.outfit, binding.expression, url, format,
             readProjectStage(gameConfig)?.portraits[`${binding.role}:${binding.outfit}`]?.sources[binding.expression] ? binding.sourcePath : undefined);
         }
-        return bindings.length > 0;
+        return bindings.length > 0 || visualPaths.has(path);
       } else if (kind === 'avatar' && IMG.test(fname)) {
         await assets.registerAvatar(fname.replace(IMG, ''), url, format);
         return true;
@@ -606,7 +612,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
         else revoke?.();
       } catch (error) {
         revoke?.();
-        if (portraitBindings.some(binding => binding.configured && binding.sourcePath === `content/assets/${rel}`)) {
+        if (portraitBindings.some(binding => binding.configured && portraitSourcePaths(binding).includes(`content/assets/${rel}`))) {
           dialogue.showBanner(`角色立绘加载失败：content/assets/${rel} · ${error instanceof Error ? error.message : String(error)}`, 'tip');
         }
         throw error;
@@ -639,6 +645,10 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
       loading.showLoading(progress);
     });
     lastLoadingProgress = { ...finalProgress };
+    // All source URLs are now retained; never wait for sibling jobs inside the bounded queue.
+    for (const binding of portraitBindings) if (binding.visual) {
+      await assets.registerPortraitVisual(binding.role, binding.outfit, binding.expression, binding.visual, visualSources);
+    }
     if (finalProgress.failed > 0) console.warn(`[starter] ${finalProgress.failed} asset(s) failed`);
     loading.hideLoading();
     console.info('[starter] 素材加载完成：音频条目', audioUrls.size);

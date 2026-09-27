@@ -1,4 +1,4 @@
-import { resolveProjectPortraits } from '@surdet/core';
+import { portraitSourcePaths, resolveProjectPortraits } from '@surdet/core';
 import { buildProjectAssetIntelligence } from './asset-intelligence.js';
 import type { AssetEntry, ProjectAssetCatalog, ProjectAssetFileFact } from './contracts.js';
 import type { ProjectSnapshot } from './project-snapshot.js';
@@ -102,10 +102,13 @@ export function buildAssetCatalog(
   }
   for (const portrait of portraitBindings) {
     const { role, outfit, expression, sourcePath } = portrait;
-    const item = intelligence.items.find(item => item.sourcePath === sourcePath);
+    const sources = portraitSourcePaths(portrait);
     portraits.push({ ...portrait, kind: 'portrait', key: `${role}:${outfit}`, timelineTarget: `${role}:${outfit}`,
-      format: extensionOf(sourcePath), resolved: !!item && item.physical && slotPaths.get(slotOf(portrait))?.size === 1
-        && item.issues.every(issue => issue === 'ASSET_UNUSED' || issue === 'ASSET_KEY_DUPLICATE') });
+      ...(portrait.visual ? { sourcePaths: sources } : {}),
+      format: extensionOf(sourcePath), resolved: slotPaths.get(slotOf(portrait))?.size === 1 && sources.every(path => {
+        const item = intelligence.items.find(item => item.sourcePath === path);
+        return !!item?.physical && item.issues.every(issue => issue === 'ASSET_UNUSED' || issue === 'ASSET_KEY_DUPLICATE' || (portrait.configured && issue === 'ASSET_NAME_INVALID'));
+      }) });
   }
   for (const entry of [...backgrounds, ...portraits]) {
     const item = intelligence.items.find(item => item.sourcePath === entry.sourcePath);

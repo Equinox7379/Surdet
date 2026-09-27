@@ -23,6 +23,8 @@ import type { TimelineFrameEvent } from '../../timeline-player.js';
 import type { FrameRequestHandler, PortraitView } from '../../types.js';
 import type { ProjectStage, StageCommand, StageLayerDefinition, StagePose, StageGeometryPolicy, StageSource, StageInspection } from '../../stage-geometry.js';
 import { StageMotionController, prepareStageMotions, lerpColor, type StageMotionSnapshot, type StageProperty, type StageValues } from '../../stage-motion.js';
+import { PortraitVisualPlayer, PortraitVisualRoot, validatePortraitAnimation } from '../../portrait-visual-player.js';
+type PortraitDisplay = Sprite | PortraitVisualRoot;
 
 export interface WorldPresentationSnapshot {
   version: 1 | 2;
@@ -36,6 +38,8 @@ export interface WorldPresentationSnapshot {
     portraits: { key: string; oldView: PortraitView; remain: number; duration: number }[];
   };
   activeSpeakerId?: string | null;
+  speaking?: boolean;
+  portraitSkipping?: boolean;
   backgroundKey: string | null;
   portraits: readonly { key: string; view: PortraitView }[];
   cameraScale: number;
@@ -256,10 +260,13 @@ export class WorldLayer implements WorldProjectionPort {
   #backgroundSprite: Sprite | null = null;
   #backgroundKey: string | null = null;
   #backgroundTransition: { old: Sprite | null; oldKey: string | null; neu: Sprite; remain: number; dur: number } | null = null;
-  #portraitSprites = new Map<string, Sprite>();
+  #portraitSprites = new Map<string, PortraitDisplay>();
   #portraitViews = new Map<string, PortraitView>();
-  readonly #portraitFrames = new WeakMap<Sprite, import('@surdet/core').StageRect>();
-  #portraitTweens: { key: string; old: Sprite; neu: Sprite; remain: number; dur: number; oldView?: PortraitView }[] = [];
+  #portraitPlayers = new Map<PortraitDisplay, PortraitVisualPlayer>();
+  #speaking = false;
+  #portraitSkipping = false;
+  readonly #portraitFrames = new WeakMap<PortraitDisplay, import('@surdet/core').StageRect>();
+  #portraitTweens: { key: string; old: PortraitDisplay; neu: PortraitDisplay; remain: number; dur: number; oldView?: PortraitView }[] = [];
   #activeSpeakerId: string | null = null;
   #flashRemain = 0;
   #flashDur = 1;
@@ -274,7 +281,7 @@ export class WorldLayer implements WorldProjectionPort {
   #particleKind: string | null = null;
   #particlePreset: ParticlePreset | null = null;
   #particles: { sprite: Graphics; vx: number; vy: number; phase: number }[] = [];
-  #moveTweens: { key: string; pos: string; sprite: Sprite; fromX: number; toX: number; remain: number; dur: number }[] = [];
+  #moveTweens: { key: string; pos: string; sprite: PortraitDisplay; fromX: number; toX: number; remain: number; dur: number }[] = [];
   #timelineMoveStarts = new Map<object, Map<string, number>>();
   #timelineValueStarts = new Map<object, number>();
   #timelinePanStarts = new Map<object, { x: number; y: number }>();
@@ -352,6 +359,11 @@ export class WorldLayer implements WorldProjectionPort {
 
   update(deltaMs: number): void {
     if (this.#disposed || !this.#hasEffectWork()) return;
+    for (const [sprite, player] of this.#portraitPlayers) {
+      const view = [...this.#portraitSprites].find(([, value]) => value === sprite)?.[0];
+      const charId = view ? this.#portraitViews.get(view)?.charId : this.#portraitTweens.find(tween => tween.old === sprite)?.oldView?.charId;
+      player.advance(deltaMs, this.#speaking && charId === this.#activeSpeakerId, !this.#presentation.reducedMotion, this.#portraitSkipping);
+    }
     this.#stageMotions.update(deltaMs);
     this.#worldEffects.update(deltaMs);
     if (this.#flashRemain > 0) {
@@ -399,6 +411,8 @@ export class WorldLayer implements WorldProjectionPort {
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void {
     this.#presentation = normalizePresentationPreferences({ ...this.#presentation, ...preferences });
     if (!this.#presentation.particleEnabled) this.stopParticles();
+    for (const player of this.#portraitPlayers.values()) player.project(!this.#presentation.reducedMotion, this.#portraitSkipping);
+    this.#syncEffectRegistration();
     this.#requestFrame();
   }
 
@@ -425,9 +439,27 @@ export class WorldLayer implements WorldProjectionPort {
     }
   }
 
+  setPortraitSpeaking(speaking: boolean): void {
+    if (this.#speaking === speaking) return;
+    this.#speaking = speaking;
+    this.#syncPortraitSpeaking();
+  }
+
+  setPortraitSkipping(skipping: boolean): void {
+    if (this.#portraitSkipping === skipping) return;
+    this.#portraitSkipping = skipping; this.#syncPortraitSpeaking();
+  }
+
+  #syncPortraitSpeaking(): void {
+    for (const [key, sprite] of this.#portraitSprites) this.#portraitPlayers.get(sprite)?.advance(0,
+      this.#speaking && this.#portraitViews.get(key)?.charId === this.#activeSpeakerId, !this.#presentation.reducedMotion, this.#portraitSkipping);
+    this.#syncEffectRegistration(); this.#requestFrame();
+  }
+
   setPortraitFocus(characterId: string | null): void {
     if (this.#disposed) return;
     this.#activeSpeakerId = characterId;
+    this.#syncPortraitSpeaking();
     for (const [key, sprite] of this.#portraitSprites) {
       sprite.tint = this.#portraitTint(this.#portraitViews.get(key));
     }
@@ -667,7 +699,7 @@ export class WorldLayer implements WorldProjectionPort {
       this.#projectStageLayer(layer);
     }
   }
-  #projectPortraitPose(sprite: Sprite, view: PortraitView): void {
+  #projectPortraitPose(sprite: PortraitDisplay, view: PortraitView): void {
     if (!view.pose) return;
     const pose = view.pose;
     const frame = this.#portraitFrames.get(sprite) ?? view.frame ?? { x: 0, y: 0, width: sprite.texture.width, height: sprite.texture.height };
@@ -676,6 +708,7 @@ export class WorldLayer implements WorldProjectionPort {
       (frame.y + frame.height * pose.anchorY) / sprite.texture.height);
     sprite.scale.set(pose.facing === 'left' ? -scale : scale, scale);
     sprite.position.set(pose.x, pose.y); sprite.alpha = pose.opacity; sprite.zIndex = pose.z;
+    this.#portraitPlayers.get(sprite)?.syncAnchor();
   }
 
   setPortrait(key: string, view: PortraitView): void {
@@ -683,6 +716,16 @@ export class WorldLayer implements WorldProjectionPort {
     const texture = this.#assets.resolvePortrait(view.charId, view.costume, view.expression)
       ?? this.#assets.getOrCreatePortrait(`${view.charId}:${view.costume}:${view.expression}`, () => makeFallbackPortraitTexture(view.charId, view.costume, view.expression));
     let previous = this.#portraitViews.get(key);
+    const visual = this.#assets.resolvePortraitVisual(view.charId, view.costume, view.expression);
+    if (visual && !view.pose) {
+      if (previous && !previous.pose) { this.#promotePortrait(key); previous = this.#portraitViews.get(key); }
+      view = { ...view, pose: previous?.pose ?? this.#geometry().stagePoseFromModifiers(this.#effectiveStage(),
+        `${view.charId}:${view.costume}`, new Map([['pos', view.pos]])) };
+    }
+    if (view.animation) {
+      if (!visual) throw new Error('静态立绘不能恢复动态播放状态');
+      validatePortraitAnimation(visual, view.animation);
+    }
     if (view.pose || previous?.pose) {
       const pose = this.#geometry().validateStagePose(view.pose ?? previous!.pose);
       const profile = this.#stage?.portraits[`${view.charId}:${view.costume}`];
@@ -702,7 +745,8 @@ export class WorldLayer implements WorldProjectionPort {
     }
     this.#invalidatePreparation();
     this.#requestFrame();
-    this.#portraitViews.set(key, { ...view, ...(view.pose ? { pose: { ...view.pose } } : {}), ...(view.frame ? { frame: { ...view.frame } } : {}) });
+    const { animation: _animation, ...liveView } = view;
+    this.#portraitViews.set(key, { ...liveView, ...(view.pose ? { pose: { ...view.pose } } : {}), ...(view.frame ? { frame: { ...view.frame } } : {}) });
     const width = Math.min(this.#w * 0.48, this.#h * 1.28 * texture.width / Math.max(1, texture.height));
     const height = (texture.height / Math.max(1, texture.width)) * width;
     const x = this.#resolvePortraitX(view.pos) ?? this.#w * 0.5;
@@ -711,9 +755,11 @@ export class WorldLayer implements WorldProjectionPort {
       const sprite = this.#createPortraitSprite(texture, x, height, view);
       this.#portraitSprites.set(key, sprite);
       this.#portraitLayer.addChild(sprite);
+      this.#syncEffectRegistration();
       return;
     }
-    if (existing.texture === texture) {
+    if (!view.animation && ((visual && this.#portraitPlayers.get(existing)?.asset === visual)
+      || (!visual && !this.#portraitPlayers.has(existing) && existing.texture === texture))) {
       if (view.pose) {
         if (view.frame) this.#portraitFrames.set(existing, { ...view.frame });
         this.#projectPortraitPose(existing, view);
@@ -726,7 +772,7 @@ export class WorldLayer implements WorldProjectionPort {
       // old transition, not another actor that shares its texture.
       const stale = this.#portraitTweens.filter(tween => tween.key === key);
       this.#portraitTweens = this.#portraitTweens.filter(tween => tween.key !== key);
-      for (const tween of stale) if (tween.old !== existing) { tween.old.parent?.removeChild(tween.old); tween.old.destroy(); }
+      for (const tween of stale) if (tween.old !== existing) { tween.old.parent?.removeChild(tween.old); this.#destroyPortrait(tween.old); }
       existing.alpha = view.pose.opacity;
     }
     const next = this.#createPortraitSprite(texture, x, height, view);
@@ -747,7 +793,7 @@ export class WorldLayer implements WorldProjectionPort {
     const keys = this.#portraitSprites.has(key)
       ? [key]
       : [...this.#portraitSprites.keys()].filter((candidate) => candidate === key || candidate.startsWith(`${key}:`));
-    const removed = new Set<Sprite>();
+    const removed = new Set<PortraitDisplay>();
     for (const candidate of keys) {
       const sprite = this.#portraitSprites.get(candidate);
       if (sprite) removed.add(sprite);
@@ -757,7 +803,7 @@ export class WorldLayer implements WorldProjectionPort {
       const sprite = this.#portraitSprites.get(candidate);
       if (!sprite) continue;
       if (sprite.parent) sprite.parent.removeChild(sprite);
-      sprite.destroy();
+      this.#destroyPortrait(sprite);
       this.#portraitSprites.delete(candidate);
       this.#portraitViews.delete(candidate);
       this.#stageMotions.cancel(`portrait:${candidate}`); this.#objectSources.delete(`portrait:${candidate}`);
@@ -1111,7 +1157,7 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   snapshotPresentation(): WorldPresentationSnapshot {
-    const extended = this.#stage !== null || this.#stageLayers.size > 0 || this.#stageMotions.hasState || [...this.#portraitViews.values()].some(view => view.pose !== undefined);
+    const extended = this.#stage !== null || this.#stageLayers.size > 0 || this.#stageMotions.hasState || this.#portraitPlayers.size > 0 || [...this.#portraitViews.values()].some(view => view.pose !== undefined);
     return {
       version: extended ? 2 : 1,
       ...(extended ? { design: { width: this.#w, height: this.#h },
@@ -1120,13 +1166,13 @@ export class WorldLayer implements WorldProjectionPort {
         transitions: {
           ...(this.#backgroundTransition?.oldKey ? { background: { oldKey: this.#backgroundTransition.oldKey,
             remain: this.#backgroundTransition.remain, duration: this.#backgroundTransition.dur } } : {}),
-          portraits: this.#portraitTweens.filter(tween => tween.oldView && this.#portraitViews.get(tween.key)?.pose).map(tween => ({ key: tween.key,
-            oldView: JSON.parse(JSON.stringify(tween.oldView)) as PortraitView, remain: tween.remain, duration: tween.dur })),
+          portraits: this.#portraitTweens.filter(tween => tween.oldView && (this.#portraitViews.get(tween.key)?.pose || this.#portraitPlayers.has(tween.old) || this.#portraitPlayers.has(tween.neu))).map(tween => ({ key: tween.key,
+            oldView: this.#snapshotPortrait(tween.oldView!, tween.old), remain: tween.remain, duration: tween.dur })),
         } } : {}),
       activeSpeakerId: this.#activeSpeakerId,
+      ...(this.#portraitPlayers.size ? { speaking: this.#speaking, portraitSkipping: this.#portraitSkipping } : {}),
       backgroundKey: this.#backgroundKey,
-      portraits: [...this.#portraitViews.entries()].map(([key, view]) => ({ key, view: { ...view,
-        ...(view.pose ? { pose: { ...view.pose } } : {}), ...(view.frame ? { frame: { ...view.frame } } : {}) } })),
+      portraits: [...this.#portraitViews.entries()].map(([key, view]) => ({ key, view: this.#snapshotPortrait(view, this.#portraitSprites.get(key)!) })),
       cameraScale: this.worldContainer.scale.x,
       cameraPan: { x: this.#cameraPanX, y: this.#cameraPanY },
       fadeAlpha: this.fadeOverlay.alpha,
@@ -1169,6 +1215,7 @@ export class WorldLayer implements WorldProjectionPort {
     }
     this.#clearEffects({ preserveWorld });
     this.#activeSpeakerId = null;
+    this.#speaking = false; this.#portraitSkipping = false;
     if (preserveWorld) this.setPortraitFocus(null);
     this.#requestFrame();
   }
@@ -1246,7 +1293,7 @@ export class WorldLayer implements WorldProjectionPort {
 
   #stopPortraitTransitions(): void {
     const live = new Set(this.#portraitSprites.values());
-    const stale = new Set<Sprite>();
+    const stale = new Set<PortraitDisplay>();
     for (const tween of this.#portraitTweens) {
       if (!live.has(tween.old)) stale.add(tween.old);
       if (!live.has(tween.neu)) stale.add(tween.neu);
@@ -1254,13 +1301,14 @@ export class WorldLayer implements WorldProjectionPort {
     this.#portraitTweens = [];
     for (const sprite of stale) {
       if (sprite.parent) sprite.parent.removeChild(sprite);
-      sprite.destroy();
+      this.#destroyPortrait(sprite);
     }
     this.#syncEffectRegistration();
   }
 
-  #createPortraitSprite(texture: Texture, x: number, height: number, view: PortraitView): Sprite {
-    const sprite = new Sprite(texture);
+  #createPortraitSprite(texture: Texture, x: number, height: number, view: PortraitView): PortraitDisplay {
+    const visual = this.#assets.resolvePortraitVisual(view.charId, view.costume, view.expression);
+    const sprite = visual ? new PortraitVisualRoot(texture) : new Sprite(texture);
     sprite.width = height * texture.width / Math.max(1, texture.height);
     sprite.height = height;
     sprite.anchor.set(0.5, 1);
@@ -1268,17 +1316,30 @@ export class WorldLayer implements WorldProjectionPort {
     sprite.tint = this.#portraitTint(view);
     if (view.frame) this.#portraitFrames.set(sprite, { ...view.frame });
     if (view.pose) this.#projectPortraitPose(sprite, view);
+    if (visual && sprite instanceof PortraitVisualRoot) {
+      const player = new PortraitVisualPlayer(sprite, visual, view.animation);
+      this.#portraitPlayers.set(sprite, player);
+      if (!view.animation) player.advance(0, this.#speaking && view.charId === this.#activeSpeakerId, !this.#presentation.reducedMotion, this.#portraitSkipping);
+      else player.project(!this.#presentation.reducedMotion, this.#portraitSkipping);
+    }
     return sprite;
   }
+
+  #snapshotPortrait(view: PortraitView, sprite: PortraitDisplay): PortraitView {
+    const animation = this.#portraitPlayers.get(sprite)?.snapshot();
+    return { ...view, ...(view.pose ? { pose: { ...view.pose } } : {}), ...(view.frame ? { frame: { ...view.frame } } : {}), ...(animation ? { animation } : {}) };
+  }
+
+  #destroyPortrait(sprite: PortraitDisplay): void { this.#portraitPlayers.delete(sprite); sprite.destroy({ children: true }); }
 
   #portraitTint(view: PortraitView | undefined): number {
     // Focus dims the drawing, not its opacity: the scenery must not show through a person.
     return !this.#activeSpeakerId || view?.charId === this.#activeSpeakerId ? 0xffffff : 0xc4cddd;
   }
 
-  #detachPortraitSprites(removed: ReadonlySet<Sprite>): void {
+  #detachPortraitSprites(removed: ReadonlySet<PortraitDisplay>): void {
     this.#moveTweens = this.#moveTweens.filter((tween) => !removed.has(tween.sprite));
-    const orphaned = new Set<Sprite>();
+    const orphaned = new Set<PortraitDisplay>();
     this.#portraitTweens = this.#portraitTweens.filter((tween) => {
       if (!removed.has(tween.old) && !removed.has(tween.neu)) return true;
       if (!removed.has(tween.old)) orphaned.add(tween.old);
@@ -1289,7 +1350,7 @@ export class WorldLayer implements WorldProjectionPort {
     for (const sprite of orphaned) {
       if (live.has(sprite) || removed.has(sprite)) continue;
       if (sprite.parent) sprite.parent.removeChild(sprite);
-      sprite.destroy();
+      this.#destroyPortrait(sprite);
     }
   }
 
@@ -1327,7 +1388,7 @@ export class WorldLayer implements WorldProjectionPort {
       }
     }
     if (this.#portraitTweens.length > 0) {
-      const done: { key: string; old: Sprite; neu: Sprite; remain: number; dur: number }[] = [];
+      const done: { key: string; old: PortraitDisplay; neu: PortraitDisplay; remain: number; dur: number }[] = [];
       for (const tween of this.#portraitTweens) {
         tween.remain = Math.max(0, tween.remain - deltaMs);
         const progress = 1 - tween.remain / tween.dur;
@@ -1338,7 +1399,7 @@ export class WorldLayer implements WorldProjectionPort {
       }
       for (const tween of done) {
         this.#portraitLayer.removeChild(tween.old);
-        tween.old.destroy();
+        this.#destroyPortrait(tween.old);
         this.#portraitTweens.splice(this.#portraitTweens.indexOf(tween), 1);
       }
     }
@@ -1376,6 +1437,7 @@ export class WorldLayer implements WorldProjectionPort {
 
   #hasEffectWork(): boolean {
     return this.#stageMotions.active || this.#worldEffects.needsUpdate
+      || [...this.#portraitPlayers.values()].some(player => player.active)
       || this.#flashRemain > 0
       || this.#zoomRemain > 0
       || this.#backgroundTransition !== null
@@ -1423,13 +1485,13 @@ export class WorldLayer implements WorldProjectionPort {
   #clearPortraits(): void {
     for (const key of this.#portraitViews.keys()) this.#objectSources.delete(`portrait:${key}`);
     for (const key of this.#portraitViews.keys()) this.#stageMotions.cancel(`portrait:${key}`);
-    const all = new Set<Sprite>([
+    const all = new Set<PortraitDisplay>([
       ...this.#portraitSprites.values(),
       ...this.#portraitTweens.flatMap((tween) => [tween.old, tween.neu]),
     ]);
     for (const sprite of all) {
       if (sprite.parent) sprite.parent.removeChild(sprite);
-      sprite.destroy();
+      this.#destroyPortrait(sprite);
     }
     this.#portraitSprites.clear();
     this.#portraitViews.clear();
@@ -1476,6 +1538,7 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   #clearVisibleState(cancelActiveTimelines = false): void {
+    this.#speaking = false; this.#portraitSkipping = false;
     this.#clearStageLayers();
     this.#clearPortraits();
     this.#clearBackground();
@@ -1494,6 +1557,8 @@ export class WorldLayer implements WorldProjectionPort {
       if (!design || design.width !== this.#w || design.height !== this.#h) throw invalidSnapshot('Stage design canvas differs from the saved canvas');
     }
     if (raw.activeSpeakerId !== undefined && raw.activeSpeakerId !== null && typeof raw.activeSpeakerId !== 'string') throw invalidSnapshot('activeSpeakerId is invalid');
+    if (raw.speaking !== undefined && typeof raw.speaking !== 'boolean') throw invalidSnapshot('speaking is invalid');
+    if (raw.portraitSkipping !== undefined && typeof raw.portraitSkipping !== 'boolean') throw invalidSnapshot('portraitSkipping is invalid');
     if (!(raw.backgroundKey === null || typeof raw.backgroundKey === 'string')) throw invalidSnapshot('backgroundKey is invalid');
     if (!Array.isArray(raw.portraits)) throw invalidSnapshot('portraits must be an array');
     const portraits: { key: string; view: PortraitView }[] = [];
@@ -1506,6 +1571,12 @@ export class WorldLayer implements WorldProjectionPort {
       if (![candidate.charId, candidate.costume, candidate.expression, candidate.pos].every((value) => typeof value === 'string')) throw invalidSnapshot('portrait view is invalid');
       if (portraits.some(value => value.key === record.key)) throw invalidSnapshot('Duplicate portrait instance identity');
       const view: PortraitView = { charId: candidate.charId as string, costume: candidate.costume as string, expression: candidate.expression as string, pos: candidate.pos as string };
+      const visual = this.#assets.resolvePortraitVisual(view.charId, view.costume, view.expression);
+      if (visual) {
+        if (!extended || typeof raw.speaking !== 'boolean') throw invalidSnapshot('Dynamic portraits require their saved animation state');
+        try { view.animation = validatePortraitAnimation(visual, candidate.animation); }
+        catch (error) { throw invalidSnapshot(String(error)); }
+      } else if (candidate.animation !== undefined) throw invalidSnapshot('Saved dynamic portrait is no longer registered');
       if (candidate.pose !== undefined) {
         if (!extended) throw invalidSnapshot('Stage pose requires a version 2 world snapshot');
         view.pose = this.#geometry().validateStagePose(candidate.pose);
@@ -1566,6 +1637,9 @@ export class WorldLayer implements WorldProjectionPort {
         if (!view || ![view.charId, view.costume, view.expression, view.pos].every(value => typeof value === 'string')) throw invalidSnapshot('Invalid previous portrait');
         const texture = this.#assets.resolvePortrait(view.charId, view.costume, view.expression);
         if (!texture) throw invalidSnapshot('Previous expression is not registered');
+        const visual = this.#assets.resolvePortraitVisual(view.charId, view.costume, view.expression);
+        if (visual) { try { validatePortraitAnimation(visual, view.animation); } catch (error) { throw invalidSnapshot(String(error)); } }
+        else if (view.animation !== undefined) throw invalidSnapshot('Previous dynamic expression is no longer registered');
         const pin = this.#stage?.portraits[`${view.charId}:${view.costume}`]?.sources[view.expression];
         if (pin) {
           const actual = this.#assets.resolvePortraitIdentity(view.charId, view.costume, view.expression);
@@ -1586,6 +1660,8 @@ export class WorldLayer implements WorldProjectionPort {
       version: extended ? 2 : 1,
       ...(extended ? { design: { width: this.#w, height: this.#h }, layers, motions: motions!, stageConfigKey: raw.stageConfigKey as string, objectSources: JSON.parse(JSON.stringify(raw.objectSources ?? [])) as [string, StageSource][], ...(transitions ? { transitions } : {}) } : {}),
       activeSpeakerId: typeof raw.activeSpeakerId === 'string' ? raw.activeSpeakerId : null,
+      ...(raw.speaking !== undefined ? { speaking: raw.speaking as boolean } : {}),
+      ...(raw.portraitSkipping !== undefined ? { portraitSkipping: raw.portraitSkipping as boolean } : {}),
       backgroundKey: raw.backgroundKey,
       portraits,
       cameraScale: raw.cameraScale,
@@ -1599,6 +1675,9 @@ export class WorldLayer implements WorldProjectionPort {
   #applyPreparedSnapshot(snapshot: WorldPresentationSnapshot): void {
     this.#invalidatePreparation();
     this.#clearVisibleState();
+    this.#activeSpeakerId = snapshot.activeSpeakerId ?? null;
+    this.#speaking = snapshot.speaking ?? false;
+    this.#portraitSkipping = snapshot.portraitSkipping ?? false;
     if (snapshot.backgroundKey !== null) this.setBackground(snapshot.backgroundKey);
     for (const record of snapshot.portraits) this.setPortrait(record.key, record.view);
     for (const layer of snapshot.layers ?? []) this.#setStageLayer(layer);

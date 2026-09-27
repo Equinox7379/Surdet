@@ -33,6 +33,8 @@ export type RendererFontRole = 'title' | 'body' | 'ui';
 export interface AssetCommands {
   registerBackground(key: string, source: RendererAssetSource, format?: string): Promise<void>;
   registerPortrait(charId: string, costume: string, expression: string, source: RendererAssetSource, format?: string, sourcePath?: string): Promise<void>;
+  registerPortraitVisual(charId: string, costume: string, expression: string, definition: import('@surdet/core').PortraitVisualDefinition,
+    sources: Readonly<Record<string, { source: RendererAssetSource; format?: string }>>): Promise<void>;
   registerAvatar(key: string, source: RendererAssetSource, format?: string): Promise<void>;
   /** URL ownership stays with the host; decoding occurs when the video is played. */
   registerVideo(key: string, source: RendererAssetSource, sourcePath?: string): Promise<void>;
@@ -64,6 +66,9 @@ export interface WorldCommands {
   stopParticles(): void;
   applyTimelineFrame(event: TimelineFrameEvent): void;
   setPortraitFocus(characterId: string | null): void;
+  /** Optional for legacy hosts which only support static portraits. */
+  setPortraitSpeaking?(speaking: boolean): void;
+  setPortraitSkipping?(skipping: boolean): void;
 }
 
 /**

@@ -353,6 +353,7 @@ export class PresentationController {
     this.#tw.onComplete = () => {
       if (this.#status === 'typing') {
         this.#status = 'awaiting';
+        this.#commands.world.setPortraitSpeaking?.(false);
         this.#awaitSince = nowMs();
         this.#syncText();
       }
@@ -795,12 +796,14 @@ export class PresentationController {
     // 按正常打字显示给玩家。旧载荷缺 wasRead（undefined）时保持旧行为（连续推进），向后兼容。
     // 快进遇未读即停；"全部跳过"模式（skipAll）则无视已读状态一路到底
     if (this.#skipMode && !this.#skipAll && p.wasRead === false) this.#skipMode = false;
+    this.#commands.world.setPortraitSkipping?.(this.#skipMode);
     // Backlog 语音关联：@voice 紧跟的文本行带上语音 key（回看可重播）
     this.#backlog?.add(p.speaker, stripRuby(p.value), this.#pendingVoice ?? undefined);
     if (this.#backlogOpen) this.#renderBacklog();
     this.#pendingVoice = null;
     this.#current = { speaker: p.speaker, value: p.value };
     if (this.#nvl) {
+      this.#commands.world.setPortraitSpeaking?.(false);
       // NVL 模式：整行瞬时追加到全屏文本页（不走打字机），等待推进
       this.#commands.dialogue.appendNvlText(p.speaker, stripRuby(p.value));
       this.#status = 'awaiting';
@@ -809,6 +812,7 @@ export class PresentationController {
     }
     this.#beginText(p.speaker);
     if (p.value.length === 0) {
+      this.#commands.world.setPortraitSpeaking?.(false);
       // 空文本行（如只有说话人前缀的“凛：”）：无可打字内容，直接进入等待推进，
       // 否则状态机永远卡在 typing（Typewriter 空文本 done=true 但不触发 onComplete），剧情无法推进。
       this.#status = 'awaiting';
@@ -816,6 +820,7 @@ export class PresentationController {
       return;
     }
     this.#status = 'typing';
+    this.#commands.world.setPortraitSpeaking?.(!this.#skipMode);
     this.#tw.text = p.value;
   }
 
@@ -824,6 +829,8 @@ export class PresentationController {
     this.#skipMode = false;
     this.#skipAll = false;
     this.#status = 'choice';
+    this.#commands.world.setPortraitSkipping?.(false);
+    this.#commands.world.setPortraitSpeaking?.(false);
     this.#choiceIndices = p.options.map((o) => o.index);
     this.#choiceCursor = -1;
     this.#commands.dialogue.showChoices(p.options);
@@ -893,6 +900,9 @@ export class PresentationController {
    * or the broader Player/Renderer session.
    */
   #clearRestoreInteractiveTransients(): void {
+    this.#skipMode = false; this.#skipAll = false;
+    this.#commands.world.setPortraitSkipping?.(false);
+    this.#commands.world.setPortraitSpeaking?.(false);
     this.#interfaceHidden = false;
     this.#commands.dialogue.hideInterface(false);
     this.#status = 'idle';
@@ -923,6 +933,7 @@ export class PresentationController {
   }
 
   #updateTimelines(deltaMs: number): void {
+    this.#commands.world.setPortraitSkipping?.(this.#skipMode);
     if (this.#skipMode && !this.#settlingTimeline) {
       for (const id of [...this.#timelineRuns.keys()]) this.#skipTimeline(id);
       this.#commands.world.applyStage?.({ type: 'skip-motions' });

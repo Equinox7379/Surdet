@@ -21,7 +21,7 @@ import { inspectConfigDraftState, previewStageConfigText, readStageConfigDraft }
 import { previewTextHash, projectPreviewContent } from '../preview-content.js';
 import { previewCheckpointKey, readPreviewCheckpoint, writePreviewCheckpoint } from '../preview-checkpoints.js';
 import type { FontRole } from '@surdet/renderer';
-import { assertUniquePortraitBindings, resolveProjectPortraits, resolveProjectFontPaths } from '@surdet/core';
+import { assertUniquePortraitBindings, portraitSourcePaths, resolveProjectPortraits, resolveProjectFontPaths, type PortraitVisualDefinition } from '@surdet/core';
 import { normalizePreviewDiagnostic, type PreviewDiagnostic } from '../preview-diagnostics.js';
 import {
   dispatchPreviewTraceSelection,
@@ -221,6 +221,7 @@ interface PreviewAssets {
   videos: { key: string; file: PreviewImage }[];
   backgrounds: { key: string; image: PreviewImage }[];
   portraits: { charId: string; costume: string; expression: string; image: PreviewImage; configured?: true }[];
+  visuals: { charId: string; costume: string; expression: string; definition: PortraitVisualDefinition; images: Record<string, PreviewImage> }[];
   avatars: { key: string; image: PreviewImage }[];
   audio: { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }[];
 }
@@ -311,6 +312,8 @@ const AUDIO_MIME: Record<string, string> = {
 async function readProjectImages(configText: string): Promise<PreviewAssets> {
   const backgrounds = new Map<string, { key: string; image: PreviewImage }>();
   const portraits = new Map<string, { charId: string; costume: string; expression: string; image: PreviewImage; configured?: true }>();
+  const visualImages = new Map<string, PreviewImage>();
+  const visuals: PreviewAssets['visuals'] = [];
   const avatars = new Map<string, { key: string; image: PreviewImage }>();
   const videos = new Map<string, { key: string; file: PreviewImage }>();
   const audio = new Map<string, { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }>();
@@ -349,7 +352,8 @@ async function readProjectImages(configText: string): Promise<PreviewAssets> {
         avatars.set(asset.key, { key: asset.key, image });
         continue;
       }
-      for (const binding of bindings.filter(value => value.sourcePath === sourcePath)) {
+      if (sourcePath) visualImages.set(sourcePath, image);
+      for (const binding of bindings.filter(value => !value.visual && value.sourcePath === sourcePath)) {
         portraits.set(`${binding.role}:${binding.outfit}:${binding.expression}`, { charId: binding.role, costume: binding.outfit, expression: binding.expression, image,
           ...(binding.configured ? { configured: true } : {}) });
       }
@@ -358,11 +362,21 @@ async function readProjectImages(configText: string): Promise<PreviewAssets> {
     }
   }
   for (const binding of bindings) {
+    if (binding.visual) {
+      const images: Record<string, PreviewImage> = {};
+      for (const path of portraitSourcePaths(binding)) {
+        const image = visualImages.get(path);
+        if (!image) throw new Error(`动态立绘文件不存在或不可读取：${path}`);
+        images[path] = image;
+      }
+      visuals.push({ charId: binding.role, costume: binding.outfit, expression: binding.expression, definition: binding.visual, images });
+      continue;
+    }
     if (binding.configured && !portraits.has(`${binding.role}:${binding.outfit}:${binding.expression}`)) {
       throw new Error(`角色立绘文件不存在或不可读取：${binding.sourcePath}`);
     }
   }
-  return { backgrounds: [...backgrounds.values()], portraits: [...portraits.values()], avatars: [...avatars.values()], audio: [...audio.values()], videos: [...videos.values()] };
+  return { backgrounds: [...backgrounds.values()], portraits: [...portraits.values()], visuals, avatars: [...avatars.values()], audio: [...audio.values()], videos: [...videos.values()] };
 }
 
 async function readProjectTimelines(): Promise<unknown[]> {
@@ -378,6 +392,7 @@ async function previewSourceFacts(assets: PreviewAssets, fonts: Partial<Record<F
     : await Promise.all(Object.entries(content.files).filter(([path]) => isPreviewSourcePath(path)).map(async ([path, text]) => ({ path,
       sha256: await previewTextHash(previewSourceText(path, text)) })));
   const buffers = [...assets.backgrounds.map(value => value.image), ...assets.portraits.map(value => value.image),
+    ...assets.visuals.flatMap(value => Object.values(value.images)),
     ...assets.avatars.map(value => value.image), ...assets.audio.map(value => value.file), ...assets.videos.map(value => value.file), ...Object.values(fonts)];
   const facts = await Promise.all(buffers.map(async value => {
     if (!value.sourcePath) throw new Error('无法核对预览素材来源，请重新加载项目。');
@@ -847,6 +862,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     const transfer = [
       ...assets.backgrounds.map((a) => a.image.buffer),
       ...assets.portraits.map((a) => a.image.buffer),
+      ...assets.visuals.flatMap(a => Object.values(a.images).map(image => image.buffer)),
       ...assets.avatars.map((a) => a.image.buffer),
       ...assets.audio.map((a) => a.file.buffer),
       ...assets.videos.map((a) => a.file.buffer),

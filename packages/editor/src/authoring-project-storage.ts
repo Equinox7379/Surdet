@@ -1,4 +1,4 @@
-import { readProjectStage, stagePinnedSourcePaths } from '@surdet/core';
+import { projectPortraitOverrides, readProjectStage, stagePinnedSourcePaths, type CharacterVisuals } from '@surdet/core';
 import { inspectStageConfig, applyStageConfigPatch, parseProjectConfigDocument } from '@surdet/authoring';
 import {
   AuthoringOperationError,
@@ -115,6 +115,8 @@ export interface CharacterTableEditRow {
   avatar: string;
   /** UI rows preserve incomplete input until save; omitted leaves the stored mapping untouched. */
   portraits?: { outfit: string; expression: string; sourcePath: string }[];
+  /** Raw JSON draft; omitted preserves the existing visuals declaration. */
+  visualsText?: string;
 }
 
 export interface CharacterTableCommitResult {
@@ -214,6 +216,10 @@ class EditorWriteStorage implements ProjectWriteStorage {
  *  validateSnapshot + recordValidation → commitChange（磁盘基线冲突检测 + stage/替换/恢复）。
  *  失败（指纹不符 / 校验 error / 磁盘基线变化）一律 fail-loud 抛 AuthoringOperationError，不落盘。 */
 export async function commitCharacterTable(rows: readonly CharacterTableEditRow[]): Promise<CharacterTableCommitResult> {
+  const visualsById = new Map<string, CharacterVisuals | null>();
+  for (const row of rows) {
+    if (row.visualsText !== undefined) visualsById.set(row.id, parseCharacterVisualsDraft(row.id, row.visualsText));
+  }
   const handle = state.handles.gameConfig;
   if (handle === null) {
     throw new AuthoringOperationError('PROJECT_NOT_FOUND', '未连接 game.config.json（演示项目不落盘）');
@@ -228,7 +234,7 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
   const table = typeof charactersValue === 'object' && charactersValue !== null && !Array.isArray(charactersValue)
     ? charactersValue as Record<string, unknown>
     : {};
-  const baselineOf = (id: string): { name: string; avatar: string; portraits: unknown } | undefined => {
+  const baselineOf = (id: string): { name: string; avatar: string; portraits: unknown; visuals: unknown } | undefined => {
     const raw = table[id];
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
     const record = raw as Record<string, unknown>;
@@ -236,6 +242,7 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
       name: typeof record['name'] === 'string' ? record['name'] as string : '',
       avatar: typeof record['avatar'] === 'string' ? record['avatar'] as string : '',
       portraits: record['portraits'] ?? {},
+      visuals: record['visuals'] ?? null,
     };
   };
   let fingerprint = await charactersFingerprint(snapshot.config, base);
@@ -263,7 +270,9 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
     }
     const portraits = Object.fromEntries([...portraitEntries].map(([outfit, expressions]) => [outfit, Object.fromEntries(expressions)]));
     const portraitsChanged = row.portraits !== undefined && stableStringify(portraits) !== stableStringify(baseline?.portraits ?? {});
-    if (!nameChanged && !avatarChanged && !portraitsChanged) continue;
+    const visuals = visualsById.get(row.id);
+    const visualsChanged = row.visualsText !== undefined && stableStringify(visuals) !== stableStringify(baseline?.visuals ?? null);
+    if (!nameChanged && !avatarChanged && !portraitsChanged && !visualsChanged) continue;
     const result = await applyCharacterEnsure(session, {
       operationId: `editor:character.ensure:${row.id}`,
       id: row.id,
@@ -271,6 +280,7 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
       // avatar 未变时传 undefined（共享语义：保留原值），空串按 null（清除）
       ...(avatarChanged ? { avatar: row.avatar.trim().length === 0 ? null : row.avatar } : {}),
       ...(portraitsChanged ? { portraits: row.portraits!.length === 0 ? null : portraits } : {}),
+      ...(visualsChanged ? { visuals: visuals! } : {}),
       expectedFingerprint: fingerprint,
     }, base, undefined, physicalAssets);
     fingerprint = result.fingerprint;
@@ -315,6 +325,24 @@ export async function commitCharacterTable(rows: readonly CharacterTableEditRow[
     scene.dirty = scene.text !== migrated;
   }
   return { changeId: session.record.changeId, updatedText, changed, speakerMigrations };
+}
+
+export function parseCharacterVisualsDraft(id: string, text: string): CharacterVisuals | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(text) as unknown;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new AuthoringOperationError('VALIDATION_FAILED', `角色 ${id} 的分层 / 帧动画 JSON 无效：${detail}`);
+  }
+  if (value === null) return null;
+  try {
+    projectPortraitOverrides({ characters: { [id]: { visuals: value } } });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new AuthoringOperationError('VALIDATION_FAILED', `角色 ${id} 的分层 / 帧动画定义无效：${detail}`);
+  }
+  return value as CharacterVisuals;
 }
 
 

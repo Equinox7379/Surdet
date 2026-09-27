@@ -1,5 +1,5 @@
 import { readProjectStage } from '@surdet/core';
-import { parsePortraitFileName, projectPortraitOverrides, resolveProjectPortraits, resolveProjectFontPaths, type GenericInstr } from '@surdet/core';
+import { parsePortraitFileName, portraitSourcePaths, projectPortraitOverrides, resolveProjectPortraits, resolveProjectFontPaths, type GenericInstr } from '@surdet/core';
 import type {
   ProjectAssetFileFact,
   ProjectAssetIntelligence,
@@ -485,13 +485,22 @@ export function buildProjectAssetIntelligence(
     byTarget.set(key, current);
   }
   const portraits = resolveProjectPortraits(snapshot.config, uniqueFacts.map(fact => fact.path));
+  const visualTargets = new Set<string>();
+  const missingVisualParts: ProjectAssetItem[] = [];
   for (const portrait of portraits) {
     if (!portrait.configured && describeProjectAssetPath(portrait.sourcePath)?.invalidName) continue;
-    const item = items.find(item => item.sourcePath === portrait.sourcePath);
-    if (!item) continue;
     const key = targetKey('portrait', `${portrait.role}:${portrait.outfit}`, portrait.expression);
+    if (portrait.visual) visualTargets.add(key);
     const matches = byTarget.get(key) ?? [];
-    if (!matches.includes(item)) matches.push(item);
+    for (const sourcePath of portraitSourcePaths(portrait)) {
+      let item = items.find(item => item.sourcePath === sourcePath);
+      if (!item && portrait.visual) {
+        item = { assetId: `missing:portrait-source:${sourcePath}`, kind: 'portrait', key: sourcePath, sourcePath,
+          physical: false, references: [], issues: ['ASSET_REFERENCE_MISSING'] };
+        items.push(item); missingVisualParts.push(item);
+      }
+      if (item && !matches.includes(item)) matches.push(item);
+    }
     byTarget.set(key, matches);
   }
 
@@ -522,7 +531,7 @@ export function buildProjectAssetIntelligence(
   }
 
   for (const [key, matches] of byTarget) {
-    if (matches.length < 2) continue;
+    if (matches.length < 2 || visualTargets.has(key)) continue;
     for (const item of matches) item.issues.push('ASSET_KEY_DUPLICATE');
     issues.push(createIssue(
       'ASSET_KEY_DUPLICATE',
@@ -573,7 +582,7 @@ export function buildProjectAssetIntelligence(
     }
   }
 
-  for (const missing of missingByTarget.values()) {
+  for (const missing of [...missingByTarget.values(), ...missingVisualParts]) {
     issues.push(createIssue(
       'ASSET_REFERENCE_MISSING',
       missing.assetId,

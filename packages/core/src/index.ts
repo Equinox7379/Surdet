@@ -40,4 +40,5 @@ export * from './localization.js';
 export * from './project-stats.js';
 export * from './project-fonts.js';
 export * from './stage.js';
-export { assertUniquePortraitBindings, parsePortraitFileName, projectPortraitOverrides, resolveProjectPortraits, type CharacterPortraits, type ProjectPortrait } from './project-portraits.js';
+export { assertUniquePortraitBindings, parsePortraitFileName, projectPortraitOverrides, portraitSourcePaths, resolveProjectPortraits, type CharacterPortraits, type CharacterVisuals, type ProjectPortrait } from './project-portraits.js';
+export { parsePortraitVisual, portraitVisualPaths, samplePortraitVisual, type PortraitVisualDefinition } from './portrait-visual.js';

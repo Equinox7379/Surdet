@@ -1,5 +1,5 @@
 import { Container, Sprite, Texture, TextureSource } from 'pixi.js';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   compileScene, EventBus, Interpreter, SceneRegistry, VariableStore, TimelineRegistry,
   parseProjectStage, type CoreEventMap, type TimelineDefinition, type ProjectStage,
@@ -14,6 +14,15 @@ import { createStageGeometryPolicy } from '../../src/stage-geometry.js';
 import { NULL_AUDIO } from '../../src/types.js';
 
 const texture = (width: number, height: number) => new Texture({ source: new TextureSource({ width, height }) });
+beforeEach(() => {
+  class CanvasContext {
+    font = '';
+    measureText(text: string) { return { width: text.length * 10, actualBoundingBoxAscent: 20, actualBoundingBoxDescent: 5 }; }
+  }
+  vi.stubGlobal('CanvasRenderingContext2D', CanvasContext);
+  vi.stubGlobal('document', { createElement: () => ({ getContext: () => new CanvasContext() }) });
+});
+afterEach(() => vi.unstubAllGlobals());
 const poseCue = (atMs: number, durationMs: number, values: Record<string, string | number>) => ({ atMs, durationMs, easing: 'linear' as const, action: 'pose', ...values });
 const config = () => parseProjectStage({ version: 1, portraits: { 'rin:coat': { height: 500,
   expressions: { normal: { x: 100, y: 100, width: 200, height: 500 }, smile: { x: 80, y: 50, width: 400, height: 1000 } } } },
@@ -63,7 +72,7 @@ async function harness(stageConfig: ProjectStage | null = config()) {
     const visit = (container: Container) => { for (const child of container.children) { if (child instanceof Sprite) result.push(child); visit(child); } };
     visit(world.worldContainer); return result;
   };
-  return { world, controller, interpreter, registry, timelines, assets, normal, smile, other, dock, rail, sounds, text, sprites,
+  return { world, dialogue, controller, interpreter, registry, timelines, assets, normal, smile, other, dock, rail, sounds, text, sprites,
     load(source: string, id = 'start') { registry.register(compileScene(source, `${id}.gal`, id)); interpreter.start(id); },
     pose(key = 'rin:coat') { return world.snapshotPresentation().portraits.find(value => value.key === key)!.view.pose!; },
     dispose() { off(); controller.dispose(); dialogue.dispose(); world.dispose(); assets.dispose(); lifecycle.dispose(); },
@@ -71,6 +80,96 @@ async function harness(stageConfig: ProjectStage | null = config()) {
 }
 
 describe('Stage composition through Core, Controller and the real World projection', () => {
+  it('keeps per-instance frame clocks through timeline movement, restoration and removal', async () => {
+    const h = await harness(null), a = texture(400, 700), b = texture(400, 700);
+    const pathA = 'content/assets/portrait/rin_parts_a.png', pathB = 'content/assets/portrait/rin_parts_b.png';
+    try {
+      await h.assets.registerPortraitVisual('rin', 'coat', 'loop', { version: 1, kind: 'sequence', loop: true,
+        frames: [{ image: pathA, durationMs: 100 }, { image: pathB, durationMs: 200 }] }, { [pathA]: { source: a }, [pathB]: { source: b } });
+      h.timelines.register({ version: 2, id: 'actors', durationMs: 1000, tracks: [
+        { kind: 'portrait', target: 'one', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'show', source: 'rin:coat', expression: 'loop', x: 300 },
+          { atMs: 0, durationMs: 1000, easing: 'linear', action: 'pose', x: 500 }] },
+        { kind: 'portrait', target: 'two', cues: [{ atMs: 100, durationMs: 0, easing: 'linear', action: 'show', source: 'rin:coat', expression: 'loop', x: 800, facing: 'left', opacity: .7 }] },
+      ] });
+      h.load('@timeline actors\n等待中的普通旁白。\n@end'); h.controller.update(175);
+      const saved = h.interpreter.saveSnapshot()!, world = h.world.snapshotPresentation();
+      expect(world.portraits.map(item => item.view.animation!.elapsedMs)).toEqual([175, 75]);
+      h.controller.update(200); h.interpreter.loadSnapshot(saved);
+      expect(h.world.snapshotPresentation().portraits).toEqual(world.portraits);
+      h.controller.update(50);
+      expect(h.world.snapshotPresentation().portraits.map(item => item.view.animation!.elapsedMs)).toEqual([225, 125]);
+      h.world.removePortrait('one'); h.controller.update(50);
+      expect(h.world.snapshotPresentation().portraits.map(item => item.key)).toEqual(['two']);
+      h.world.setPortraitSkipping(true); h.world.clearPresentation();
+      h.world.setPortrait('next', { charId: 'rin', costume: 'coat', expression: 'loop', pos: 'center' });
+      expect(h.world.snapshotPresentation().portraits[0]!.view.animation!.elapsedMs).toBe(0);
+      h.world.update(100); expect(h.world.snapshotPresentation().portraits[0]!.view.animation!.elapsedMs).toBe(100);
+    } finally { h.dispose(); a.destroy(true); b.destroy(true); }
+  });
+  it('plays layered speech on the focused actor and preserves frame clocks through pause and repeated load', async () => {
+    const h = await harness(null);
+    const body = texture(400, 700), closed = texture(400, 700), open = texture(400, 700);
+    const p = (name: string) => `content/assets/portrait/rin_parts_${name}.png`;
+    const visual: import('@surdet/core').PortraitVisualDefinition = { version: 1, kind: 'layered', layers: [
+      { id: 'body', images: { base: p('body') }, default: 'base' },
+      { id: 'mouth', images: { closed: p('closed'), open: p('open') }, default: 'closed', speaking: {
+        loop: true, frames: [{ variant: 'closed', durationMs: 100 }, { variant: 'open', durationMs: 200 }],
+      } },
+    ] };
+    try {
+      await h.assets.registerPortraitVisual('rin', 'coat', 'normal', visual, { [p('body')]: { source: body }, [p('closed')]: { source: closed }, [p('open')]: { source: open } });
+      h.dialogue.setSpeakerProfiles([{ id: 'rin', name: '凛' }]);
+      h.load('@show rin:coat normal\nrin: 这是一段用于测试口型且足够长、不会在两百毫秒之内播放完成的对话。\n@end');
+      h.world.setPortraitFocus('rin');
+      h.controller.update(150);
+      expect(h.sprites().some(sprite => sprite.texture === open)).toBe(true);
+      const before = h.world.snapshotPresentation();
+      h.controller.setPresentationPaused(true); h.controller.update(900);
+      expect(h.world.snapshotPresentation()).toEqual(before);
+      h.controller.setPresentationPaused(false);
+      const save = h.interpreter.saveSnapshot()!;
+      h.controller.update(160);
+      h.interpreter.loadSnapshot(save);
+      expect(h.world.snapshotPresentation().portraits).toEqual(before.portraits);
+      h.controller.update(100);
+      expect(h.world.snapshotPresentation().portraits[0]!.view.animation!.elapsedMs).toBe(250);
+      h.interpreter.loadSnapshot(save);
+      expect(h.world.snapshotPresentation().portraits[0]!.view.animation!.elapsedMs).toBe(150);
+      h.world.setPortraitFocus('mio');
+      expect(h.sprites().some(sprite => sprite.texture === closed)).toBe(true);
+      expect(h.sprites().some(sprite => sprite.texture === open)).toBe(false);
+      h.world.removePortrait('rin:coat'); h.world.update(1000);
+      expect(h.world.snapshotPresentation().portraits).toHaveLength(0);
+      expect(body.destroyed).toBe(false);
+    } finally { h.dispose(); body.destroy(true); closed.destroy(true); open.destroy(true); }
+  });
+
+  it('restores a legacy-to-sequence crossfade, rejects changed images before mutation, and settles skip/reduced motion', async () => {
+    const h = await harness(null);
+    const a = texture(400, 700), b = texture(400, 700);
+    const pathA = 'content/assets/portrait/rin_seq_a.png', pathB = 'content/assets/portrait/rin_seq_b.png';
+    const definition = { version: 1 as const, kind: 'sequence' as const, loop: false, frames: [{ image: pathA, durationMs: 100 }, { image: pathB, durationMs: 400 }] };
+    try {
+      await h.assets.registerPortraitVisual('rin', 'coat', 'animated', definition, { [pathA]: { source: a }, [pathB]: { source: b } });
+      h.world.setPortrait('rin:coat', { charId: 'rin', costume: 'coat', expression: 'normal', pos: 'left' }); h.world.update(1000);
+      h.world.setPortrait('rin:coat', { charId: 'rin', costume: 'coat', expression: 'animated', pos: 'left' }); h.world.update(125);
+      const save = h.world.snapshotPresentation();
+      expect(save.version).toBe(2);
+      expect(save.transitions!.portraits).toHaveLength(1);
+      h.world.update(1000); h.world.restorePresentation(save);
+      expect(h.world.snapshotPresentation()).toEqual(save);
+      const invalid = structuredClone(save); invalid.portraits[0]!.view.animation!.key = 'changed';
+      expect(() => h.world.restorePresentation(invalid)).toThrow();
+      expect(h.world.snapshotPresentation()).toEqual(save);
+      h.world.setPortraitSkipping(true); h.world.update(1000);
+      expect(h.sprites().some(sprite => sprite.texture === b)).toBe(true);
+      expect(h.world.needsUpdate).toBe(false);
+      h.world.setPortraitSkipping(false);
+      h.world.setPresentationPreferences({ reducedMotion: true });
+      expect(h.sprites().some(sprite => sprite.texture === a)).toBe(true);
+      expect(h.world.needsUpdate).toBe(false);
+    } finally { h.dispose(); a.destroy(true); b.destroy(true); }
+  });
   it('does not promote legacy portrait layout just because a screen cue was cancelled', async () => {
     const h = await harness(null);
     try {
