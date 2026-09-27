@@ -78,7 +78,9 @@ const THEME_FIELDS = new Set([...THEME_GROUPS, ...THEME_SCALARS]);
 export function validateThemeAssetBindings(section: ProjectThemeSection, titleLogo: string | null, assets: ProjectAssetCatalog): void {
   const keys = [...projectThemeAssetKeys(section), ...(titleLogo ? [titleLogo] : [])];
   for (const key of keys) {
-    if (!assets.backgrounds.some(item => item.key === key && item.resolved)) {
+    const matches = assets.backgrounds.filter(item => item.key === key);
+    if (matches.length > 1) throw new AuthoringOperationError('VALIDATION_FAILED', `主题/字标素材键不唯一：${key}`);
+    if (!matches[0]?.resolved) {
       throw new AuthoringOperationError('VALIDATION_FAILED', `主题/字标素材不存在或不支持：${key}`);
     }
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import { buildObjectIndex } from '@surdet/authoring';
-import { commitThemeConfiguration, createEditorProjectStorage, loadEditorProjectSnapshot } from '../src/authoring-project-storage.js';
+import { commitThemeConfiguration, createEditorProjectStorage, loadEditorProjectSnapshot, parseThemeEditorDraft, projectThemeEditorDraft } from '../src/authoring-project-storage.js';
 import { state } from '../src/state.js';
 
 const original = {
@@ -34,6 +34,39 @@ afterEach(() => {
 });
 
 describe('editor authoring project storage', () => {
+  it.each([
+    { theme: { colors: { accent: 9 } }, titleLogo: null, titleBackground: 'dock', font: null, fonts: null },
+    { theme: null, titleLogo: null, titleBackground: 'dock', font: null, fonts: null },
+    { theme: { colors: { accent: 9 } }, titleLogo: 'mark', titleBackground: 'mark', font: 'content/assets/fonts/body.ttf', fonts: { title: 'content/assets/fonts/body.ttf' } },
+    { theme: null, titleLogo: 'mark', titleBackground: null, font: null, fonts: {} },
+  ])('saves the valid final full form when the old logo is missing: %j', async form => {
+    let diskText = JSON.stringify({ entryScene: 'intro', variables: {}, future: { keep: true },
+      theme: { colors: { accent: 8 }, future: { keep: true } }, player: { titleLogo: 'gone', titleBackground: 'dock', subtitle: 'preserve' } });
+    let writes = 0;
+    const handle = {
+      getFile: async () => new File([diskText], 'game.config.json'),
+      createWritable: async () => ({ write: async (v: unknown) => { diskText = String(v); writes++; }, close: async () => {} }),
+    } as unknown as FileSystemFileHandle;
+    Object.assign(state, { dirName: 'theme-repair', dirHandle: { name: 'theme-repair' }, handles: { ...state.handles, gameConfig: handle }, gameConfigText: diskText,
+      scenes: new Map([['intro', { id: 'intro', file: 'intro.gal', text: '@scene intro\n@end\n', eol: '\n', dirty: false, handle: null }]]), timelines: [],
+      configFiles: { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null }, configReadErrors: {},
+      dirAssets: ['bg/dock.svg', 'bg/mark.svg', 'fonts/body.ttf'].map(path => ({ key: path.split('/').at(-1)!.split('.')[0], kind: path.startsWith('bg/') ? 'bg' : 'font', isImage: path.startsWith('bg/'), handle: null, sourcePath: `content/assets/${path}`, bytes: 4 })),
+      reviewWorkspace: null, reviewPreviewReadOnly: false, projectLoading: false });
+    const before = diskText;
+    const draft = parseThemeEditorDraft(JSON.stringify(form));
+    const expected = projectThemeEditorDraft(JSON.parse(before), draft);
+    await commitThemeConfiguration(draft.theme, draft.titleLogo, before, draft.playerConfig);
+    expect(JSON.parse(diskText)).toEqual(expected);
+    expect(state.gameConfigText).toBe(diskText);
+    expect(writes).toBe(1);
+    await expect(commitThemeConfiguration(draft.theme, draft.titleLogo, before, draft.playerConfig)).rejects.toThrow('配置已经改变');
+    const saved = diskText;
+    await expect(commitThemeConfiguration(draft.theme, 'missing-new-logo', saved, { ...draft.playerConfig, font: 'missing.ttf' })).rejects.toThrow();
+    expect(diskText).toBe(saved);
+    expect(state.gameConfigText).toBe(saved);
+    expect(writes).toBe(1);
+  });
+
   it('refuses an authoring snapshot with unreadable config instead of omitting its dependencies', async () => {
     state.configReadErrors = { events: 'content/config/events.json 解析失败' };
     await expect(loadEditorProjectSnapshot()).rejects.toThrow(/events.json/);
@@ -121,6 +154,8 @@ describe('editor authoring project storage', () => {
     const withFont = diskText;
     await expect(commitThemeConfiguration(null, null, diskText, { fonts: { body: 'missing.ttf' } })).rejects.toThrow();
     expect(diskText).toBe(withFont);
+    await commitThemeConfiguration(null, null, diskText, { fonts: { body: null, ui: 'content/assets/fonts/body.ttf' } });
+    expect(JSON.parse(diskText).fonts).toEqual({ ui: 'content/assets/fonts/body.ttf' });
     await commitThemeConfiguration(null, null, diskText, { fonts: null, titleBackground: null });
     expect(JSON.parse(diskText)).not.toHaveProperty('fonts');
     expect(JSON.parse(diskText).player).toEqual({ subtitle: 'untouched' });
