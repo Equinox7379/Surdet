@@ -65,6 +65,33 @@ async function insertJump(session: AgentPortSession, operationId: string, sceneI
 }
 
 describe('Wave 8 candidate readiness through Agent Port', () => {
+  it('rejects ambiguous theme keys through public writes and validation without changing source or draft', async () => {
+    const { root } = fixture();
+    for (const folder of ['one', 'two']) {
+      fs.mkdirSync(path.join(root, 'content/assets/bg', folder), { recursive: true });
+      fs.writeFileSync(path.join(root, 'content/assets/bg', folder, 'paper.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    }
+    const configPath = path.join(root, 'game.config.json');
+    const source = fs.readFileSync(configPath, 'utf8');
+    const session = await openAgentPortSession({ projectRoot: root, policy: 'apply' });
+    try {
+      expect(result<any>(await session.invoke('project.validate', {})).ok).toBe(true);
+      result(await session.invoke('change.begin', { compositionMode: 'direct' }));
+      const before = (await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record;
+      const inspection = result<any>(await session.invoke('project.inspect', { view: 'working' }));
+      expect(await session.invoke('project.theme-config.patch', { operationId: 'duplicate-skin', expectedFingerprint: inspection.themeConfig.fingerprint, patch: { dialogSkin: 'paper' } })).toMatchObject({ ok: false, error: { code: 'VALIDATION_FAILED' } });
+      expect((await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record).toEqual(before);
+      expect(fs.readFileSync(configPath, 'utf8')).toBe(source);
+    } finally { await session.close(); }
+    fs.writeFileSync(configPath, JSON.stringify({ ...JSON.parse(source), theme: { dialogSkin: 'paper' } }));
+    const invalid = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
+    try {
+      const validation = result<any>(await invalid.invoke('project.validate', {}));
+      expect(validation.ok).toBe(false);
+      expect(validation.issues).toContainEqual(expect.objectContaining({ code: 'THEME_INVALID' }));
+    } finally { await invalid.close(); }
+  });
+
   it('updates visuals through a direct fingerprint chain, resolves all visual sources, and rejects candidate visuals before writes', async () => {
     const { root } = fixture();
     const originalVisuals = { uniform: { normal: portraitSequence(portraitFramePaths.slice(0, 1)) } };

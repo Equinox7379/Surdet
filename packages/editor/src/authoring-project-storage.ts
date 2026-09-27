@@ -516,25 +516,28 @@ export async function commitThemeConfiguration(themeValue: Record<string, unknow
       }
     }
   }
-  const projectedLogo = draft.titleLogo;
-  if (before.titleLogo !== projectedLogo) patch.titleLogo = projectedLogo;
   const catalog = buildAssetCatalog(assetFiles, snapshot, { gallery: state.configFiles.gallery });
-  let playerChanged = false;
-  if (Object.keys(playerConfig).length > 0) {
-    const beforePlayer = await inspectPlayerConfig(beforeConfig, editorStorage);
-    const playerPatch = { ...playerConfig };
-    if (playerPatch.fonts !== undefined && playerPatch.fonts !== null) playerPatch.fonts = { body: null, title: null, ui: null, ...playerPatch.fonts };
+  const beforePlayer = await inspectPlayerConfig(beforeConfig, editorStorage);
+  const nextPlayer = await inspectPlayerConfig(projected, editorStorage);
+  const playerPatch: PlayerConfigPatchInput['patch'] = {};
+  for (const key of ['font', 'titleBackground', 'titleLogo'] as const) {
+    if (beforePlayer.values[key] !== nextPlayer.values[key]) playerPatch[key] = nextPlayer.values[key];
+  }
+  if (stableStringify(beforePlayer.values.fonts) !== stableStringify(nextPlayer.values.fonts)) playerPatch.fonts = nextPlayer.values.fonts;
+  const playerChanged = Object.keys(playerPatch).length > 0;
+  if (playerChanged) {
+    // Include the final logo in this operation: never validate a stale logo
+    // before the same form's clear/replacement has been applied.
     await applyPlayerConfigPatch(session, { operationId: crypto.randomUUID(), expectedFingerprint: beforePlayer.fingerprint, patch: playerPatch }, editorStorage, catalog);
-    playerChanged = true;
   }
   let result;
-  if (nextTheme === null && before.value !== null) {
+  if ((nextTheme === null && before.value !== null) || Object.keys(patch).length > 0) {
+    // titleLogo participates in the theme fingerprint, including clears.
+    const current = playerChanged
+      ? await inspectThemeConfig(parseProjectConfigDocument(session.record.workingFiles['game.config.json']!), editorStorage)
+      : before;
     result = await applyThemeConfigPatch(session,
-      { operationId: crypto.randomUUID(), expectedFingerprint: before.fingerprint, patch: null }, editorStorage, catalog);
-  }
-  if (Object.keys(patch).length > 0) {
-    result = await applyThemeConfigPatch(session,
-      { operationId: crypto.randomUUID(), expectedFingerprint: result?.themeConfig.fingerprint ?? before.fingerprint, patch }, editorStorage, catalog);
+      { operationId: crypto.randomUUID(), expectedFingerprint: current.fingerprint, patch: nextTheme === null ? null : patch }, editorStorage, catalog);
   }
   if (!result && !playerChanged) return { text: expectedConfigText, before: before.value, after: before.value };
   const afterTheme = result ? result.themeConfig.value : before.value;

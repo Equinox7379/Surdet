@@ -103,7 +103,11 @@ export async function applyPlayerConfigPatch(change: ChangeSession, input: Playe
     const background = after.values.titleBackground;
     if (background !== null && background !== '' && !assets.backgrounds.some((asset) => asset.key === background && asset.resolved)) throw new AuthoringOperationError('VALIDATION_FAILED', `标题背景不存在或不支持：${background}`);
     const titleLogo = after.values.titleLogo;
-    if (titleLogo !== null && titleLogo !== '' && !assets.backgrounds.some((asset) => asset.key === titleLogo && asset.resolved)) throw new AuthoringOperationError('VALIDATION_FAILED', `标题字标不存在或不支持：${titleLogo}`);
+    if (titleLogo) {
+      const matches = assets.backgrounds.filter(asset => asset.key === titleLogo);
+      if (matches.length > 1) throw new AuthoringOperationError('VALIDATION_FAILED', `标题字标素材键不唯一：${titleLogo}`);
+      if (!matches[0]?.resolved) throw new AuthoringOperationError('VALIDATION_FAILED', `标题字标不存在或不支持：${titleLogo}`);
+    }
     for (const sceneId of after.values.endScenes ?? []) {
       if (resolveUniqueScenarioPath(record.workingFiles, sceneId) === undefined) throw new AuthoringOperationError('VALIDATION_FAILED', `结束场景不存在：${sceneId}`);
     }

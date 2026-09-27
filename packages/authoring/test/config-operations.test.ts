@@ -13,6 +13,8 @@ import {
   type TextHasher,
   applyThemeConfigPatch,
   inspectThemeConfig,
+  applyPlayerConfigPatch,
+  inspectPlayerConfig,
 } from '../src/index.js';
 import {
   applyCharacterEnsure,
@@ -67,6 +69,40 @@ async function open(): Promise<{ change: ChangeSession; repo: InMemoryChangeRepo
 }
 
 describe('theme configuration validation', () => {
+  it.each([
+    ['content/assets/bg/one/paper.svg', 'content/assets/bg/two/paper.svg'],
+    ['content/assets/bg/paper.png', 'content/assets/bg/paper.svg'],
+    ['content/assets/bg/paper.png', 'content/assets/bg/paper.psd'],
+    ['content/assets/bg/paper.psd'],
+  ])('rejects non-unique or unsupported theme images atomically: %j', async (...paths) => {
+    const { change } = await open();
+    change.record.composition!.mode = 'direct';
+    const assets = buildAssetCatalog(paths);
+    const before = structuredClone(change.record);
+    const current = await inspectThemeConfig(JSON.parse(baseConfig), hasher);
+    for (const field of ['dialogSkin', 'buttonSkin', 'titleLogo']) {
+      await expect(applyThemeConfigPatch(change, { operationId: field, expectedFingerprint: current.fingerprint, patch: { [field]: 'paper' } }, hasher, assets)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+      expect(change.record).toEqual(before);
+      const invalid = { ...snapshot(), config: { ...JSON.parse(baseConfig), ...(field === 'titleLogo' ? { player: { titleLogo: 'paper' } } : { theme: { [field]: 'paper' } }) } };
+      expect(validateSnapshot(invalid, buildObjectIndex(invalid), { assetCatalog: assets }).issues).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'THEME_INVALID', severity: 'error' })]));
+    }
+    const player = await inspectPlayerConfig(JSON.parse(baseConfig), hasher);
+    await expect(applyPlayerConfigPatch(change, { operationId: 'player-logo', expectedFingerprint: player.fingerprint, patch: { titleLogo: 'paper' } }, hasher, assets)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(change.record).toEqual(before);
+  });
+
+  it('allows one physical image in all theme roles and ignores unrelated duplicate keys', async () => {
+    const { change } = await open();
+    change.record.composition!.mode = 'direct';
+    const current = await inspectThemeConfig(JSON.parse(baseConfig), hasher);
+    const assets = buildAssetCatalog(['content/assets/bg/paper.svg', 'content/assets/bg/a/unused.png', 'content/assets/bg/b/unused.png']);
+    const result = await applyThemeConfigPatch(change, { operationId: 'shared-image', expectedFingerprint: current.fingerprint, patch: { dialogSkin: 'paper', buttonSkin: 'paper', titleLogo: 'paper' } }, hasher, assets);
+    expect(result.themeConfig.titleLogo).toBe('paper');
+    expect(result.themeConfig.effective.skins).toEqual({ dialogSkin: 'paper', buttonSkin: 'paper' });
+    const valid = { ...snapshot(), config: JSON.parse(change.record.workingFiles['game.config.json']!) };
+    expect(validateSnapshot(valid, buildObjectIndex(valid), { assetCatalog: assets }).issues.filter(issue => issue.code === 'THEME_INVALID')).toEqual([]);
+  });
+
   it('reads defaults, validates assets, resets fields and preserves unrelated config', async () => {
     const { change } = await open();
     change.record.composition = { ...change.record.composition!, mode: 'direct' };

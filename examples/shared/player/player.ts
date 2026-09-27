@@ -552,6 +552,14 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
     const backgroundErrors = new Map<string, string>();
     const desktopAsset = window.surdetAsset;
     const files = desktopAsset ? await desktopAsset.list() : Object.keys(project.assetFiles);
+    // Validate effective bindings before concurrent loading can overwrite a key.
+    // Count physical paths, not roles: one image may serve several UI purposes.
+    const themeImageKeys = new Set([playerConfig.titleLogo, ...Object.values(playerTheme.skins)].filter(Boolean));
+    for (const key of themeImageKeys) {
+      const matches = new Set(files.filter(rel => rel.split('/')[0]?.toLowerCase() === 'bg'
+        && rel.split('/').at(-1)!.replace(/\.[^.]*$/, '') === key));
+      if (matches.size > 1) throw new Error(`作品主题图片键不唯一：${key}`);
+    }
     const portraitBindings = resolveProjectPortraits(gameConfig, files.map(rel => `content/assets/${rel}`));
     assertUniquePortraitBindings(portraitBindings);
     for (const binding of portraitBindings) {
@@ -654,7 +662,7 @@ export async function startPlayer(project: PlayerProject): Promise<void> {
       loading.showLoading(progress);
     });
     lastLoadingProgress = { ...finalProgress };
-    for (const key of [playerConfig.titleLogo, ...Object.values(playerTheme.skins)].filter(Boolean)) {
+    for (const key of themeImageKeys) {
       if (!loadedBackgrounds.has(key)) throw new Error(`作品主题图片未加载：${key}${backgroundErrors.has(key) ? ` · ${backgroundErrors.get(key)}` : '（素材不存在）'}`);
     }
     // All source URLs are now retained; never wait for sibling jobs inside the bounded queue.
