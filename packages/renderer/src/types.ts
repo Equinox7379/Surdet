@@ -55,6 +55,8 @@ export interface AdvStage {
   hideChoices(): void;
   /** 设置黑场叠加透明度（0..1） */
   setFade(alpha: number): void;
+  fade?(from: number, to: number, durationMs: number): void;
+  isFadeActive?(): boolean;
   /**
    * 选择肢点击回调（可选能力）。PixiStage 实现；`AdvRenderer` 构造时自动绑定，
    * 纯投影 fake 可不提供。绑定后选择肢点击 → AdvRenderer.select → 宿主 onSelect。

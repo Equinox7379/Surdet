@@ -23,12 +23,14 @@ const fixture = createStageFixture(root, entry);
 const write = (name, value) => fs.writeFileSync(path.join(root, name), typeof value === 'string' ? value : JSON.stringify(value, null, 2));
 const config = { ...fixture.config }; delete config.stage;
 write('game.config.json', config);
-write('content/scenario/start.gal', '@scene start\n@choice\n  旧角色转新姿态 -> @jump legacy\n  屏幕淡入 -> @jump screen_fade\n  屏幕染色 -> @jump screen_tint\n  改名后的角色 -> @jump renamed\n@end\n');
+const menu = '@scene start\n@choice\n  旧角色转新姿态 -> @jump legacy\n  屏幕淡入 -> @jump screen_fade\n  屏幕染色 -> @jump screen_tint\n  混合淡入 -> @jump mixed_fade\n  混合染色 -> @jump mixed_tint\n  改名后的角色 -> @jump renamed\n@end\n';
+write('content/scenario/start.gal', menu);
 const legacy = '@scene legacy\n@bg dock\n@show rin:coat normal @left\n先保持旧式立绘。\n@show rin:coat smile @x=400\n同时换表情并改变站位。\n@end\n';
 write('content/scenario/legacy.gal', legacy);
 const renamed = '@scene renamed\n@bg dock\n@show mio:coat normal @x=100 @y=680 @baseHeight=510\n@pose portrait:mio:coat @x=500\n改名后的姿态仍然有效。\n@end\n';
 write('content/scenario/renamed.gal', renamed);
 for (const action of ['fade', 'tint']) {
+  write(`content/scenario/mixed_${action}.gal`, `@scene mixed_${action}\n@bg dock\n@timeline screen_${action}\n先运行时间轴。\n${action === 'fade' ? '@fadein 20000' : '@tint off 20000'}\n场景指令接管。\n@end\n`);
   write(`content/scenario/screen_${action}.gal`, `@scene screen_${action}\n@bg dock\n@show rin:coat normal @x=400\n@timeline screen_${action} @blocking\n完成。\n@end\n`);
   write(`content/timelines/screen_${action}.json`, { version: 2, id: `screen_${action}`, durationMs: 20000, tracks: [{ kind: 'screen', cues: [
     { atMs: 0, durationMs: 20000, easing: 'linear', action, alpha: 1, ...(action === 'tint' ? { color: 0x33aa55 } : {}) },
@@ -56,7 +58,7 @@ try {
   assert.equal(fs.readFileSync(path.join(root, 'content/scenario/renamed.gal'), 'utf8'), renamed.replaceAll('mio:coat', 'kei:coat'));
   pass('public-stdio-plan-and-commit-preserve-png-bytes-and-rewrite-prefixed-pose');
   fs.writeFileSync(path.join(output, 'build.log'), execFileSync(process.execPath, [path.join(repo, 'packages/cli/dist/index.js'), 'build', root, '--web'], { cwd: repo, encoding: 'utf8', timeout: 120000 }));
-  const dist = path.join(output, 'isolated-dist'); fs.cpSync(path.join(root, 'dist'), dist, { recursive: true });
+  let dist = path.join(output, 'isolated-dist'); fs.cpSync(path.join(root, 'dist'), dist, { recursive: true });
   server = http.createServer((req, res) => {
     const relative = decodeURIComponent((req.url ?? '/').split('?')[0]);
     const file = path.resolve(dist, '.' + (relative === '/' ? '/index.html' : relative));
@@ -102,12 +104,57 @@ try {
   assert.equal((await snapshot()).stage.portraits[0].view.charId, 'kei');
   await page.screenshot({ path: path.join(output, 'renamed-rendered.png') });
   pass('independent-dist-decodes-renamed-png-and-executes-prefixed-pose');
+  for (const action of ['fade', 'tint']) {
+    await enter(action === 'fade' ? '混合淡入' : '混合染色');
+    await page.waitForFunction(() => window.__surdetDebug.presentationSnapshot.timelines[0]?.snapshot.cursorMs >= 4000);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Space');
+      if ((await snapshot()).stage.motions.direct.some(m => m.target === `screen:${action}`)) break;
+    }
+    await page.waitForFunction(action => window.__surdetDebug.presentationSnapshot.stage.motions.direct.some(m => m.target === `screen:${action}` && m.elapsed >= 400), action);
+    await page.keyboard.press('Escape'); await page.waitForFunction(() => window.__surdetDebug.uiSession.overlay === 'system-menu');
+    const saved = await snapshot(); assert(await page.evaluate(() => window.__surdetDebug.quickSave()));
+    const restored = await page.evaluate(async () => ({ ok: await window.__surdetDebug.quickLoad(), snapshot: window.__surdetDebug.presentationSnapshot }));
+    assert(restored.ok); assert.deepEqual(restored.snapshot, saved);
+    const motion = saved.stage.motions.direct.find(m => m.target === `screen:${action}`);
+    await page.waitForFunction(([target, elapsed]) => window.__surdetDebug.presentationSnapshot.stage.motions.direct.some(m => m.target === target && m.elapsed >= elapsed + 500), [motion.target, motion.elapsed]);
+    const continued = await snapshot(), current = continued.stage.motions.direct.find(m => m.target === motion.target);
+    const t = current.elapsed / motion.duration, progress = action === 'fade' ? (t < .5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2) : t;
+    const actual = action === 'fade' ? continued.stage.fadeAlpha : continued.stage.tint.alpha;
+    assert(Math.abs(actual - (motion.from.opacity + (motion.to.opacity - motion.from.opacity) * progress)) < 1e-10);
+    pass(`actual-player-mixed-${action}-restores-owner-and-continues-scene-trajectory`);
+  }
   const undone = await call('surdet_asset_relocation_undo', { operationId, receiptId: committed.receipt.receiptId, receiptFingerprint: committed.receipt.receiptFingerprint });
   assert.equal(undone.operation.status, 'UNDONE');
   assert(fs.readFileSync(path.join(root, sourcePath)).equals(bytes));
   assert.equal(fs.readFileSync(path.join(root, 'content/scenario/renamed.gal'), 'utf8'), renamed);
-  await client.close(); client = undefined;
   pass('public-stdio-undo-restores-original-source-and-png');
+
+  const custom = '@scene custom\n@bg dock\n@show mio:coat normal @instance=mio:coat @x=100\n@pose portrait:mio:coat @x=500\n合法实例。\n@end\n';
+  const grouped = '@scene grouped\n@bg dock\n@show mio:coat normal @x=100\n@timeline parent @blocking\n@pose portrait:mio @x=500\n合法角色组。\n@end\n';
+  const free = '@scene free\n@show mio:coat normal @instance=hero @x=100\n@pose portrait:hero @x=500\n无歧义实例。\n@end\n';
+  write('content/scenario/custom.gal', custom); write('content/scenario/grouped.gal', grouped); write('content/scenario/free.gal', free);
+  write('content/scenario/start.gal', menu.replace('@end', '  自定义实例 -> @jump custom\n  片段角色组 -> @jump grouped\n  无歧义实例 -> @jump free\n@end'));
+  write('content/timelines/child.json', { version: 2, id: 'child', durationMs: 1, tracks: [{ kind: 'portrait', target: 'guest', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'show', source: 'rin:coat', expression: 'normal', x: 100 }] }] });
+  write('content/timelines/parent.json', { version: 2, id: 'parent', durationMs: 1, tracks: [], clips: [{ timelineId: 'child', atMs: 0, targets: { guest: 'mio:guest' } }] });
+  fs.writeFileSync(path.join(output, 'instance-build.log'), execFileSync(process.execPath, [path.join(repo, 'packages/cli/dist/index.js'), 'build', root, '--web'], { cwd: repo, encoding: 'utf8', timeout: 120000 }));
+  dist = path.join(output, 'instance-dist'); fs.cpSync(path.join(root, 'dist'), dist, { recursive: true });
+  const actors = () => page.evaluate(() => Object.fromEntries(window.__surdetDebug.queries.world.inspectStage().objects.map(o => [o.target, o.pose.x])));
+  await enter('自定义实例'); await page.waitForFunction(() => window.__surdetDebug.status === 'awaiting-advance'); assert.equal((await actors())['mio:coat'], 500);
+  await enter('片段角色组'); await page.waitForFunction(() => window.__surdetDebug.status === 'awaiting-advance'); assert.deepEqual(await actors(), { 'mio:coat': 500, 'mio:guest': 500 });
+  await enter('无歧义实例'); await page.waitForFunction(() => window.__surdetDebug.status === 'awaiting-advance'); assert.equal((await actors()).hero, 500);
+  const blockedId = randomUUID(), blocked = await call('surdet_asset_relocation_plan', { operationId: blockedId, moves: [{ sourcePath, targetPath }] });
+  assert.notEqual(blocked.plan.status, 'ready');
+  assert(blocked.plan.blockers.some(b => b.sourcePath === 'content/scenario/custom.gal'));
+  assert(blocked.plan.blockers.some(b => b.sourcePath === 'content/timelines/parent.json'));
+  const refused = await client.callTool({ name: 'surdet_asset_relocation_commit', arguments: { operationId: blockedId, planFingerprint: blocked.plan.planFingerprint } });
+  assert(refused.isError); assert(!fs.existsSync(path.join(root, targetPath))); assert(fs.readFileSync(path.join(root, sourcePath)).equals(bytes));
+  assert.equal(fs.readFileSync(path.join(root, 'content/scenario/custom.gal'), 'utf8'), custom); assert.equal(fs.readFileSync(path.join(root, 'content/scenario/grouped.gal'), 'utf8'), grouped);
+  pass('core-and-player-run-real-instance-and-targets-before-public-plan-and-commit-refuse-ambiguity');
+  await page.screenshot({ path: path.join(output, 'valid-instance-before-refused-rename.png') });
+  const cancelled = await call('surdet_asset_relocation_cancel', { operationId: blockedId, planFingerprint: blocked.plan.planFingerprint });
+  assert.equal(cancelled.operation.status, 'CANCELLED');
+  await client.close(); client = undefined;
 
   write('game.config.json', { ...config, entryScene: 'legacy' });
   editor = await startDevProject(['--project', root, '--data-root', path.join(output, 'authority'), '--port', '4437'], { registerSignals: false, cacheDir: path.join(output, 'vite-cache') });
@@ -116,6 +163,7 @@ try {
   await page.goto('http://127.0.0.1:4437/index.html', { waitUntil: 'networkidle' });
   await page.locator('[data-action="open-project"]').click();
   await page.waitForFunction(() => window.surdetEditorDebug?.state?.projectLoading === false && window.surdetEditorDebug?.state?.assetIntelligenceState === 'ready');
+  await page.locator('[data-scene-id="legacy"]').click();
   await page.getByRole('button', { name: '预览', exact: true }).click();
   await page.getByRole('button', { name: '重新播放', exact: true }).click();
   const frame = page.frames().find(frame => /preview\.html/.test(frame.url())); assert(frame);

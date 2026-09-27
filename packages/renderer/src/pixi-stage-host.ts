@@ -808,6 +808,9 @@ export class RendererStageHost {
     this.#world.setFade(alpha);
   }
 
+  fade(from: number, to: number, durationMs: number): void { this.#world.fade(from, to, durationMs); }
+  isFadeActive(): boolean { return this.#world.isFadeActive(); }
+
   showLoading(progress: LoadingProgress): void {
     this.#requestFrame();
     this.#loadingLayer.show(progress);

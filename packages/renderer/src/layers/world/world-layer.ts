@@ -271,10 +271,6 @@ export class WorldLayer implements WorldProjectionPort {
   #cameraPanY = 0;
   #wipeRemain = 0;
   #wipeDur = 1;
-  #tintFrom = { color: 0x000000, alpha: 0 };
-  #tintTo = { color: 0x000000, alpha: 0 };
-  #tintRemain = 0;
-  #tintDur = 1;
   #particleKind: string | null = null;
   #particlePreset: ParticlePreset | null = null;
   #particles: { sprite: Graphics; vx: number; vy: number; phase: number }[] = [];
@@ -771,9 +767,23 @@ export class WorldLayer implements WorldProjectionPort {
 
   setFade(alpha: number): void {
     if (this.#disposed) return;
-    this.fadeOverlay.alpha = Math.max(0, Math.min(1, alpha));
+    const value = Math.max(0, Math.min(1, alpha));
+    if (value === this.fadeOverlay.alpha && !this.#stageMotions.hasState) return;
+    this.#stageMotions.start('screen:fade', { opacity: value });
     this.#requestFrame();
   }
+
+  fade(from: number, to: number, durationMs: number): void {
+    if (this.#disposed) return;
+    if (!Number.isFinite(from) || !Number.isFinite(to) || !Number.isFinite(durationMs) || durationMs < 0) {
+      throw new Error('Invalid screen fade values or timing');
+    }
+    this.#stageMotions.start('screen:fade', { opacity: Math.max(0, Math.min(1, from)) });
+    this.#stageMotions.start('screen:fade', { opacity: Math.max(0, Math.min(1, to)) }, durationMs, 'inOutQuad');
+    this.#ensureEffectRegistration(); this.#requestFrame();
+  }
+
+  isFadeActive(): boolean { return this.#stageMotions.isActive('screen:fade'); }
 
   shake(durationMs = 400, strength = 8, direction: ShakeDirection = 'both'): void {
     this.#worldEffects.shake(presentationDuration(durationMs, this.#presentation), strength, direction);
@@ -798,7 +808,7 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   zoom(scale = 1, durationMs = 400): void {
-    if (this.#stage || this.#stageMotions.hasState) {
+    if (this.#stage || this.#stageMotions.hasSpatialState) {
       this.#zoomRemain = 0;
       this.#stageMotions.start('camera', { scale: Math.max(.25, Math.min(4, scale)) }, presentationDuration(durationMs, this.#presentation));
       this.#ensureEffectRegistration(); this.#requestFrame(); return;
@@ -841,16 +851,17 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   setTint(color: number, alpha: number, durationMs = 400): void {
-    this.#tintFrom = this.#tintCurrent();
-    this.#tintTo = { color: color & 0xffffff, alpha: Math.max(0, Math.min(1, alpha)) };
-    this.#tintDur = presentationDuration(durationMs, this.#presentation);
-    this.#tintRemain = this.#tintDur;
-    this.#tintOverlay.visible = true;
+    if (this.#disposed) return;
+    this.#stageMotions.start('screen:tint', { color: color & 0xffffff, opacity: Math.max(0, Math.min(1, alpha)) }, presentationDuration(durationMs, this.#presentation));
     this.#ensureEffectRegistration();
     this.#requestFrame();
   }
 
-  clearTint(durationMs = 400): void { this.setTint(this.#tintCurrent().color, 0, durationMs); }
+  clearTint(durationMs = 400): void {
+    if (this.#disposed) return;
+    this.#stageMotions.start('screen:tint', { opacity: 0 }, presentationDuration(durationMs, this.#presentation));
+    this.#ensureEffectRegistration(); this.#requestFrame();
+  }
 
   startParticles(kind: string): void {
     if (this.#disposed || !this.#presentation.particleEnabled) return;
@@ -890,10 +901,9 @@ export class WorldLayer implements WorldProjectionPort {
   #applyOwnedTimelineFrame(event: TimelineFrameEvent): boolean {
     const cue = event.cue, target = event.target ?? '';
     const identity = `${event.runId}/${event.cueId ?? 0}`;
+    if (this.#stageMotions.isCueCancelled(identity)) return true;
     if (event.track === 'screen' && (cue.action === 'fade' || cue.action === 'tint')) {
-      if (this.#stageMotions.isCueCancelled(identity)) return true;
       if (cue.action === 'tint' && !this.#stageMotions.timelineTarget(identity)) {
-        this.#tintRemain = 0;
         if (this.#tintOverlay.alpha <= .001) this.#tintOverlay.tint = Number(cue.color);
       }
       this.#stageMotions.timeline(identity, `screen:${cue.action}`, {
@@ -1105,7 +1115,7 @@ export class WorldLayer implements WorldProjectionPort {
     return {
       version: extended ? 2 : 1,
       ...(extended ? { design: { width: this.#w, height: this.#h },
-        layers: [...this.#stageLayers.values()].map(value => ({ ...value.definition })), motions: this.#stageMotions.snapshot(), stageConfigKey: this.#geometry().stageConfigurationKey(this.#stage),
+        layers: [...this.#stageLayers.values()].map(value => ({ ...value.definition })), motions: this.#stageMotions.snapshot(), stageConfigKey: this.#stage === null ? 'null' : this.#geometry().stageConfigurationKey(this.#stage),
         objectSources: [...this.#objectSources].map(([key, source]) => [key, JSON.parse(JSON.stringify(source)) as StageSource]),
         transitions: {
           ...(this.#backgroundTransition?.oldKey ? { background: { oldKey: this.#backgroundTransition.oldKey,
@@ -1284,14 +1294,6 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   #updateTransient(deltaMs: number): void {
-    if (this.#tintRemain > 0) {
-      this.#tintRemain = Math.max(0, this.#tintRemain - deltaMs);
-      const progress = 1 - this.#tintRemain / this.#tintDur;
-      const alpha = this.#tintFrom.alpha + (this.#tintTo.alpha - this.#tintFrom.alpha) * progress;
-      this.#tintOverlay.tint = lerpColor(this.#tintFrom.color, this.#tintTo.color, progress);
-      this.#tintOverlay.alpha = alpha;
-      if (this.#tintRemain === 0 && alpha <= 0.001) this.#tintOverlay.visible = false;
-    }
     if (this.#moveTweens.length > 0) {
       for (let index = this.#moveTweens.length - 1; index >= 0; index--) {
         const tween = this.#moveTweens[index]!;
@@ -1351,15 +1353,6 @@ export class WorldLayer implements WorldProjectionPort {
     }
   }
 
-  #tintCurrent(): { color: number; alpha: number } {
-    if (this.#tintRemain <= 0) return { ...this.#tintTo };
-    const progress = 1 - this.#tintRemain / this.#tintDur;
-    return {
-      color: lerpColor(this.#tintFrom.color, this.#tintTo.color, progress),
-      alpha: this.#tintFrom.alpha + (this.#tintTo.alpha - this.#tintFrom.alpha) * progress,
-    };
-  }
-
   #particlePosition(pos: string): number | null {
     if (pos === 'left') return this.#w * 0.25;
     if (pos === 'right') return this.#w * 0.75;
@@ -1386,7 +1379,6 @@ export class WorldLayer implements WorldProjectionPort {
       || this.#flashRemain > 0
       || this.#zoomRemain > 0
       || this.#backgroundTransition !== null
-      || this.#tintRemain > 0
       || this.#moveTweens.length > 0
       || this.#particles.length > 0
       || this.#portraitTweens.length > 0
@@ -1475,9 +1467,6 @@ export class WorldLayer implements WorldProjectionPort {
     this.#wipeRemain = 0;
     this.wipeOverlay.visible = false;
     this.wipeOverlay.position.set(0, 0);
-    this.#tintRemain = 0;
-    this.#tintFrom = { color: 0x000000, alpha: 0 };
-    this.#tintTo = { color: 0x000000, alpha: 0 };
     this.#tintOverlay.alpha = 0;
     this.#tintOverlay.visible = false;
     this.stopParticles();
@@ -1500,7 +1489,7 @@ export class WorldLayer implements WorldProjectionPort {
     if (raw.version !== 1 && raw.version !== 2) throw invalidSnapshot('Presentation snapshot version must be 1 or 2');
     const extended = raw.version === 2;
     if (extended) {
-      if (raw.stageConfigKey !== this.#geometry().stageConfigurationKey(this.#stage)) throw invalidSnapshot('Saved stage configuration differs from the current project');
+      if (raw.stageConfigKey !== (this.#stage === null ? 'null' : this.#geometry().stageConfigurationKey(this.#stage))) throw invalidSnapshot('Saved stage configuration differs from the current project');
       const design = raw.design as { width?: unknown; height?: unknown } | undefined;
       if (!design || design.width !== this.#w || design.height !== this.#h) throw invalidSnapshot('Stage design canvas differs from the saved canvas');
     }

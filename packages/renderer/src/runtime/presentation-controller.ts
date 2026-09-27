@@ -375,7 +375,7 @@ export class PresentationController {
    * the tween nor requests a frame.
    */
   canCaptureRollbackCheckpoint(): boolean {
-    return this.#fade === null || this.#fade.done;
+    return (this.#fade === null || this.#fade.done) && this.#queries.world.isFadeActive?.() !== true;
   }
 
   /**
@@ -1243,6 +1243,11 @@ export class PresentationController {
   }
 
   #startFade(from: number, to: number, durMs: number): void {
+    if (this.#commands.world.fade) {
+      this.#fade = null;
+      this.#commands.world.fade(from, to, durMs);
+      return;
+    }
     this.#fade = new FadeTween(from, to, durMs);
     this.#fade.onDone = () => {
       this.#commands.world.setFade(to);

@@ -349,6 +349,7 @@ export class RendererFacade {
       setPortrait: (key, view) => this.#callWorld('setPortrait', this.#worldPort?.setPortrait, this.#stage.setPortrait, key, view),
       removePortrait: (key) => this.#callWorld('removePortrait', this.#worldPort?.removePortrait, this.#stage.removePortrait, key),
       setFade: (alpha) => this.#callWorld('setFade', this.#worldPort?.setFade, this.#stage.setFade, alpha),
+      fade: this.#worldPort?.fade || this.#stage.fade ? (from, to, durationMs) => this.#callWorld('fade', this.#worldPort?.fade, this.#stage.fade, from, to, durationMs) : undefined,
       shake: (durationMs = 400, strength = 8, direction = 'both') => this.#callWorld('shake', this.#worldPort?.shake, this.#stage.shake, durationMs, strength, direction),
       transition: (name, durationMs) => this.#callWorld('transition', this.#worldPort?.transition, this.#stage.transition, name, durationMs),
       flash: (durationMs = 300) => this.#callWorld('flash', this.#worldPort?.flash, this.#stage.flash, durationMs),
@@ -777,6 +778,7 @@ export class RendererFacade {
     this.commands = { assets, world, dialogue, menu, gallery, system, loading, preferences, presentation };
 
     const worldQueries: WorldQueries = {
+      isFadeActive: () => this.#worldPort?.isFadeActive?.() ?? this.#stage.isFadeActive?.() ?? false,
       inspectStage: () => this.#worldPort?.inspectStage?.() ?? null,
       captureThumbnail: () => {
         this.#ensureQueryActive('world', 'captureThumbnail');

@@ -225,6 +225,8 @@ runtime.commands.presentation.clear();
 
 解释器的 save hooks 应把该快照放入存档；回退缓冲应保存并恢复同一份完整快照。restore 必须是原子操作，失败时不应留下半恢复的 World 或旧时间轴在下一帧复活。
 
+正常 Runtime 的 `commands.world.fade(from, to, durationMs)` 与 `setTint` / `clearTint` 使用 World 内同一套可保存的属性归属与进度；场景指令和时间轴互相接管时也按这份状态恢复。`setFade(alpha)` 仍是瞬时赋值，`clearTint` 只接管透明度。Controller 通过 `queries.world.isFadeActive()` 保持场景淡化期间的回退检查点限制。只实现 `setFade` 的旧宿主仍可沿用 Controller 的旧淡化路径，但不能据此声称具备正常 Runtime 的中途恢复保证。
+
 ## 9. 编辑器预览与 CLI 模板迁移
 
 编辑器预览和 `surdet new` 生成的模板都遵循同一模式：一个 Runtime、一个内部帧调度器、语义 Commands/Queries、统一 normalized input、退出时一次 dispose。预览 reload 只重建 Interpreter、SceneRegistry 和宿主配置，不重新创建 canvas、ticker 或 RendererRuntime。

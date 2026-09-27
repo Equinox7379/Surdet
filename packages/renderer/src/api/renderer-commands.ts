@@ -50,6 +50,8 @@ export interface WorldCommands {
   setPortrait(key: string, view: PortraitView): void;
   removePortrait(key: string): void;
   setFade(alpha: number): void;
+  /** Atomic, snapshot-backed fade; optional only for existing setFade-only hosts. */
+  fade?(from: number, to: number, durationMs: number): void;
   shake(durationMs?: number, strength?: number, direction?: ShakeDirection): void;
   transition(name: TransitionName | string, durationMs: number): boolean;
   flash(durationMs?: number): void;
@@ -70,6 +72,7 @@ export interface WorldCommands {
  * capabilities are kept on the concrete world owner rather than on Facade.
  */
 export interface WorldProjectionPort extends WorldCommands {
+  isFadeActive?(): boolean;
   inspectStage?(): import('@surdet/core').StageInspection;
   readonly needsUpdate: boolean;
   setFrameRequest(handler: FrameRequestHandler | null): void;
