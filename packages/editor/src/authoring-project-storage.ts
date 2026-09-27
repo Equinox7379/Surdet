@@ -1,5 +1,5 @@
-import { projectPortraitOverrides, readProjectStage, resolvePlayerTheme, resolveProjectFontPaths, stagePinnedSourcePaths, THEME_TOKEN_GROUPS, type CharacterVisuals } from '@surdet/core';
-import { inspectStageConfig, applyStageConfigPatch, inspectThemeConfig, applyThemeConfigPatch, inspectPlayerConfig, applyPlayerConfigPatch, type PlayerConfigPatchInput, parseProjectConfigDocument } from '@surdet/authoring';
+import { projectPortraitOverrides, readProjectStage, readProjectUi, PROJECT_UI_PAGES, resolvePlayerTheme, resolveProjectFontPaths, stagePinnedSourcePaths, THEME_TOKEN_GROUPS, type CharacterVisuals, type ProjectUiDocument } from '@surdet/core';
+import { inspectStageConfig, applyStageConfigPatch, inspectThemeConfig, applyThemeConfigPatch, inspectUi, applyUiPatch, inspectPlayerConfig, applyPlayerConfigPatch, type PlayerConfigPatchInput, parseProjectConfigDocument } from '@surdet/authoring';
 import {
   AuthoringOperationError,
   InMemoryChangeRepository,
@@ -559,4 +559,65 @@ export async function commitThemeConfiguration(themeValue: Record<string, unknow
   if (state.dirHandle !== root || state.handles.gameConfig !== handle || state.dirName !== name) throw new Error('原项目配置已写入，但当前项目已切换；没有覆盖当前项目内存。');
   state.gameConfigText = actual;
   return { text: actual, before: before.value, after: afterTheme };
+}
+
+/** Save every changed UI page through the same direct authoring operation and one file transaction. */
+export async function commitUiConfiguration(value: ProjectUiDocument | null, expectedConfigText: string): Promise<{ text: string; before: ProjectUiDocument | null; after: ProjectUiDocument | null }> {
+  const root = state.dirHandle, handle = state.handles.gameConfig, name = state.dirName;
+  if (!root || !handle || state.reviewWorkspace !== null || state.reviewPreviewReadOnly || state.projectLoading)
+    throw new Error('作品界面只可保存到当前可写项目。');
+  if (state.gameConfigText !== expectedConfigText) throw new Error('项目配置已经改变，请刷新界面草稿。');
+  const beforeConfig = parseProjectConfigDocument(expectedConfigText || '{}');
+  const before = readProjectUi(beforeConfig);
+  const proposed = { ...beforeConfig };
+  if (value === null) delete proposed.ui; else proposed.ui = value;
+  const after = readProjectUi(proposed);
+  if (stableStringify(before) === stableStringify(after)) return { text: expectedConfigText, before, after };
+  const editorStorage = createEditorProjectStorage();
+  const snapshot = await loadProjectSnapshot(editorStorage, editorStorage);
+  const assetFiles = state.dirAssets.flatMap(asset => {
+    const sourcePath = asset.sourcePath ?? (asset.handle ? assetPathForHandle(asset.handle) : undefined);
+    return sourcePath ? [{ path: sourcePath, bytes: asset.bytes }] : [];
+  });
+  if (state.dirHandle !== root || state.handles.gameConfig !== handle || state.dirName !== name || state.gameConfigText !== expectedConfigText)
+    throw new Error('界面读取期间项目已变化。');
+  const catalog = buildAssetCatalog(assetFiles, snapshot, { gallery: state.configFiles.gallery });
+  const session = await beginChange(snapshot, new InMemoryChangeRepository());
+  session.record.composition = { ...session.record.composition!, mode: 'direct' };
+  const changedPages = PROJECT_UI_PAGES.filter(page => stableStringify(before?.pages[page] ?? null) !== stableStringify(after?.pages[page] ?? null));
+  // Remove changed old pages first: a stable ID may legally move to another page
+  // in the final document, without conflicting with that page's old intermediate value.
+  for (const page of changedPages) {
+    if (!before?.pages[page]) continue;
+    const working = parseProjectConfigDocument(session.record.workingFiles['game.config.json']!);
+    const fingerprint = (await inspectUi(working, editorStorage)).fingerprint;
+    await applyUiPatch(session, { operationId: crypto.randomUUID(), expectedFingerprint: fingerprint,
+      patch: { type: 'page.remove', page } }, editorStorage, catalog);
+  }
+  for (const page of changedPages) {
+    if (!after?.pages[page]) continue;
+    const working = parseProjectConfigDocument(session.record.workingFiles['game.config.json']!);
+    const fingerprint = (await inspectUi(working, editorStorage)).fingerprint;
+    const rootNode = after?.pages[page];
+    await applyUiPatch(session, { operationId: crypto.randomUUID(), expectedFingerprint: fingerprint,
+      patch: rootNode ? { type: 'page.set', page, root: rootNode } : { type: 'page.remove', page } }, editorStorage, catalog);
+  }
+  const text = session.record.workingFiles['game.config.json']!;
+  const validationStorage: ProjectStorage = { ...editorStorage,
+    readText: async path => path === 'game.config.json'
+      ? { path, text, bytes: bytesOf(text), sha256: await editorStorage.sha256(text) }
+      : editorStorage.readText(path) };
+  const changedSnapshot = await loadProjectSnapshot(validationStorage, editorStorage);
+  const validation = validateSnapshot(changedSnapshot, buildObjectIndex(changedSnapshot), { assetCatalog: buildAssetCatalog(assetFiles, changedSnapshot, { gallery: state.configFiles.gallery }) });
+  if (!validation.ok) throw new Error(validation.issues.filter(issue => issue.severity === 'error').map(issue => issue.text).join('\n'));
+  await recordValidation(session, { evidenceId: `editor-ui-${crypto.randomUUID()}`, errors: 0 });
+  const sceneHandles = new Map<string, FileSystemFileHandle>();
+  for (const scene of state.scenes.values()) if (scene.handle) sceneHandles.set(scenarioPath(scene), scene.handle);
+  const committed = await commitChange(session, new EditorWriteStorage(editorStorage, handle, sceneHandles));
+  const actual = committed.files.includes('game.config.json') ? session.record.workingFiles['game.config.json'] : undefined;
+  if (actual === undefined) throw new Error('界面配置事务未返回已写入正文。');
+  if (state.dirHandle !== root || state.handles.gameConfig !== handle || state.dirName !== name)
+    throw new Error('原项目界面已写入，但当前项目已切换；没有覆盖当前项目内存。');
+  state.gameConfigText = actual;
+  return { text: actual, before, after };
 }

@@ -1,3 +1,35 @@
+.ui-designer { width:100%; min-width:0; color:var(--surdet-text-primary); }
+.ui-player-preview { width:min(1440px,94vw); max-width:94vw; height:min(900px,92vh); max-height:92vh; padding:0; border:0; border-radius:6px; background:var(--surdet-surface-panel); }
+.ui-player-preview::backdrop { background:color-mix(in srgb,var(--surdet-text-primary) 50%,transparent); }
+.ui-player-preview-heading { height:44px; display:flex; align-items:center; justify-content:space-between; padding:0 16px; box-sizing:border-box; color:var(--surdet-text-primary); }
+.ui-player-preview iframe { display:block; width:100%; height:calc(100% - 44px); border:0; }
+.ui-designer-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:24px; }
+.ui-designer button, .ui-player-preview-heading button { font:inherit; cursor:pointer; color:inherit; border:0; border-radius:4px; padding:7px 10px; background:var(--surdet-surface-subtle); }
+.ui-designer button:hover, .ui-player-preview-heading button:hover { background:var(--surdet-surface-selected); }
+.ui-designer button:disabled { opacity:.45; cursor:default; }
+.ui-designer .ui-designer-toolbar select { margin-right:auto; width:180px; }
+.ui-designer-body { display:grid; grid-template-columns:190px minmax(280px,1fr) 230px; align-items:start; gap:24px; }
+.ui-designer-tree, .ui-designer-properties { min-width:0; font-size:13px; }
+.ui-designer h3 { margin:0 0 16px; font-size:14px; font-weight:600; }
+.ui-designer .ui-tree-node { display:block; width:100%; border:0; background:none; text-align:left; padding:8px 6px; overflow-wrap:anywhere; color:inherit; }
+.ui-tree-node[aria-current=true] { color:var(--surdet-action-primary); background:var(--surdet-surface-selected); }
+.ui-add-row { display:grid; gap:8px; margin-top:24px; }
+.ui-designer-center { min-width:0; padding:16px 0; }
+.ui-designer-canvas { position:relative; width:100%; aspect-ratio:16/9; container-type:inline-size; overflow:hidden; background:var(--surdet-surface-panel); outline:1px solid var(--surdet-border-default); }
+.ui-canvas-node { position:absolute; box-sizing:border-box; white-space:pre-wrap; overflow-wrap:anywhere; touch-action:none; cursor:move; user-select:none; color:var(--surdet-text-primary); }
+.ui-canvas-button, .ui-canvas-toggle, .ui-canvas-slider, .ui-canvas-input { background:var(--surdet-surface-subtle); border-radius:3px; }
+.ui-canvas-node[data-selected=true] { outline:2px solid var(--surdet-action-primary); outline-offset:-1px; }
+.ui-canvas-image, .ui-canvas-image img { width:100%; height:100%; pointer-events:none; object-fit:contain; }
+.ui-resize-handle { position:absolute; bottom:0; right:0; width:10px; height:10px; background:var(--surdet-action-primary); cursor:nwse-resize; }
+.ui-property-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.ui-property-grid label, .ui-property-line { display:grid; gap:6px; color:var(--surdet-text-secondary); min-width:0; }
+.ui-property-line { margin:18px 0; }
+.ui-designer input, .ui-designer select { box-sizing:border-box; min-width:0; width:100%; min-height:30px; font:inherit; border:1px solid var(--surdet-border-default); border-radius:4px; padding:4px 7px; color:var(--surdet-text-primary); background:var(--surdet-surface-panel); }
+.ui-property-actions { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0; }
+.ui-empty { padding:12px; color:var(--surdet-text-secondary); line-height:1.7; }
+.ui-designer :focus-visible { outline:2px solid var(--surdet-focus-ring); outline-offset:2px; }
+@media (max-width:1200px) { .ui-designer-body { grid-template-columns:150px minmax(250px,1fr); gap:16px; } .ui-designer-properties { grid-column:1/-1; max-width:600px; } }
+
 /* Frontend Pass 4 — Configuration Ledger
  *
  * The configuration page is a working ledger: a quiet directory, one active

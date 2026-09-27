@@ -1,6 +1,7 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import { buildObjectIndex } from '@surdet/authoring';
-import { commitThemeConfiguration, createEditorProjectStorage, loadEditorProjectSnapshot, parseThemeEditorDraft, projectThemeEditorDraft } from '../src/authoring-project-storage.js';
+import { commitThemeConfiguration, commitUiConfiguration, createEditorProjectStorage, loadEditorProjectSnapshot, parseThemeEditorDraft, projectThemeEditorDraft } from '../src/authoring-project-storage.js';
+import type { ProjectUiDocument } from '@surdet/core';
 import { state } from '../src/state.js';
 
 const original = {
@@ -34,6 +35,34 @@ afterEach(() => {
 });
 
 describe('editor authoring project storage', () => {
+  it('moves stable UI identities across pages atomically and refuses stale or invalid final documents', async () => {
+    const frame = { x: 0, y: 0, width: 1280, height: 720 };
+    const ui: ProjectUiDocument = { version: 1, pages: {
+      title: { id: 'first', type: 'container', frame, children: [] },
+      hud: { id: 'second', type: 'container', frame, children: [] },
+    } };
+    let disk = JSON.stringify({ entryScene: 'intro', variables: {}, future: 'preserve', ui });
+    let writes = 0;
+    const handle = { getFile: async () => new File([disk], 'game.config.json'), createWritable: async () => ({
+      write: async (text: unknown) => { disk = String(text); writes++; }, close: async () => {},
+    }) } as unknown as FileSystemFileHandle;
+    Object.assign(state, { dirName: 'ui-project', dirHandle: { name: 'ui-project' }, handles: { ...state.handles, gameConfig: handle }, gameConfigText: disk,
+      scenes: new Map([['intro', { id: 'intro', file: 'intro.gal', text: '@scene intro\n@end\n', eol: '\n', dirty: false, handle: null }]]), timelines: [],
+      configFiles: { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null }, configReadErrors: {}, dirAssets: [],
+      reviewWorkspace: null, reviewPreviewReadOnly: false, projectLoading: false });
+    const baseline = disk;
+    const swapped: ProjectUiDocument = { version: 1, pages: { title: ui.pages.hud, hud: ui.pages.title } };
+    await commitUiConfiguration(swapped, baseline);
+    expect(JSON.parse(disk)).toEqual({ entryScene: 'intro', variables: {}, future: 'preserve', ui: swapped });
+    expect(writes).toBe(1);
+    const saved = disk;
+    await expect(commitUiConfiguration(ui, baseline)).rejects.toThrow('配置已经改变');
+    await expect(commitUiConfiguration({ version: 1, pages: { title: ui.pages.title, hud: ui.pages.title } }, saved)).rejects.toThrow('重复');
+    expect(disk).toBe(saved); expect(state.gameConfigText).toBe(saved); expect(writes).toBe(1);
+    disk = JSON.stringify({ ...JSON.parse(disk), future: 'external' });
+    await expect(commitUiConfiguration(ui, saved)).rejects.toThrow();
+    expect(JSON.parse(disk).future).toBe('external'); expect(state.gameConfigText).toBe(saved); expect(writes).toBe(1);
+  });
   it.each([
     { theme: { colors: { accent: 9 } }, titleLogo: null, titleBackground: 'dock', font: null, fonts: null },
     { theme: null, titleLogo: null, titleBackground: 'dock', font: null, fonts: null },

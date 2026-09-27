@@ -62,6 +62,7 @@ export interface PresentationStage extends
   restorePresentation?: (snapshot: unknown) => void;
   clearPresentation?: () => void;
   setTheme?: (theme: RendererTheme) => void;
+  setDeclarativeUiSuppression?: (pages: Partial<Record<import('@surdet/core').ProjectUiPageId, boolean>>) => void;
 }
 
 interface PresentationPortStage extends PresentationStage {
@@ -298,6 +299,7 @@ export function createPresentationPorts(
     loading: loadingCommands,
     preferences: preferenceCommands,
     presentation: presentationCommands,
+    projectUi: { setDefaultSuppression: (pages) => stage.setDeclarativeUiSuppression?.(pages) },
   };
 
   const queries: RendererQueries = {

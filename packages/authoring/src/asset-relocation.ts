@@ -789,6 +789,31 @@ function configRewrite(
       }
     }
   }
+  const ui = isRecord(root.ui) ? root.ui : {};
+  const uiPages = isRecord(ui.pages) ? ui.pages : {};
+  const visitUiNode = (node: unknown, nodePath: JsonPath, page: string): void => {
+    if (!isRecord(node)) return;
+    // These are declarative identities/labels, not media references. Unknown
+    // fields remain visible to the opaque-reference scan below.
+    for (const key of ['id', 'type', 'tab', 'source']) if (typeof node[key] === 'string') knownPaths.add(pathKey([...nodePath, key]));
+    for (const [field, keys] of [
+      ['text', ['kind', 'value', 'name', 'field']], ['binding', ['kind', 'name']],
+      ['action', ['kind', 'page', 'mode', 'id', 'name']], ['style', ['fontRole', 'align']],
+    ] as const) {
+      const value = node[field];
+      if (isRecord(value)) for (const key of keys) if (typeof value[key] === 'string') knownPaths.add(pathKey([...nodePath, field, key]));
+    }
+    const assetPath: JsonPath = [...nodePath, 'asset'];
+    if (typeof node.asset === 'string') {
+      knownPaths.add(pathKey(assetPath));
+      if (source.kind === 'background' && node.asset === source.key && target.key !== source.key) {
+        replacements.push({ path: assetPath, before: source.key, after: target.key,
+          reference: reference('config', file.path, `界面 ${page} 图片 ${String(node.id)}`, 'ui', `ui:${String(node.id)}:asset`) });
+      }
+    }
+    if (Array.isArray(node.children)) node.children.forEach((child, index) => visitUiNode(child, [...nodePath, 'children', index], page));
+  };
+  for (const [page, node] of Object.entries(uiPages)) visitUiNode(node, ['ui', 'pages', page], page);
   for (const [id, value] of Object.entries(characters)) {
     if (!isRecord(value) || typeof value.avatar !== 'string') continue;
     const path: JsonPath = ['characters', id, 'avatar'];

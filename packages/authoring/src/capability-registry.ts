@@ -523,6 +523,14 @@ const themeConfigSchema = strictObject({
   fingerprint: stringSchema,
 }, ['value', 'effective', 'titleLogo', 'fingerprint']);
 
+const uiInspectionSchema = strictObject({
+  view: readViewSchema,
+  value: { oneOf: [jsonObjectSchema, nullSchema] },
+  defaultPages: stringArraySchema,
+  nodes: arrayOf(strictObject({ page: stringSchema, id: stringSchema, type: stringSchema, parentId: { type: ['string', 'null'] } }, ['page', 'id', 'type', 'parentId'])),
+  fingerprint: stringSchema,
+}, ['value', 'defaultPages', 'nodes', 'fingerprint']);
+
 const projectInspectionSchema = strictObject({
   playerConfig: playerConfigSchema,
   themeConfig: themeConfigSchema,
@@ -1226,6 +1234,27 @@ const definitions = {
     outputSchema: strictObject({ themeConfig: themeConfigSchema, diffEntry: diffEntrySchema }, ['themeConfig', 'diffEntry']),
     example: { input: { operationId: 'op_theme', expectedFingerprint: '...', patch: { colors: { accent: 0x8b1e3f }, opacity: { panel: 0.88 }, titleLogo: 'title_logo' } }, expectedResultShape: { themeConfig: { value: {}, effective: { tokens: {}, skins: {}, layout: {} }, titleLogo: 'title_logo', fingerprint: '...' }, diffEntry: {} } },
   },
+  ui: {
+    inputSchema: readViewInputSchema,
+    outputSchema: uiInspectionSchema,
+    example: { input: { view: 'working' }, expectedResultShape: { view: 'working', value: null, defaultPages: ['title'], nodes: [], fingerprint: '...' } },
+  },
+  uiPatch: {
+    inputSchema: strictObject({
+      operationId: stringSchema, expectedFingerprint: stringSchema,
+      patch: { oneOf: [
+        strictObject({ type: { const: 'page.set' }, page: stringSchema, root: jsonObjectSchema }, ['type', 'page', 'root']),
+        strictObject({ type: { const: 'page.remove' }, page: stringSchema }, ['type', 'page']),
+        strictObject({ type: { const: 'node.insert' }, page: stringSchema, parentId: stringSchema, index: integerSchema, node: jsonObjectSchema }, ['type', 'page', 'parentId', 'index', 'node']),
+        strictObject({ type: { const: 'node.update' }, page: stringSchema, id: stringSchema, patch: jsonObjectSchema }, ['type', 'page', 'id', 'patch']),
+        strictObject({ type: { const: 'node.remove' }, page: stringSchema, id: stringSchema }, ['type', 'page', 'id']),
+        strictObject({ type: { const: 'node.copy' }, page: stringSchema, id: stringSchema, newId: stringSchema, index: integerSchema }, ['type', 'page', 'id', 'newId']),
+        strictObject({ type: { const: 'node.reorder' }, page: stringSchema, id: stringSchema, index: integerSchema }, ['type', 'page', 'id', 'index']),
+      ] },
+    }, ['operationId', 'expectedFingerprint', 'patch']),
+    outputSchema: strictObject({ ui: uiInspectionSchema, diffEntry: diffEntrySchema }, ['ui', 'diffEntry']),
+    example: { input: { operationId: 'ui_move_1', expectedFingerprint: '...', patch: { type: 'node.update', page: 'hud', id: 'trust-value', patch: { frame: { x: 36, y: 24, width: 220, height: 40 } } } }, expectedResultShape: { ui: { view: 'working', value: {}, defaultPages: [], nodes: [], fingerprint: '...' }, diffEntry: {} } },
+  },
   validate: {
     inputSchema: emptyInputSchema,
     outputSchema: validationOutputSchema,
@@ -1332,6 +1361,7 @@ const definitions = {
 export const AUTHORING_CAPABILITY_IDS = [
   'capabilities.describe',
   'project.inspect',
+  'project.ui',
   'project.assets',
   'project.gallery',
   'script.import.preview',
@@ -1366,6 +1396,7 @@ export const AUTHORING_CAPABILITY_IDS = [
   'project.player-config.patch',
   'project.stage-config.patch',
   'project.theme-config.patch',
+  'project.ui.patch',
   'project.validate',
   'project.simulate',
   'runtime.run-from',
@@ -1426,6 +1457,8 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
   'asset.relocation.replace': { title: 'Prepare same-path asset replacement', purpose: 'Prepare a byte replacement of one existing, exact same-format project asset while retaining its key/path, original license and structured references. Read the permitted source bytes/hash from asset.sources. This is not a move, ordinary import overwrite, or source publication. The original relocation commit/recover/undo APIs apply the exact plan after separate apply permission. No change is reported for identical content.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['no active story change', 'human workspaces clean', 'authorized local source and current SHA-256', 'exact existing target with supported unambiguous format'], possibleErrors: imageImportErrors, repairRecipes: ['Inspect the original operationId after interruption; do not prepare another replacement to hide uncertain state.', 'Changed targets and unowned files are preserved. Use the original receipts for recovery or undo.'] },
   'project.stage-config.patch': { title: 'Patch stage configuration', purpose: 'Configure design coordinates, named positions/distances, character calibration and compositions. Read project.inspect.stageConfig for current value/effective defaults and fingerprint. Supplied top-level tables replace; missing tables retain; null clears a table, and patch:null removes the stage opt-in. No model, arbitrary JSON, source write or candidate configuration mutation.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['OPEN direct, not integration', 'current working stageConfig fingerprint', 'all configured assets resolve'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Read the complete current table before replacing it. Use project assets keys, not display names or guessed paths.', 'Validate and preview the working draft before separately authorized apply.'] },
   'project.theme-config.patch': { title: 'Patch work theme configuration', purpose: 'Configure theme tokens (colors/opacity/typography/spacing/radius), dialog/button skins, basic layout and title wordmark. Read project.inspect.themeConfig for value/effective/fingerprint. Token groups replace as tables; null deletes a group. Skin and titleLogo keys reference project.assets backgrounds. patch:null removes theme (titleLogo unaffected). Direct only; default appearance is preserved when fields are omitted.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['OPEN direct, not integration', 'current working themeConfig fingerprint', 'all configured asset keys resolve'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Read project.inspect.themeConfig with view=working and copy the fingerprint. Omitted fields keep current values; null clears skins/layout/titleLogo or deletes a token group.', 'Use background asset keys from project.assets, not file paths or display names.'] },
+  'project.ui': { title: 'Read work UI', purpose: 'Read game.config.json.ui from project or working view, including default pages, stable node IDs and the whole UI fingerprint.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false, preconditions: ['working view requires the active change'], possibleErrors: [...commonErrors, 'UI_INVALID'], repairRecipes: ['Use view=working before a direct UI patch and copy its fingerprint.'] },
+  'project.ui.patch': { title: 'Patch work UI', purpose: 'Set or remove one page, or insert/update/remove/copy/reorder one node in game.config.json.ui. Direct only. The whole UI record is validated and written atomically to the working change.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['OPEN direct, not integration', 'current project.ui fingerprint', 'declared variables and unique supported image assets'], possibleErrors: [...commonErrors, 'UI_INVALID', 'UNSUPPORTED_OPERATION', 'OBJECT_REF_STALE', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Re-read project.ui(view=working), fix the requested node and retry with a current fingerprint.'] },
   'asset.relocation.plan': { title: 'Plan asset relocation', purpose: 'Prepare exact same-kind asset moves and structured reference edits using the existing authority. No source publication or replacement. Preserve explicit portrait slot restrictions. Review the full plan before apply.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['no active story change', 'use exact project.assets sourcePath and an existing target directory', 'human workspace is clean'], possibleErrors: imageImportErrors, repairRecipes: ['Inspect this operationId after an uncertain result.', 'A blocked plan does not authorize deletion or overwrite. Correct the source problem, cancel the old plan and prepare a distinct operation.'] },
   'asset.relocation.inspect': { title: 'Inspect asset relocation', purpose: 'Read an existing authoritative plan, status and receipt. Does not publish source changes or confer permission to apply a plan.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read', 'change-store-write'], idempotency: 'idempotent', composable: false, preconditions: ['operationId identifies a plan in this project'], possibleErrors: imageImportErrors, repairRecipes: ['Continue using the same operationId, plan fingerprint and existing recovery state.'] },
   'asset.relocation.commit': { title: 'Commit asset relocation', purpose: 'Explicitly apply the exact prepared move/reference batch. Recheck source, bytes, readers and recovery barriers; no clobber of unrelated targets.', minimumPolicy: 'apply', sideEffects: ['project-write', 'change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['no active story change', 'human workspace is clean', 'plan fingerprint matches'], possibleErrors: imageImportErrors, repairRecipes: ['Inspect the original operation after response loss. Never repeat an unknown write using a new identifier.'] },
@@ -1484,7 +1517,7 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
 
 function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition {
   const item = metadata[id];
-  const schema = definitions[id === 'project.stage-config.patch' ? 'stageConfigPatch' : id === 'project.player-config.patch' ? 'playerConfigPatch' : id === 'project.theme-config.patch' ? 'themeConfigPatch' : id === 'asset.sources' ? 'assetSources'
+  const schema = definitions[id === 'project.ui' ? 'ui' : id === 'project.ui.patch' ? 'uiPatch' : id === 'project.stage-config.patch' ? 'stageConfigPatch' : id === 'project.player-config.patch' ? 'playerConfigPatch' : id === 'project.theme-config.patch' ? 'themeConfigPatch' : id === 'asset.sources' ? 'assetSources'
     : id === 'project.gallery' ? 'gallery'
     : id === 'script.import.preview' ? 'scriptImportPreview'
     : id === 'gallery.cg.create' ? 'galleryCgCreate'

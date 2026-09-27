@@ -30,6 +30,7 @@ export * from './plugin-host.js';
 export * from './post-process.js';
 export * from './loading-progress.js';
 export * from './theme.js';
+export * from './project-ui-dom.js';
 export * from './loading-layer.js';
 export * from './rollback-buffer.js';
 export * from './transition-registry.js';

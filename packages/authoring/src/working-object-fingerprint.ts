@@ -15,6 +15,7 @@ export type ComposableObjectRef =
   | 'config:characters'
   | 'config:fonts'
   | 'config:theme'
+  | 'config:ui'
   | 'config:stage'
   | 'config:portraits'
   | 'config:entryScene';
@@ -113,6 +114,7 @@ function readWorkingObject(workingFiles: Readonly<Record<string, string>>, objec
   const fullConfig = parseProjectConfigDocument(workingFiles['game.config.json'] ?? '{}');
   if (objectRef === 'config:stage') return present(fullConfig.stage ?? null);
   if (objectRef === 'config:theme') return present({ theme: fullConfig.theme ?? null, titleLogo: fullConfig.player !== undefined && typeof fullConfig.player === 'object' && fullConfig.player !== null ? (fullConfig.player as Record<string, unknown>)['titleLogo'] ?? null : null });
+  if (objectRef === 'config:ui') return present(fullConfig.ui ?? null);
   if (objectRef === 'config:fonts') return present(resolveProjectFontPaths(fullConfig));
   if (objectRef === 'config:portraits') return present(projectPortraitOverrides(fullConfig));
   if (objectRef.startsWith('variable:')) {

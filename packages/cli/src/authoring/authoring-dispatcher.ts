@@ -77,6 +77,8 @@ export async function dispatchAuthoringCapability(
       return { value: await service.describeCapabilities(payload as { ids?: string[]; detail?: 'summary' | 'full' }) };
     case 'project.inspect':
       return { value: await service.inspectProject(requireProject(context), readChange(context, payload, false)) };
+    case 'project.ui':
+      return { value: await service.projectUi(requireProject(context), readChange(context, payload, false)) };
     case 'project.assets':
       return { value: await service.projectAssets(requireProject(context), readChange(context, payload, false)) };
     case 'project.gallery':
@@ -149,6 +151,8 @@ export async function dispatchAuthoringCapability(
       return { value: await service.playerConfigPatch(requireChange(context), payload as unknown as Parameters<AuthoringService['playerConfigPatch']>[1]), operationId: operationIdFrom(payload) };
     case 'project.theme-config.patch':
       return { value: await service.themeConfigPatch(requireChange(context), payload as unknown as Parameters<AuthoringService['themeConfigPatch']>[1]), operationId: operationIdFrom(payload) };
+    case 'project.ui.patch':
+      return { value: await service.uiPatch(requireChange(context), payload as unknown as Parameters<AuthoringService['uiPatch']>[1]), operationId: operationIdFrom(payload) };
     case 'project.validate':
       return context.activeChangeId === undefined
         ? { value: await service.validateProject(requireProject(context)) }

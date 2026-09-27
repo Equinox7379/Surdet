@@ -8,12 +8,15 @@
  *  - 名词表导入/导出；审计面板一键加变体入口（addTerminologyVariant）
  */
 import { state, h, setStatus } from '../state.js';
-import { projectPortraitOverrides, readProjectStage } from '@surdet/core';
+import { projectPortraitOverrides, readProjectStage, readProjectUi, type ProjectUiDocument } from '@surdet/core';
 import { assertConfigSourcesReadable, configSourceError, configSourcePath, parseConfigSource, type ConfigSourceName } from '../config-source.js';
 import { assetPathForHandle, assertProjectWriteUnlocked, readProjectSourceText, runProjectWriteOperation, writeProjectText } from '../project-io.js';
 import { editorWorkspaceStatus } from '../editor-workspace.js';
-import { AuthoringOperationError, parseProjectConfigDocument, renameConfigReferences, renameGalleryLabel } from '@surdet/authoring';
-import { commitCharacterTable, commitStageConfiguration, commitThemeConfiguration, parseCharacterVisualsDraft, parseThemeEditorDraft, projectThemeEditorDraft, type CharacterTableEditRow } from '../authoring-project-storage.js';
+import { AuthoringOperationError, parseProjectConfigDocument, patchUiDocument, renameConfigReferences, renameGalleryLabel, type UiPatch } from '@surdet/authoring';
+import { commitCharacterTable, commitStageConfiguration, commitThemeConfiguration, commitUiConfiguration, parseCharacterVisualsDraft, parseThemeEditorDraft, projectThemeEditorDraft, type CharacterTableEditRow } from '../authoring-project-storage.js';
+import { disposeUiDesigner, renderUiDesigner } from '../ui-designer.js';
+import { openUiPlayerPreview } from '../ui-player-preview.js';
+import { copySharedFragment, exportUiShare, missingUiShareAssets, readUiShare, type ShareAsset } from '../ui-sharing.js';
 import {
   VAR_TYPES, parseVariablesToRows, rowsToVariables, applyVariablesToConfig,
   parseAchievementsToRows, rowsToAchievements, collectReferencedVars,
@@ -34,9 +37,11 @@ import { createSnapshotHistory, snapshotPush, snapshotUndo, snapshotRedo } from 
 /** 校验刷新钩子（main.ts 注入：scheduleValidate） */
 let requestValidateHook: () => void = () => {};
 let configDraftStateChangedHook: (() => void) | undefined;
-export function bindConfigHooks(opts: { requestValidate: () => void; onDraftStateChanged?: () => void }): void {
+let stageSharedAssetsHook: ((files: File[]) => void) | undefined;
+export function bindConfigHooks(opts: { requestValidate: () => void; onDraftStateChanged?: () => void; stageSharedAssets?: (files: File[]) => void }): void {
   requestValidateHook = opts.requestValidate;
   configDraftStateChangedHook = opts.onDraftStateChanged;
+  stageSharedAssetsHook = opts.stageSharedAssets;
 }
 
 export type ConfigSectionId =
@@ -49,7 +54,8 @@ export type ConfigSectionId =
   | 'gallery'
   | 'terminology'
   | 'stage'
-  | 'theme';
+  | 'theme'
+  | 'ui';
 
 export interface ConfigDraftInspection {
   dirty: boolean;
@@ -68,6 +74,7 @@ const CONFIG_SECTIONS: readonly ConfigSectionDescriptor[] = [
   { id: 'characters', label: '角色', description: '管理显示名称、头像与服装/表情立绘。', file: 'game.config.json', render: renderCharactersSection },
   { id: 'variables', label: '变量', description: '定义剧情状态、初始值、范围和只读约束。', file: 'game.config.json', render: renderVariablesSection },
   { id: 'theme', label: '主题外观', description: '配置颜色、字体大小、对话框/按钮皮肤、字标与基础布局。', file: 'game.config.json', render: renderThemeSection },
+  { id: 'ui', label: '界面设计', description: '为作品页面排布组件并设置数据与操作。', file: 'game.config.json', render: renderUiSection },
   { id: 'achievements', label: '成就', description: '整理成就文案、触发条件与隐藏状态。', file: 'content/config/achievements.json', render: renderAchievementsSection },
   { id: 'calendar', label: '日历与地图', description: '安排回合规则、地图节点、前置关系与据点指令。', file: 'content/config/calendar.json', render: renderCalendarSection },
   { id: 'growth', label: '角色成长', description: '设置经验曲线、等级范围和成长事件。', file: 'content/config/growth.json', render: renderGrowthSection },
@@ -84,10 +91,11 @@ function configDescriptor(id: ConfigSectionId): ConfigSectionDescriptor {
 }
 
 function sectionSource(id: ConfigSectionId): ConfigSourceName {
-  return id === 'characters' || id === 'variables' || id === 'stage' || id === 'theme' ? 'gameConfig' : id;
+  return id === 'characters' || id === 'variables' || id === 'stage' || id === 'theme' || id === 'ui' ? 'gameConfig' : id;
 }
 
 function renderConfigWorkspace(root: HTMLElement): void {
+  disposeUiDesigner();
   root.innerHTML = '';
   root.setAttribute('data-editor-panel', 'config');
   root.setAttribute('data-editor-region', 'config-workbench');
@@ -181,6 +189,8 @@ let stageDraft: string | null = null;
 let stageSourceBaseline: string | undefined;
 let themeDraft: string | null = null;
 let themeSourceBaseline: string | undefined;
+let uiDraft: ProjectUiDocument | null | undefined;
+let uiSourceBaseline: string | undefined;
 let configSessionRevision = 0;
 let configSessionLoaded = false;
 const configBaselines: Partial<Record<ConfigSectionId, string>> = {};
@@ -207,6 +217,7 @@ function serializeConfigSection(sectionId: ConfigSectionId): string {
     case 'terminology': return JSON.stringify(ensureTermRows());
     case 'stage': return JSON.stringify(readStageConfigDraft());
     case 'theme': return JSON.stringify(readThemeConfigDraft());
+    case 'ui': return JSON.stringify(readUiConfigDraft());
   }
 }
 
@@ -368,6 +379,76 @@ export async function saveThemeConfigDraftUnlocked() {
   return result;
 }
 
+export function readUiConfigDraft(): ProjectUiDocument | null {
+  if (uiDraft === undefined) {
+    const config = parseConfigObj();
+    uiDraft = readProjectUi(config);
+    uiSourceBaseline = JSON.stringify(uiDraft);
+    configBaselines.ui = JSON.stringify(uiDraft);
+  }
+  return uiDraft;
+}
+
+export function editUiConfigDraft(patch: UiPatch): ProjectUiDocument | null {
+  assertProjectWriteUnlocked();
+  if (state.reviewWorkspace || state.reviewPreviewReadOnly || state.projectLoading) throw new Error('当前项目不可编辑界面。');
+  const current = readUiConfigDraft();
+  const config = parseConfigObj();
+  const next = patchUiDocument(current, { ...config, ui: current }, patch);
+  if (JSON.stringify(next) === JSON.stringify(current)) return current;
+  pushConfigHistory(false);
+  uiDraft = next;
+  configSessionLoaded = true;
+  scheduleConfigDraftStateChanged();
+  return next;
+}
+
+export function replaceUiConfigDraft(value: ProjectUiDocument | null): void {
+  assertProjectWriteUnlocked();
+  if (state.reviewWorkspace || state.reviewPreviewReadOnly || state.projectLoading) throw new Error('当前项目不可编辑界面。');
+  const config = parseConfigObj();
+  const projected = { ...config };
+  if (value === null) delete projected.ui; else projected.ui = value;
+  const next = readProjectUi(projected);
+  if (JSON.stringify(next) === JSON.stringify(readUiConfigDraft())) return;
+  pushConfigHistory(false);
+  uiDraft = next;
+  configSessionLoaded = true;
+  scheduleConfigDraftStateChanged();
+}
+
+export function previewUiConfigText(source: string): string {
+  if (uiDraft === undefined || configBaselines.ui === JSON.stringify(uiDraft)) return source;
+  const config = parseProjectConfigDocument(source || '{}');
+  if (uiDraft === null) delete config.ui; else config.ui = uiDraft;
+  readProjectUi(config);
+  return JSON.stringify(config);
+}
+
+export function reloadUiConfigDraft(): ProjectUiDocument | null {
+  const source = readProjectUi(parseConfigObj());
+  replaceUiConfigDraft(source);
+  uiSourceBaseline = JSON.stringify(source);
+  configBaselines.ui = JSON.stringify(source);
+  notifyConfigDraftStateChanged();
+  return source;
+}
+
+export async function saveUiConfigDraftUnlocked() {
+  assertProjectWriteUnlocked();
+  assertConfigSaveReady('gameConfig');
+  const submitted = readUiConfigDraft(), revision = configSessionRevision;
+  if (JSON.stringify(readProjectUi(parseConfigObj())) !== uiSourceBaseline) throw new Error('界面来源配置已经变化，请保留草稿并重新核对。');
+  const result = await commitUiConfiguration(submitted, state.gameConfigText);
+  if (revision === configSessionRevision) {
+    uiSourceBaseline = JSON.stringify(result.after);
+    markConfigSectionSaved('ui', submitted, revision);
+    for (const snapshot of [...configHist.past, ...configHist.future]) snapshot.gameConfigText = result.text;
+    requestValidateHook();
+  }
+  return result;
+}
+
 /** 打开配置页时从盘上重读源文件；失败保持显式错误，不冒充旧值仍有效。 */
 async function refreshConfigSources(revision: number): Promise<boolean> {
   const gameConfigHandle = state.handles.gameConfig;
@@ -450,6 +531,7 @@ interface ConfigSnapshot {
   termRows: TerminologyTableRows | null;
   stageDraft: string | null;
   themeDraft: string | null;
+  uiDraft: ProjectUiDocument | null | undefined;
   gameConfigText: string;
 }
 
@@ -468,6 +550,8 @@ function clearConfigRowsAndHistory(): void {
   stageSourceBaseline = undefined;
   themeDraft = null;
   themeSourceBaseline = undefined;
+  uiDraft = undefined;
+  uiSourceBaseline = undefined;
   configSessionLoaded = false;
   for (const sectionId of Object.keys(configBaselines) as ConfigSectionId[]) delete configBaselines[sectionId];
   configHist.past = [];
@@ -476,6 +560,7 @@ function clearConfigRowsAndHistory(): void {
 
 /** 项目切换边界：取消旧读取并丢弃只属于上一项目的配置行缓存和撤销历史。 */
 export function resetConfigSession(): void {
+  disposeUiDesigner();
   configSessionRevision += 1;
   clearConfigRowsAndHistory();
   notifyConfigDraftStateChanged();
@@ -486,7 +571,7 @@ function clone<T>(v: T): T {
 }
 
 function takeConfigSnapshot(): ConfigSnapshot {
-  return { ...clone({ charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows, stageDraft, themeDraft }), gameConfigText: state.gameConfigText };
+  return { ...clone({ charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows, stageDraft, themeDraft, uiDraft }), gameConfigText: state.gameConfigText };
 }
 
 /** Rebase live rows, clean baselines and undo/redo together; never save unrelated edits. */
@@ -576,6 +661,7 @@ function restoreConfigSnapshot(snap: ConfigSnapshot): void {
   termRows = clone(snap.termRows);
   stageDraft = snap.stageDraft;
   themeDraft = snap.themeDraft;
+  uiDraft = snap.uiDraft;
   state.gameConfigText = snap.gameConfigText; // 内存态同步回退（磁盘不回滚，与行模型同语义）
   rerenderConfig();
 }
@@ -1606,6 +1692,82 @@ function renderThemeSection(): HTMLElement {
   return sec;
 }
 
+function renderUiSection(): HTMLElement {
+  const { sec, ops } = sectionShell('ui');
+  const status = h('p', 'dim');
+  const designer = renderUiDesigner({
+    read: readUiConfigDraft,
+    edit: editUiConfigDraft,
+    replace: replaceUiConfigDraft,
+    reload: reloadUiConfigDraft,
+    save: () => runProjectWriteOperation(saveUiConfigDraftUnlocked),
+    preview: () => openUiPlayerPreview(previewUiConfigText(previewThemeConfigText(previewStageConfigText(state.gameConfigText)))),
+    exportShare: async fragment => {
+      const root = state.dirHandle;
+      const config = parseProjectConfigDocument(previewUiConfigText(previewThemeConfigText(state.gameConfigText)));
+      const share = await exportUiShare(config, shareAssets(), fragment);
+      if (state.dirHandle !== root) throw new Error('导出期间项目已切换');
+      const url = URL.createObjectURL(new Blob([JSON.stringify(share, null, 2)], { type: 'application/json' }));
+      const link = h('a'); link.href = url; link.download = fragment ? 'surdet-ui-fragment.json' : 'surdet-ui-theme.json';
+      link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      status.textContent = '已导出界面数据及必要图片/字体，不包含剧情、存档或项目私有字段。片段继承目标作品的主题与字体。';
+    },
+    importShare: async (file, target) => {
+      assertProjectWriteUnlocked();
+      if (state.reviewWorkspace || state.reviewPreviewReadOnly || state.projectLoading) throw new Error('当前项目不可导入界面');
+      const root = state.dirHandle, revision = configSessionRevision;
+      const config = parseProjectConfigDocument(previewUiConfigText(previewThemeConfigText(state.gameConfigText)));
+      const share = readUiShare(await file.text(), config);
+      const missing = await missingUiShareAssets(share, shareAssets());
+      if (root !== state.dirHandle || revision !== configSessionRevision) throw new Error('导入期间项目或草稿已变化，请重试');
+      assertProjectWriteUnlocked();
+      if (state.reviewWorkspace || state.reviewPreviewReadOnly || state.projectLoading) throw new Error('当前项目不可导入界面');
+      if (missing.length) {
+        if (!stageSharedAssetsHook) throw new Error('缺少素材，请先通过现有素材导入工作台导入共享包的图片/字体');
+        stageSharedAssetsHook(missing);
+        setStatus('依赖已加入素材导入待选区；确认导入后，再次导入此共享文件即可生成界面草稿。', true, 10000);
+        return;
+      }
+      if (share.kind === 'fragment') {
+        const source = readProjectUi({ ...share.config, variables: config.variables })!;
+        const page = Object.keys(source.pages)[0];
+        if (page !== target.page) throw new Error('片段页面类型不同，请先切换到对应页面');
+        const node = copySharedFragment(Object.values(source.pages)[0]!, `import_${crypto.randomUUID().replaceAll('-', '')}`);
+        if (target.parentId) {
+          const parent = (function find(current: import('@surdet/core').ProjectUiNode): import('@surdet/core').ProjectUiNode | undefined {
+            return current.id === target.parentId ? current : current.children?.map(find).find(Boolean);
+          })(readUiConfigDraft()!.pages[target.page]!);
+          editUiConfigDraft({ type: 'node.insert', page: target.page, parentId: target.parentId, index: parent?.children?.length ?? 0, node });
+        } else editUiConfigDraft({ type: 'page.set', page: target.page, root: node });
+      } else {
+        const imported = share.config;
+        const nextUi = readProjectUi({ ...imported, variables: config.variables });
+        const player = imported.player as Record<string, unknown> | undefined;
+        const form = JSON.stringify({ theme: imported.theme ?? null, titleLogo: player?.titleLogo ?? null,
+          titleBackground: player?.titleBackground ?? null, font: null, fonts: imported.fonts ?? {} }, null, 2);
+        projectThemeEditorDraft(config, parseThemeEditorDraft(form));
+        if (!window.confirm('将此作品主题和页面放入当前草稿？尚未保存的界面编辑会被替换，可撤销；源文件不会立即改写。')) return;
+        readUiConfigDraft(); readThemeConfigDraft(); pushConfigHistory(false);
+        uiDraft = nextUi; themeDraft = form; configSessionLoaded = true; scheduleConfigDraftStateChanged();
+        rerenderConfig();
+      }
+      setStatus('已生成界面草稿。可试玩、撤销；保存全部后才写回项目。', true, 8000);
+    },
+    onStatus: (message, ok = true) => { status.textContent = message; setStatus(message, ok, 5000); },
+    undo: configUndo,
+    redo: configRedo,
+  });
+  sec.append(designer, status, ops);
+  return sec;
+}
+
+function shareAssets(): ShareAsset[] {
+  return state.dirAssets.flatMap(asset => {
+    const path = asset.sourcePath ?? (asset.handle ? assetPathForHandle(asset.handle) : undefined);
+    return path && asset.handle ? [{ path, read: () => asset.handle!.getFile() }] : [];
+  });
+}
+
 function renderTerminologySection(): HTMLElement {
   const { sec, ops } = sectionShell('terminology');
   const tt = ensureTermRows();
@@ -1666,6 +1828,10 @@ export async function saveDirtyConfigSections(): Promise<ConfigSaveOutcome> {
           break;
         case 'theme':
           await saveThemeConfigDraftUnlocked();
+          ok = true;
+          break;
+        case 'ui':
+          await saveUiConfigDraftUnlocked();
           ok = true;
           break;
         case 'characters':

@@ -89,7 +89,7 @@ export class PlayerFocusScope {
     this.#suppressed = [];
     let modal: Container | null = null;
     const visit = (node: Container): void => {
-      if (!node.visible) return;
+      if (!node.visible || !node.renderable) return;
       if (modals.has(node)) modal = node;
       for (const child of node.children) visit(child);
     };
@@ -127,8 +127,10 @@ export class PlayerFocusScope {
     for (const button of Array.from(div.querySelectorAll<AccessibleButton>('button'))) {
       const control = button.container && controls.get(button.container);
       if (!control) continue;
-      button.setAttribute('aria-disabled', String(control.enabled === false));
-      button.tabIndex = control.enabled === false ? -1 : 0;
+      const reachable = this.#inScope(button.container!);
+      button.setAttribute('aria-hidden', String(!reachable));
+      button.setAttribute('aria-disabled', String(!reachable || control.enabled === false));
+      button.tabIndex = !reachable || control.enabled === false ? -1 : 0;
       // The library pools DOM nodes. Refresh names rather than retaining another control's label.
       button.setAttribute('aria-label', button.container!.accessibleHint ?? control.label);
       button.style.outlineOffset = '-3px';
@@ -161,7 +163,7 @@ export class PlayerFocusScope {
   #inScope(target: Container): boolean {
     let current: Container | null = target;
     while (current) {
-      if (!current.visible || current.destroyed) return false;
+      if (!current.visible || !current.renderable || current.destroyed) return false;
       if (current === (this.#modal ?? this.#root)) return true;
       current = current.parent;
     }

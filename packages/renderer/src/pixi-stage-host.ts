@@ -321,6 +321,13 @@ export class RendererStageHost {
     this.#requestFrame();
   }
 
+  setDeclarativeUiSuppression(pages: Partial<Record<import('@surdet/core').ProjectUiPageId, boolean>>): void {
+    this.#dialogue.setDeclarativeUiSuppression(pages);
+    this.#menu.setDeclarativeUiSuppression(pages);
+    this.#gallery.setDeclarativeUiSuppression(Boolean(pages.gallery));
+    this.#requestFrame();
+  }
+
   #layout(): void {
     this.#dialogue.layout();
   }

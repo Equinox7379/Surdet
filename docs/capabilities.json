@@ -2,6 +2,25 @@
   "version": 1,
   "capabilities": [
     {
+      "id": "project-ui-designer",
+      "kind": "ui",
+      "core": "implemented",
+      "renderer": "implemented",
+      "editor": "implemented",
+      "host": "implemented",
+      "tests": [
+        "packages/core/test/project-ui.test.ts",
+        "packages/authoring/test/ui-operations.test.ts",
+        "packages/editor/test/authoring-project-storage.test.ts",
+        "packages/editor/test/ui-sharing.test.ts",
+        "packages/editor/test/config-draft-state.test.ts",
+        "packages/renderer/test/player-controls.test.ts",
+        "packages/host/test/player-ui-coordination.test.ts"
+      ],
+      "docs": ["docs/AI-GUIDE.md", "README.md"],
+      "limitation": "版本1固定组件与许可动作，1280×720设计坐标；UI修改direct-only，不支持任意脚本/HTML或在线主题市场。共享缺失资源先走现有素材导入确认，再生成配置草稿；桌面浏览器证据不代表移动端、Electron或原生IME验收。"
+    },
+    {
       "id": "renderer-lifecycle",
       "kind": "ui",
       "core": "n/a",

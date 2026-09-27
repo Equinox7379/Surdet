@@ -62,6 +62,24 @@ function makeFocusHarness() {
 }
 
 describe('player control projection', () => {
+  it('excludes a replaced, non-rendered default modal from keyboard routing and native focus', async () => {
+    const harness = makeFocusHarness();
+    harness.modalControls[0]!.parent!.renderable = false;
+    harness.activeDocument.activeElement = null;
+    const event = { key: 'Tab', shiftKey: true, preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() } as unknown as KeyboardEvent;
+    harness.keydown()(event);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    harness.scope.postrender();
+    await Promise.resolve();
+    expect(harness.buttons.slice(0, 3).every(button => button.tabIndex === -1)).toBe(true);
+    expect(harness.buttons[0]!.setAttribute).toHaveBeenCalledWith('aria-hidden', 'true');
+    harness.modalControls[0]!.parent!.renderable = true;
+    harness.scope.prerender(); harness.scope.postrender();
+    await Promise.resolve();
+    expect(harness.buttons[0]!.tabIndex).toBe(0);
+    harness.scope.destroy();
+  });
+
   it('keeps physical activation singular while bridging native accessible activation to the original handler', () => {
     const target = new Container();
     const activate = vi.fn();

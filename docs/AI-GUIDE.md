@@ -2,7 +2,7 @@
 
 本指南面向编写剧情、配置与演出的内容作者。默认使用正式 Agent Port 工具，在隔离草稿中修改、验证和试玩；不需要先读引擎源码、长期台账或重新接线播放器。已有项目保持原位，新项目使用现有模板。
 
-本批公开创作合同为 **2.18.0**，新增作品主题配置，保留分层立绘、逐帧动画、素材整理／原位替换及有限舞台配置能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+本批公开创作合同为 **2.19.0**，新增作品界面读取与窄修改（共 56 项公开能力），保留作品主题配置、分层立绘、逐帧动画、素材整理／原位替换及有限舞台配置能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
 
 ## 0. 准备项目与会话
 
@@ -200,6 +200,35 @@ Player 的显式主题字段只覆盖相应项目字段，不会因只显式设�
 ```
 
 主题引用的素材键必须已出现在 project.assets 的 backgrounds 中。修改只支持 direct；candidate/integration 在修改前拒绝。`config:theme` 已纳入组合基线指纹、候选重放前置与封存依赖检查。缺省不提供 theme 字段时保持已接受的默认外观；显式 PlayerProject 参数优先于 game.config.json，再到引擎默认。Editor 的"主题外观"配置区可读取、修改和保存同一配置。
+
+### 作品界面与人类接管
+
+不定制时沿用默认 UI。需要定制时，先用 `project.ui({view:"working"})`（MCP：`surdet_project_ui`）读取 value/defaultPages/nodes/fingerprint，再用 `project.ui.patch`（MCP：`surdet_project_ui_patch`）修改。文档位于 `game.config.json.ui`，结构 `{version:1,pages:{...}}`；省略页面即使用默认界面。
+
+页面：title、system-menu、save-load、settings、gallery、backlog、dialogue、choices、toolbar、hud。固定组件：container、image、text、button、toggle、slider、input、scroll、tabs、content。每个节点有全作品唯一的 id、type 和 `frame:{x,y,width,height,anchorX?,anchorY?}`。设计坐标为 1280×720，节点原点＝父级原点＋x/y－anchor×本节点宽高；锚点范围0..1，默认0，尺寸须为正。兄弟顺序即叠放顺序；tabs 子项用 tab 命名分组。
+
+`text` 支持 `{kind:"literal",value:"文字"}`、`{kind:"variable",name:"已声明变量"}`、`{kind:"setting",name:"textSpeedCps"}`，以及 `{kind:"data",field:...}`：title 的 title/subtitle，dialogue 的 speaker/dialogue，save-load 的 mode，公共内容条目的 id/label/description/value/date。没有 JS、表达式求值或 HTML。image.asset 为唯一的项目背景素材键；style 可设 color/background/opacity/fontSize/align/fontRole（body/title/ui）。
+
+toggle/slider/input 的 `binding:{kind:"variable"|"setting",name}` 必须匹配类型并遵守只读约束。输入框只绑定可写字符串变量，开关绑定 flag/boolean 或 skipStrategy，滑条绑定数值。可调整设置：textSpeedCps、autoBaseDelayMs、masterVolume、bgmVolume、ambienceVolume、seVolume、voiceVolume、skipStrategy；范围仍由原 Player 设置控制。
+
+按钮 action 为有限操作：start/continue/back/close/advance/rollback/auto/skip/hide；`{kind:"open",page:"settings"}`；存读档页须明确 `{kind:"open",page:"save-load",mode:"save"|"load"}`。save/load 可带槽位 id，不带时打开列表；choice/gallery-item 使用当前条目或明确 id；setting-step 使用 name 和 direction: ±1。content.source 为 save-slots/backlog/gallery-cgs/gallery-music/gallery-texts/choices/settings，须放在对应页面，子节点可读取当前条目。原保存确认、暂停、返回及失败恢复继续有效。
+
+修改支持 page.set/page.remove、node.insert/node.update/node.remove/node.copy/node.reorder。更新节点只传所需字段，frame/style 等子对象整项替换；复制需提供 newId，后代也产生新 ID。例如：
+
+```json
+{
+  "operationId": "revise-title",
+  "expectedFingerprint": "刚读取的 fingerprint",
+  "patch": { "type": "node.update", "page": "title", "id": "title-heading",
+    "patch": { "text": { "kind": "literal", "value": "潮汐画笺" } } }
+}
+```
+
+UI 写入仅支持 direct，candidate/integration 在业务修改前拒绝。旧指纹、非法动作/绑定/引用不写内容；候选可读取基线 UI，并封存 config:ui 与实际图片、变量及配置字体依赖。仍须正常 diff、校验、模拟、试玩与获授权写回。
+
+Editor「配置 → 界面设计」可接管同一文档，选中、拖动/缩放、精确输入几何、对齐、重排、复制、撤销/重做、恢复单页默认并保存。「试玩草稿」将未保存的舞台/主题/UI 投影交给普通共享 Player 的独立测试上下文，不写正式作品进度；普通剧本预览不代替完整 UI 试玩。
+
+本地 `surdet-ui` JSON 支持导出作品主题或所选片段。主题含支持的主题字段、页面、字体及必要图片；片段只带组件和图片，继承目标作品主题/字体。共享资源与现有素材 authority 同范围：PNG/JPEG/WebP、TTF/OTF/WOFF2，其他格式明确拒绝。包内不含剧情、存档、变量初始值、未知项目字段或绝对来源路径。目标须已有同名同类型变量；片段导入同类页面并产生新 ID。相同字节资源可复用，内容冲突拒绝覆盖。缺失资源先加入素材导入待选区，确认导入后再次导入共享文件生成草稿；authority 不可用时不绕过写入边界。草稿保存才写盘，素材依原回执撤销。分享许可与许可证原文仍按既有素材流程处理。
 
 Editor 的合法场景改名会同步已知引用及 `player.endScenes` 等结束配置：改名先更新工作稿，点击“保存全部”后一起写入。删除仍被引用的场景会被拒绝并指出来源，应先调整引用；异常配置也不会绕过检查。
 

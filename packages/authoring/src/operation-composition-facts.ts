@@ -1,4 +1,4 @@
-import { projectPortraitOverrides, projectStageAssetKeys, readProjectStage, resolveProjectTitleLogo, resolveProjectTheme, projectThemeAssetKeys } from '@surdet/core';
+import { projectPortraitOverrides, projectStageAssetKeys, readProjectStage, resolveProjectTitleLogo, resolveProjectTheme, projectThemeAssetKeys, readProjectUi, projectUiAssetKeys, projectUiVariableNames, resolveProjectFontPaths } from '@surdet/core';
 import type { OperationCompositionDraft } from './composition-contracts.js';
 import type { TextHasher } from './project-storage.js';
 import { stableStringify } from './change-session.js';
@@ -27,6 +27,16 @@ function themeAssetReferences(config: unknown) {
     token: key, objectRef: `asset:bg:${key}`, source: { path: 'game.config.json' } }));
 }
 
+function uiReferences(config: Record<string, unknown>) {
+  const ui = readProjectUi(config);
+  return [
+    ...projectUiAssetKeys(ui).map(key => ({ kind: 'background-asset' as const, scope: 'candidate-external' as const,
+      token: key, objectRef: `asset:bg:${key}`, source: { path: 'game.config.json' } })),
+    ...projectUiVariableNames(ui).map(name => ({ kind: 'variable' as const, scope: 'candidate-external' as const,
+      token: name, objectRef: `variable:${name}`, source: { path: 'game.config.json' } })),
+  ];
+}
+
 export async function buildSceneOperationCompositionDraft(input: {
   capabilityId: 'scene.create' | 'scene.patch';
   sceneId: string;
@@ -37,6 +47,8 @@ export async function buildSceneOperationCompositionDraft(input: {
   fontPaths: Partial<Record<'body' | 'title' | 'ui', string>>;
   stageConfig?: unknown;
   themeConfig?: unknown;
+  uiConfig?: unknown;
+  variables?: Record<string, unknown>;
   titleLogo?: string | null;
   hasher: TextHasher;
 }): Promise<OperationCompositionDraft> {
@@ -44,7 +56,7 @@ export async function buildSceneOperationCompositionDraft(input: {
   const objectFingerprintAfter = await input.hasher.sha256(input.afterText);
   return {
     capabilityId: input.capabilityId, primaryObject,
-    rawReferences: [...themeAssetReferences({ theme: input.themeConfig, player: { titleLogo: input.titleLogo ?? undefined } }), ...analyzeSceneCompositionReferences({
+    rawReferences: [...themeAssetReferences({ theme: input.themeConfig, player: { titleLogo: input.titleLogo ?? undefined } }), ...uiReferences({ ui: input.uiConfig, variables: input.variables ?? {} }), ...analyzeSceneCompositionReferences({
       sceneId: input.sceneId, path: input.path,
       text: input.afterText, characters: input.characters,
     }), ...[...new Set(Object.values(input.fontPaths))].map(path => ({
@@ -58,6 +70,7 @@ export async function buildSceneOperationCompositionDraft(input: {
       { objectRef: 'config:stage', expectedFingerprint: await input.hasher.sha256(stableStringify(input.stageConfig ?? null)) },
       { objectRef: 'config:fonts', expectedFingerprint: await input.hasher.sha256(stableStringify(input.fontPaths)) },
       { objectRef: 'config:theme', expectedFingerprint: await input.hasher.sha256(stableStringify({ theme: input.themeConfig ?? null, titleLogo: input.titleLogo ?? null })) },
+      { objectRef: 'config:ui', expectedFingerprint: await input.hasher.sha256(stableStringify(input.uiConfig ?? null)) },
       { objectRef: 'config:portraits', expectedFingerprint: await input.hasher.sha256(stableStringify(projectPortraitOverrides({ characters: input.characters }))) },
       ...(input.beforeText === undefined ? [] : [{ objectRef: primaryObject, expectedFingerprint: await input.hasher.sha256(input.beforeText) }]),
     ],
@@ -89,7 +102,9 @@ export async function buildTimelineOperationCompositionDraft(input: {
   });
   return {
     capabilityId: input.capabilityId, primaryObject,
-    rawReferences: [...rawReferences, ...themeAssetReferences(input.config)],
+    rawReferences: [...rawReferences, ...themeAssetReferences(input.config), ...uiReferences(input.config),
+      ...[...new Set(Object.values(resolveProjectFontPaths(input.config)))].map(fontPath => ({ kind: 'font-asset' as const, scope: 'candidate-external' as const,
+        token: fontPath, objectRef: `asset:font:${fontPath}`, source: { path: 'game.config.json' } }))],
     producedObjects: [{ objectRef: primaryObject, disposition: input.capabilityId === 'timeline.create' ? 'create' : 'update', finalFingerprint: objectFingerprintAfter }],
     ...(input.beforeDefinition === undefined ? {} : { objectFingerprintBefore: await input.hasher.sha256(stableStringify(input.beforeDefinition)) }),
     objectFingerprintAfter,
@@ -102,7 +117,9 @@ export async function buildTimelineOperationCompositionDraft(input: {
         objectRef: `timeline:${id}`, expectedFingerprint: await input.hasher.sha256(stableStringify(definition)),
       }))),
       { objectRef: 'config:stage', expectedFingerprint: await input.hasher.sha256(stableStringify(input.config.stage ?? null)) },
+      { objectRef: 'config:fonts', expectedFingerprint: await input.hasher.sha256(stableStringify(resolveProjectFontPaths(input.config))) },
       { objectRef: 'config:theme', expectedFingerprint: await input.hasher.sha256(stableStringify({ theme: input.config.theme ?? null, titleLogo: resolveProjectTitleLogo(input.config) })) },
+      { objectRef: 'config:ui', expectedFingerprint: await input.hasher.sha256(stableStringify(input.config.ui ?? null)) },
       { objectRef: 'config:portraits', expectedFingerprint: await input.hasher.sha256(stableStringify(projectPortraitOverrides(input.config))) },
     ],
   };

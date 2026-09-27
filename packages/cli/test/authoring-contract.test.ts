@@ -31,8 +31,8 @@ describe('agent authoring CLI JSON contract', () => {
     expect(result.stdout.trim().endsWith('}')).toBe(true);
     expect(result.stderr).toBe('');
     const body = JSON.parse(result.stdout);
-    expect(body.contractVersion).toBe('2.18.0');
-    expect(body.result.capabilities).toHaveLength(54);
+    expect(body.contractVersion).toBe('2.19.0');
+    expect(body.result.capabilities).toHaveLength(56);
     expect(body.result.capabilities[0]).toEqual(expect.objectContaining({
       id: 'capabilities.describe',
       mcpTool: 'surdet_capabilities_describe',
@@ -78,6 +78,37 @@ describe('agent authoring CLI JSON contract', () => {
     const reopened = runCli(['project', 'gallery', '--project', root, '--change', changeId, '--json'], env);
     expect(JSON.parse(reopened.stdout)).toMatchObject({ ok: true, result: { view: 'working', cgs: [{ id: 'night', name: '归途' }] } });
     expect(fs.existsSync(path.join(root, 'content/config/gallery.json'))).toBe(false);
+  });
+
+  it('reads and patches one UI node through the public CLI while keeping source separate', () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-ui-cli-'));
+    const root = path.join(fixture, 'project');
+    fs.mkdirSync(path.join(root, 'content/scenario'), { recursive: true });
+    writeJson(path.join(root, 'game.config.json'), { entryScene: 'start', variables: { trust: { type: 'number', initial: 3 } } });
+    fs.writeFileSync(path.join(root, 'content/scenario/start.gal'), '@scene start\n@end\n');
+    const env = { SURDET_AGENT_DATA_DIR: path.join(fixture, 'data') };
+    const read = JSON.parse(runCli(['project', 'ui', '--project', root, '--json'], env).stdout);
+    expect(read).toMatchObject({ ok: true, result: { view: 'project', value: null } });
+    const changeId = JSON.parse(runCli(['change', 'begin', '--project', root, '--json'], env).stdout).result.changeId as string;
+    const input = path.join(fixture, 'input.json');
+    const frame = { x: 0, y: 0, width: 1280, height: 720 };
+    writeJson(input, { operationId: 'ui-set', expectedFingerprint: read.result.fingerprint,
+      patch: { type: 'page.set', page: 'hud', root: { id: 'hud-root', type: 'container', frame, children: [
+        { id: 'trust', type: 'text', frame: { x: 20, y: 20, width: 180, height: 40 }, text: { kind: 'variable', name: 'trust' } },
+      ] } } });
+    const applied = runCli(['project', 'ui', 'patch', '--change', changeId, '--input', input, '--json'], env);
+    expect(applied.status, applied.stdout).toBe(0);
+    const workingInput = path.join(fixture, 'working.json');
+    writeJson(workingInput, { view: 'working' });
+    const working = JSON.parse(runCli(['project', 'ui', '--project', root, '--change', changeId, '--input', workingInput, '--json'], env).stdout);
+    expect(working).toMatchObject({ ok: true, result: { view: 'working', nodes: [
+      { id: 'hud-root', parentId: null }, { id: 'trust', parentId: 'hud-root' },
+    ] } });
+    writeJson(input, { operationId: 'ui-move', expectedFingerprint: working.result.fingerprint,
+      patch: { type: 'node.update', page: 'hud', id: 'trust', patch: { frame: { x: 36, y: 24, width: 180, height: 40 } } } });
+    expect(runCli(['project', 'ui', 'patch', '--change', changeId, '--input', input, '--json'], env).status).toBe(0);
+    expect(JSON.parse(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8')).ui).toBeUndefined();
+    expect(JSON.parse(runCli(['project', 'ui', '--project', root, '--change', changeId, '--input', workingInput, '--json'], env).stdout).result.value.pages.hud.children[0].frame.x).toBe(36);
   });
 
   it('rejects unknown input fields before service dispatch', () => {

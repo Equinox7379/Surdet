@@ -214,6 +214,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   #commandRailItems: CommandRailItem[] = [];
   #commandRailOnSelect: ((id: string) => void) | null = null;
   #commandRailSuppressed = false;
+  #customUiToolbar = false;
   #commandRailLayout: CommandRailLayout | null = null;
   #onPointerConsumed: (() => void) | null = null;
 
@@ -502,6 +503,30 @@ export class DialogueLayer implements DialogueProjectionPort {
     });
     this.#layoutNvl();
     this.layout();
+  }
+
+  /** Hide only the default drawing and hit targets; projection and controller state remain live. */
+  setDeclarativeUiSuppression(pages: Partial<Record<import('@surdet/core').ProjectUiPageId, boolean>>): void {
+    this.#customUiToolbar = Boolean(pages.toolbar);
+    for (const target of [this.#dialogPanel, this.#speakerAvatar!, this.#speakerPlate, this.#speakerText,
+      this.#dialogText, this.#dialogRubyLayer, this.#continueIndicator, this.#nvlLayer]) {
+      target.alpha = pages.dialogue ? 0 : 1;
+      target.renderable = !pages.dialogue;
+      target.accessibleChildren = !pages.dialogue;
+      target.eventMode = pages.dialogue ? 'none' : 'auto';
+    }
+    this.#choiceLayer.alpha = pages.choices ? 0 : 1;
+    this.#choiceLayer.renderable = !pages.choices;
+    this.#choiceLayer.accessibleChildren = !pages.choices;
+    this.#choiceLayer.eventMode = pages.choices ? 'none' : 'static';
+    this.#commandRail.alpha = pages.toolbar ? 0 : 1;
+    this.#commandRail.renderable = !pages.toolbar;
+    this.#commandRail.accessibleChildren = !pages.toolbar;
+    this.#commandRail.eventMode = pages.toolbar ? 'none' : 'auto';
+    this.#backlogLayer.renderable = !pages.backlog;
+    this.#backlogLayer.accessibleChildren = !pages.backlog;
+    this.#backlogLayer.interactiveChildren = !pages.backlog;
+    this.#requestFrame();
   }
 
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void {
@@ -910,7 +935,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   restoreCommandRail(): void {
     this.#commandRailSuppressed = false;
     this.#commandRail.visible = !this.#interfaceHidden && this.#commandRailItems.length > 0;
-    this.#commandRail.alpha = 1;
+    this.#commandRail.alpha = this.#customUiToolbar ? 0 : 1;
     this.#applyContinueIndicatorAnchor();
     this.#requestFrame();
   }
@@ -1044,7 +1069,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#interfaceHidden = false;
     this.#commandRailSuppressed = false;
     this.#commandRail.visible = this.#commandRailItems.length > 0;
-    this.#commandRail.alpha = 1;
+    this.#commandRail.alpha = this.#customUiToolbar ? 0 : 1;
     this.#lifecycle.release('dialogue', 'tween', 'command-rail');
     this.#choiceHighlight = -1;
     this.#bannerRemain = 0;
