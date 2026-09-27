@@ -316,6 +316,15 @@ function changedBatchText(
 }
 
 describe('reference-aware project asset relocation planner', () => {
+  it.each(['"', "'"])('rewrites only the real quoted background after unmatched %s prose', async quote => {
+    const scene = `@scene rain\r\n@choice\r\n  未闭合的 ${quote}castle_hall 文案 -> @bg ${quote}castle_hall${quote} @goto done\r\n@label done\r\n@end\r\n`;
+    const input = await makeInput({ files: { 'content/scenario/rain.gal': scene },
+      assets: [{ path: 'content/assets/bg/castle_hall.webp', bytes: 10 }],
+      sourcePath: 'content/assets/bg/castle_hall.webp', targetPath: 'content/assets/bg/night.webp' });
+    const result = await planProjectAssetRelocation(input, hasher);
+    expect(result.plan).toMatchObject({ status: 'ready', affectedReferenceCount: 1, blockers: [] });
+    expect(changedText(result, 'content/scenario/rain.gal')).toBe(scene.replace(`@bg ${quote}castle_hall${quote}`, `@bg ${quote}night${quote}`));
+  });
   it('renames a background across a quoted CRLF scene, timeline, and explicit gallery source', async () => {
     const scene = '@scene rain\r\n  @bg "castle_hall"\r\n@unlock_cg memory\r\n@end\r\n';
     const timeline = '{\r\n  "version": 1,\r\n  "id": "rain",\r\n  "durationMs": 200,\r\n  "tracks": [{ "kind": "background", "cues": [{ "atMs": 0, "durationMs": 0, "easing": "linear", "action": "set", "key": "castle_hall" }] }]\r\n}\r\n';

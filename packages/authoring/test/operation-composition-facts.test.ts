@@ -152,11 +152,11 @@ describe('candidate operation-time facts', () => {
     expect(change.record.operations['entry']!.sequence).toBe(1);
   });
 
-  it('keeps dependencies after quoted choice arrows through rejection, retry and sealing', async () => {
-    const change = await candidate();
+  it.each(['Continue', '未闭合的 "文案', "未闭合的 '文案"])('keeps dependencies after %s through rejection, retry and sealing', async label => {
+    const change = await candidate(['asset:bg:night']);
     const before = structuredClone(change.record);
     const input = { operationId: 'quoted-choice', sceneId: 'entry', blocks: [{ kind: 'choice' as const, options: [{
-      label: 'Continue', when: 'flag && " -> " == " -> "', target: { kind: 'jump' as const, value: 'ending' },
+      label, when: 'flag && " -> " == " -> "', effects: [{ name: 'bg', args: ['"night"'] }], target: { kind: 'jump' as const, value: 'ending' },
     }] }] };
     await expect(applySceneCreate(change, input, hasher)).rejects.toMatchObject({
       code: 'CANDIDATE_DEPENDENCY_NOT_READY', details: { issues: expect.arrayContaining([
@@ -170,6 +170,7 @@ describe('candidate operation-time facts', () => {
     await applySceneCreate(change, input, hasher);
     const dependencies = facts(change, input.operationId).requiredObjects;
     expect(dependencies).toEqual(expect.arrayContaining([
+      expect.objectContaining({ objectRef: 'asset:bg:night', source: 'base' }),
       expect.objectContaining({ objectRef: 'variable:flag', source: 'candidate', candidateOperationSequence: 0 }),
       expect.objectContaining({ objectRef: 'scene:ending', source: 'candidate', candidateOperationSequence: 1 }),
     ]));

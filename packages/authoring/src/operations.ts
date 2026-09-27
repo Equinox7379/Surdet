@@ -520,7 +520,7 @@ export function rewriteLabelReferences(source: string, path: string, currentScen
       } else if (block.kind === 'choice') {
         for (const option of block.options) {
           const row = document[option.pos.line - 1]!;
-          const arrow = findChoiceArrow(row.raw);
+          const arrow = findChoiceArrow(row.raw, { file: path, line: option.pos.line, col: 1 });
           if (arrow === null) continue;
           let jumpSeen = false;
           const segments = splitOutsideQuotes(row.raw.slice(arrow.end), '@');

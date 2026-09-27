@@ -34,7 +34,7 @@ export function visitSceneReferences(source: string, oldId: string, newId?: stri
     const row = lines[index]!;
     if (row.kind === 'instr') row.raw = rewrite(row.raw, index + 1);
     if (row.kind !== 'choice-option') continue;
-    const arrow = findChoiceArrow(row.raw);
+    const arrow = findChoiceArrow(row.raw, { file, line: index + 1, col: 1 });
     if (arrow === null) continue;
     const parts = splitOutsideQuotes(row.raw.slice(arrow.end), '@');
     let jumpSeen = false;

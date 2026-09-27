@@ -62,7 +62,7 @@ export function patchStageSourceLine(source: string, path: string, sceneId: stri
   if (raw.trimStart().startsWith('@')) {
     const at = raw.indexOf('@'); return raw.slice(0, at + 1) + write(raw.slice(at + 1), false);
   }
-  const arrow = findChoiceArrow(raw);
+  const arrow = findChoiceArrow(raw, { file: path, line, col: 1 });
   if (!arrow) return error('选择项来源缺少可定位的箭头');
   const parts = splitOutsideQuotes(raw.slice(arrow.end), '@');
   const candidates = parts.flatMap((part, index) => index > 0 && ['show', 'pose', 'layer'].includes(splitInstruction('@' + part).name) ? [index] : []);

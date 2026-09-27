@@ -32,6 +32,18 @@ describe('Parser', () => {
     expect((compile(`@choice\n  ${unclosed} -> @goto done\n@label done\n@end`).instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]!.label).toBe(unclosed);
   });
 
+  it('rejects genuinely ambiguous prose/action boundaries with a source location', () => {
+    const source = '@scene start\n@choice\n  选 " -> @bg fake " 再加 "文案 -> @bg "night" @jump accepted\n@end';
+    let failure: unknown;
+    try { compileScene(source, 'ambiguous.gal', 'start'); } catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(DslError);
+    expect(failure).toMatchObject({ code: 'S009', pos: { file: 'ambiguous.gal', line: 3 } });
+  });
+
+  it('still diagnoses a malformed condition after an unmatched prose quote', () => {
+    expect(() => compile('@choice\n  未闭合的 "文案 [if:flag &&] -> @bg "night"\n@end')).toThrow(/S002/);
+  });
+
   it.each(['video clip.mp4', 'loop 3 target', 'switch score 1:target'])('rejects unsupported inline control rather than emitting an inert generic instruction (%s)', instruction => {
     expect(() => compile(`@choice\n  继续 -> @${instruction}\n@label target\n@end`)).toThrow(/S010/);
   });
