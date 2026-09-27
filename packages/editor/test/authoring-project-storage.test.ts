@@ -35,6 +35,35 @@ afterEach(() => {
 });
 
 describe('editor authoring project storage', () => {
+  it.each(['remove-all', 'replace-both', 'still-missing'] as const)('validates only the final multi-page UI repair: %s', async mode => {
+    const frame = { x: 0, y: 0, width: 1280, height: 720 };
+    const ui: ProjectUiDocument = { version: 1, pages: {
+      title: { id: 'title-image', type: 'image', frame, asset: 'gone-title' },
+      hud: { id: 'hud-image', type: 'image', frame, asset: 'gone-hud' },
+    } };
+    let disk = JSON.stringify({ entryScene: 'intro', variables: {}, future: 'preserve', ui });
+    let writes = 0;
+    const handle = { getFile: async () => new File([disk], 'game.config.json'), createWritable: async () => ({
+      write: async (text: unknown) => { disk = String(text); writes++; }, close: async () => {},
+    }) } as unknown as FileSystemFileHandle;
+    Object.assign(state, { dirName: 'ui-repair', dirHandle: { name: 'ui-repair' }, handles: { ...state.handles, gameConfig: handle }, gameConfigText: disk,
+      scenes: new Map([['intro', { id: 'intro', file: 'intro.gal', text: '@scene intro\n@end\n', eol: '\n', dirty: false, handle: null }]]), timelines: [],
+      configFiles: { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null }, configReadErrors: {}, dirAssets: [],
+      reviewWorkspace: null, reviewPreviewReadOnly: false, projectLoading: false });
+    const baseline = disk;
+    const replacement: ProjectUiDocument | null = mode === 'remove-all' ? null : { version: 1, pages: {
+      title: { id: 'hud-image', type: 'container', frame },
+      hud: mode === 'still-missing' ? ui.pages.title : { id: 'title-image', type: 'container', frame },
+    } };
+    if (mode === 'still-missing') {
+      await expect(commitUiConfiguration(replacement, baseline)).rejects.toThrow('gone-title');
+      expect(disk).toBe(baseline); expect(state.gameConfigText).toBe(baseline); expect(writes).toBe(0);
+    } else {
+      await commitUiConfiguration(replacement, baseline);
+      expect(JSON.parse(disk)).toEqual({ entryScene: 'intro', variables: {}, future: 'preserve', ...(replacement ? { ui: replacement } : {}) });
+      expect(state.gameConfigText).toBe(disk); expect(writes).toBe(1);
+    }
+  });
   it('moves stable UI identities across pages atomically and refuses stale or invalid final documents', async () => {
     const frame = { x: 0, y: 0, width: 1280, height: 720 };
     const ui: ProjectUiDocument = { version: 1, pages: {

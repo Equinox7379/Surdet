@@ -16,6 +16,7 @@ export type UiPatch =
   | { type: 'node.reorder'; page: ProjectUiPageId; id: string; index: number };
 
 export interface UiPatchInput { operationId: string; expectedFingerprint: string; patch: UiPatch }
+export interface UiDocumentInput { operationId: string; expectedFingerprint: string; value: ProjectUiDocument | null }
 
 export interface UiInspection {
   value: ProjectUiDocument | null;
@@ -128,6 +129,15 @@ export function patchUiDocument(current: ProjectUiDocument | null, config: Recor
 }
 
 export async function applyUiPatch(change: ChangeSession, input: UiPatchInput, hasher: TextHasher, assets: ProjectAssetCatalog) {
+  return applyUiEdit(change, input, hasher, assets);
+}
+
+/** Save the Editor's complete draft as one operation, validating only its final document. */
+export async function applyUiDocument(change: ChangeSession, input: UiDocumentInput, hasher: TextHasher, assets: ProjectAssetCatalog) {
+  return applyUiEdit(change, input, hasher, assets);
+}
+
+async function applyUiEdit(change: ChangeSession, input: UiPatchInput | UiDocumentInput, hasher: TextHasher, assets: ProjectAssetCatalog) {
   if (change.record.composition?.mode !== 'direct' || change.record.integration !== undefined) {
     throw new AuthoringOperationError('UNSUPPORTED_OPERATION', 'UI 修改只支持 direct 草稿', { operationApplied: false, operationId: input.operationId });
   }
@@ -136,8 +146,7 @@ export async function applyUiPatch(change: ChangeSession, input: UiPatchInput, h
     const config = parseProjectConfigDocument(source);
     const before = await inspectUi(config, hasher);
     if (before.fingerprint !== input.expectedFingerprint) throw new AuthoringOperationError('OBJECT_REF_STALE', 'UI 指纹已变化，请重新读取 project.ui');
-    const patch = input.patch;
-    const value = patchUiDocument(before.value, config, patch);
+    const value = 'patch' in input ? patchUiDocument(before.value, config, input.patch) : input.value;
     if (value === null) delete config.ui;
     else config.ui = value;
     const after = await inspectUi(config, hasher);
@@ -145,7 +154,9 @@ export async function applyUiPatch(change: ChangeSession, input: UiPatchInput, h
     const diffEntry: LedgerDiffEntry = {
       kind: 'config.ui.patch', operationId: input.operationId,
       fingerprintBefore: before.fingerprint, fingerprintAfter: after.fingerprint,
-      directChange: { path: CONFIG_PATH, fields: [`ui.pages.${patch.page}`] }, potentialImpact: [], observedImpact: [],
+      directChange: { path: CONFIG_PATH, fields: 'patch' in input ? [`ui.pages.${input.patch.page}`]
+        : PROJECT_UI_PAGES.filter(page => stableStringify(before.value?.pages[page] ?? null) !== stableStringify(after.value?.pages[page] ?? null))
+          .map(page => `ui.pages.${page}`) }, potentialImpact: [], observedImpact: [],
     };
     return { result: { ui: after, diffEntry }, workingFiles: { ...record.workingFiles, [CONFIG_PATH]: serializeProjectConfigDocument(config, source) } };
   });

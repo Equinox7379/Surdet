@@ -227,11 +227,17 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
           bar.appendChild(button);
         }
         element.append(bar, panels);
+        const tabPanels = new Map<string, HTMLDivElement>();
         for (const child of node.children ?? []) {
-          const panel = document.createElement('div');
-          panel.dataset.uiTab = child.tab ?? tabs[0];
-          panel.style.cssText = 'position:absolute;inset:0';
-          panels.appendChild(panel);
+          const name = child.tab ?? tabs[0]!;
+          let panel = tabPanels.get(name);
+          if (!panel) {
+            panel = document.createElement('div');
+            panel.dataset.uiTab = name;
+            panel.style.cssText = 'position:absolute;inset:0';
+            panels.appendChild(panel);
+            tabPanels.set(name, panel);
+          }
           renderNode(display, child, panel, projectUiChildrenRect(rect, node.type), item, bindings);
         }
         select(tabs[0]!);

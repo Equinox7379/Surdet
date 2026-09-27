@@ -300,6 +300,13 @@ describe('PresentationController', () => {
       expect(controller.status).toBe('choice');
       expect(stage.choices).toEqual([{ index: 10, label: '左' }, { index: 20, label: '右' }]);
 
+      for (const index of [0, 99, -1, 10.5, NaN]) {
+        expect(controller.dispatchInput({ type: 'choice.select', index })).toBe(false);
+        expect(controller.status).toBe('choice');
+        expect(stage.choices).toEqual([{ index: 10, label: '左' }, { index: 20, label: '右' }]);
+        expect(selected).toEqual([]);
+      }
+
       bus.emit('stateReset', { reason: 'load' });
       expect(controller.status).toBe('idle');
       expect(stage.choices).toEqual([]);

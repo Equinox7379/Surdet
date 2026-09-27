@@ -796,7 +796,7 @@ export class PresentationController {
   /** 玩家选中选项 */
   select(index: number): boolean {
     if (this.#explicitPaused || ['system-menu', 'save-load', 'settings'].includes(this.#queries.overlay?.menu?.().type ?? 'none')) return false;
-    if (this.#status !== 'choice') return false;
+    if (this.#status !== 'choice' || !this.#choiceIndices.includes(index)) return false;
     this.#requestFrame();
     this.#status = 'idle';
     this.#commands.dialogue.hideChoices();

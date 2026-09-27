@@ -989,7 +989,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         }
         if (source === 'choices') {
           const accepted = renderer.dispatchInput({ type: 'choice.select', index: Number(item.id) });
-          if (accepted) hideWorkPage('choices');
+          if (accepted) syncStoryWorkUi();
           return accepted;
         }
         if (source === 'backlog') { const voice = queries.dialogue.backlogEntries()[Number(item.id)]?.voice; if (voice) audio.playVoice(voice); return true; }
@@ -1059,7 +1059,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         return;
       case 'choice':
         if (!renderer.dispatchInput({ type: 'choice.select', index: Number(action.id ?? item?.id) })) throw new Error('当前剧情选项不可用');
-        hideWorkPage('choices'); return;
+        syncStoryWorkUi(); return;
       case 'gallery-item':
         if (!action.id && !item) throw new Error('鉴赏动作缺少条目 ID');
         await uiContext(page).select(item?.source?.startsWith('gallery-') ? item.source : 'gallery-cgs',
