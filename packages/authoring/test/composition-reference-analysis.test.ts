@@ -75,7 +75,7 @@ describe('raw composition reference analysis', () => {
       sceneId: 'entry', path: 'content/scenario/entry.gal', characters: {},
       text: [
         '@scene entry', '@if true', '@choice', '  // retained comment', '',
-        `  Continue [if:flag && ${literal} == ${literal}] -> @set score = 1 @bg dusk @jump other.entry @jump ignored`,
+        `  Continue " -> @jump fake_label " [if:flag && ${literal} == ${literal}] -> @set score = 1 @bg dusk @jump other.entry @jump ignored`,
         '@endif', '@end',
       ].join('\n'),
     });

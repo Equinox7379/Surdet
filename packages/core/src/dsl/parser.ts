@@ -451,6 +451,15 @@ export function findChoiceArrow(raw: string): { index: number; end: number } | n
       inCondition = true;
       continue;
     }
+    // Labels are prose: paired quotes protect literal arrows, while English
+    // apostrophes and an unmatched quote remain ordinary label characters.
+    if ((char === '"' || char === "'") && !(char === "'" && /[a-z0-9]/i.test(raw[i - 1] ?? ''))) {
+      for (let end = i + 1; end < raw.length; end++) {
+        if (raw[end] === '\\') { end++; continue; }
+        if (raw[end] === char) { i = end; break; }
+      }
+      continue;
+    }
     if (char !== '-' || raw[i + 1] !== '>') continue;
     const before = i > 0 ? raw[i - 1]! : '';
     const after = raw[i + 2] ?? '';

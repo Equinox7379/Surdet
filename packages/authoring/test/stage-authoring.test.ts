@@ -35,7 +35,7 @@ describe('stage source, config, references and validation share authoring facts'
     expect(() => patchStageSourceLine(text, 'start.gal', 'start', 2, raw, instruction.index, { scale: -1 })).toThrow();
   });
   it('locates the second pose after a quoted choice arrow without editing the first pose or voice', () => {
-    const raw = '  走向码头 [if:" -> " == " -> "] -> @pose rin:coat x=100 @voice quiet @pose rin:coat y=600 @goto done';
+    const raw = '  走向 " -> @pose rin:coat x=999" 码头 [if:" -> " == " -> "] -> @pose rin:coat x=100 @voice quiet @pose rin:coat y=600 @goto done';
     const text = '@scene start\n@choice\n' + raw + '\n@label done\n正文。\n@end\n';
     const poses = compileScene(text, 'start.gal', 'start').instructions.filter(value => value.op === 'instr' && value.name === 'pose');
     expect(poses).toHaveLength(2);

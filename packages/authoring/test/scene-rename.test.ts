@@ -25,7 +25,7 @@ async function fixture(extra: Record<string, string> = {}, mode: 'direct' | 'can
 
 describe('scene rename in an isolated direct draft', () => {
   it('rewrites precise targets and known config fields atomically, retaining unknown data and source bytes', async () => {
-    const caller = '@scene start\r\n@if true\r\n@call old.entry\r\n@endif\r\n@choice\r\n  前往 [if:" -> @jump old " == " -> @jump old "] -> @call old.entry @jump older @jump old\r\n  返回 -> @jump old.entry\r\n@end\r\n';
+    const caller = '@scene start\r\n@if true\r\n@call old.entry\r\n@endif\r\n@choice\r\n  前往 " -> @jump old " [if:" -> @jump old " == " -> @jump old "] -> @call old.entry @jump older @jump old\r\n  返回 -> @jump old.entry\r\n@end\r\n';
     const { change, files, input } = await fixture({
       'content/scenario/start.gal': caller,
       'content/scenario/older.gal': '@scene older\n@label old\n@goto old\n@end\n',

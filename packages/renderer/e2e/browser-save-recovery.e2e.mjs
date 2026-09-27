@@ -104,7 +104,30 @@ try {
       await activate(page, '读取存档');
       await readFailure;
       await page.waitForFunction(() => window.__surdetDebug.uiSession.base === 'title' && window.__surdetDebug.uiSession.overlay === 'none');
-      assert((await canvasTexts(page)).some(text => text.includes('存档列表读取失败')));
+      // A text node can exist yet be hidden behind the opaque title background.
+      await page.waitForFunction(() => {
+        const button = Array.from(document.querySelectorAll('button')).find(button => button.getAttribute('aria-label') === '读取存档');
+        const titleControl = button?.container;
+        if (!titleControl?.parent) return false;
+        let root = titleControl; while (root.parent) root = root.parent;
+        const find = node => typeof node.text === 'string' && node.text.includes('存档列表读取失败')
+          ? node : (node.children ?? []).map(find).find(Boolean);
+        const bannerText = find(root); if (!bannerText) return false;
+        const path = node => {
+          const indices = []; let alpha = 1;
+          for (let current = node; current; current = current.parent) {
+            if (!current.visible || !current.renderable || current.destroyed) return null;
+            alpha *= current.alpha;
+            if (current.parent) indices.unshift(current.parent.children.indexOf(current));
+          }
+          return alpha >= .8 ? indices : null;
+        };
+        const bannerPath = path(bannerText), titlePath = path(titleControl);
+        if (!bannerPath || !titlePath) return false;
+        const differing = bannerPath.findIndex((index, i) => index !== titlePath[i]);
+        return differing >= 0 && bannerPath[differing] > titlePath[differing];
+      });
+      await page.screenshot({ path: path.join(output, `${directory}-visible-read-failure.png`) });
       assert.equal(errors.length, 1);
       assert(errors[0].includes('存档列表读取失败') && errors[0].includes('存储访问被拒绝'));
       await page.evaluate(() => { Storage.prototype.getItem = window.restoreStorageRead; });

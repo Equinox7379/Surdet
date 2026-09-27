@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { compileScene, SceneCompiler, PLANNED_INSTRUCTIONS } from '../src/dsl/compiler.js';
-import { Parser } from '../src/dsl/parser.js';
+import { findChoiceArrow, Parser } from '../src/dsl/parser.js';
 import { Lexer } from '../src/dsl/lexer.js';
 import { DslError } from '../src/dsl/ast.js';
 import type { ChoiceInstr, CondJumpInstr, CompiledScene, JumpInstr } from '../src/dsl/ast.js';
@@ -8,6 +8,30 @@ import type { ChoiceInstr, CondJumpInstr, CompiledScene, JumpInstr } from '../sr
 const compile = (src: string, sceneId = 'ch01_01') => compileScene(src, 'ch01_01.gal', sceneId);
 
 describe('Parser', () => {
+  it.each([
+    '选 "同意 -> 继续" 这项', "选 '同意 -> 继续' 这项",
+    String.raw`选 "同意 \" -> 继续" 这项`, String.raw`选 '同意 \' -> 继续' 这项`,
+    '" -> @jump fake "', "Don't stop, I'm here", "James' choice",
+  ])('preserves choice label %s and finds only its real action boundary', label => {
+    for (const condition of ['', ' [if:" -> " == " -> "]']) {
+      const row = `  ${label}${condition} -> @goto done`;
+      const arrow = findChoiceArrow(row)!;
+      expect(row.slice(0, arrow.index)).toBe(`  ${label}${condition}`);
+      expect(row.slice(arrow.end)).toBe('@goto done');
+      const scene = compile(`@choice\n${row}\n@label done\n@end`);
+      expect((scene.instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]!.label).toBe(label);
+    }
+  });
+
+  it('keeps quoted arrows as text without an action and rejects real malformed actions', () => {
+    const label = '显示 "同意 -> 继续"';
+    expect(findChoiceArrow(`  ${label}`)).toBeNull();
+    expect((compile(`@choice\n  ${label}\n@end`).instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]!.label).toBe(label);
+    for (const action of ['', 'not-an-instruction']) expect(() => compile(`@choice\n  ${label} -> ${action}\n@end`)).toThrow(/S009/);
+    const unclosed = '未闭合的 "文案';
+    expect((compile(`@choice\n  ${unclosed} -> @goto done\n@label done\n@end`).instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]!.label).toBe(unclosed);
+  });
+
   it.each(['video clip.mp4', 'loop 3 target', 'switch score 1:target'])('rejects unsupported inline control rather than emitting an inert generic instruction (%s)', instruction => {
     expect(() => compile(`@choice\n  继续 -> @${instruction}\n@label target\n@end`)).toThrow(/S010/);
   });

@@ -47,6 +47,14 @@ function choiceCollector(bus: EventBus<CoreEventMap>): ChoiceEventPayload[] {
 }
 
 describe('Interpreter', () => {
+  it('shows quoted choice arrows as prose and executes only the selected real action', () => {
+    const { bus, registry, interp } = makeRuntime();
+    const label = '选 "同意 -> @jump fake" 这项';
+    registry.register(compileScene(`@choice\n  ${label} [if:" -> " == " -> "] -> @goto done\n错误分支。\n@label done\n正确分支。\n@end`, 'quoted.gal', 'quoted'));
+    const choices = choiceCollector(bus), lines = textCollector(bus);
+    interp.start('quoted'); expect(choices[0]!.options[0]!.label).toBe(label);
+    interp.choose(0); expect(lines).toEqual(['正确分支。']);
+  });
   it('runtime errors leave a failed state that cannot be saved and can be restarted', () => {
     const { registry, interp } = makeRuntime(baseDecls);
     registry.register(compileScene('@set missing = 1\n@end', 'bad.gal', 'bad'));
