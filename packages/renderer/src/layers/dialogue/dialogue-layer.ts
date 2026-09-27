@@ -98,6 +98,7 @@ export interface DialogueLayerDebugSnapshot {
 }
 
 interface ChoiceView {
+  skin?: Sprite;
   readonly holder: Container;
   readonly bg: Graphics;
   readonly bar: Graphics;
@@ -156,7 +157,9 @@ export class DialogueLayer implements DialogueProjectionPort {
   #lineActive = false;
   #speakerPlate: Graphics;
   #dialogCharsPerLine = 40;
-  #dialogPanel: Graphics;
+  #dialogPanel: Container;
+  #dialogPanelFill: Graphics;
+  #dialogSkinSprite: Sprite | null = null;
   #dialogMask: Graphics;
   #choiceMask: Graphics;
   #nvlMask: Graphics;
@@ -289,7 +292,9 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#bannerText.anchor.set(0.5);
     this.#bannerLayer.addChild(this.#bannerBars, this.#bannerTipBg, this.#bannerText);
 
-    this.#dialogPanel = bindThemeGraphicsProjection(new Graphics(), ['panel', 'line']);
+    this.#dialogPanel = new Container();
+    this.#dialogPanelFill = bindThemeGraphicsProjection(new Graphics(), ['panel', 'line']);
+    this.#dialogPanel.addChild(this.#dialogPanelFill);
     this.#drawDialogPanel();
     this.#speakerPlate = bindThemeGraphicsProjection(new Graphics(), ['line']);
     this.#speakerAvatar = new Sprite(Texture.EMPTY);
@@ -526,14 +531,18 @@ export class DialogueLayer implements DialogueProjectionPort {
       ? (typeof document === 'undefined' ? this.#dialogText.text.split('\n').length * this.#theme.typography.bodySize * 1.6 : this.#dialogText.height) : 0)
       : Math.max(0, ...this.#rubyBasePool.filter((text) => text.visible).map((text) => text.y + text.height));
     // Keep the stage visible even for a long paragraph; the existing scroll path exposes every line.
-    this.#dialogTop = Math.max(this.#h * 0.50, this.#h - Math.max(188, textHeight + 118));
+    const heightRatio = this.#theme.layout.dialogHeightRatio;
+    const panelBottom = this.#dialogBottom();
+    this.#dialogTop = heightRatio === null
+      ? Math.max(0, Math.min(panelBottom - 188, panelBottom * 0.50), panelBottom - Math.max(188, textHeight + 118))
+      : Math.max(0, panelBottom - Math.max(188, this.#h * heightRatio));
     const left = this.#dialogLeft();
-    this.#advScroll = Math.max(0, Math.min(Math.max(0, textHeight + this.#dialogTop + 48 - (this.#h - 70)), this.#advScroll));
+    this.#advScroll = Math.max(0, Math.min(Math.max(0, textHeight + this.#dialogTop + 48 - (panelBottom - 70)), this.#advScroll));
     this.#speakerText.position.set(left, this.#dialogTop + 6);
     this.#dialogText.position.set(left, this.#dialogTop + 48 - this.#advScroll);
     this.#dialogRubyLayer.position.set(left, this.#dialogTop + 48 - this.#advScroll);
-    this.#dialogMask.clear().rect(left, this.#dialogTop + 44, this.#dialogWidth(), Math.max(1, this.#h - 114 - this.#dialogTop)).fill(0xffffff);
-    this.#speakerAvatar?.position.set(this.#w * 0.025 + 94, this.#h - 62);
+    this.#dialogMask.clear().rect(left, this.#dialogTop + 44, this.#dialogWidth(), Math.max(1, panelBottom - 114 - this.#dialogTop)).fill(0xffffff);
+    this.#speakerAvatar?.position.set(this.#w * 0.025 + this.#dialogMarginX() + 94, panelBottom - 62);
     this.#drawDialogPanel();
     this.#drawSpeakerPlate();
     const gap = 12;
@@ -1156,20 +1165,46 @@ export class DialogueLayer implements DialogueProjectionPort {
       ctx.measureText(text).width + Math.max(0, Array.from(text).length - 1) * style.letterSpacing);
   }
 
-  #dialogLeft(): number { return this.#speakerAvatar?.visible ? this.#w * 0.025 + 200 : this.#w * 0.025 + 46; }
-  #dialogWidth(): number { return Math.max(120, this.#w - this.#dialogLeft() - 78); }
+  #dialogLeft(): number {
+    return this.#w * 0.025 + this.#dialogMarginX() + (this.#speakerAvatar?.visible ? 200 : 46);
+  }
+  #dialogMarginX(): number { return Math.min(Math.max(0, this.#w / 2 - 240), this.#theme.layout.dialogMarginX ?? 0); }
+  #dialogBottom(): number { return Math.max(188, this.#h - (this.#theme.layout.dialogMarginBottom ?? 0)); }
+  #dialogWidth(): number { return Math.max(120, this.#w - this.#dialogLeft() - this.#dialogMarginX() - 78); }
 
   #drawDialogPanel(): void {
-    const panel = this.#dialogPanel.clear();
+    const skinKey = this.#theme.skins.dialogSkin;
+    const skinTexture = skinKey ? this.#assets.resolveBackground(skinKey) : null;
+    if (skinTexture) {
+      if (!this.#dialogSkinSprite) {
+        this.#dialogSkinSprite = new Sprite(skinTexture);
+        this.#dialogPanel.addChild(this.#dialogSkinSprite);
+      } else {
+        this.#dialogSkinSprite.texture = skinTexture;
+      }
+      const top = this.#dialogTop;
+      this.#dialogSkinSprite.visible = true;
+      this.#dialogSkinSprite.position.set(this.#dialogMarginX(), top);
+      this.#dialogSkinSprite.width = this.#w - 2 * this.#dialogMarginX();
+      this.#dialogSkinSprite.height = Math.max(1, this.#dialogBottom() - top);
+      this.#dialogSkinSprite.alpha = this.#theme.opacity.panel;
+      this.#dialogPanelFill.clear();
+      bindThemeGraphicsProjection(this.#dialogPanelFill, []);
+      return;
+    }
+    if (this.#dialogSkinSprite) {
+      this.#dialogSkinSprite.visible = false;
+    }
+    const panel = this.#dialogPanelFill.clear();
     const top = this.#dialogTop;
     // Fade into the scenery above the text, keeping the actual reading area stable.
     const fadeHeight = 44;
     for (let step = 0; step < 22; step++) {
-      panel.rect(0, top - fadeHeight + step * 2, this.#w, 2)
+      panel.rect(this.#dialogMarginX(), top - fadeHeight + step * 2, this.#w - 2 * this.#dialogMarginX(), 2)
         .fill({ color: this.#theme.colors.panel, alpha: this.#theme.opacity.panel * step / 22 });
     }
-    panel.rect(0, top, this.#w, this.#h - top).fill({ color: this.#theme.colors.panel, alpha: this.#theme.opacity.panel });
-    panel.moveTo(0, top + 1).lineTo(this.#w, top + 1).stroke({ color: this.#theme.colors.line, width: 1.5, alpha: 0.85 });
+    panel.rect(this.#dialogMarginX(), top, this.#w - 2 * this.#dialogMarginX(), this.#dialogBottom() - top).fill({ color: this.#theme.colors.panel, alpha: this.#theme.opacity.panel });
+    panel.moveTo(this.#dialogMarginX(), top + 1).lineTo(this.#w - this.#dialogMarginX(), top + 1).stroke({ color: this.#theme.colors.line, width: 1.5, alpha: 0.85 });
     bindThemeGraphicsProjection(panel, [...Array<keyof RendererTheme['colors']>(23).fill('panel'), 'line']);
   }
 
@@ -1285,6 +1320,17 @@ export class DialogueLayer implements DialogueProjectionPort {
     const h = view.height;
     drawPlayerFrame(view.bg, this.#theme, 0, 0, w, h,
       { color: selected ? 'surfaceStrong' : 'panel', alpha: this.#theme.opacity.surface, active: selected });
+    const key = this.#theme.skins.buttonSkin;
+    const texture = key ? this.#assets.resolveBackground(key) : null;
+    let skin = view.skin;
+    if (texture) {
+      if (!skin) { skin = new Sprite(texture); view.holder.addChildAt(skin, 1); view.skin = skin; }
+      skin.texture = texture;
+      skin.visible = true;
+      skin.width = w; skin.height = h;
+      skin.alpha = this.#theme.opacity.surface;
+      skin.eventMode = 'none';
+    } else if (skin) skin.visible = false;
     view.bar.clear();
     if (selected) view.bar.moveTo(16, h / 2 - 5).lineTo(23, h / 2).lineTo(16, h / 2 + 5)
       .stroke({ color: this.#theme.colors.accent, width: 1.5, alpha: 0.95 });
@@ -1335,7 +1381,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     const size = Math.min(160, 196 * texture.width / Math.max(1, texture.height));
     sprite.width = size;
     sprite.height = size * (texture.height / Math.max(1, texture.width));
-    sprite.position.set(this.#w * 0.025 + 94, this.#h - 62);
+    sprite.position.set(this.#w * 0.025 + this.#dialogMarginX() + 94, this.#dialogBottom() - 62);
     sprite.alpha = 1;
     sprite.visible = true;
   }
@@ -1431,7 +1477,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       this.#continueIndicatorAnchorY = Math.min(this.#dialogTop + 70, rail.y - 24);
     } else {
       this.#continueIndicatorAnchorX = this.#w - 68;
-      this.#continueIndicatorAnchorY = this.#h - 46;
+      this.#continueIndicatorAnchorY = this.#dialogBottom() - 46;
     }
     this.#continueIndicator.position.set(this.#continueIndicatorAnchorX, this.#continueIndicatorAnchorY);
     this.#continueIndicator.visible = true;

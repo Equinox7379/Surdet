@@ -16,7 +16,7 @@ function contrast(first: number, second: number): number {
 describe('Frontend Pass 8 default player theme retains the public theme contract', () => {
   it('keeps exactly the existing public groups', () => {
     expect(Object.keys(DEFAULT_RENDERER_THEME).sort())
-      .toEqual(['colors', 'opacity', 'radius', 'spacing', 'typography'].sort());
+      .toEqual(['colors', 'layout', 'opacity', 'radius', 'skins', 'spacing', 'typography'].sort());
   });
   it('freezes the default and its nested groups', () => {
     expect(Object.isFrozen(DEFAULT_RENDERER_THEME)).toBe(true);

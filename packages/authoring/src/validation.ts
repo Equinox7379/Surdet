@@ -1,4 +1,6 @@
 import { validateProjectStageContent } from './stage-validation.js';
+import { resolveProjectTheme, resolveProjectTitleLogo } from '@surdet/core';
+import { validateThemeAssetBindings } from './theme-operations.js';
 import {
   attachHints,
   checkChoiceSuspects,
@@ -435,6 +437,13 @@ export function validateSnapshot(
     }));
   }
   rawIssues.push(...validateProjectStageContent(snapshot, options.assetCatalog));
+  try {
+    const theme = resolveProjectTheme(snapshot.config);
+    const logo = resolveProjectTitleLogo(snapshot.config);
+    if (options.assetCatalog) validateThemeAssetBindings(theme, logo, options.assetCatalog);
+  } catch (error) {
+    rawIssues.push({ severity: 'error', code: 'THEME_INVALID', text: error instanceof Error ? error.message : String(error), file: configPath, line: 1, col: 1 });
+  }
   attachHints(rawIssues);
   const issues = rawIssues.map((issue) => enrich(index, issue));
   return {

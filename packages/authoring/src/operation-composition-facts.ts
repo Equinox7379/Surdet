@@ -1,4 +1,4 @@
-import { projectPortraitOverrides, projectStageAssetKeys, readProjectStage } from '@surdet/core';
+import { projectPortraitOverrides, projectStageAssetKeys, readProjectStage, resolveProjectTitleLogo, resolveProjectTheme, projectThemeAssetKeys } from '@surdet/core';
 import type { OperationCompositionDraft } from './composition-contracts.js';
 import type { TextHasher } from './project-storage.js';
 import { stableStringify } from './change-session.js';
@@ -21,6 +21,12 @@ export const compositionTextHasher: TextHasher = {
   },
 };
 
+function themeAssetReferences(config: unknown) {
+  const keys = [...projectThemeAssetKeys(resolveProjectTheme(config)), resolveProjectTitleLogo(config)].filter((key): key is string => Boolean(key));
+  return [...new Set(keys)].map(key => ({ kind: 'background-asset' as const, scope: 'candidate-external' as const,
+    token: key, objectRef: `asset:bg:${key}`, source: { path: 'game.config.json' } }));
+}
+
 export async function buildSceneOperationCompositionDraft(input: {
   capabilityId: 'scene.create' | 'scene.patch';
   sceneId: string;
@@ -30,13 +36,15 @@ export async function buildSceneOperationCompositionDraft(input: {
   characters: Record<string, unknown>;
   fontPaths: Partial<Record<'body' | 'title' | 'ui', string>>;
   stageConfig?: unknown;
+  themeConfig?: unknown;
+  titleLogo?: string | null;
   hasher: TextHasher;
 }): Promise<OperationCompositionDraft> {
   const primaryObject = `scene:${input.sceneId}`;
   const objectFingerprintAfter = await input.hasher.sha256(input.afterText);
   return {
     capabilityId: input.capabilityId, primaryObject,
-    rawReferences: [...analyzeSceneCompositionReferences({
+    rawReferences: [...themeAssetReferences({ theme: input.themeConfig, player: { titleLogo: input.titleLogo ?? undefined } }), ...analyzeSceneCompositionReferences({
       sceneId: input.sceneId, path: input.path,
       text: input.afterText, characters: input.characters,
     }), ...[...new Set(Object.values(input.fontPaths))].map(path => ({
@@ -49,6 +57,7 @@ export async function buildSceneOperationCompositionDraft(input: {
     replayStatePreconditions: [
       { objectRef: 'config:stage', expectedFingerprint: await input.hasher.sha256(stableStringify(input.stageConfig ?? null)) },
       { objectRef: 'config:fonts', expectedFingerprint: await input.hasher.sha256(stableStringify(input.fontPaths)) },
+      { objectRef: 'config:theme', expectedFingerprint: await input.hasher.sha256(stableStringify({ theme: input.themeConfig ?? null, titleLogo: input.titleLogo ?? null })) },
       { objectRef: 'config:portraits', expectedFingerprint: await input.hasher.sha256(stableStringify(projectPortraitOverrides({ characters: input.characters }))) },
       ...(input.beforeText === undefined ? [] : [{ objectRef: primaryObject, expectedFingerprint: await input.hasher.sha256(input.beforeText) }]),
     ],
@@ -80,7 +89,7 @@ export async function buildTimelineOperationCompositionDraft(input: {
   });
   return {
     capabilityId: input.capabilityId, primaryObject,
-    rawReferences,
+    rawReferences: [...rawReferences, ...themeAssetReferences(input.config)],
     producedObjects: [{ objectRef: primaryObject, disposition: input.capabilityId === 'timeline.create' ? 'create' : 'update', finalFingerprint: objectFingerprintAfter }],
     ...(input.beforeDefinition === undefined ? {} : { objectFingerprintBefore: await input.hasher.sha256(stableStringify(input.beforeDefinition)) }),
     objectFingerprintAfter,
@@ -93,6 +102,7 @@ export async function buildTimelineOperationCompositionDraft(input: {
         objectRef: `timeline:${id}`, expectedFingerprint: await input.hasher.sha256(stableStringify(definition)),
       }))),
       { objectRef: 'config:stage', expectedFingerprint: await input.hasher.sha256(stableStringify(input.config.stage ?? null)) },
+      { objectRef: 'config:theme', expectedFingerprint: await input.hasher.sha256(stableStringify({ theme: input.config.theme ?? null, titleLogo: resolveProjectTitleLogo(input.config) })) },
       { objectRef: 'config:portraits', expectedFingerprint: await input.hasher.sha256(stableStringify(projectPortraitOverrides(input.config))) },
     ],
   };

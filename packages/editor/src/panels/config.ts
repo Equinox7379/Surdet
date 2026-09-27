@@ -13,7 +13,7 @@ import { assertConfigSourcesReadable, configSourceError, configSourcePath, parse
 import { assetPathForHandle, assertProjectWriteUnlocked, readProjectSourceText, runProjectWriteOperation, writeProjectText } from '../project-io.js';
 import { editorWorkspaceStatus } from '../editor-workspace.js';
 import { AuthoringOperationError, parseProjectConfigDocument, renameConfigReferences, renameGalleryLabel } from '@surdet/authoring';
-import { commitCharacterTable, commitStageConfiguration, parseCharacterVisualsDraft, type CharacterTableEditRow } from '../authoring-project-storage.js';
+import { commitCharacterTable, commitStageConfiguration, commitThemeConfiguration, parseCharacterVisualsDraft, parseThemeEditorDraft, projectThemeEditorDraft, type CharacterTableEditRow } from '../authoring-project-storage.js';
 import {
   VAR_TYPES, parseVariablesToRows, rowsToVariables, applyVariablesToConfig,
   parseAchievementsToRows, rowsToAchievements, collectReferencedVars,
@@ -48,7 +48,8 @@ export type ConfigSectionId =
   | 'events'
   | 'gallery'
   | 'terminology'
-  | 'stage';
+  | 'stage'
+  | 'theme';
 
 export interface ConfigDraftInspection {
   dirty: boolean;
@@ -66,6 +67,7 @@ interface ConfigSectionDescriptor {
 const CONFIG_SECTIONS: readonly ConfigSectionDescriptor[] = [
   { id: 'characters', label: '角色', description: '管理显示名称、头像与服装/表情立绘。', file: 'game.config.json', render: renderCharactersSection },
   { id: 'variables', label: '变量', description: '定义剧情状态、初始值、范围和只读约束。', file: 'game.config.json', render: renderVariablesSection },
+  { id: 'theme', label: '主题外观', description: '配置颜色、字体大小、对话框/按钮皮肤、字标与基础布局。', file: 'game.config.json', render: renderThemeSection },
   { id: 'achievements', label: '成就', description: '整理成就文案、触发条件与隐藏状态。', file: 'content/config/achievements.json', render: renderAchievementsSection },
   { id: 'calendar', label: '日历与地图', description: '安排回合规则、地图节点、前置关系与据点指令。', file: 'content/config/calendar.json', render: renderCalendarSection },
   { id: 'growth', label: '角色成长', description: '设置经验曲线、等级范围和成长事件。', file: 'content/config/growth.json', render: renderGrowthSection },
@@ -82,7 +84,7 @@ function configDescriptor(id: ConfigSectionId): ConfigSectionDescriptor {
 }
 
 function sectionSource(id: ConfigSectionId): ConfigSourceName {
-  return id === 'characters' || id === 'variables' || id === 'stage' ? 'gameConfig' : id;
+  return id === 'characters' || id === 'variables' || id === 'stage' || id === 'theme' ? 'gameConfig' : id;
 }
 
 function renderConfigWorkspace(root: HTMLElement): void {
@@ -177,6 +179,8 @@ let termRows: TerminologyTableRows | null = null;
 // save-all, switching guards and history with the existing configuration forms.
 let stageDraft: string | null = null;
 let stageSourceBaseline: string | undefined;
+let themeDraft: string | null = null;
+let themeSourceBaseline: string | undefined;
 let configSessionRevision = 0;
 let configSessionLoaded = false;
 const configBaselines: Partial<Record<ConfigSectionId, string>> = {};
@@ -202,6 +206,7 @@ function serializeConfigSection(sectionId: ConfigSectionId): string {
     case 'gallery': return JSON.stringify(ensureGaRows());
     case 'terminology': return JSON.stringify(ensureTermRows());
     case 'stage': return JSON.stringify(readStageConfigDraft());
+    case 'theme': return JSON.stringify(readThemeConfigDraft());
   }
 }
 
@@ -299,6 +304,70 @@ export async function saveStageConfigDraftUnlocked() {
   return result;
 }
 
+function themeFormValue(config: Record<string, unknown>) {
+  const player = config.player as Record<string, unknown> | undefined;
+  return { theme: config.theme ?? null, titleLogo: player?.titleLogo ?? null, titleBackground: player?.titleBackground ?? null,
+    font: config.font ?? null, fonts: config.fonts ?? null };
+}
+
+export function readThemeConfigDraft(): string {
+  if (themeDraft === null) {
+    const config = parseConfigObj();
+    const value = themeFormValue(config);
+    themeSourceBaseline = JSON.stringify(value);
+    themeDraft = JSON.stringify(value, null, 2);
+    configBaselines.theme = JSON.stringify(themeDraft);
+  }
+  return themeDraft;
+}
+
+export function editThemeConfigDraft(text: string, coalesce = false): void {
+  assertProjectWriteUnlocked();
+  if (state.reviewWorkspace || state.reviewPreviewReadOnly || state.projectLoading) throw new Error('当前项目不可编辑主题配置。');
+  if (readThemeConfigDraft() === text) return;
+  pushConfigHistory(coalesce);
+  themeDraft = text;
+  configSessionLoaded = true;
+  scheduleConfigDraftStateChanged();
+}
+
+export function previewThemeConfigText(source: string): string {
+  if (themeDraft === null || configBaselines.theme === JSON.stringify(themeDraft)) return source;
+  const config = parseProjectConfigDocument(source || '{}');
+  return JSON.stringify(projectThemeEditorDraft(config, parseThemeEditorDraft(themeDraft)));
+}
+
+export function reloadThemeConfigDraft(): string {
+  const config = parseConfigObj();
+  const value = themeFormValue(config);
+  const text = JSON.stringify(value, null, 2);
+  editThemeConfigDraft(text);
+  themeSourceBaseline = JSON.stringify(value);
+  configBaselines.theme = JSON.stringify(text);
+  notifyConfigDraftStateChanged();
+  return text;
+}
+
+export async function saveThemeConfigDraftUnlocked() {
+  assertProjectWriteUnlocked();
+  assertConfigSaveReady('gameConfig');
+  const submitted = readThemeConfigDraft(), revision = configSessionRevision;
+  const config = parseConfigObj();
+  const current = JSON.stringify(themeFormValue(config));
+  if (current !== themeSourceBaseline) throw new Error('主题来源配置已经变化，请保留草稿并重新核对。');
+  const draft = parseThemeEditorDraft(submitted);
+  projectThemeEditorDraft(config, draft);
+  const result = await commitThemeConfiguration(draft.theme, draft.titleLogo, state.gameConfigText, draft.playerConfig);
+  if (revision === configSessionRevision) {
+    const afterConfig = parseProjectConfigDocument(result.text);
+    themeSourceBaseline = JSON.stringify(themeFormValue(afterConfig));
+    markConfigSectionSaved('theme', submitted, revision);
+    for (const snapshot of [...configHist.past, ...configHist.future]) snapshot.gameConfigText = result.text;
+    requestValidateHook();
+  }
+  return result;
+}
+
 /** 打开配置页时从盘上重读源文件；失败保持显式错误，不冒充旧值仍有效。 */
 async function refreshConfigSources(revision: number): Promise<boolean> {
   const gameConfigHandle = state.handles.gameConfig;
@@ -380,6 +449,7 @@ interface ConfigSnapshot {
   gaRows: GalleryRows | null;
   termRows: TerminologyTableRows | null;
   stageDraft: string | null;
+  themeDraft: string | null;
   gameConfigText: string;
 }
 
@@ -396,6 +466,8 @@ function clearConfigRowsAndHistory(): void {
   termRows = null;
   stageDraft = null;
   stageSourceBaseline = undefined;
+  themeDraft = null;
+  themeSourceBaseline = undefined;
   configSessionLoaded = false;
   for (const sectionId of Object.keys(configBaselines) as ConfigSectionId[]) delete configBaselines[sectionId];
   configHist.past = [];
@@ -414,7 +486,7 @@ function clone<T>(v: T): T {
 }
 
 function takeConfigSnapshot(): ConfigSnapshot {
-  return { ...clone({ charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows, stageDraft }), gameConfigText: state.gameConfigText };
+  return { ...clone({ charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows, stageDraft, themeDraft }), gameConfigText: state.gameConfigText };
 }
 
 /** Rebase live rows, clean baselines and undo/redo together; never save unrelated edits. */
@@ -503,6 +575,7 @@ function restoreConfigSnapshot(snap: ConfigSnapshot): void {
   gaRows = clone(snap.gaRows);
   termRows = clone(snap.termRows);
   stageDraft = snap.stageDraft;
+  themeDraft = snap.themeDraft;
   state.gameConfigText = snap.gameConfigText; // 内存态同步回退（磁盘不回滚，与行模型同语义）
   rerenderConfig();
 }
@@ -1499,6 +1572,40 @@ function importTerminology(file: File): void {
   });
 }
 
+function renderThemeSection(): HTMLElement {
+  const { sec, ops } = sectionShell('theme');
+  sec.appendChild(h('p', 'config-section-help', 'theme 配置颜色、透明度、字号、皮肤与布局；titleLogo/titleBackground 使用背景素材键；fonts 使用 body/title/ui 对应的项目字体完整路径，font 为旧式统一字体。null 恢复默认。删除 theme 内已支持字段即恢复默认，其他来源字段保留；省略 font/fonts/titleBackground 保持原值。'));
+  const form = h('textarea');
+  form.rows = 18;
+  form.spellcheck = false;
+  form.className = 'theme-config-json';
+  form.setAttribute('aria-label', '主题配置 JSON');
+  form.value = readThemeConfigDraft();
+  const status = h('p', 'dim');
+  form.oninput = () => {
+    try { editThemeConfigDraft(form.value, true); status.textContent = ''; }
+    catch (error) { status.textContent = `主题草稿未更新：${error instanceof Error ? error.message : String(error)}`; }
+  };
+  const saveBtn = h('button', 'primary', '保存主题配置');
+  saveBtn.onclick = async () => {
+    status.textContent = '正在保存…';
+    try {
+      await runProjectWriteOperation(saveThemeConfigDraftUnlocked);
+      status.textContent = '主题配置已通过共享事务保存。重新播放后使用新配置。';
+    } catch (error) {
+      status.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
+    }
+  };
+  const reloadBtn = h('button', undefined, '放弃编辑并重读');
+  reloadBtn.onclick = () => {
+    try { form.value = reloadThemeConfigDraft(); status.textContent = '已从来源配置重读。'; }
+    catch (error) { status.textContent = `主题配置重读失败：${error instanceof Error ? error.message : String(error)}`; }
+  };
+  ops.append(saveBtn, reloadBtn);
+  sec.append(form, status, ops);
+  return sec;
+}
+
 function renderTerminologySection(): HTMLElement {
   const { sec, ops } = sectionShell('terminology');
   const tt = ensureTermRows();
@@ -1555,6 +1662,10 @@ export async function saveDirtyConfigSections(): Promise<ConfigSaveOutcome> {
       switch (section) {
         case 'stage':
           await saveStageConfigDraftUnlocked();
+          ok = true;
+          break;
+        case 'theme':
+          await saveThemeConfigDraftUnlocked();
           ok = true;
           break;
         case 'characters':

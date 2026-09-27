@@ -2,7 +2,7 @@
 
 本指南面向编写剧情、配置与演出的内容作者。默认使用正式 Agent Port 工具，在隔离草稿中修改、验证和试玩；不需要先读引擎源码、长期台账或重新接线播放器。已有项目保持原位，新项目使用现有模板。
 
-本批公开创作合同为 **2.17.0**，支持分层立绘与逐帧动画，保留素材整理／原位替换及有限舞台配置能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+本批公开创作合同为 **2.18.0**，新增作品主题配置，保留分层立绘、逐帧动画、素材整理／原位替换及有限舞台配置能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
 
 ## 0. 准备项目与会话
 
@@ -151,7 +151,7 @@ candidate/integration 明确拒绝该跨文件操作，既有候选创建/修改
 
 ### 项目展示配置
 
-`project.inspect` 的 `playerConfig` 返回有限字段的 `values` 与修改所需 `fingerprint`。`title`、旧式 `font`、字体角色表 `fonts` 存在 game.config.json 根部，`subtitle`、`titleBackground`、`endScenes`、`firstRunHint` 存在其 `player` 对象中；无需打开或修改 src/main.ts。
+`project.inspect` 的 `playerConfig` 返回有限字段的 `values` 与修改所需 `fingerprint`。`title`、旧式 `font`、字体角色表 `fonts` 存在 game.config.json 根部，`subtitle`、`titleBackground`、`titleLogo`、`endScenes`、`firstRunHint` 存在其 `player` 对象中；无需打开或修改 src/main.ts。
 
 普通 direct 草稿先以 `view: "working"` 读取，再调用 `project.player-config.patch`（MCP：`surdet_project_player_config_patch`），提供 operationId、刚读到的 expectedFingerprint 及 patch。只写要改的字段；旧指纹会被拒绝，成功后重新读取。该操作不支持 candidate/integration。
 
@@ -174,6 +174,32 @@ candidate/integration 明确拒绝该跨文件操作，既有候选创建/修改
 字体复制 `project.assets.intelligence.items` 中 `kind: "font"` 的完整 `sourcePath`，不是 basename 或素材短键。例如 `patch: { fonts: { body: "content/assets/fonts/正文.TTF", title: "", ui: null } }`：body 换字体、title 明确使用默认字体、ui 删除该角色配置，未提供的角色保持原值。`fonts` 对象整体优先于旧 `font`，缺省/空角色不会从旧 font 继承；`fonts: {}` 表示建立/保留角色表，`fonts: null` 才删除整表并恢复旧 font 或默认行为。未知配置字段仍保留，读取的角色 null 表示未提供。路径区分目录与大小写；不同目录同名字体不是重复键。字体目录同时列出每个角色的实际引用。
 
 字体修改只支持 direct；candidate 场景引用基线字体路径并记录有效角色配置的重放指纹，不得伴随写配置。未封存旧草稿若缺少新增字体事实，须保留原记录并新建候选，不能补写历史；已封存胶囊不改写。隔离工作版本试玩读取未写回的配置，坏字体明确显示文件与失败原因并记失败；Player 会报告失败并使用默认字体，不能把回退当作字体加载成功。字体许可原件随附方式见下文素材导入。
+
+### 作品主题与外观配置
+
+`project.inspect` 的 `themeConfig` 返回 `value`（game.config.json.theme 原文，未提供为 null）、`effective`（解析后的 token/皮肤/布局）、`titleLogo` 与修改所需 `fingerprint`。主题 token 组（`colors`/`opacity`/`typography`/`spacing`/`radius`）与 Renderer 主题同构；`dialogSkin`/`buttonSkin` 引用背景素材键作为对话框/按钮皮肤；`dialogHeightRatio`/`dialogMarginX`/`dialogMarginBottom` 控制基础布局；`titleLogo` 在 `player` 对象中设置标题字标素材键。
+
+普通 direct 草稿先以 `view: "working"` 读取，再调用 `project.theme-config.patch`（MCP：`surdet_project_theme_config_patch`）。token 分组整表替换，null 删除该组；皮肤/字标键设字符串或 null 清除；布局数值设数或 null 恢复默认。`patch: null` 删除整个 theme 段（不影响 titleLogo）。省略字段保持当前值。
+
+`effective.tokens` 补齐与 Renderer 相同的默认值；`sources` 逐字段标明 `project` 或 `default`，不冒称已知宿主传入的显式覆盖。有效 token 名称可直接从该读取结果取得，未知 token、非法色值/透明度/负数在写入前拒绝。`dialogHeightRatio` 为屏高比例（大于 0 且不大于 1，保留至少 188 引擎单位的阅读区），`dialogMarginX` 为左右外边距，`dialogMarginBottom` 为底部留白；过大的边距在目标画面中限制到仍可阅读的范围。布局 null 保留既有自适应默认。皮肤按目标框尺寸缩放，按钮皮肤覆盖标题、系统菜单、设置/存读档及剧情选项，不提供九宫格或自由组件画布。
+
+Player 的显式主题字段只覆盖相应项目字段，不会因只显式设置一个颜色而丢掉其余作品配置；显式空皮肤键可禁用项目皮肤。主题和字标图片必须真实加载成功，缺失或解码失败会明确报错，不把默认画面回退当作成功。Editor 的 JSON 表单包含 theme/titleLogo，以及可选的 font/fonts/titleBackground：theme 内删除已支持字段即恢复默认，后三项省略时保持原值、null 清除；fonts 对象是完整角色表。保存仍复用对应的主题/展示配置操作与同一事务。未保存预览、撤销/重做与保存重开使用同一配置，未知来源字段保留。
+
+```json
+{
+  "operationId": "work-theme",
+  "expectedFingerprint": "替换为公开读取返回的指纹",
+  "patch": {
+    "colors": { "accent": 9117247, "panel": 2760479, "text": 16115411 },
+    "opacity": { "panel": 0.88 },
+    "typography": { "bodySize": 30 },
+    "dialogHeightRatio": 0.32,
+    "titleLogo": "title_logo"
+  }
+}
+```
+
+主题引用的素材键必须已出现在 project.assets 的 backgrounds 中。修改只支持 direct；candidate/integration 在修改前拒绝。`config:theme` 已纳入组合基线指纹、候选重放前置与封存依赖检查。缺省不提供 theme 字段时保持已接受的默认外观；显式 PlayerProject 参数优先于 game.config.json，再到引擎默认。Editor 的"主题外观"配置区可读取、修改和保存同一配置。
 
 Editor 的合法场景改名会同步已知引用及 `player.endScenes` 等结束配置：改名先更新工作稿，点击“保存全部”后一起写入。删除仍被引用的场景会被拒绝并指出来源，应先调整引用；异常配置也不会绕过检查。
 

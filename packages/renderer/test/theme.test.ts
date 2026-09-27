@@ -1,4 +1,4 @@
-import { Container, Graphics, Text as PText, Texture } from 'pixi.js';
+import { Container, Graphics, Sprite, Text as PText, Texture } from 'pixi.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_RENDERER_THEME,
@@ -142,6 +142,8 @@ describe('RendererTheme', () => {
       },
       spacing: { xs: 4, sm: 8, md: 16, lg: 24, xl: 40 },
       radius: { sm: 2, md: 4, lg: 6 },
+      skins: { dialogSkin: '', buttonSkin: '' },
+      layout: { dialogHeightRatio: null, dialogMarginX: null, dialogMarginBottom: null },
     });
     expect(Object.isFrozen(DEFAULT_RENDERER_THEME)).toBe(true);
     expect(Object.isFrozen(DEFAULT_RENDERER_THEME.colors)).toBe(true);
@@ -149,6 +151,8 @@ describe('RendererTheme', () => {
     expect(Object.isFrozen(DEFAULT_RENDERER_THEME.typography)).toBe(true);
     expect(Object.isFrozen(DEFAULT_RENDERER_THEME.spacing)).toBe(true);
     expect(Object.isFrozen(DEFAULT_RENDERER_THEME.radius)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_RENDERER_THEME.skins)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_RENDERER_THEME.layout)).toBe(true);
   });
 
   it('deep merges overrides without freezing the caller input', () => {
@@ -198,6 +202,50 @@ describe('RendererTheme', () => {
 });
 
 describe('live Pixi player-layer theme projection', () => {
+  it('keeps the dialogue skin visible across relayout and releases it on dispose', () => {
+    const { root, assets, lifecycle } = makeProjectionHarness();
+    vi.spyOn(assets, 'resolveBackground').mockReturnValue(Texture.WHITE);
+    const layer = new DialogueLayer({ uiLayer: root, width: 1280, height: 720, assets, lifecycle });
+    layer.setTheme(createRendererTheme({ skins: { dialogSkin: 'skin' } }));
+    layer.showText(null, 'A');
+    const all = (node: Container): Container[] => [node, ...node.children.flatMap(child => all(child))];
+    const skin = all(root).find(node => node instanceof Sprite && node.texture === Texture.WHITE)!;
+    layer.update(16);
+    expect(skin.visible).toBe(true);
+    layer.layout();
+    layer.update(16);
+    expect(skin.visible).toBe(true);
+    layer.setTheme(createRendererTheme({ skins: { dialogSkin: 'skin' }, layout: { dialogHeightRatio: 0.4, dialogMarginBottom: 24, dialogMarginX: 40 } }));
+    expect(skin.x).toBe(40);
+    expect(skin.width).toBe(1200);
+    expect(skin.height).toBeCloseTo(288);
+    expect(skin.y + skin.height).toBe(696);
+    layer.setTheme(createRendererTheme({ skins: { dialogSkin: 'skin' }, layout: { dialogMarginBottom: 5000, dialogMarginX: 5000 } }));
+    expect(skin.height).toBeGreaterThanOrEqual(188);
+    expect(skin.width).toBeGreaterThanOrEqual(480);
+    layer.dispose();
+    expect(skin.destroyed).toBe(true);
+    assets.dispose(); lifecycle.dispose();
+  });
+
+  it('skins real system-menu buttons and clears them when the theme resets', () => {
+    const { root, assets, lifecycle } = makeProjectionHarness();
+    vi.spyOn(assets, 'resolveBackground').mockReturnValue(Texture.WHITE);
+    const layer = new MenuLayer({ uiLayer: root, width: 1280, height: 720, assets, lifecycle });
+    layer.setTheme(createRendererTheme({ skins: { buttonSkin: 'button' } }));
+    const onSelect = vi.fn();
+    layer.showSystemMenu([{ id: 'save', label: '存档' }], onSelect, vi.fn());
+    const all = (node: Container): Container[] => [node, ...node.children.flatMap(child => all(child))];
+    const skins = all(root).filter(node => node instanceof Sprite && node.texture === Texture.WHITE);
+    expect(skins).toHaveLength(1);
+    expect(skins[0]!.visible).toBe(true);
+    layer.setTheme(DEFAULT_RENDERER_THEME);
+    expect(skins[0]!.visible).toBe(false);
+    layer.dispose();
+    expect(skins[0]!.destroyed).toBe(true);
+    assets.dispose(); lifecycle.dispose();
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });

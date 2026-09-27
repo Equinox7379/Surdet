@@ -1,5 +1,5 @@
 import { readProjectStage } from '@surdet/core';
-import { parsePortraitFileName, portraitSourcePaths, projectPortraitOverrides, resolveProjectPortraits, resolveProjectFontPaths, type GenericInstr } from '@surdet/core';
+import { parsePortraitFileName, portraitSourcePaths, projectPortraitOverrides, resolveProjectPortraits, resolveProjectFontPaths, resolveProjectTheme, type GenericInstr } from '@surdet/core';
 import type {
   ProjectAssetFileFact,
   ProjectAssetIntelligence,
@@ -300,6 +300,28 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
     sourceLabel: '标题背景',
     sourcePath: 'game.config.json',
   });
+  add('background', typeof player?.titleLogo === 'string' ? player.titleLogo : undefined, {
+    referenceId: 'config:player:titleLogo',
+    sourceKind: 'config',
+    sourceLabel: '标题字标',
+    sourcePath: 'game.config.json',
+  });
+  let themeSection: ReturnType<typeof resolveProjectTheme> | null = null;
+  try { themeSection = resolveProjectTheme(snapshot.config); } catch { /* project validation owns the structural issue */ }
+  if (themeSection) {
+    add('background', themeSection.skins.dialogSkin ?? undefined, {
+      referenceId: 'config:theme:dialogSkin',
+      sourceKind: 'config',
+      sourceLabel: '对话框皮肤',
+      sourcePath: 'game.config.json',
+    });
+    add('background', themeSection.skins.buttonSkin ?? undefined, {
+      referenceId: 'config:theme:buttonSkin',
+      sourceKind: 'config',
+      sourceLabel: '按钮皮肤',
+      sourcePath: 'game.config.json',
+    });
+  }
   const characters = asRecord(snapshot.config.characters) ?? {};
   for (const [id, declaration] of Object.entries(characters)) {
     const record = asRecord(declaration);

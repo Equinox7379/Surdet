@@ -1,4 +1,5 @@
 import { createStageWorkspace } from '../stage-workspace.js';
+import { projectThemeAssetKeys, resolveProjectTheme, resolveProjectTitleLogo } from '@surdet/core';
 import '../styles/stage-workspace.css';
 /**
  * 预览面板（M6 E4，父窗口侧）：iframe 承载 preview.html 运行器，
@@ -17,7 +18,7 @@ export { normalizePreviewTraceMessage, type PreviewTraceMessage, type PreviewTra
 import { createEditorProjectStorage } from '../authoring-project-storage.js';
 import { assetPathForHandle } from '../project-io.js';
 import { editorPreviewPublisher, editorWorkspaceStatus } from '../editor-workspace.js';
-import { inspectConfigDraftState, previewStageConfigText, readStageConfigDraft } from './config.js';
+import { inspectConfigDraftState, previewStageConfigText, previewThemeConfigText, readStageConfigDraft, readThemeConfigDraft } from './config.js';
 import { previewTextHash, projectPreviewContent } from '../preview-content.js';
 import { previewCheckpointKey, readPreviewCheckpoint, writePreviewCheckpoint } from '../preview-checkpoints.js';
 import type { FontRole } from '@surdet/renderer';
@@ -65,6 +66,7 @@ function previewSourceKey(): string {
     scenes: [...state.scenes.entries()].map(([key, entry]) => [key, entry.id, entry.file, entry.text]),
     config: state.gameConfigText,
     stageDraft: inspectConfigDraftState().dirtySections.includes('stage') ? readStageConfigDraft() : null,
+    themeDraft: inspectConfigDraftState().dirtySections.includes('theme') ? readThemeConfigDraft() : null,
     configs: state.configFiles,
     configReadErrors: state.configReadErrors,
     timelines: state.timelines.map((entry) => [entry.file, entry.text]),
@@ -375,6 +377,10 @@ async function readProjectImages(configText: string): Promise<PreviewAssets> {
     if (binding.configured && !portraits.has(`${binding.role}:${binding.outfit}:${binding.expression}`)) {
       throw new Error(`角色立绘文件不存在或不可读取：${binding.sourcePath}`);
     }
+  }
+  for (const key of [...projectThemeAssetKeys(resolveProjectTheme(config)), resolveProjectTitleLogo(config)].filter((key): key is string => Boolean(key))) {
+    if (!backgrounds.has(key) || state.dirAssets.filter(asset => asset.kind === 'bg' && asset.key === key).length !== 1)
+      throw new Error(`主题图片不存在、不唯一或不可读取：${key}`);
   }
   return { backgrounds: [...backgrounds.values()], portraits: [...portraits.values()], visuals, avatars: [...avatars.values()], audio: [...audio.values()], videos: [...videos.values()] };
 }
@@ -770,7 +776,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     let assets: PreviewAssets;
     let requestConfigText: string;
     try {
-      requestConfigText = projected?.configText ?? previewStageConfigText(state.gameConfigText);
+      requestConfigText = projected?.configText ?? previewThemeConfigText(previewStageConfigText(state.gameConfigText));
       cachedFonts = await readProjectFonts(requestConfigText);
       assets = await readProjectImages(requestConfigText);
     }
@@ -828,10 +834,12 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     }
     if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || requestKey() !== requestSource
       || state.dirHandle !== requestRoot || !container.isConnected) return;
+    const gameConfig = parseProjectConfigDocument(requestConfigText || '{}');
     const message = {
       type: 'surdet-preview-load',
       payload: {
-        stage: parseProjectConfigDocument(requestConfigText || '{}').stage,
+        stage: gameConfig.stage,
+        gameConfig,
         traceId,
         seed,
         replay: replay ?? undefined,

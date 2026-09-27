@@ -147,6 +147,8 @@ export async function dispatchAuthoringCapability(
       return { value: await service.stageConfigPatch(requireChange(context), payload as unknown as Parameters<AuthoringService['stageConfigPatch']>[1]), operationId: operationIdFrom(payload) };
     case 'project.player-config.patch':
       return { value: await service.playerConfigPatch(requireChange(context), payload as unknown as Parameters<AuthoringService['playerConfigPatch']>[1]), operationId: operationIdFrom(payload) };
+    case 'project.theme-config.patch':
+      return { value: await service.themeConfigPatch(requireChange(context), payload as unknown as Parameters<AuthoringService['themeConfigPatch']>[1]), operationId: operationIdFrom(payload) };
     case 'project.validate':
       return context.activeChangeId === undefined
         ? { value: await service.validateProject(requireProject(context)) }

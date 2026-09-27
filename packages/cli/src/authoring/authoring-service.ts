@@ -15,6 +15,7 @@ import {
   inspectGallery,
   inspectPlayerConfig,
   inspectStageConfig, applyStageConfigPatch, type StageConfigPatchInput,
+  inspectThemeConfig, applyThemeConfigPatch, type ThemeConfigPatchInput,
   applyPlayerConfigPatch,
   type PlayerConfigPatchInput,
   GALLERY_PATH,
@@ -614,13 +615,14 @@ export class AuthoringService {
     return { snapshot: context.snapshot, assetFiles, gallery, metadata: metadataForChange(context.session), view: 'working' as const };
   }
 
-  async inspectProject(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof inspectProject> & { view: 'project' | 'working'; charactersFingerprint: string; playerConfig: Awaited<ReturnType<typeof inspectPlayerConfig>>; stageConfig: Awaited<ReturnType<typeof inspectStageConfig>> }>> {
+  async inspectProject(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof inspectProject> & { view: 'project' | 'working'; charactersFingerprint: string; playerConfig: Awaited<ReturnType<typeof inspectPlayerConfig>>; stageConfig: Awaited<ReturnType<typeof inspectStageConfig>>; themeConfig: Awaited<ReturnType<typeof inspectThemeConfig>> }>> {
     const { snapshot, assetFiles, gallery, metadata, view } = await this.readProjectView(projectRoot, changeId, true);
     const index = buildObjectIndex(snapshot);
     return { ...metadata, result: { ...inspectProject(snapshot, index, assetFiles, gallery), view,
       charactersFingerprint: await charactersFingerprint(snapshot.config, { sha256: async text => hashText(text) }),
       playerConfig: await inspectPlayerConfig(snapshot.config, { sha256: async text => hashText(text) }),
-      stageConfig: await inspectStageConfig(snapshot.config, { sha256: async text => hashText(text) }) } };
+      stageConfig: await inspectStageConfig(snapshot.config, { sha256: async text => hashText(text) }),
+      themeConfig: await inspectThemeConfig(snapshot.config, { sha256: async text => hashText(text) }) } };
   }
 
   async projectAssets(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof buildAssetCatalog> & { view: 'project' | 'working' }>> {
@@ -816,6 +818,15 @@ export class AuthoringService {
     return this.withOpenChange(changeId, async (context) => {
       const assets = await withProjectLeaseRetry(this.leaseManager, context.storage.rootIdentity, async () => buildAssetCatalog(assetPathsFromFiles(await context.storage.listFiles())));
       const result = await applyPlayerConfigPatch(context.session, input, { sha256: async text => hashText(text) }, assets);
+      return { ...metadataForChange(context.session), result };
+    });
+  }
+
+  async themeConfigPatch(changeId: string, input: ThemeConfigPatchInput): Promise<ServiceResult<unknown>> {
+    return this.withOpenChange(changeId, async context => {
+      const assets = await withProjectLeaseRetry(this.leaseManager, context.storage.rootIdentity,
+        async () => buildAssetCatalog(assetPathsFromFiles(await context.storage.listFiles())));
+      const result = await applyThemeConfigPatch(context.session, input, { sha256: async text => hashText(text) }, assets);
       return { ...metadataForChange(context.session), result };
     });
   }

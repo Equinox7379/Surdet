@@ -10,7 +10,7 @@ import { GALLERY_PATH, readGalleryDocument } from './gallery-operations.js';
 import { timelineIdFromPath } from './timeline-identity.js';
 import { parseTimelineDefinition, timelineFingerprint } from './timeline-operations.js';
 import { mediaAssetCommand } from './asset-intelligence.js';
-import { projectPortraitOverrides, resolveProjectFontPaths } from '@surdet/core';
+import { projectPortraitOverrides, resolveProjectFontPaths, resolveProjectTheme, resolveProjectTitleLogo } from '@surdet/core';
 
 export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, hasher: TextHasher): Promise<ReplayStatePrecondition[]> {
   const { cgs } = readGalleryDocument(snapshot.files.find((file) => file.path === GALLERY_PATH)?.text);
@@ -28,6 +28,7 @@ export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, has
     { objectRef: 'config:characters', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.config['characters'] ?? {})) },
     { objectRef: 'config:stage', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.config.stage ?? null)) },
     { objectRef: 'config:fonts', expectedFingerprint: await hasher.sha256(stableStringify(resolveProjectFontPaths(snapshot.config))) },
+    { objectRef: 'config:theme', expectedFingerprint: await hasher.sha256(stableStringify({ theme: snapshot.config.theme ?? null, titleLogo: resolveProjectTitleLogo(snapshot.config) })) },
     { objectRef: 'config:portraits', expectedFingerprint: await hasher.sha256(stableStringify(projectPortraitOverrides(snapshot.config))) },
     ...snapshot.scenes.map((scene) => ({ objectRef: `scene:${scene.id}`, expectedFingerprint: scene.file.sha256 })),
     ...timelineObjects,

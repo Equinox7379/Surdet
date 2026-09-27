@@ -17,6 +17,17 @@ const hasher: TextHasher = {
   sha256: async (text) => createHash('sha256').update(text, 'utf8').digest('hex'),
 };
 
+it('renames theme skins and title logo as image references without changing prose', async () => {
+  const sourcePath = 'content/assets/bg/paper.png', targetPath = 'content/assets/bg/new-paper.png';
+  const config = { player: { titleLogo: 'paper' }, theme: { dialogSkin: 'paper', buttonSkin: 'paper' } };
+  const scene = '@scene start\n旁白：paper\n@end\n';
+  const input = await makeInput({ files: { 'game.config.json': JSON.stringify(config), 'content/scenario/start.gal': scene }, assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath });
+  const result = await planProjectAssetRelocation(input, hasher);
+  expect(result.plan.blockers).toEqual([]);
+  expect(JSON.parse(result.textChanges.find(file => file.path === 'game.config.json')!.afterText)).toEqual({ player: { titleLogo: 'new-paper' }, theme: { dialogSkin: 'new-paper', buttonSkin: 'new-paper' } });
+  expect(result.textChanges.some(file => file.path.endsWith('.gal'))).toBe(false);
+});
+
 it.each(['sequence', 'layered'] as const)('moves every %s image reference without rewriting logical identity or prose', async kind => {
   const a = 'content/assets/portrait/rin_parts_a.png', b = 'content/assets/portrait/rin_parts_b.png';
   const movedB = 'content/assets/portrait/cast/rin_parts_b.png';

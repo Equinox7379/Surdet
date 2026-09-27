@@ -186,12 +186,12 @@ describe('Surdet Agent Port MCP tool projection', () => {
       expect(names).not.toContain('surdet_change_commit');
       expect(names).not.toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
       for (const action of ['commit', 'recover', 'undo'] as const) expect(names).not.toContain(nativeCapabilityToMcpTool(`asset.relocation.${action}`));
-      expect(names).toHaveLength(48);
+      expect(names).toHaveLength(49);
    }
    if (policy === 'apply') {
      expect(names).toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
       for (const action of ['commit', 'recover', 'undo'] as const) expect(names).toContain(nativeCapabilityToMcpTool(`asset.relocation.${action}`));
-      expect(names).toHaveLength(55);
+      expect(names).toHaveLength(56);
    }
    const described = await client.callTool({ name: 'surdet_session_describe', arguments: {} });
     expect(described.isError).not.toBe(true);
@@ -199,7 +199,7 @@ describe('Surdet Agent Port MCP tool projection', () => {
     const capabilities = await client.callTool({ name: 'surdet_capabilities_describe', arguments: {} });
     expect(capabilities.isError).not.toBe(true);
     expect((capabilities.structuredContent as any).ok).toBe(true);
-    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(53);
+    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(54);
     expect(names).not.toContain('surdet_review_write_decision');
     expect(names).not.toContain('surdet_review_approve');
     if (policy === 'stage') {
@@ -475,7 +475,7 @@ describe('Surdet Agent Port MCP tool projection', () => {
       const patched = await call('surdet_project_player_config_patch', input);
       const after = (await call('surdet_project_inspect', { view: 'working' })).result.playerConfig;
       expect(after).toEqual(patched.result.playerConfig);
-      expect(after.values).toEqual({ ...input.patch, font: null, fonts: null });
+      expect(after.values).toEqual({ ...input.patch, titleLogo: null, font: null, fonts: null });
       expect((await call('surdet_project_inspect', { view: 'project' })).result.playerConfig).toEqual(before);
       const repeated = await call('surdet_project_player_config_patch', input);
       expect(repeated.workingRevision).toBe(patched.workingRevision);

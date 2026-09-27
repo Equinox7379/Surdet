@@ -26,6 +26,7 @@ export interface PlayerConfigValues {
   title: string | null;
   subtitle: string | null;
   titleBackground: string | null;
+  titleLogo: string | null;
   endScenes: string[] | null;
   firstRunHint: string | null;
   font: string | null;
@@ -42,8 +43,8 @@ export interface PlayerConfigPatchInput {
 export async function inspectPlayerConfig(config: Record<string, unknown>, hasher: TextHasher): Promise<{ values: PlayerConfigValues; fingerprint: string }> {
   if (config['player'] !== undefined && !isRecord(config['player'])) throw new AuthoringOperationError('PROJECT_INVALID', 'game.config.json.player 必须是对象');
   const player = (config['player'] ?? {}) as Record<string, unknown>;
-  const values: PlayerConfigValues = { title: null, subtitle: null, titleBackground: null, endScenes: null, firstRunHint: null, font: null, fonts: null };
-  for (const field of ['title', 'subtitle', 'titleBackground', 'firstRunHint'] as const) {
+  const values: PlayerConfigValues = { title: null, subtitle: null, titleBackground: null, titleLogo: null, endScenes: null, firstRunHint: null, font: null, fonts: null };
+  for (const field of ['title', 'subtitle', 'titleBackground', 'titleLogo', 'firstRunHint'] as const) {
     const value = field === 'title' ? config[field] : player[field];
     if (value !== undefined && typeof value !== 'string') throw new AuthoringOperationError('PROJECT_INVALID', `展示配置 ${field} 必须是字符串`);
     values[field] = value ?? null;
@@ -101,6 +102,8 @@ export async function applyPlayerConfigPatch(change: ChangeSession, input: Playe
     }
     const background = after.values.titleBackground;
     if (background !== null && background !== '' && !assets.backgrounds.some((asset) => asset.key === background && asset.resolved)) throw new AuthoringOperationError('VALIDATION_FAILED', `标题背景不存在或不支持：${background}`);
+    const titleLogo = after.values.titleLogo;
+    if (titleLogo !== null && titleLogo !== '' && !assets.backgrounds.some((asset) => asset.key === titleLogo && asset.resolved)) throw new AuthoringOperationError('VALIDATION_FAILED', `标题字标不存在或不支持：${titleLogo}`);
     for (const sceneId of after.values.endScenes ?? []) {
       if (resolveUniqueScenarioPath(record.workingFiles, sceneId) === undefined) throw new AuthoringOperationError('VALIDATION_FAILED', `结束场景不存在：${sceneId}`);
     }

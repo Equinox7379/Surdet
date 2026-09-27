@@ -14,6 +14,7 @@ export type ComposableObjectRef =
   | `gallery:cgs:${string}`
   | 'config:characters'
   | 'config:fonts'
+  | 'config:theme'
   | 'config:stage'
   | 'config:portraits'
   | 'config:entryScene';
@@ -109,9 +110,11 @@ function readWorkingObject(workingFiles: Readonly<Record<string, string>>, objec
   }
 
   const config = parseConfigObject(workingFiles['game.config.json']);
-  if (objectRef === 'config:stage') return present(parseProjectConfigDocument(workingFiles['game.config.json'] ?? '{}').stage ?? null);
-  if (objectRef === 'config:fonts') return present(resolveProjectFontPaths(parseProjectConfigDocument(workingFiles['game.config.json'] ?? '{}')));
-  if (objectRef === 'config:portraits') return present(projectPortraitOverrides(parseProjectConfigDocument(workingFiles['game.config.json'] ?? '{}')));
+  const fullConfig = parseProjectConfigDocument(workingFiles['game.config.json'] ?? '{}');
+  if (objectRef === 'config:stage') return present(fullConfig.stage ?? null);
+  if (objectRef === 'config:theme') return present({ theme: fullConfig.theme ?? null, titleLogo: fullConfig.player !== undefined && typeof fullConfig.player === 'object' && fullConfig.player !== null ? (fullConfig.player as Record<string, unknown>)['titleLogo'] ?? null : null });
+  if (objectRef === 'config:fonts') return present(resolveProjectFontPaths(fullConfig));
+  if (objectRef === 'config:portraits') return present(projectPortraitOverrides(fullConfig));
   if (objectRef.startsWith('variable:')) {
     const id = objectRef.slice('variable:'.length);
     return Object.prototype.hasOwnProperty.call(config.variables, id)

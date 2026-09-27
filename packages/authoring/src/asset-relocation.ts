@@ -770,6 +770,25 @@ function configRewrite(
         reference: reference('config', file.path, '标题背景', 'titleBackground', 'config:player:titleBackground') });
     }
   }
+  if (typeof player.titleLogo === 'string') {
+    const path: JsonPath = ['player', 'titleLogo'];
+    knownPaths.add(pathKey(path));
+    if (source.kind === 'background' && player.titleLogo === source.key && target.key !== source.key) {
+      replacements.push({ path, before: source.key, after: target.key,
+        reference: reference('config', file.path, '标题字标', 'titleLogo', 'config:player:titleLogo') });
+    }
+  }
+  const theme = isRecord(root.theme) ? root.theme : {};
+  for (const field of ['dialogSkin', 'buttonSkin'] as const) {
+    if (typeof theme[field] === 'string') {
+      const path: JsonPath = ['theme', field];
+      knownPaths.add(pathKey(path));
+      if (source.kind === 'background' && theme[field] === source.key && target.key !== source.key) {
+        replacements.push({ path, before: source.key, after: target.key,
+          reference: reference('config', file.path, field === 'dialogSkin' ? '对话框皮肤' : '按钮皮肤', field, `config:theme:${field}`) });
+      }
+    }
+  }
   for (const [id, value] of Object.entries(characters)) {
     if (!isRecord(value) || typeof value.avatar !== 'string') continue;
     const path: JsonPath = ['characters', id, 'avatar'];

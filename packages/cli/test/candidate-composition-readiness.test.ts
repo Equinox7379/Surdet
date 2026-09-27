@@ -158,6 +158,54 @@ describe('Wave 8 candidate readiness through Agent Port', () => {
     } finally { await missingSession.close(); }
   });
 
+  it('rejects a candidate with missing baseline theme images without mutating the draft', async () => {
+    const { root } = fixture();
+    const config = JSON.parse(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8'));
+    fs.writeFileSync(path.join(root, 'game.config.json'), JSON.stringify({ ...config, theme: { dialogSkin: 'missing-paper' } }));
+    const session = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
+    try {
+      result(await session.invoke('change.begin', { compositionMode: 'candidate' }));
+      const before = (await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record;
+      expect(await session.invoke('scene.create', { operationId: 'missing-theme', sceneId: 'new_scene', blocks: [{ kind: 'text', value: '正文。' }] }))
+        .toMatchObject({ ok: false, error: { code: 'CANDIDATE_DEPENDENCY_NOT_READY', details: { issues: [expect.objectContaining({ objectRef: 'asset:bg:missing-paper' })] } } });
+      expect((await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record).toEqual(before);
+    } finally { await session.close(); }
+  });
+
+  it('seals real theme image dependencies together with the theme configuration fingerprint', async () => {
+    const { root } = fixture();
+    const config = JSON.parse(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8'));
+    fs.mkdirSync(path.join(root, 'content/assets/bg'), { recursive: true });
+    for (const key of ['paper', 'button', 'logo']) fs.writeFileSync(path.join(root, `content/assets/bg/${key}.png`), 'catalog fixture, browser tests verify image decoding');
+    fs.writeFileSync(path.join(root, 'game.config.json'), JSON.stringify({ ...config, player: { titleLogo: 'logo' }, theme: { dialogSkin: 'paper', buttonSkin: 'button' } }));
+    const session = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
+    try {
+      result(await session.invoke('change.begin', { compositionMode: 'candidate' }));
+      result(await session.invoke('scene.create', { operationId: 'themed-scene', sceneId: 'themed', blocks: [{ kind: 'text', value: '正文。' }] }));
+      const capsule = await generateDeliveryCapsule(session);
+      const operation = (capsule.composition.manifest as CompositionManifest).operations.find(item => item.primaryObject === 'scene:themed')!;
+      for (const key of ['paper', 'button', 'logo']) expect(operation.requiredObjects).toContainEqual({ objectRef: `asset:bg:${key}`, source: 'base' });
+      expect(operation.replayStateRequirements).toContainEqual(expect.objectContaining({ objectRef: 'config:theme', source: 'base' }));
+    } finally { await session.close(); }
+  });
+
+  it('exposes effective theme defaults and applies the narrow patch only in the working view', async () => {
+    const { root } = fixture();
+    const session = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
+    try {
+      result(await session.invoke('change.begin', { compositionMode: 'direct' }));
+      const before = result<any>(await session.invoke('project.inspect', { view: 'working' })).themeConfig;
+      expect(before.effective.tokens.colors.accent).toBe(0x203e88);
+      const changed = result<any>(await session.invoke('project.theme-config.patch', { operationId: 'theme', expectedFingerprint: before.fingerprint, patch: { colors: { accent: 0x8b1e3f }, dialogMarginBottom: 24 } }));
+      const after = result<any>(await session.invoke('project.inspect', { view: 'working' })).themeConfig;
+      expect(after).toEqual(changed.themeConfig);
+      expect(after.sources['colors.accent']).toBe('project');
+      expect((await standardSchemaFromJson(getCapabilityDefinition('project.inspect').outputSchema)['~standard'].validate(result(await session.invoke('project.inspect', { view: 'working' })))).issues).toBeUndefined();
+      expect(result<any>(await session.invoke('project.inspect', { view: 'project' })).themeConfig).toEqual(before);
+      expect(await session.invoke('project.theme-config.patch', { operationId: 'stale-theme', expectedFingerprint: before.fingerprint, patch: null })).toMatchObject({ ok: false, error: { code: 'OBJECT_REF_STALE' } });
+    } finally { await session.close(); }
+  });
+
   it('rejects a candidate scene whose configured baseline font is missing without writing its record', async () => {
     const { root } = fixture();
     const config = JSON.parse(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8'));
@@ -374,7 +422,7 @@ describe('Wave 8 candidate readiness through Agent Port', () => {
   });
 
   it('validates strict mode/status and nested readiness fields under contract 2.5', async () => {
-    expect(AUTHORING_CONTRACT_VERSION).toBe('2.17.0');
+    expect(AUTHORING_CONTRACT_VERSION).toBe('2.18.0');
     const schema = standardSchemaFromJson(CANDIDATE_COMPOSITION_READINESS_SCHEMA);
     const readiness = { mode: 'candidate', status: 'ready', operationFactsVersion: '1.0.0', operationCount: 0, issueCount: 0, issues: [], truncated: false };
     expect((await schema['~standard'].validate(readiness)).issues).toBeUndefined();
