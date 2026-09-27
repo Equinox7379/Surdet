@@ -242,6 +242,8 @@ export interface PresentationControllerOptions extends AdvRendererOptions {
   /** Read-only nested World validation used by the shared presentation prepare path. */
   readonly validateStagePresentation?: (snapshot: unknown) => void;
   readonly updateProjection?: (deltaMs: number) => void;
+  /** 暂停期间仍需完成的菜单界面推进（如系统菜单入场动画）；返回 true 表示菜单界面还有待完成工作。 */
+  readonly updateMenuProjection?: (deltaMs: number) => boolean | void;
   readonly canScrollBacklog?: () => boolean;
   readonly bindStageCallbacks?: (handlers: {
     onSelect: (index: number) => void;
@@ -261,6 +263,9 @@ export class PresentationController {
   #resetProjection?: (options?: ResetSessionOptions) => void;
   #validateStagePresentation?: (snapshot: unknown) => void;
   #updateProjection?: (deltaMs: number) => void;
+  #updateMenuProjection?: (deltaMs: number) => boolean | void;
+  /** 暂停期间菜单界面推进是否仍有待完成工作（最近一次 updateMenuProjection 的返回值）。 */
+  #menuProjectionBusy = false;
   #canScrollBacklog: () => boolean = () => true;
   #unbindStageCallbacks?: () => void;
   #detachPlugin?: () => void;
@@ -333,6 +338,7 @@ export class PresentationController {
     this.#resetProjection = options.resetProjection;
     this.#validateStagePresentation = options.validateStagePresentation;
     this.#updateProjection = options.updateProjection;
+    this.#updateMenuProjection = options.updateMenuProjection;
     this.#canScrollBacklog = options.canScrollBacklog ?? (() => true);
     this.#lifecycle = options.lifecycle;
     this.#detachPlugin = options.detachPlugin;
@@ -385,7 +391,10 @@ export class PresentationController {
    * 旧舞台未实现该能力时返回 true，保持原有宿主行为。
    */
   get needsUpdate(): boolean {
-    if (this.#disposed || this.presentationPaused) return false;
+    if (this.#disposed) return false;
+    // 暂停冻结的是剧情演出；菜单自身的界面反馈（入场动画）仍需逐帧完成，
+    // 否则调度器会把刚打开的系统菜单永久休眠在透明状态。
+    if (this.presentationPaused) return this.#menuProjectionBusy;
     return this.#hasRendererWork() || this.#queries.diagnostics.needsUpdate();
   }
 
@@ -535,12 +544,16 @@ export class PresentationController {
   update(deltaMs: number): void {
     if (this.#disposed) return;
     if (this.presentationPaused) {
-      this.#pausedSince ??= nowMs(); return;
+      this.#pausedSince ??= nowMs();
+      // 只推进菜单层自身的界面反馈，不触碰 World/Dialogue（整组旧回调会继续推进被暂停的演出）。
+      this.#menuProjectionBusy = this.#updateMenuProjection?.(deltaMs) === true;
+      return;
     }
     if (this.#pausedSince !== null) {
       const delay = nowMs() - this.#pausedSince;
       if (this.#waitDeadline !== null) this.#waitDeadline += delay;
       this.#awaitSince += delay; this.#pausedSince = null;
+      this.#menuProjectionBusy = false;
     }
     if (!this.needsUpdate) return;
     this.#updateTimelines(deltaMs);

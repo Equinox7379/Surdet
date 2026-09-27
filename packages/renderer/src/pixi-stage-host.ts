@@ -580,6 +580,12 @@ export class RendererStageHost {
     this.#dialogue.update(deltaMs);
   }
 
+  /** 菜单层独立推进：暂停期间仍需完成的菜单界面反馈（入场动画）。
+   *  与 updateEffects 不同，不推进 World/Dialogue；返回菜单是否仍有待完成的更新。 */
+  updateMenu(deltaMs: number): boolean {
+    return this.#menu.update(deltaMs);
+  }
+
   #hasEffectWork(): boolean {
     return this.#world.needsUpdate || this.#dialogue.needsUpdate() || this.#menu.needsUpdate;
   }

@@ -657,4 +657,69 @@ describe('PresentationController', () => {
       lifecycle.dispose();
     }
   });
+
+  it('keeps the system-menu entrance animating while paused, then sleeps without advancing the frozen presentation', () => {
+    const stage = stageHarness();
+    const updateProjection = vi.fn();
+    let menuOpen = false;
+    let menuRemain = 0;
+    const updateMenuProjection = vi.fn((deltaMs: number) => {
+      if (!menuOpen || menuRemain === 0) return false;
+      menuRemain = Math.max(0, menuRemain - deltaMs);
+      return menuRemain > 0;
+    });
+    const ports = createPresentationPorts(stage, {
+      menuLayer: { menu: () => (menuOpen ? { type: 'system-menu' } : { type: 'none' }) },
+    });
+    const controller = new PresentationController(ports.commands, ports.queries, undefined, {
+      commands: ports.commands,
+      queries: ports.queries,
+      validateStagePresentation: ports.validateStagePresentation,
+      updateProjection,
+      updateMenuProjection,
+    });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus);
+    try {
+      bus.emit('text', { speaker: '凛', value: '暂停前正在打字的一行足够长的文本。', wasRead: false });
+      controller.update(16);
+      const wholeGroupCallsBeforePause = updateProjection.mock.calls.length;
+      const typedBeforePause = stage.texts.length;
+
+      menuOpen = true; menuRemain = 260;
+      controller.update(16);
+      expect(controller.presentationPaused).toBe(true);
+      expect(controller.needsUpdate).toBe(true);
+      expect(updateMenuProjection).toHaveBeenCalledWith(16);
+      // 暂停期间不调用包含 World 更新的整组旧回调，打字保持冻结
+      expect(updateProjection).toHaveBeenCalledTimes(wholeGroupCallsBeforePause);
+      controller.update(120); controller.update(200);
+      expect(stage.texts.length).toBe(typedBeforePause);
+      // 入场完成且无其他必要界面工作：恢复休眠
+      expect(controller.needsUpdate).toBe(false);
+
+      // 关闭菜单：恢复整组演出推进；单帧只推进一次，且不把暂停墙钟补算进帧推进
+      menuOpen = false;
+      controller.update(16);
+      expect(updateProjection).toHaveBeenCalledTimes(wholeGroupCallsBeforePause + 1);
+      expect(updateProjection).toHaveBeenLastCalledWith(16);
+      expect(controller.needsUpdate).toBe(true);
+
+      controller.dispose();
+      expect(controller.needsUpdate).toBe(false);
+    } finally { controller.dispose(); }
+  });
+
+  it('explicit pause stays dormant for hosts without a menu projection', () => {
+    const stage = stageHarness();
+    const updateProjection = vi.fn();
+    const controller = controllerFor(stage, { updateProjection });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus);
+    try {
+      controller.setPresentationPaused(true);
+      controller.update(16);
+      expect(controller.presentationPaused).toBe(true);
+      expect(controller.needsUpdate).toBe(false);
+      expect(updateProjection).not.toHaveBeenCalled();
+    } finally { controller.dispose(); }
+  });
 });
