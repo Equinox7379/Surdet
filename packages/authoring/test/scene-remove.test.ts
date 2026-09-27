@@ -40,7 +40,7 @@ describe('direct scene removal', () => {
     ['single-quoted call', "' -> ' == ' -> '", '@call unused.entry'],
   ])('protects the real target after arrows inside a %s condition', async (_name, condition, action) => {
     const callerPath = 'content/scenario/start.gal';
-    const caller = `@scene start\n@choice\n  继续 [if:${condition}] -> ${action}\n@end\n`;
+    const caller = `@scene start\n@choice\n  继续 "同意 -> 继续" [if:${condition}] -> ${action}\n@end\n`;
     const { change, files } = await fixture({ [callerPath]: caller });
     const before = structuredClone(change.record);
     await expect(applySceneRemove(change, await request(), hasher)).rejects.toMatchObject({

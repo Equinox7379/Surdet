@@ -53,7 +53,7 @@ describe('typed authoring operations', () => {
 
   it('renames direct labels across real local/cross-scene targets without rewriting prose or quoted choice text', async () => {
     const a = '@scene a\r\n  @label entry  \r\n@if false\r\n@goto entry\r\n@loop entry\r\n@switch route 1:entry 2:unused\r\n@endif\r\n已到达。\r\n@return\r\n@label unused\r\n@end\r\n';
-    const b = '@scene b\n旁白：@call a.entry 是正文。\n@call a.entry\n@choice\n  甲 [if:" -> @call a.entry " == " -> @call a.entry "] -> @call a.entry @goto done\n  乙 -> @jump a.entry\n@label done\n@end\n';
+    const b = '@scene b\n旁白：@call a.entry 是正文。\n@call a.entry\n@choice\n  甲 " -> @call a.entry " [if:" -> @call a.entry " == " -> @call a.entry "] -> @call a.entry @goto done\n  乙 -> @jump a.entry\n@label done\n@end\n';
     const c = '@scene c\n@label entry\n保留同名标签。\n@end\n';
     const storage = fixtureStorage('{"entryScene":"b","variables":{"route":{"type":"number","initial":1}}}', a, 'content/scenario/nested/a.gal', { 'content/scenario/b.gal': b, 'content/scenario/c.gal': c });
     const snapshot = await loadProjectSnapshot(storage, hasher);

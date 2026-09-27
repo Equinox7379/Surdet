@@ -419,7 +419,8 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   themeProjectionSnapshot(): LayerThemeProjectionSnapshot {
-    return readThemeProjection(this.#dialogueRoot, this.#dialogueOverlayRoot);
+    return readThemeProjection(this.#dialogueRoot, this.#dialogueOverlayRoot,
+      ...(this.#bannerLayer.parent === this.#root ? [this.#bannerLayer] : []));
   }
 
   #onSelect: ((index: number) => void) | null = null;
@@ -476,6 +477,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     for (const view of this.#choiceViews) this.#drawChoiceCard(view, view === this.#choiceViews[this.#choiceHighlight]);
     repaintThemeProjection(this.#dialogueRoot, previous, theme);
     repaintThemeProjection(this.#dialogueOverlayRoot, previous, theme);
+    if (this.#bannerLayer.parent === this.#root) repaintThemeProjection(this.#bannerLayer, previous, theme);
     this.#speakerText.style.fontSize = theme.typography.uiSize;
     this.#dialogText.style.fontSize = theme.typography.bodySize;
     this.#dialogText.style.lineHeight = theme.typography.bodySize * 1.6;
@@ -905,7 +907,9 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   showBanner(text: string, variant: 'chapter' | 'tip'): void {
-    if (text.length === 0) return;
+    if (this.#disposed || text.length === 0) return;
+    // Tips must remain visible over menus; chapter presentation stays below them.
+    (variant === 'tip' ? this.#root : this.#dialogueRoot).addChild(this.#bannerLayer);
     this.#bannerText.text = text;
     this.#bannerText.style = variant === 'chapter'
       ? { fontSize: 38, fill: this.#theme.colors.text, fontWeight: 'normal', letterSpacing: 6, fontFamily: this.#assets.fontFamily('title') } satisfies TextStyleOptions

@@ -48,9 +48,9 @@ async function makeRuntime() {
   };
 }
 
-function portraitAlphas(root: Container): number[] {
+function portraitAppearance(root: Container): { alpha: number; tint: number }[] {
   return root.children.flatMap(child => child instanceof Sprite && child.texture === Texture.WHITE
-    ? [child.alpha] : child instanceof Container ? portraitAlphas(child) : []);
+    ? [{ alpha: child.alpha, tint: child.tint }] : child instanceof Container ? portraitAppearance(child) : []);
 }
 
 describe('speaker focus through production presentation ports', () => {
@@ -59,16 +59,16 @@ describe('speaker focus through production presentation ports', () => {
     try {
       runtime.bus.emit('text', { speaker: '凛', value: '正在说话。' });
       expect(runtime.stage.worldLayer.snapshotPresentation()).toMatchObject({ activeSpeakerId: 'lynn' });
-      expect(portraitAlphas((runtime.stage.worldLayer as WorldLayer).worldContainer)).toEqual([1, 0.46]);
+      expect(portraitAppearance((runtime.stage.worldLayer as WorldLayer).worldContainer)).toEqual([{ alpha: 1, tint: 0xffffff }, { alpha: 1, tint: 0xc4cddd }]);
       runtime.controller.update(10_000);
       expect(runtime.stage.dialogueLayer.activeSpeakerId).toBe('lynn');
       runtime.bus.emit('text', { speaker: '澪', value: '' });
       expect(runtime.stage.worldLayer.snapshotPresentation()).toMatchObject({ activeSpeakerId: 'mio' });
-      expect(portraitAlphas((runtime.stage.worldLayer as WorldLayer).worldContainer)).toEqual([0.46, 1]);
+      expect(portraitAppearance((runtime.stage.worldLayer as WorldLayer).worldContainer)).toEqual([{ alpha: 1, tint: 0xc4cddd }, { alpha: 1, tint: 0xffffff }]);
       for (const speaker of [null, '未配置角色']) {
         runtime.bus.emit('text', { speaker, value: '没有角色聚焦。' });
         expect(runtime.stage.worldLayer.snapshotPresentation()).toMatchObject({ activeSpeakerId: null });
-        expect(portraitAlphas((runtime.stage.worldLayer as WorldLayer).worldContainer)).toEqual([1, 1]);
+        expect(portraitAppearance((runtime.stage.worldLayer as WorldLayer).worldContainer)).toEqual([{ alpha: 1, tint: 0xffffff }, { alpha: 1, tint: 0xffffff }]);
       }
       runtime.ports.commands.dialogue.setActiveSpeaker('lynn');
       expect(runtime.stage.worldLayer.snapshotPresentation()).toMatchObject({ activeSpeakerId: 'lynn' });
@@ -90,7 +90,7 @@ describe('speaker focus through production presentation ports', () => {
       runtime.controller.update(10_000);
       expect(runtime.stage.dialogueLayer.activeSpeakerId).toBe('mio');
       expect(runtime.stage.worldLayer.snapshotPresentation()).toMatchObject({ activeSpeakerId: 'mio' });
-      expect(portraitAlphas((runtime.stage.worldLayer as WorldLayer).worldContainer)).toEqual([0.46, 1]);
+      expect(portraitAppearance((runtime.stage.worldLayer as WorldLayer).worldContainer)).toEqual([{ alpha: 1, tint: 0xc4cddd }, { alpha: 1, tint: 0xffffff }]);
     } finally { runtime.dispose(); }
   });
 

@@ -55,6 +55,30 @@ function makeRuntime(height = 720): DialogueRuntime {
   return { root, layer, lifecycle, assets, requestFrame };
 }
 
+it('shows tips above an existing menu without raising dialogue, and resets and disposes them', () => {
+  const runtime = makeRuntime();
+  const menu = new Container(); runtime.root.addChild(menu);
+  try {
+    runtime.layer.showBanner('存档列表读取失败，请重试。', 'tip'); runtime.layer.update(500);
+    const texts = (node: Container): PText[] => [...(node instanceof PText ? [node] : []), ...node.children.flatMap(texts)];
+    const tip = texts(runtime.root).find(text => text.text.includes('存档列表读取失败'))!;
+    const topBranch = (node: Container): Container => node.parent === runtime.root ? node : topBranch(node.parent!);
+    expect(runtime.root.getChildIndex(topBranch(tip))).toBeGreaterThan(runtime.root.getChildIndex(menu));
+    expect(runtime.root.getChildIndex(dialogueRoot(runtime.root))).toBeLessThan(runtime.root.getChildIndex(menu));
+    expect(tip.parent!.visible).toBe(true); expect(tip.parent!.alpha).toBe(1);
+    runtime.layer.setTheme(createRendererTheme({ colors: { text: 0x123456, surface: 0xabcdef } }));
+    expect(runtime.layer.themeProjectionSnapshot().visibleTextFills).toContain(0x123456);
+    expect(runtime.layer.themeProjectionSnapshot().visibleGraphicsColors).toContain(0xabcdef);
+    runtime.layer.reset(); expect(tip.parent!.visible).toBe(false);
+    runtime.layer.showBanner('下一章', 'chapter');
+    expect(runtime.root.getChildIndex(topBranch(tip))).toBeLessThan(runtime.root.getChildIndex(menu));
+    runtime.layer.showBanner('重试提示', 'tip'); runtime.layer.update(1800);
+    expect(tip.parent!.visible).toBe(false);
+  } finally { disposeRuntime(runtime); }
+  runtime.layer.showBanner('销毁后的提示不应重新挂载', 'tip');
+  expect(runtime.root.children).toEqual([menu]);
+});
+
 function disposeRuntime(runtime: DialogueRuntime): void {
   runtime.layer.dispose();
   runtime.assets.dispose();

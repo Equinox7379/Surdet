@@ -19,7 +19,7 @@ const hasher: TextHasher = {
 
 it.each(['portrait:rin:coat', 'rin:coat'])('renames the actual pose target %s in scenes and quoted-arrow choices, for single and batch plans', async poseTarget => {
   const sourcePath = 'content/assets/portrait/rin_coat_normal.png', targetPath = 'content/assets/portrait/kei_coat_normal.png';
-  const before = `@scene start\r\n@show rin:coat normal @x=100\r\n@pose ${poseTarget} @x=500\r\n@choice\r\n  原文 portrait:rin:coat [if:" -> " == " -> "] -> @pose ${poseTarget} x=700 @goto end\r\n@label end\r\n@end\r\n`;
+  const before = `@scene start\r\n@show rin:coat normal @x=100\r\n@pose ${poseTarget} @x=500\r\n@choice\r\n  原文 "portrait:rin:coat -> 保留" [if:" -> " == " -> "] -> @pose ${poseTarget} x=700 @goto end\r\n@label end\r\n@end\r\n`;
   const expected = before.replace('@show rin:coat', '@show kei:coat').replaceAll(`@pose ${poseTarget}`, `@pose ${poseTarget.replace('rin', 'kei')}`);
   const options = { files: { 'game.config.json': '{"entryScene":"start"}', 'content/scenario/start.gal': before },
     assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath };

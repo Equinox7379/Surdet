@@ -8,7 +8,7 @@ beforeEach(() => {
   class Context {
     font = '28px sans-serif';
     measureText(text: string) {
-      const size = Number.parseFloat(this.font) || 28;
+      const size = Number(this.font.match(/([\d.]+)px\b/)?.[1] ?? 28);
       return { width: Array.from(text).length * size, actualBoundingBoxAscent: size, actualBoundingBoxDescent: 4 };
     }
   }
@@ -109,7 +109,11 @@ describe('Pass 8 active dialogue presentation', () => {
       const body = r.texts().find((text) => text.text.startsWith('这是一段'))!;
       expect(body.style.fontSize).toBe(36);
       expect(body.y).toBeGreaterThanOrEqual(40);
+      expect(body.mask).toBeTruthy();
+      const content = body.text;
+      body.emit('wheel', { deltaY: 10000, stopPropagation: () => undefined } as never);
       expect(body.y + body.height).toBeLessThanOrEqual(650);
+      expect(body.text).toBe(content);
       r.layer.showText('读者', '读音《du yin》的正文。');
       const rubyBase = r.texts().find((text) => text.visible && text.text === '读音');
       expect(rubyBase).toBeDefined();
