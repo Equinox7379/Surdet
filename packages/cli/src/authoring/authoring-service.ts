@@ -769,7 +769,7 @@ export class AuthoringService {
 
   async characterEnsure(changeId: string, input: CharacterEnsureInput): Promise<ServiceResult<unknown>> {
     return this.withOpenChange(changeId, async (context) => {
-      const assets = input.portraits == null ? undefined : await withProjectLeaseRetry(this.leaseManager, context.storage.rootIdentity, async () => buildAssetCatalog(assetPathsFromFiles(await context.storage.listFiles())));
+      const assets = input.portraits === undefined && input.visuals === undefined ? undefined : await withProjectLeaseRetry(this.leaseManager, context.storage.rootIdentity, async () => buildAssetCatalog(assetPathsFromFiles(await context.storage.listFiles())));
       const result = await applyCharacterEnsure(context.session, input, { sha256: async (text) => hashText(text) }, undefined, assets);
       return { ...metadataForChange(context.session), result };
     });

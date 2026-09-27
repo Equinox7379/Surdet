@@ -1,9 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { assertUniquePortraitBindings, projectPortraitOverrides, resolveProjectPortraits } from '../src/project-portraits.js';
+import { assertUniquePortraitBindings, portraitSourcePaths, projectPortraitOverrides, resolveProjectPortraits } from '../src/project-portraits.js';
 
 describe('project portrait mappings', () => {
   const old = 'content/assets/portrait/hero_uniform_normal.png';
   const alternate = 'content/assets/portrait/library_casual_smile.webp';
+  it('keeps dynamic slots explicit and exposes all parts, including unused variants, without shadowing static declarations', () => {
+    const visual = { version: 1, kind: 'layered', layers: [{ id: 'body', images: { base: old, alternate }, default: 'base' }] };
+    const config = { characters: { hero: { visuals: { uniform: { normal: visual } } } } };
+    const bindings = resolveProjectPortraits(config, [old]);
+    expect(bindings).toHaveLength(1);
+    expect(bindings[0]).toMatchObject({ role: 'hero', configured: true, sourcePath: old, visual });
+    expect(new Set(portraitSourcePaths(bindings[0]!))).toEqual(new Set([old, alternate]));
+    const reordered = { characters: { hero: { visuals: { uniform: { normal: { ...visual, layers: [{ ...visual.layers[0], images: { alternate, base: old } }] } } } } } };
+    expect(JSON.stringify(projectPortraitOverrides(reordered))).toBe(JSON.stringify(projectPortraitOverrides(config)));
+    expect(() => projectPortraitOverrides({ characters: { hero: { ...config.characters.hero, portraits: { uniform: { normal: old } } } } })).toThrow('冲突');
+  });
   it('rejects duplicate automatic slots before runtime registration but accepts an explicit choice', () => {
     const duplicate = 'content/assets/portrait/hero_uniform_normal.webp';
     for (const paths of [[old, duplicate], [duplicate, old]]) {

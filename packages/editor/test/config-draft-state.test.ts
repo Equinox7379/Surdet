@@ -13,7 +13,11 @@ vi.mock('../src/project-io.js', () => ({
     return handle;
   },
 }));
-vi.mock('../src/authoring-project-storage.js', () => ({ commitCharacterTable: vi.fn(), commitStageConfiguration: vi.fn() }));
+vi.mock('../src/authoring-project-storage.js', () => ({
+  commitCharacterTable: vi.fn(),
+  commitStageConfiguration: vi.fn(),
+  parseCharacterVisualsDraft: (_id: string, text: string) => JSON.parse(text),
+}));
 
 class FakeElement {
   readonly tagName: string;
@@ -27,6 +31,8 @@ class FakeElement {
   value = '';
   checked = false;
   hidden = false;
+  disabled = false;
+  isConnected = true;
   rows = 0;
   readonly style: Record<string, string> = {};
   onclick: (() => void) | null = null;
@@ -73,6 +79,10 @@ class FakeElement {
 
   removeAttribute(name: string): void {
     this.attributes.delete(name);
+  }
+
+  closest(): FakeElement | null {
+    return null;
   }
 
   click(): void {
@@ -148,12 +158,12 @@ const {
 } = await import('../src/panels/config.js');
 const { commitStageConfiguration } = await import('../src/authoring-project-storage.js');
 
-async function renderFixture(): Promise<FakeElement> {
+async function renderFixture(gameConfigText = INITIAL_GAME_CONFIG): Promise<FakeElement> {
   state.configReadErrors = {};
   state.pendingSceneConfigWrites = [];
   state.pendingSceneConfigRenames = [];
   state.dirHandle = null;
-  state.gameConfigText = INITIAL_GAME_CONFIG;
+  state.gameConfigText = gameConfigText;
   state.configFiles = configFiles() as typeof state.configFiles;
   state.handles = {
     gameConfig: null,
@@ -182,6 +192,61 @@ afterEach(() => {
 });
 
 describe('configuration draft state', () => {
+  it('keeps malformed stored visual JSON visible so the author can repair it', async () => {
+    const visuals = { uniform: { broken: { version: 1, kind: 'sequence', frames: [], loop: true } } };
+    const root = await renderFixture(JSON.stringify({ ...JSON.parse(INITIAL_GAME_CONFIG), characters: { lynn: { name: '凛', visuals } } }));
+    const field = byAttribute(root, 'aria-label', 'lynn 分层 / 帧动画 JSON');
+    expect(JSON.parse(field.value)).toEqual(visuals);
+    expect(byAttribute(root, 'aria-label', 'lynn 的显示名称').value).toBe('凛');
+  });
+  it('keeps visual definitions separate from static portrait bindings and in undo/redo drafts', async () => {
+    const staticPath = 'content/assets/portrait/lynn_uniform_normal.png';
+    const visualPath = 'content/assets/portrait/lynn_uniform_talk.png';
+    const visuals = {
+      uniform: {
+        talk: {
+          version: 1,
+          kind: 'sequence',
+          frames: [{ image: visualPath, durationMs: 100 }],
+          loop: true,
+        },
+      },
+    };
+    const gameConfigText = JSON.stringify({
+      ...JSON.parse(INITIAL_GAME_CONFIG),
+      characters: {
+        lynn: {
+          name: '凛', avatar: 'lynn',
+          portraits: { uniform: { normal: staticPath } },
+          visuals,
+        },
+      },
+    }, null, 2);
+    state.dirAssets = [
+      { key: 'portrait:normal', kind: 'portrait', isImage: true, handle: null, sourcePath: staticPath },
+      { key: 'portrait:talk', kind: 'portrait', isImage: true, handle: null, sourcePath: visualPath },
+    ];
+    const root = await renderFixture(gameConfigText);
+    const field = () => byAttribute(root, 'aria-label', 'lynn 分层 / 帧动画 JSON');
+
+    expect(byText(root, '1 项显式绑定')).toBeDefined();
+    expect(JSON.parse(field().value)).toEqual(visuals);
+    expect(byText(root, '填入帧动画示例').disabled).toBe(true);
+
+    field().value = '{';
+    field().oninput?.();
+    expect(inspectConfigDraftState().dirtySections).toEqual(['characters']);
+    renderConfig(root as unknown as HTMLElement);
+    expect(field().value).toBe('{');
+
+    configUndo();
+    expect(JSON.parse(field().value)).toEqual(visuals);
+    expect(inspectConfigDraftState().dirty).toBe(false);
+    configRedo();
+    expect(field().value).toBe('{');
+    expect(inspectConfigDraftState().dirtySections).toEqual(['characters']);
+  });
+
   it('keeps stage edits across workbench remounts and shares dirty, undo and redo without writing source', async () => {
     await renderFixture();
     const original = readStageConfigDraft();

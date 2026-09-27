@@ -1,4 +1,4 @@
-import { assertUniquePortraitBindings, parseProjectStage, readProjectStage, resolveProjectPortraits } from '@surdet/core';
+import { assertUniquePortraitBindings, parseProjectStage, portraitSourcePaths, readProjectStage, resolveProjectPortraits, samplePortraitVisual } from '@surdet/core';
 import { parseProjectConfigDocument } from '@surdet/authoring';
 import { state } from './state.js';
 import { assetPathForHandle, runProjectWriteOperation } from './project-io.js';
@@ -20,7 +20,8 @@ export function createStageCalibrationPanel(onSaved: () => void, isEditable: () 
     node('p', '只编辑 stage 对象。positions 为命名坐标，distances 为命名倍率，compositions 为背景和图层。其他项目字段保持原样。'), form);
   let configText = state.gameConfigText, projectRoot = state.dirHandle, projectName = state.dirName, disposed = false, busy = false;
   let bitmap: ImageBitmap | null = null;
-  let loaded: { path: string; sha256: string; width: number; height: number; role: string; outfit: string; expression: string; fileHandle: FileSystemFileHandle } | null = null;
+  let loaded: { path: string; sha256: string; width: number; height: number; role: string; outfit: string; expression: string; fileHandle: FileSystemFileHandle;
+    parts: { handle: FileSystemFileHandle; sha256: string }[] } | null = null;
   let readSequence = 0;
   const canUse = () => isEditable() && !disposed && root.isConnected && !root.closest('[inert]') && state.pendingSceneCommit == null && !state.projectLoading && !state.reviewWorkspace && !state.reviewPreviewReadOnly
     && state.dirHandle === projectRoot && state.dirName === projectName && !state.projectWriteLock;
@@ -106,22 +107,44 @@ export function createStageCalibrationPanel(onSaved: () => void, isEditable: () 
     const asset = state.dirAssets.find(asset => (asset.sourcePath ?? (asset.handle ? assetPathForHandle(asset.handle) : undefined)) === binding.sourcePath);
     if (!asset?.handle) throw new Error('角色图片缺少实际读取句柄。');
     const file = await asset.handle.getFile(), bytes = await file.arrayBuffer();
-    const sha256 = await digest(bytes), image = await createImageBitmap(new Blob([bytes], { type: file.type }));
+    const sha256 = await digest(bytes);
+    let image = await createImageBitmap(new Blob([bytes], { type: file.type }));
+    const parts = [{ handle: asset.handle, sha256 }];
+    if (binding.visual) {
+      const composed = document.createElement('canvas'); composed.width = image.width; composed.height = image.height;
+      const context = composed.getContext('2d')!, visible = samplePortraitVisual(binding.visual, 0, false, false).images;
+      const images = new Map([[binding.sourcePath, image]]);
+      try {
+        for (const path of portraitSourcePaths(binding)) {
+          if (path === binding.sourcePath) continue;
+          const handle = state.dirAssets.find(item => (item.sourcePath ?? (item.handle ? assetPathForHandle(item.handle) : undefined)) === path)?.handle;
+          if (!handle) throw new Error(`缺少动态立绘图片：${path}`);
+          const file = await handle.getFile(), bytes = await file.arrayBuffer();
+          parts.push({ handle, sha256: await digest(bytes) });
+          const decoded = await createImageBitmap(new Blob([bytes], { type: file.type })); images.set(path, decoded);
+          if (decoded.width !== image.width || decoded.height !== image.height) throw new Error(`动态立绘画布尺寸不同：${path}`);
+        }
+        for (const path of visible) context.drawImage(images.get(path)!, 0, 0);
+        image = await createImageBitmap(composed);
+      } finally { for (const part of images.values()) part.close(); }
+    }
     if (!canUse() || sequence !== readSequence) { image.close(); return; }
     bitmap?.close(); bitmap = image;
-    loaded = { path: binding.sourcePath, sha256, width: image.width, height: image.height, role: binding.role, outfit: binding.outfit, expression: binding.expression, fileHandle: asset.handle };
+    loaded = { path: binding.sourcePath, sha256, width: image.width, height: image.height, role: binding.role, outfit: binding.outfit, expression: binding.expression, fileHandle: asset.handle, parts };
     const profile = readProjectStage({ stage: readValue() })?.portraits[`${binding.role}:${binding.outfit}`];
     const frame = profile?.expressions[binding.expression] ?? { x: 0, y: 0, width: image.width, height: image.height };
     for (const [key, value] of Object.entries({ ...frame, baseHeight: profile?.height ?? 648, anchorX: profile?.anchorX ?? .5, anchorY: profile?.anchorY ?? 1 })) inputs[key]!.value = String(value);
-    imageInfo.textContent = `${binding.sourcePath} · ${image.width} × ${image.height} · SHA-256 ${sha256}`; draw();
+    imageInfo.textContent = `${binding.sourcePath} · ${image.width} × ${image.height}${binding.visual ? ' · 显示默认组合，请为所有变体保留足够范围' : ''}`; draw();
   };
   select.onchange = () => { loaded = null; bitmap?.close(); bitmap = null; draw(); };
   calibration.append(node('p', '在图上拖出可见范围，或填写像素坐标。十字为锚点；不自动猜测透明边距。'), select,
     button('刷新角色列表', () => refresh()), button('读取实际图片', readImage), imageInfo, canvas, fields,
     button('确认图片校准并加入草稿', async () => {
       const captured = loaded; if (!captured) throw new Error('请先读取实际图片。');
-      const current = await (await captured.fileHandle.getFile()).arrayBuffer();
-      if (!canUse() || loaded !== captured || await digest(current) !== captured.sha256) throw new Error('图片或项目已变化，请重新读取后校准。');
+      for (const part of captured.parts) {
+        const current = await (await part.handle.getFile()).arrayBuffer();
+        if (!canUse() || loaded !== captured || await digest(current) !== part.sha256) throw new Error('图片或项目已变化，请重新读取后校准。');
+      }
       const value = readValue(), target = `${captured.role}:${captured.outfit}`;
       const v = Object.fromEntries(Object.entries(inputs).map(([key, input]) => [key, Number(input.value)]));
       if (v.x! < 0 || v.y! < 0 || v.width! <= 0 || v.height! <= 0 || v.x! + v.width! > captured.width || v.y! + v.height! > captured.height) throw new Error('可见范围超出实际图片。');

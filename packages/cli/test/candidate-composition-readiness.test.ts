@@ -22,6 +22,33 @@ function fixture() {
   return { root, data };
 }
 
+const portraitFramePaths = [
+  'content/assets/portrait/visual-frame-a.png',
+  'content/assets/portrait/visual-frame-b.png',
+];
+
+function portraitSequence(sourcePaths: readonly string[]) {
+  return {
+    version: 1 as const,
+    kind: 'sequence' as const,
+    frames: sourcePaths.map(image => ({ image, durationMs: 80 })),
+    loop: true,
+  };
+}
+
+function writePortraitVisualFixture(root: string, visuals: unknown, availablePaths: readonly string[] = portraitFramePaths): string {
+  for (const sourcePath of availablePaths) {
+    const file = path.join(root, sourcePath);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'fixture bytes for asset path metadata; no image decoding');
+  }
+  const configPath = path.join(root, 'game.config.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+  config['characters'] = { rin: { name: '凛', visuals } };
+  fs.writeFileSync(configPath, JSON.stringify(config));
+  return fs.readFileSync(configPath, 'utf8');
+}
+
 function result<T>(envelope: AuthoringEnvelope<unknown>): T {
   expect(envelope.ok, JSON.stringify(envelope)).toBe(true);
   if (!envelope.ok) throw new Error(envelope.error.message);
@@ -38,6 +65,99 @@ async function insertJump(session: AgentPortSession, operationId: string, sceneI
 }
 
 describe('Wave 8 candidate readiness through Agent Port', () => {
+  it('updates visuals through a direct fingerprint chain, resolves all visual sources, and rejects candidate visuals before writes', async () => {
+    const { root } = fixture();
+    const originalVisuals = { uniform: { normal: portraitSequence(portraitFramePaths.slice(0, 1)) } };
+    const updatedVisuals = { uniform: { normal: portraitSequence(portraitFramePaths) } };
+    const source = writePortraitVisualFixture(root, originalVisuals);
+    const session = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
+    try {
+      result(await session.invoke('change.begin', { compositionMode: 'direct' }));
+      const baseline = result<{ charactersFingerprint: string }>(await session.invoke('project.inspect', { view: 'working' }));
+      const updated = result<{ fingerprint: string }>(await session.invoke('character.ensure', {
+        operationId: 'add-visual-frames', id: 'rin', name: '凛', visuals: updatedVisuals,
+        portraits: { uniform: { still: portraitFramePaths[0] } },
+        expectedFingerprint: baseline.charactersFingerprint,
+      }));
+      const afterUpdate = result<{ charactersFingerprint: string }>(await session.invoke('project.inspect', { view: 'working' }));
+      expect(afterUpdate.charactersFingerprint).toBe(updated.fingerprint);
+      expect(afterUpdate.charactersFingerprint).not.toBe(baseline.charactersFingerprint);
+
+      const omitted = result<{ fingerprint: string }>(await session.invoke('character.ensure', {
+        operationId: 'preserve-visuals', id: 'rin', name: '凛', expectedFingerprint: afterUpdate.charactersFingerprint,
+      }));
+      expect(omitted.fingerprint).toBe(afterUpdate.charactersFingerprint);
+      const assets = result<ProjectAssetCatalog>(await session.invoke('project.assets', { view: 'working' }));
+      const portrait = assets.portraits.find(item => item.role === 'rin' && item.outfit === 'uniform' && item.expression === 'normal');
+      expect(portrait).toMatchObject({ visual: updatedVisuals.uniform.normal, sourcePaths: portraitFramePaths, resolved: true });
+      for (const sourcePath of portraitFramePaths) {
+        expect(assets.intelligence.items.find(item => item.sourcePath === sourcePath)).toMatchObject({ physical: true });
+      }
+      result(await session.invoke('character.ensure', { operationId: 'remove-visual-only', id: 'rin', name: '凛', visuals: null, expectedFingerprint: omitted.fingerprint }));
+      const retained = result<ProjectAssetCatalog>(await session.invoke('project.assets', { view: 'working' }));
+      expect(retained.portraits.find(item => item.role === 'rin' && item.expression === 'still')?.resolved).toBe(true);
+      expect(retained.portraits.some(item => item.role === 'rin' && item.visual)).toBe(false);
+      expect(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8')).toBe(source);
+      expect(result<{ charactersFingerprint: string }>(await session.invoke('project.inspect', { view: 'project' })).charactersFingerprint)
+        .toBe(baseline.charactersFingerprint);
+    } finally { await session.close(); }
+
+    const candidate = fixture();
+    const candidateSource = writePortraitVisualFixture(candidate.root, originalVisuals);
+    const candidateSession = await openAgentPortSession({ projectRoot: candidate.root, policy: 'stage' });
+    try {
+      result(await candidateSession.invoke('change.begin', { compositionMode: 'candidate' }));
+      const before = (await NodeChangeStore.openByChangeId(candidateSession.activeChangeId!))!.record;
+      const fingerprint = result<{ charactersFingerprint: string }>(await candidateSession.invoke('project.inspect', { view: 'working' })).charactersFingerprint;
+      expect(await candidateSession.invoke('character.ensure', {
+        operationId: 'candidate-visual-change', id: 'rin', name: '凛', visuals: updatedVisuals, expectedFingerprint: fingerprint,
+      })).toMatchObject({ ok: false, error: { code: 'UNSUPPORTED_OPERATION' } });
+      expect((await NodeChangeStore.openByChangeId(candidateSession.activeChangeId!))!.record).toEqual(before);
+      expect(fs.readFileSync(path.join(candidate.root, 'game.config.json'), 'utf8')).toBe(candidateSource);
+    } finally { await candidateSession.close(); }
+  });
+
+  it('seals candidate @show against complete baseline visual assets and refuses a missing animation frame atomically', async () => {
+    const complete = fixture();
+    const visuals = { uniform: { normal: portraitSequence(portraitFramePaths) } };
+    writePortraitVisualFixture(complete.root, visuals);
+    const session = await openAgentPortSession({ projectRoot: complete.root, policy: 'stage' });
+    try {
+      result(await session.invoke('change.begin', { compositionMode: 'candidate' }));
+      const created = await session.invoke('scene.create', {
+        operationId: 'show-visual', sceneId: 'show_visual',
+        blocks: [{ kind: 'instruction', name: 'show', args: ['rin:uniform', 'normal'] }],
+      });
+      expect(created.ok, JSON.stringify(created)).toBe(true);
+      const assets = result<ProjectAssetCatalog>(await session.invoke('project.assets', { view: 'working' }));
+      expect(assets.portraits.find(item => item.role === 'rin' && item.outfit === 'uniform' && item.expression === 'normal'))
+        .toMatchObject({ visual: visuals.uniform.normal, sourcePaths: portraitFramePaths, resolved: true });
+
+      const capsule = await generateDeliveryCapsule(session);
+      const manifest = capsule.composition.manifest as CompositionManifest;
+      const operation = manifest.operations.find(item => item.capabilityId === 'scene.create' && item.primaryObject === 'scene:show_visual')!;
+      expect(operation.requiredObjects).toContainEqual({ objectRef: 'asset:portrait:rin:uniform:normal', source: 'base' });
+      expect(operation.replayStateRequirements).toEqual(expect.arrayContaining([
+        expect.objectContaining({ objectRef: 'config:portraits', source: 'base' }),
+      ]));
+    } finally { await session.close(); }
+
+    const incomplete = fixture();
+    const source = writePortraitVisualFixture(incomplete.root, visuals, portraitFramePaths.slice(0, 1));
+    const missingSession = await openAgentPortSession({ projectRoot: incomplete.root, policy: 'stage' });
+    try {
+      result(await missingSession.invoke('change.begin', { compositionMode: 'candidate' }));
+      const before = (await NodeChangeStore.openByChangeId(missingSession.activeChangeId!))!.record;
+      expect(await missingSession.invoke('scene.create', {
+        operationId: 'show-visual', sceneId: 'show_visual',
+        blocks: [{ kind: 'instruction', name: 'show', args: ['rin:uniform', 'normal'] }],
+      })).toMatchObject({ ok: false, error: { code: 'CANDIDATE_DEPENDENCY_NOT_READY' } });
+      expect((await NodeChangeStore.openByChangeId(missingSession.activeChangeId!))!.record).toEqual(before);
+      expect(fs.readFileSync(path.join(incomplete.root, 'game.config.json'), 'utf8')).toBe(source);
+      expect(fs.existsSync(path.join(incomplete.root, 'content', 'scenario', 'show_visual.gal'))).toBe(false);
+    } finally { await missingSession.close(); }
+  });
+
   it('rejects a candidate scene whose configured baseline font is missing without writing its record', async () => {
     const { root } = fixture();
     const config = JSON.parse(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8'));
@@ -169,7 +289,7 @@ describe('Wave 8 candidate readiness through Agent Port', () => {
       const opened = (await NodeChangeStore.openByChangeId(session.activeChangeId!))!;
       expect(opened.record).toEqual(beforeCycle);
       const description = await session.describe();
-      expect(description.contractVersion).toBe('2.16.0');
+      expect(description.contractVersion).toBe(AUTHORING_CONTRACT_VERSION);
       expect(description.candidateReadiness).toMatchObject({ mode: 'candidate', status: 'ready', operationCount: 5, issueCount: 0, truncated: false });
       result(await session.invoke('project.validate', {}));
       result(await session.invoke('project.simulate', { sceneId: 'entry' }));
@@ -254,7 +374,7 @@ describe('Wave 8 candidate readiness through Agent Port', () => {
   });
 
   it('validates strict mode/status and nested readiness fields under contract 2.5', async () => {
-    expect(AUTHORING_CONTRACT_VERSION).toBe('2.16.0');
+    expect(AUTHORING_CONTRACT_VERSION).toBe('2.17.0');
     const schema = standardSchemaFromJson(CANDIDATE_COMPOSITION_READINESS_SCHEMA);
     const readiness = { mode: 'candidate', status: 'ready', operationFactsVersion: '1.0.0', operationCount: 0, issueCount: 0, issues: [], truncated: false };
     expect((await schema['~standard'].validate(readiness)).issues).toBeUndefined();

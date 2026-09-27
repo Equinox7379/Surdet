@@ -31,7 +31,7 @@ describe('agent authoring CLI JSON contract', () => {
     expect(result.stdout.trim().endsWith('}')).toBe(true);
     expect(result.stderr).toBe('');
     const body = JSON.parse(result.stdout);
-    expect(body.contractVersion).toBe('2.16.0');
+    expect(body.contractVersion).toBe('2.17.0');
     expect(body.result.capabilities).toHaveLength(53);
     expect(body.result.capabilities[0]).toEqual(expect.objectContaining({
       id: 'capabilities.describe',

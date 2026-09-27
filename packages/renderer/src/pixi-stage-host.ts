@@ -417,6 +417,9 @@ export class RendererStageHost {
     this.#world.setPortraitFocus(characterId);
   }
 
+  setPortraitSpeaking(speaking: boolean): void { this.#world.setPortraitSpeaking(speaking); }
+  setPortraitSkipping(skipping: boolean): void { this.#world.setPortraitSkipping(skipping); }
+
   applyStage(command: import('@surdet/core').StageCommand): void { this.#world.applyStage(command); }
 
   setBackground(key: string | null): void {

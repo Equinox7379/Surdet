@@ -17,6 +17,22 @@ const hasher: TextHasher = {
   sha256: async (text) => createHash('sha256').update(text, 'utf8').digest('hex'),
 };
 
+it.each(['sequence', 'layered'] as const)('moves every %s image reference without rewriting logical identity or prose', async kind => {
+  const a = 'content/assets/portrait/rin_parts_a.png', b = 'content/assets/portrait/rin_parts_b.png';
+  const movedB = 'content/assets/portrait/cast/rin_parts_b.png';
+  const visual = kind === 'sequence' ? { version: 1, kind, loop: true, frames: [{ image: a, durationMs: 100 }, { image: b, durationMs: 50 }] }
+    : { version: 1, kind, layers: [{ id: 'eyes', images: { open: a, closed: b }, default: 'open', idle: { loop: true, frames: [{ variant: 'open', durationMs: 100 }, { variant: 'closed', durationMs: 50 }] } }] };
+  const config = { characters: { rin: { name: '凛', visuals: { uniform: { normal: visual } } } } };
+  const options = { files: { 'game.config.json': JSON.stringify(config), 'content/scenario/start.gal': '@scene start\n@show rin:uniform normal\n@end\n' },
+    assets: [{ path: a, bytes: 1 }, { path: b, bytes: 1 }], sourcePath: b, targetPath: movedB };
+  for (const result of [await planProjectAssetRelocation(await makeInput(options), hasher),
+    await planProjectAssetRelocationBatch(await makeBatchInput({ ...options, items: [{ itemId: 'part', sourcePath: b, targetPath: movedB }] }), hasher)]) {
+    expect(result.plan.blockers).toEqual([]);
+    expect(JSON.parse(result.textChanges.find(file => file.path === 'game.config.json')!.afterText)).toEqual(JSON.parse(JSON.stringify(config).replaceAll(b, movedB)));
+    expect(result.textChanges.some(file => file.path.endsWith('.gal'))).toBe(false);
+  }
+});
+
 it.each(['portrait:rin:coat', 'rin:coat'])('renames the actual pose target %s in scenes and quoted-arrow choices, for single and batch plans', async poseTarget => {
   const sourcePath = 'content/assets/portrait/rin_coat_normal.png', targetPath = 'content/assets/portrait/kei_coat_normal.png';
   const before = `@scene start\r\n@show rin:coat normal @x=100\r\n@pose ${poseTarget} @x=500\r\n@choice\r\n  原文 "portrait:rin:coat -> 保留" [if:" -> " == " -> "] -> @pose ${poseTarget} x=700 @goto end\r\n@label end\r\n@end\r\n`;

@@ -4,6 +4,7 @@ import type { RendererFontRole } from '../api/renderer-commands.js';
 import { RendererError } from '../api/renderer-errors.js';
 import { AsyncGeneration } from '../lifecycle/async-generation.js';
 import { RenderLifecycle } from '../lifecycle/render-lifecycle.js';
+import { parsePortraitVisual, portraitVisualPaths, samplePortraitVisual, type PortraitVisualDefinition } from '@surdet/core';
 
 export type RenderAssetSource = string | Texture;
 
@@ -39,6 +40,12 @@ interface AssetSlot {
 
 type AssetMap = Map<string, AssetSlot>;
 
+export interface RegisteredPortraitVisual {
+  readonly definition: PortraitVisualDefinition;
+  readonly images: ReadonlyMap<string, Texture>;
+  readonly key: string;
+}
+
 function assetParser(format: string | undefined, source: string): 'loadSVG' | 'loadTextures' | undefined {
   const value = (format ?? source.split('?')[0]?.split('#')[0]?.split('.').pop() ?? '').toLowerCase();
   if (value === 'svg' || value === 'image/svg+xml') return 'loadSVG';
@@ -72,6 +79,9 @@ export class RenderAssetRegistry {
   readonly #unload: (sources: readonly string[]) => Promise<void>;
   #backgrounds: AssetMap = new Map();
   #portraits: AssetMap = new Map();
+  #portraitVisuals = new Map<string, { value: RegisteredPortraitVisual; assets: AssetMap }>();
+  #visualRequests = new Map<string, object>();
+  #visualLoads = new Set<Promise<void>>();
   #avatars: AssetMap = new Map();
   #videos = new Map<string, { url: string; sourcePath?: string }>();
   #registrations = new WeakMap<AssetMap, Map<string, object>>();
@@ -105,7 +115,61 @@ export class RenderAssetRegistry {
     format?: string,
     sourcePath?: string,
   ): Promise<void> {
-    await this.#register(this.#portraits, `${charId}:${costume}:${expression}`, source, format, sourcePath);
+    this.#ensureActive('registerPortrait');
+    const id = `${charId}:${costume}:${expression}`, ticket = {}, token = this.#generation.token(), staged: AssetMap = new Map();
+    this.#visualRequests.set(id, ticket);
+    const work = (async () => {
+      try {
+        await this.#register(staged, id, source, format, sourcePath);
+        if (!token.current || this.#visualRequests.get(id) !== ticket) return;
+        this.#commit(this.#portraits, id, staged.get(id)!);
+        this.#clearPortraitVisual(id);
+      } finally {
+        this.#clearMap(staged);
+        if (this.#visualRequests.get(id) === ticket) this.#visualRequests.delete(id);
+      }
+    })();
+    this.#visualLoads.add(work);
+    try { await work; } finally { this.#visualLoads.delete(work); }
+  }
+
+  async registerPortraitVisual(charId: string, costume: string, expression: string, input: PortraitVisualDefinition,
+    sources: Readonly<Record<string, { source: RenderAssetSource; format?: string }>>): Promise<void> {
+    this.#ensureActive('registerPortraitVisual');
+    const definition = parsePortraitVisual(input), paths = portraitVisualPaths(definition);
+    for (const path of paths) if (!Object.hasOwn(sources, path)) throw new Error(`动态立绘图片未提供：${path}`);
+    const id = `${charId}:${costume}:${expression}`, ticket = {}, token = this.#generation.token(), assets: AssetMap = new Map();
+    this.#visualRequests.set(id, ticket);
+    const work = (async () => {
+      try {
+        const results = await Promise.allSettled(paths.map(path => this.#register(assets, path, sources[path]!.source, sources[path]!.format,
+          typeof sources[path]!.source === 'string' ? path : undefined)));
+        const failed = results.find(value => value.status === 'rejected');
+        if (failed?.status === 'rejected') throw failed.reason;
+        if (!token.current || this.#visualRequests.get(id) !== ticket) throw new Error('动态立绘注册已取消');
+        const first = assets.get(paths[0]!)!.texture;
+        for (const [path, item] of assets) if (item.texture.width !== first.width || item.texture.height !== first.height)
+          throw new Error(`动态立绘需要一致画布尺寸：${path}`);
+        const value: RegisteredPortraitVisual = { definition, images: new Map([...assets].map(([path, item]) => [path, item.texture])),
+          key: JSON.stringify({ definition, images: paths.map(path => { const item = assets.get(path)!; return [path, item.sourceIdentity?.sha256 ?? null, item.texture.width, item.texture.height]; }) }) };
+        this.#clearPortraitVisual(id);
+        const staticSlot = this.#portraits.get(id);
+        if (staticSlot) { this.#portraits.delete(id); this.#releaseSlot(staticSlot); }
+        this.#portraitVisuals.set(id, { value, assets });
+      } catch (error) { this.#clearMap(assets); throw error; }
+      finally { if (this.#visualRequests.get(id) === ticket) this.#visualRequests.delete(id); }
+    })();
+    this.#visualLoads.add(work);
+    try { await work; } finally { this.#visualLoads.delete(work); }
+  }
+
+  resolvePortraitVisual(charId: string, costume: string, expression: string): RegisteredPortraitVisual | null {
+    return this.#portraitVisuals.get(`${charId}:${costume}:${expression}`)?.value ?? null;
+  }
+
+  #clearPortraitVisual(id: string): void {
+    const old = this.#portraitVisuals.get(id);
+    if (old) { this.#portraitVisuals.delete(id); this.#clearMap(old.assets); }
   }
 
   async registerAvatar(key: string, source: RenderAssetSource, format?: string): Promise<void> {
@@ -117,11 +181,14 @@ export class RenderAssetRegistry {
   }
 
   resolvePortrait(charId: string, costume: string, expression: string): Texture | null {
+    const visual = this.resolvePortraitVisual(charId, costume, expression);
+    if (visual) return visual.images.get(samplePortraitVisual(visual.definition, 0, false, false).images[0]!)!;
     return this.#portraits.get(`${charId}:${costume}:${expression}`)?.texture ?? null;
   }
 
   resolvePortraitIdentity(charId: string, costume: string, expression: string): import('@surdet/core').StageImageSource | null {
-    const slot = this.#portraits.get(`${charId}:${costume}:${expression}`);
+    const id = `${charId}:${costume}:${expression}`, visual = this.#portraitVisuals.get(id);
+    const slot = visual ? visual.assets.get(samplePortraitVisual(visual.value.definition, 0, false, false).images[0]!) : this.#portraits.get(id);
     return slot?.sourceIdentity ? { ...slot.sourceIdentity, width: slot.texture.width, height: slot.texture.height } : null;
   }
 
@@ -205,6 +272,7 @@ export class RenderAssetRegistry {
     this.#generation.advance();
     if (options.preserveAssets) return;
     const clearAssets = options.clearAssets === true;
+    if (clearAssets) for (const id of this.#portraitVisuals.keys()) this.#clearPortraitVisual(id);
     if (clearAssets) this.#videos.clear();
     this.#resetMap(this.#backgrounds, clearAssets);
     this.#resetMap(this.#portraits, clearAssets);
@@ -214,6 +282,9 @@ export class RenderAssetRegistry {
   async releaseRegisteredAssetSources(): Promise<void> {
     this.#ensureActive('releaseRegisteredAssetSources');
     this.#videos.clear();
+    this.#visualRequests.clear();
+    const visualPending = await Promise.allSettled([...this.#visualLoads]);
+    for (const id of this.#portraitVisuals.keys()) this.#clearPortraitVisual(id);
     // Synchronous reset/dispose can start an unload before this awaited barrier.
     // Failed attempts remain owned until the caller explicitly retries release.
     for (const [source, release] of this.#sourceReleases) {
@@ -228,14 +299,14 @@ export class RenderAssetRegistry {
       }
     }
     const results = await Promise.allSettled([...this.#sourceReleases.values()].map(({ promise }) => promise));
-    const failure = [...pending, ...results].find((result) => result.status === 'rejected');
+    const failure = [...visualPending, ...pending, ...results].find((result) => result.status === 'rejected');
     if (failure?.status === 'rejected') throw failure.reason;
   }
 
   diagnosticSnapshot(): RenderAssetDiagnosticSnapshot {
     return {
       backgrounds: [...this.#backgrounds.keys()].sort(),
-      portraits: [...this.#portraits.keys()].sort(),
+      portraits: [...this.#portraits.keys(), ...this.#portraitVisuals.keys()].sort(),
       avatars: [...this.#avatars.keys()].sort(),
       fontFamilies: { ...this.#fontFamilies },
       sources: [...new Set([...this.#sourceRefs.keys(), ...this.#sourceLoads.keys(), ...this.#sourceReleases.keys()])].sort(),
@@ -247,6 +318,8 @@ export class RenderAssetRegistry {
     this.#generation.dispose();
     this.#clearMap(this.#backgrounds);
     this.#clearMap(this.#portraits);
+    this.#visualRequests.clear();
+    for (const id of this.#portraitVisuals.keys()) this.#clearPortraitVisual(id);
     this.#clearMap(this.#avatars);
     this.#videos.clear();
     this.#resetFontsInternal();

@@ -297,6 +297,11 @@ export class RendererFacade {
         if (!method) this.#missing('assets', 'registerPortrait');
         await method.call(this.#stage, charId, costume, expression, source, format, sourcePath);
       },
+      registerPortraitVisual: async (charId, costume, expression, definition, sources) => {
+        this.#ensureActive('assets', 'registerPortraitVisual');
+        if (!this.#assetRegistry) this.#missing('assets', 'registerPortraitVisual');
+        await this.#assetRegistry.registerPortraitVisual(charId, costume, expression, definition, sources);
+      },
       registerAvatar: async (key, source, format) => {
         this.#ensureActive('assets', 'registerAvatar');
         if (this.#assetRegistry) {
@@ -362,6 +367,8 @@ export class RendererFacade {
       stopParticles: () => this.#callWorld('stopParticles', this.#worldPort?.stopParticles, this.#stage.stopParticles),
       applyTimelineFrame: (event) => this.#callWorld('applyTimelineFrame', this.#worldPort?.applyTimelineFrame, this.#stage.applyTimelineFrame, event),
       setPortraitFocus: (characterId) => this.#callWorld('setPortraitFocus', this.#worldPort?.setPortraitFocus, this.#stage.setPortraitFocus, characterId),
+      setPortraitSpeaking: (speaking) => { if (this.#worldPort) this.#worldPort.setPortraitSpeaking?.(speaking); else this.#stage.setPortraitSpeaking?.(speaking); },
+      setPortraitSkipping: (skipping) => { if (this.#worldPort) this.#worldPort.setPortraitSkipping?.(skipping); else this.#stage.setPortraitSkipping?.(skipping); },
     };
 
     const dialogue: DialogueCommands = {

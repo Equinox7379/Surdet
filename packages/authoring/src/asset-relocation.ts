@@ -740,6 +740,20 @@ function configRewrite(
     }
   }
   for (const portrait of projectPortraitOverrides(root)) {
+    if (portrait.visual) {
+      const prefix: JsonPath = ['characters', portrait.role, 'visuals', portrait.outfit, portrait.expression];
+      const entries: { path: JsonPath; value: string }[] = portrait.visual.kind === 'sequence'
+        ? portrait.visual.frames.map((frame, index) => ({ path: [...prefix, 'frames', index, 'image'], value: frame.image }))
+        : portrait.visual.layers.flatMap((layer, index) => Object.entries(layer.images).map(([variant, value]) => ({ path: [...prefix, 'layers', index, 'images', variant], value })));
+      for (const entry of entries) {
+        knownPaths.add(pathKey(entry.path));
+        if (source.kind === 'portrait' && entry.value === source.path && target.path !== source.path) replacements.push({
+          path: entry.path, before: source.path, after: target.path,
+          reference: reference('character', file.path, `角色 ${portrait.role}`, 'visuals', `character:${portrait.role}:${portrait.outfit}:${portrait.expression}`),
+        });
+      }
+      continue;
+    }
     const path: JsonPath = ['characters', portrait.role, 'portraits', portrait.outfit, portrait.expression];
     knownPaths.add(pathKey(path));
     if (source.kind === 'portrait' && portrait.sourcePath === source.path && target.path !== source.path) {

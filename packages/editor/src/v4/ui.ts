@@ -64,7 +64,19 @@ export class ImageScope {
     }
     const load = async (): Promise<void> => {
       try {
-        const file = await source.handle!.getFile();
+        let file: Blob = await source.handle!.getFile();
+        if (source.layers) {
+          const canvas = document.createElement('canvas'), context = canvas.getContext('2d')!;
+          for (const [index, handle] of source.layers.entries()) {
+            const bitmap = await createImageBitmap(await handle.getFile());
+            try {
+              if (index === 0) { canvas.width = bitmap.width; canvas.height = bitmap.height; }
+              if (bitmap.width !== canvas.width || bitmap.height !== canvas.height) throw new Error('分层画布尺寸不一致');
+              context.drawImage(bitmap, 0, 0);
+            } finally { bitmap.close(); }
+          }
+          file = await new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('合成缩略图失败'))));
+        }
         if (this.disposed || !host.isConnected) return;
         const url = URL.createObjectURL(file); this.urls.add(url);
         const img = h('img'); img.alt = alt; img.decoding = 'async'; img.style.objectFit = fit;

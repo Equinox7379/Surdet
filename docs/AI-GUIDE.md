@@ -2,7 +2,7 @@
 
 本指南面向编写剧情、配置与演出的内容作者。默认使用正式 Agent Port 工具，在隔离草稿中修改、验证和试玩；不需要先读引擎源码、长期台账或重新接线播放器。已有项目保持原位，新项目使用现有模板。
 
-本批公开创作合同为 **2.16.0**，新增素材整理／原位替换及有限舞台配置能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+本批公开创作合同为 **2.17.0**，支持分层立绘与逐帧动画，保留素材整理／原位替换及有限舞台配置能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
 
 ## 0. 准备项目与会话
 
@@ -210,6 +210,38 @@ Editor 的合法场景改名会同步已知引用及 `player.endScenes` 等结�
 角色资料沿用 `character.ensure`：`name` 是默认显示名，`avatar` 是 avatars 中的实际键。需要让某个服装／表情使用另一张立绘时，direct 草稿可传 `portraits: { "coat": { "smile": "content/assets/portrait/实际角色_实际服装_实际表情.png" } }`；路径必须复制当前目录返回的完整 sourcePath。这会替换该角色的整份显式映射，省略 portraits 保留原值，传 null 清除映射并恢复文件名发现。未配置的槽仍按“角色_服装_表情”发现；配置了却缺文件或解码失败会明确报错，不静默改用旧图。`project.inspect` 的 characters[].declaration 与 charactersFingerprint 提供当前值和修改指纹；修改后重新读取 `project.assets(view:working)`，configured 和 overriddenSourcePaths 会标出显式绑定及其覆盖的原文件，usage 使用最终逻辑键。未知角色字段保留。
 
 自动发现只接受恰好三段、各段非空的“角色_服装_表情”文件名；`rin_coat_smile_v2.png` 之类备份名仍可诊断或显式绑定，但不会截断成 smile 覆盖原图。同一槽存在多个合法图片时，试玩与成品会明确报绑定冲突，快捷选图也不猜其中一张；先在角色资料中明确绑定，或整理冲突文件。
+
+**分层立绘与帧动画。** 在 direct 草稿中用 `character.ensure.visuals` 设置 `服装 → 表情 → 定义`，继续携带 `charactersFingerprint`。`portraits` 仍只接受静态图片路径；同一槽不能同时存在两种显式配置。省略 visuals 保留旧值，null 删除整份动态映射，对象替换整份映射。`project.inspect` 的角色 declaration 可读取定义；`project.assets` 返回 visual、全部 sourcePaths、resolved 与原有 usage。先导入全部图片，再编辑定义，最后使用原 `@show 角色:服装 表情` 或时间轴 show。
+
+两种定义示例（图片路径必须换成项目目录的真实 sourcePath）：
+
+```json
+{
+  "coat": {
+    "blink": {
+      "version": 1, "kind": "sequence", "loop": true,
+      "frames": [
+        { "image": "content/assets/portrait/rin_parts_open.png", "durationMs": 2400 },
+        { "image": "content/assets/portrait/rin_parts_closed.png", "durationMs": 120 }
+      ]
+    },
+    "talk": {
+      "version": 1, "kind": "layered",
+      "layers": [
+        { "id": "body", "images": { "normal": "content/assets/portrait/rin_parts_body.png" }, "default": "normal" },
+        { "id": "mouth", "images": { "closed": "content/assets/portrait/rin_parts_mouthclosed.png", "open": "content/assets/portrait/rin_parts_mouthopen.png" }, "default": "closed",
+          "speaking": { "loop": true, "frames": [{ "variant": "closed", "durationMs": 100 }, { "variant": "open", "durationMs": 120 }] } }
+      ]
+    }
+  }
+}
+```
+
+图片须为相同尺寸的完整画布；分层部件在该画布上对齐，空白区域透明。layers 顺序从后到前，每层只显示一个变体；default 必须存在，idle 为待机序列，speaking 只在当前角色的台词打字时使用（无 speaking 时沿用 idle）。这不是音素级语音口型。说话状态切换重启分层序列时钟，普通帧动画不受说话状态重启影响。每段 1–256 帧，每帧为正整数毫秒、总长不超过 10 分钟；最多 16 层、每层 64 变体。loop:false 完成后保持最后一帧。
+
+暂停冻结进度；快进将单次片段收至末帧、循环片段暂用默认画面；减少动态效果使用第一帧／默认部件。存档记录图片内容身份和动画位置；任何帧缺失、画布不一致或存档图片身份不符均拒绝，不悄悄回退到首图。舞台移动、镜像、缩放、透明度及表情过渡作用于整个组合。校准页显示默认组合，作者须为其他帧／变体留足可见范围。
+
+Editor 角色表的“分层 / 帧动画”提供 JSON 草稿及引用已导入图片的起始示例；保存、撤销／重做沿用角色表。快捷选图与排布显示默认组合，真实动画在试玩中查看。素材目录会追踪每个部件，包括未选中的变体；整理图片同步修改定义路径。candidate 可使用基线已完整解析的动态槽，配置依赖按现有 manifest 冻结；本阶段不允许 candidate 修改 visuals，不回填旧胶囊，也不把胶囊声明成素材二进制归档。
 
 人类可在 Editor“配置 → 角色”填写 ID 和显示名，点击“添加角色”建立首个或新的未保存角色；“取消新增”只撤销该草稿，不删除已有角色。仍须保存角色表才写入文件，原角色缺失不会被误当成新增。随后可展开服装／表情绑定，添加一行、填写服装与表情、从项目立绘中选图，再点“保存角色表”或“保存全部”。编辑支持原配置撤销，未保存不写磁盘；移除绑定只恢复该槽的自动发现，不删除图片。重复槽、不完整字段和不存在的图片会拒绝保存，保留草稿供修正。
 

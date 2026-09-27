@@ -13,7 +13,7 @@ import { assertConfigSourcesReadable, configSourceError, configSourcePath, parse
 import { assetPathForHandle, assertProjectWriteUnlocked, readProjectSourceText, runProjectWriteOperation, writeProjectText } from '../project-io.js';
 import { editorWorkspaceStatus } from '../editor-workspace.js';
 import { AuthoringOperationError, parseProjectConfigDocument, renameConfigReferences, renameGalleryLabel } from '@surdet/authoring';
-import { commitCharacterTable, commitStageConfiguration, type CharacterTableEditRow } from '../authoring-project-storage.js';
+import { commitCharacterTable, commitStageConfiguration, parseCharacterVisualsDraft, type CharacterTableEditRow } from '../authoring-project-storage.js';
 import {
   VAR_TYPES, parseVariablesToRows, rowsToVariables, applyVariablesToConfig,
   parseAchievementsToRows, rowsToAchievements, collectReferencedVars,
@@ -348,7 +348,9 @@ function ensureCharRows(): CharacterTableEditRow[] {
           id,
           name: typeof record['name'] === 'string' ? record['name'] as string : '',
           avatar: typeof record['avatar'] === 'string' ? record['avatar'] as string : '',
-          portraits: projectPortraitOverrides({ characters: { [id]: record } }).map(({ outfit, expression, sourcePath }) => ({ outfit, expression, sourcePath })),
+          portraits: projectPortraitOverrides({ characters: { [id]: { portraits: record['portraits'] } } })
+            .map(({ outfit, expression, sourcePath }) => ({ outfit, expression, sourcePath })),
+          ...(record['visuals'] === undefined ? {} : { visualsText: JSON.stringify(record['visuals'], null, 2) }),
         };
       })
       : [];
@@ -795,7 +797,7 @@ function renderCharactersSection(): HTMLElement {
     if (!id || !name) { setStatus('请填写角色 ID 与显示名称。', false); return; }
     if (rows.some(row => row.id === id)) { setStatus(`角色 ID 已存在：${id}`, false); return; }
     pushConfigHistory(false);
-    rows.push({ id, name, avatar: '', portraits: [], create: true });
+    rows.push({ id, name, avatar: '', portraits: [], visualsText: '{}', create: true });
     rerenderConfig();
   };
   const idField = h('label', 'config-field'), nameField = h('label', 'config-field');
@@ -807,7 +809,7 @@ function renderCharactersSection(): HTMLElement {
   const table = h('table', 'config-table') as HTMLTableElement;
   const thead = h('thead');
   const hr = h('tr');
-  for (const [label, key] of [['角色标识', 'id'], ['显示名称', 'name'], ['头像素材', 'avatar'], ['服装 / 表情', 'portraits']] as const) {
+  for (const [label, key] of [['角色标识', 'id'], ['显示名称', 'name'], ['头像素材', 'avatar'], ['服装 / 表情', 'portraits'], ['分层 / 帧动画', 'visuals']] as const) {
     const th = h('th');
     th.appendChild(configLabel(label, key));
     hr.appendChild(th);
@@ -901,6 +903,85 @@ function renderCharactersSection(): HTMLElement {
     };
     details.append(summary, h('p', 'hint', '这里的绑定优先于文件名；未绑定的表情仍自动发现。移除绑定不删除图片。'), list, add);
     renderMappings(); tdPortraits.appendChild(details); tr.appendChild(tdPortraits);
+
+    const tdVisuals = h('td');
+    const visualsDetails = h('details');
+    visualsDetails.style.whiteSpace = 'normal';
+    const visualsSummary = h('summary', '', '分层 / 帧动画');
+    const visualsText = h('textarea') as HTMLTextAreaElement;
+    visualsText.value = row.visualsText ?? '';
+    visualsText.rows = 8;
+    visualsText.setAttribute('aria-label', `${row.id} 分层 / 帧动画 JSON`);
+    visualsText.placeholder = '在此编辑 outfit → expression → PortraitVisualDefinition；输入 null 可移除已有配置。';
+    const visualImagePaths = [...new Set(state.dirAssets.flatMap(asset =>
+      asset.kind === 'portrait' && asset.isImage && asset.sourcePath ? [asset.sourcePath] : []
+    ))].sort();
+    const sequenceExample = h('button', '', '填入帧动画示例') as HTMLButtonElement;
+    sequenceExample.type = 'button';
+    const layeredExample = h('button', '', '填入分层示例') as HTMLButtonElement;
+    layeredExample.type = 'button';
+    const exampleHint = h('p', 'hint');
+    const draftIsEmpty = (): boolean => {
+      const text = visualsText.value.trim();
+      if (!text) return true;
+      try {
+        const parsed: unknown = JSON.parse(text);
+        return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) && Object.keys(parsed).length === 0;
+      } catch {
+        return false;
+      }
+    };
+    const updateExampleControls = () => {
+      const empty = draftIsEmpty();
+      sequenceExample.disabled = layeredExample.disabled = visualImagePaths.length === 0 || !empty;
+      exampleHint.textContent = visualImagePaths.length === 0
+        ? '当前没有可用立绘图片，请先导入图片后再添加示例。'
+        : empty
+          ? '示例只引用已导入的立绘图片，可继续替换帧图。各分层请使用同尺寸透明画布。'
+          : '示例不会覆盖已有编辑；清空为 {} 后才可填入起始示例。';
+    };
+    const canEditVisuals = () => visualsDetails.isConnected && rows[i] === row && canEdit();
+    const fillVisualExample = (kind: 'sequence' | 'layered') => {
+      if (!canEditVisuals() || !draftIsEmpty() || visualImagePaths.length === 0) return;
+      const sourcePath = visualImagePaths[0]!;
+      const definition = kind === 'sequence'
+        ? {
+          version: 1,
+          kind: 'sequence',
+          frames: [{ image: sourcePath, durationMs: 160 }, { image: sourcePath, durationMs: 160 }],
+          loop: true,
+        }
+        : {
+          version: 1,
+          kind: 'layered',
+          layers: [{ id: 'base', images: { base: sourcePath }, default: 'base' }],
+        };
+      pushConfigHistory(false);
+      row.visualsText = JSON.stringify({ outfit: { expression: definition } }, null, 2);
+      visualsText.value = row.visualsText;
+      updateExampleControls();
+    };
+    visualsText.oninput = () => {
+      if (!canEditVisuals() || !visualsText.isConnected) return;
+      pushConfigHistory(true);
+      row.visualsText = visualsText.value;
+      updateExampleControls();
+    };
+    sequenceExample.onclick = () => fillVisualExample('sequence');
+    layeredExample.onclick = () => fillVisualExample('layered');
+    const visualsLabel = h('label', 'config-field');
+    visualsLabel.append(h('span', undefined, 'outfit → expression JSON'), visualsText);
+    visualsDetails.append(
+      visualsSummary,
+      h('p', 'hint', '顶层按 outfit → expression 映射，值为 sequence 或 layered 定义；layers 数组从后向前排列。所有分层素材须使用同尺寸透明画布。保存 null 会移除 visuals，保存对象会整体替换。'),
+      visualsLabel,
+      sequenceExample,
+      layeredExample,
+      exampleHint,
+    );
+    updateExampleControls();
+    tdVisuals.appendChild(visualsDetails);
+    tr.appendChild(tdVisuals);
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
@@ -919,6 +1000,9 @@ async function saveCharactersUnlocked(): Promise<boolean> {
   const sessionRevision = configSessionRevision;
   const rows = ensureCharRows();
   const submittedRows = clone(rows);
+  for (const row of submittedRows) {
+    if (row.visualsText !== undefined) parseCharacterVisualsDraft(row.id, row.visualsText);
+  }
   let handle = state.handles.gameConfig;
   if (!handle && state.dirHandle) {
     try {

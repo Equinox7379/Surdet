@@ -5,6 +5,7 @@
 import {
   compileScene,
   resolveProjectPortraits,
+  portraitSourcePaths,
   assertUniquePortraitBindings,
   readProjectStage,
   Interpreter,
@@ -711,8 +712,8 @@ async function main(): Promise<void> {
     const portraitBindings = resolveProjectPortraits(gameConfig, files.map(rel => `content/assets/${rel}`));
     assertUniquePortraitBindings(portraitBindings);
     for (const binding of portraitBindings) {
-      if (binding.configured && !files.includes(binding.sourcePath.slice('content/assets/'.length))) {
-        throw new Error(`角色立绘文件不存在：${binding.role}:${binding.outfit}:${binding.expression} → ${binding.sourcePath}`);
+      for (const path of portraitSourcePaths(binding)) if (binding.configured && !files.includes(path.slice('content/assets/'.length))) {
+        throw new Error(`角色立绘文件不存在：${binding.role}:${binding.outfit}:${binding.expression} → ${path}`);
       }
     }
     const IMG = /\.(png|jpe?g|webp|gif|avif|svg)$/i;
@@ -724,6 +725,8 @@ async function main(): Promise<void> {
       mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4', flac: 'audio/flac',
       mp4: 'video/mp4', webm: 'video/webm', ogv: 'video/ogg',
     };
+    const visualPaths = new Set(portraitBindings.filter(binding => binding.visual).flatMap(portraitSourcePaths));
+    const visualSources: Record<string, { source: string; format?: string }> = {};
     const register = async (rel: string, url: string): Promise<boolean> => {
       const parts = rel.split('/');
       const kind = (parts[0] ?? '').toLowerCase();
@@ -732,12 +735,14 @@ async function main(): Promise<void> {
         await assets.registerBackground(fname.replace(IMG, ''), url, fname.split('.').pop());
         return true;
       } else if (kind === 'portrait' && IMG.test(fname)) {
-        const bindings = portraitBindings.filter(value => value.sourcePath === `content/assets/${rel}`);
+        const path = `content/assets/${rel}`;
+        if (visualPaths.has(path)) visualSources[path] = { source: url, format: fname.split('.').pop() };
+        const bindings = portraitBindings.filter(value => !value.visual && value.sourcePath === path);
         for (const binding of bindings) {
           await assets.registerPortrait(binding.role, binding.outfit, binding.expression, url, fname.split('.').pop(),
             readProjectStage(gameConfig)?.portraits[`${binding.role}:${binding.outfit}`]?.sources[binding.expression] ? binding.sourcePath : undefined);
         }
-        return bindings.length > 0;
+        return bindings.length > 0 || visualPaths.has(path);
       } else if (kind === 'avatar' && IMG.test(fname)) {
         await assets.registerAvatar(fname.replace(IMG, ''), url, fname.split('.').pop());
         return true;
@@ -763,7 +768,7 @@ async function main(): Promise<void> {
         else revoke?.();
       } catch (error) {
         revoke?.();
-        if (portraitBindings.some(binding => binding.configured && binding.sourcePath === `content/assets/${rel}`)) {
+        if (portraitBindings.some(binding => binding.configured && portraitSourcePaths(binding).includes(`content/assets/${rel}`))) {
           dialogue.showBanner(`角色立绘加载失败：content/assets/${rel} · ${error instanceof Error ? error.message : String(error)}`, 'tip');
         }
         throw error;
@@ -798,6 +803,10 @@ async function main(): Promise<void> {
       loading.showLoading(progress);
     });
     lastLoadingProgress = { ...finalProgress };
+    // All source URLs are now retained; never wait for sibling jobs inside the bounded queue.
+    for (const binding of portraitBindings) if (binding.visual) {
+      await assets.registerPortraitVisual(binding.role, binding.outfit, binding.expression, binding.visual, visualSources);
+    }
     if (finalProgress.failed > 0) console.warn(`[zero] ${finalProgress.failed} asset(s) failed`);
     loading.hideLoading();
     console.info('[zero] 素材加载完成：音频条目', audioUrls.size);

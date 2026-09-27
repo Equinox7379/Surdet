@@ -136,6 +136,8 @@ export interface AdvStage {
   setActiveSpeaker?(characterId: string | null): void;
   /** World-only portrait focus projection, separate from dialogue speaker state. */
   setPortraitFocus?(characterId: string | null): void;
+  setPortraitSpeaking?(speaking: boolean): void;
+  setPortraitSkipping?(skipping: boolean): void;
   /** 显示现代 ADV 底部操作带；宿主负责动作语义。 */
   showCommandRail?(items: CommandRailItem[], onSelect: (id: string) => void): void;
   /** 更新操作带的 active/enabled 状态，不重建宿主状态。 */
@@ -149,6 +151,7 @@ export interface AdvStage {
 }
 
 export interface PortraitView {
+  animation?: import('./portrait-visual-player.js').PortraitAnimationState;
   pose?: import('@surdet/core').StagePose;
   frame?: import('@surdet/core').StageRect;
   charId: string;

@@ -58,6 +58,7 @@ interface PreviewAssets {
   videos?: { key: string; file: PreviewImage }[];
   backgrounds: { key: string; image: PreviewImage }[];
   portraits: { charId: string; costume: string; expression: string; image: PreviewImage; configured?: true }[];
+  visuals?: { charId: string; costume: string; expression: string; definition: import('@surdet/core').PortraitVisualDefinition; images: Record<string, PreviewImage> }[];
   avatars: { key: string; image: PreviewImage }[];
   audio: { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }[];
 }
@@ -973,6 +974,16 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined): Promise<vo
     urls.push(url);
   }
   await Promise.all([
+    ...(assets.visuals ?? []).map(async asset => {
+      const sources: Record<string, { source: string; format: string }> = {};
+      for (const [path, image] of Object.entries(asset.images)) {
+        const source = URL.createObjectURL(new Blob([image.buffer], { type: image.mime }));
+        urls.push(source);
+        sources[path] = { source, format: image.mime };
+      }
+      try { await rendererAssets.registerPortraitVisual(asset.charId, asset.costume, asset.expression, asset.definition, sources); }
+      catch (error) { configuredFailure ??= new Error(`动态立绘加载失败：${asset.charId}:${asset.costume}:${asset.expression} · ${error instanceof Error ? error.message : String(error)}`); }
+    }),
     ...assets.backgrounds.map((asset) => register(
       asset.image.buffer,
       asset.image.mime,

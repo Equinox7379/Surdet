@@ -396,6 +396,8 @@ export interface AssetEntry {
   outfit?: string;
   expression?: string;
   sourcePath: string;
+  sourcePaths?: string[];
+  visual?: import('@surdet/core').PortraitVisualDefinition;
   format: string;
   resolved: boolean;
   /** Minimal examples using this exact asset. Absent for ambiguous/invalid assets and avatars. */
@@ -662,6 +664,7 @@ export interface CharacterEnsureInput {
   avatar?: string | null;
   /** Replace outfit/expression mappings; omitted preserves, null returns to filename discovery. Direct only. */
   portraits?: import('@surdet/core').CharacterPortraits | null;
+  visuals?: import('@surdet/core').CharacterVisuals | null;
   /** 当前角色表（characters 字段）规范化 JSON 片段的 SHA-256；角色表缺失时 = 空对象指纹。 */
   expectedFingerprint: string;
 }
