@@ -47,7 +47,7 @@ body {
   padding: 9px 18px 0;
   background: var(--surdet-shell-chrome-bg);
   color: var(--surdet-shell-chrome-text);
-  border-bottom: 1px solid var(--surdet-border-default);
+  border-bottom: 0;
 }
 
 .editor-product-identity {
@@ -95,7 +95,7 @@ body {
   gap: 12px;
   align-items: center;
   min-width: 0;
-  border-left: 1px solid var(--surdet-border-default);
+  border-left: 0;
   padding-left: 18px;
 }
 
@@ -155,7 +155,7 @@ body {
 }
 
 .editor-command-group+.editor-command-group {
-  border-left: 1px solid var(--surdet-border-default);
+  border-left: 0;
   padding-left: 10px;
 }
 
@@ -176,7 +176,7 @@ body {
 
 .editor-project-bar .editor-command:hover {
   background: var(--surdet-shell-chrome-selected);
-  border-color: var(--surdet-border-default);
+  border-color: transparent;
 }
 
 .editor-project-bar .editor-global-primary {
@@ -187,8 +187,8 @@ body {
 }
 
 .editor-project-bar .editor-global-primary:hover {
-  background: #803e2d;
-  border-color: #803e2d;
+  background: #425B84;
+  border-color: #425B84;
 }
 
 .editor-command-shortcut {
@@ -213,8 +213,8 @@ body {
 
 .editor-command[data-action=search-project] {
   order: -1;
-  border-color: var(--surdet-border-default);
-  background: white;
+  border-color: transparent;
+  background: var(--surdet-surface-panel);
   min-width: 135px;
   justify-content: flex-start;
 }
@@ -386,7 +386,7 @@ body {
 }
 
 .editor-mode-group+.editor-mode-group::before {
-  content: '';
+  content: none;
   position: absolute;
   left: -8px;
   height: 16px;
@@ -411,7 +411,7 @@ body {
   border-radius: 0;
   background: transparent;
   color: var(--surdet-text-secondary);
-  font: 500 12px/1.4 var(--surdet-font-ui);
+  font: 500 13px/1.4 var(--surdet-font-ui);
   cursor: pointer;
 }
 
