@@ -78,7 +78,7 @@ export class AudioManager implements AudioHandle {
 
   playBgm(src: string | null, options?: BgmPlaybackOptions): void {
     const restart = options?.restart === true;
-    if (src === this.#bgmKey && !restart) return;
+    if (src === this.#bgmKey && !restart && (src === null || this.#bgm !== null)) return;
     if (src === this.#bgmKey && restart && this.#bgm) {
       const h = this.#bgm;
       h.stop();
@@ -141,7 +141,7 @@ export class AudioManager implements AudioHandle {
 
   /** 环境音循环播放；切换时只保留一个当前声道，并以代际保护延迟停止旧实例。 */
   playAmbience(src: string | null, fadeMs = BGM_FADE_MS): void {
-    if (src === this.#ambienceKey) return;
+    if (src === this.#ambienceKey && (src === null || this.#ambience !== null)) return;
     const prev = this.#ambience;
     this.#ambience = null;
     this.#ambienceKey = src;
@@ -360,13 +360,24 @@ export class AudioManager implements AudioHandle {
   }
 
   #reportError(entry: AudioCacheEntry | undefined, type: AudioBgmDiagnosticError['type'], reason: unknown, soundId?: number): void {
-    if (!entry || this.#cache.get(entry.key) !== entry || entry.session !== this.#session) return;
-    if ((entry.channel === 'bgm' && entry.src !== this.#bgmKey) || (entry.channel === 'ambience' && entry.src !== this.#ambienceKey)) return;
-    if (entry.channel === 'voice') {
-      if (entry.howl !== this.#voice) return;
-      if (soundId !== undefined && soundId !== this.#voiceId) return;
+    if (!entry || this.#cache.get(entry.key) !== entry) return;
+    const active = entry.session === this.#session
+      && (entry.channel !== 'bgm' || entry.howl === this.#bgm)
+      && (entry.channel !== 'ambience' || entry.howl === this.#ambience)
+      && (entry.channel !== 'voice' || (entry.howl === this.#voice && (soundId === undefined || soundId === this.#voiceId)));
+    // A load failure poisons this Howl even if its caller has since moved on.
+    // Remove it before callbacks can request the same source again. Only an
+    // explicit new play retries; healthy cached objects and other tracks stay live.
+    if (type === 'loaderror') {
+      this.#cache.delete(entry.key);
+      if (entry.howl === this.#voice) this.stopVoice();
+      if (entry.howl === this.#bgm) this.#bgm = null;
+      if (entry.howl === this.#ambience) this.#ambience = null;
+      entry.howl.unload();
+    } else if (active && entry.channel === 'voice') {
       this.stopVoice();
     }
+    if (!active) return;
     const message = String(reason);
     if (entry.channel === 'bgm') {
       this.#bgmErrors.push({ type, message });
