@@ -31,6 +31,8 @@ export interface ProjectConfig {
   raw: Record<string, unknown> | null;
   /** 配置展示名（报错定位用） */
   path: string;
+  /** 当前内存词条配置，含尚未保存的修改。 */
+  terminologyText?: string;
 }
 
 /** Phase 2C（A3）：项目 timelines 的最小输入（来自 state.timelines，保留未保存编辑缓冲）。 */
@@ -46,13 +48,9 @@ export interface ValidateResult {
   scenes: Map<string, CompiledScene>;
 }
 
-function validationDigest(text: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < text.length; index++) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0');
+async function validationDigest(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function compileConfigForCustomInstructions(raw: Record<string, unknown>, _path: string): string[] {
@@ -62,12 +60,12 @@ function compileConfigForCustomInstructions(raw: Record<string, unknown>, _path:
     : [];
 }
 
-export function validateProject(
+export async function validateProject(
   sceneSources: SceneSource[],
   entryScene?: string,
   config?: ProjectConfig,
   timelines: TimelineSource[] = [],
-): ValidateResult {
+): Promise<ValidateResult> {
   const issues: Issue[] = [];
   const compiled = new Map<string, CompiledScene>();
   const failedScenes = new Set<string>();
@@ -128,17 +126,19 @@ export function validateProject(
     }
   }
 
-  const sharedFiles = [...sceneSources].filter((source) => compiled.has(source.id)).map((source) => ({
+  const sharedFiles = await Promise.all([...sceneSources].filter((source) => compiled.has(source.id)).map(async (source) => ({
     path: source.file,
     text: source.source,
     bytes: source.source.length,
-    sha256: validationDigest(source.source),
-  }));
+    sha256: await validationDigest(source.source),
+  })));
+  if (config?.terminologyText !== undefined) sharedFiles.push({ path: 'content/config/terminology.json', text: config.terminologyText,
+    bytes: config.terminologyText.length, sha256: await validationDigest(config.terminologyText) });
   const configFile = config?.raw === undefined || config?.raw === null ? null : {
     path: config.path,
     text: JSON.stringify(config.raw),
     bytes: JSON.stringify(config.raw).length,
-    sha256: validationDigest(JSON.stringify(config.raw)),
+    sha256: await validationDigest(JSON.stringify(config.raw)),
   };
   const configRaw = config?.raw ?? {};
   const configVariables = typeof configRaw['variables'] === 'object' && configRaw['variables'] !== null && !Array.isArray(configRaw['variables'])
@@ -146,7 +146,7 @@ export function validateProject(
     : {};
   const sharedSnapshot = {
     rootIdentity: 'editor-validation',
-    revision: validationDigest(sharedFiles.map((file) => `${file.path}\0${file.sha256}`).join('\n')),
+    revision: await validationDigest(sharedFiles.map((file) => `${file.path}\0${file.sha256}`).join('\n')),
     files: configFile === null ? sharedFiles : [...sharedFiles, configFile],
     configFile,
     config: configRaw,
@@ -158,12 +158,12 @@ export function validateProject(
       const file = sharedFiles.find((candidate) => candidate.path === source.file)!;
       return { id, path: source.file, file, document: parseSceneDocument(source.source), compiled: scene };
     }),
-    timelines: timelines.map((timeline) => ({
+    timelines: await Promise.all(timelines.map(async (timeline) => ({
       path: timeline.path,
       text: timeline.text,
       bytes: timeline.text.length,
-      sha256: validationDigest(timeline.text),
-    })),
+      sha256: await validationDigest(timeline.text),
+    }))),
   };
   const shared = validateSnapshot(sharedSnapshot, buildObjectIndex(sharedSnapshot), { failedScenes, timelineReferenceScope: 'complete' });
   issues.push(...shared.issues);

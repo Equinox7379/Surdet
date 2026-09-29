@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
+import { collectProjectTextRows, projectTextSources } from '@surdet/core';
 import { lintProject } from '../src/lint.js';
 
 function makeProject(files: Record<string, string>): string {
@@ -15,6 +17,22 @@ function makeProject(files: Record<string, string>): string {
 }
 
 describe('lintProject', () => {
+  it.each(['', '\uFEFF'])('validates confirmed dialogue/voice and terminology sources with exact source digests (%j BOM)', async bom => {
+    const text = `${bom}@scene start\r\n旁白：雾港。\r\n@end\r\n`;
+    const terminology = { terms: [{ canonical: '雾港', variants: [] }] };
+    const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+    const sources = await projectTextSources(collectProjectTextRows({}, [{ id: 'start', path: 'content/scenario/start.gal', text, sha256: hash(text) }], terminology), async value => hash(value));
+    const entries = sources.map(({ sourceId, path, line, ...source }, i) => ({ key: `text.${i}`, source, translations: {},
+      ...(source.kind === 'dialogue' ? { voices: { 'zh-CN': { asset: 'hello', sourceVersion: source.version, text: source.text } } } : {}) }));
+    const dir = makeProject({ 'content/scenario/start.gal': text, 'content/config/terminology.json': JSON.stringify(terminology),
+      'content/assets/voice/hello.wav': 'reference-only fixture',
+      'game.config.json': JSON.stringify({ entryScene: 'start', textCatalog: { version: 1, sourceLocale: 'zh-CN', entries } }) });
+    expect(lintProject(dir).issues.filter(issue => issue.code?.startsWith('TEXT_'))).toEqual([]);
+    fs.appendFileSync(path.join(dir, 'content/scenario/start.gal'), '\r\n// changed source version');
+    expect(lintProject(dir).issues.filter(issue => issue.code === 'TEXT_SOURCE_STALE')).toHaveLength(1);
+    fs.writeFileSync(path.join(dir, 'content/config/terminology.json'), '{"terms":[]}');
+    expect(lintProject(dir).issues.filter(issue => issue.code === 'TEXT_SOURCE_STALE')).toHaveLength(2);
+  });
   it('checks DSL and timeline image references using content/assets and supported public images', () => {
     const dir = makeProject({
       'game.config.json': JSON.stringify({ entryScene: 'start', variables: {} }),

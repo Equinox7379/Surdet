@@ -89,9 +89,9 @@ Editor 和 Agent Port 必须绑定同一个项目；若自定义了 `SURDET_AGEN
 
 播放后通过公开 `runtime.read-preview` 能力读取实际观察，先核对返回的内容身份、版本和 `status`，再定位返修对象。观察中的运行和表现事实不能替代截图。页面的“回到上次位置”沿已记录的真实选择重新播放；选择或目标不再匹配时会停下，需正常重选。试玩不批准、不写回，也不会保存或丢弃来源草稿。
 
-当前 Authoring 合同为 `2.21.0`（59 项能力），direct 草稿支持 `scene.rename` 同步改名引用、`scene.move` 按章节整理、`project.player-config.patch` 配置字体/字标、`project.theme-config.patch` 配置作品主题、`project.ui` / `project.ui.patch` 读取和修改作品界面，以及 `character.ensure.portraits` 绑定静态立绘、`character.ensure.visuals` 配置分层立绘与逐帧动画；字体许可证可作为 `license` 与素材同批导入。Editor 的「界面设计」可视化接管同一配置并试玩未保存稿；普通项目无需修改启动源码。完整差异与获授权写回仍走原事务。新 stage 候选会在操作写入前检查缺失依赖和对象单元互引环：按错误中的 `issues` 先建立被引用对象或选择基线已解析素材，再重试；互相创建空场景不能解除互引环。`session.describe.candidateReadiness` 与 `change.diff.compositionReadiness` 只说明已记录的组合事实是否完整，不替代最终 validation、simulation、runtime 和 delivery capsule 检查。旧变更缺少操作时点事实时须新建候选，已封存的 v2 capsule 继续可读。
+当前 Authoring 合同为 `2.22.0`（59 项能力），direct 草稿支持 `scene.rename` 同步改名引用、`scene.move` 按章节整理、`project.player-config.patch` 配置字体/字标、`project.theme-config.patch` 配置作品主题、`project.ui` / `project.ui.patch` 读取和修改作品界面，以及 `character.ensure.portraits` 绑定静态立绘、`character.ensure.visuals` 配置分层立绘与逐帧动画；字体许可证可作为 `license` 与素材同批导入。Editor 的「界面设计」可视化接管同一配置并试玩未保存稿；普通项目无需修改启动源码。完整差异与获授权写回仍走原事务。新 stage 候选会在操作写入前检查缺失依赖和对象单元互引环：按错误中的 `issues` 先建立被引用对象或选择基线已解析素材，再重试；互相创建空场景不能解除互引环。`session.describe.candidateReadiness` 与 `change.diff.compositionReadiness` 只说明已记录的组合事实是否完整，不替代最终 validation、simulation、runtime 和 delivery capsule 检查。旧变更缺少操作时点事实时须新建候选，已封存的 v2 capsule 继续可读。
 
-多语言作品使用同一文本目录和 CSV 流程登记正文、选项、人物显示名、自定义界面文字及词条。共享 Player 在「设置 → 显示与输入 → 作品语言」切换已导入的语言，保持剧情进度；偏好随设备保存，读档沿用当前语言。缺译文或来源变化时显示原文，不猜对应。Editor「文本与译稿」可直接试玩已确认译稿；具体范围及改稿规则见 [AI 创作指南](docs/AI-GUIDE.md#文本目录与译稿-csv)。
+多语言作品使用同一文本目录和 CSV 流程登记正文、选项、人物显示名、自定义界面文字及词条，并按对白键与语言关联已有配音。共享 Player 在「设置 → 显示与输入 → 作品语言」切换语言，保持剧情进度；偏好随设备保存，读档沿用当前语言。缺译文显示原文，缺失/过期配音允许无声阅读，不猜对应。Editor「文本与译稿」可导出、预览和确认配音清单，直接试玩已保存内容；具体范围及改稿规则见 [AI 创作指南](docs/AI-GUIDE.md#文本目录与译稿-csv)。
 
 新舞台通过 `project.inspect.stageConfig` 读取、`project.stage-config.patch` 在 direct 草稿修改；旧项目不必启用。人物姿态、环境图层和有限复用片段走原场景/时间轴能力；candidate 可引用基线配置，但不能伴随改写舞台配置。Editor 临时摆放确认后才进入普通草稿，校准/构图参与原撤销与保存全部，工作预览消费未保存版本，不将临时画面冒充封存结果。
 

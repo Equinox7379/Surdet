@@ -1,4 +1,4 @@
-import { inspectTextCatalog, exportTextCatalogCsv, previewTextCatalogImport, type TextCatalogPatch } from '@surdet/authoring';
+import { inspectTextCatalog, exportTextCatalogCsv, exportVoiceCatalogCsv, previewTextCatalogImport, type TextCatalogPatch } from '@surdet/authoring';
 import { createEditorProjectStorage, loadEditorProjectSnapshot, commitTextCatalogPatch } from '../authoring-project-storage.js';
 import { runProjectWriteOperation } from '../project-io.js';
 import { state, h } from '../state.js';
@@ -30,6 +30,7 @@ export function renderTextCatalogSection(options: {
   const differences = h('div');
   const bindingList = h('div');
   const controls = h('div', 'config-actions');
+  const assetFiles = () => state.dirAssets.flatMap(asset => asset.sourcePath ? [{ path: asset.sourcePath }] : []);
   const current = (): boolean => section.isConnected && state.dirHandle === root && options.isCurrent();
   const run = (action: () => Promise<void>): void => {
     if (busy || !current()) return;
@@ -56,14 +57,16 @@ export function renderTextCatalogSection(options: {
     const labels = { 'needs-rebind': '来源变化，需重新绑定', 'needs-translation': '原文变化，待重译', untranslated: '未翻译', translated: '已翻译' };
     for (const entry of inspection.entries) {
       const row = h('p');
-      row.textContent = `${entry.key} · ${labels[entry.status]} · ${entry.source.speaker ? entry.source.speaker + '：' : ''}${entry.source.text} → ${entry.translations[inspection.locale]?.value ?? ''}`;
+      const voiceLabels: Record<string, string> = { unassigned: '未关联', 'needs-rebind': '来源待确认', 'needs-recording': '台词已改，配音待确认', ready: '已确认', 'asset-unavailable': '素材不可用' };
+      row.textContent = `${entry.key} · ${labels[entry.status]} · ${entry.source.speaker ? entry.source.speaker + '：' : ''}${entry.source.text} → ${entry.translations[inspection.locale]?.value ?? ''}`
+        + (entry.source.kind === 'dialogue' ? ` · 配音：${voiceLabels[entry.voiceStatus]}${entry.voices?.[inspection.locale] ? `（${entry.voices[inspection.locale]!.asset}）` : ''}` : '');
       table.append(row);
     }
     if (!inspection.entries.length) table.append(h('p', undefined, '尚未登记文本。选择真实来源并填写固定文本键后保存。'));
   };
   const refresh = async (): Promise<void> => {
     const snapshot = await loadEditorProjectSnapshot();
-    const next = await inspectTextCatalog(snapshot, createEditorProjectStorage(), locale.value.trim());
+    const next = await inspectTextCatalog(snapshot, createEditorProjectStorage(), locale.value.trim(), assetFiles());
     if (!current()) return;
     inspection = next; preview = undefined; differences.replaceChildren(); render(); renderBindings();
   };
@@ -115,12 +118,17 @@ export function renderTextCatalogSection(options: {
   const savedCatalog = async () => {
     const language = locale.value.trim();
     const snapshot = await loadEditorProjectSnapshot();
-    return inspectTextCatalog(snapshot, createEditorProjectStorage(), language);
+    return inspectTextCatalog(snapshot, createEditorProjectStorage(), language, assetFiles());
   };
   button('导出译稿表格', async () => {
     const saved = await savedCatalog(); if (!current()) return;
     download(exportTextCatalogCsv(saved), `surdet-texts-${saved.locale}.csv`);
     status.textContent = '已导出文本目录中的译稿，不含编辑框中未确认的修改；工作稿、绑定清单和导入预览均未改变。';
+  });
+  button('导出配音清单', async () => {
+    const saved = await savedCatalog(); if (!current()) return;
+    download(exportVoiceCatalogCsv(saved), `surdet-voices-${saved.locale}.csv`);
+    status.textContent = '已导出对白配音清单；voice 填现有素材键，action 用 keep 保留、bind 确认或 remove 解除。只关联文件，不生成音频。';
   });
   button('下载当前工作稿', async () => {
     const value = options.readCsv();
@@ -141,14 +149,14 @@ export function renderTextCatalogSection(options: {
   });
   button('预览导入差异', async () => {
     const submitted = options.readCsv(), language = locale.value.trim(), snapshot = await loadEditorProjectSnapshot();
-    const next = await previewTextCatalogImport(snapshot, createEditorProjectStorage(), language, submitted);
+    const next = await previewTextCatalogImport(snapshot, createEditorProjectStorage(), language, submitted, assetFiles());
     if (!current() || submitted !== options.readCsv() || language !== locale.value.trim()) return;
-    const nextInspection = await inspectTextCatalog(snapshot, createEditorProjectStorage(), language);
+    const nextInspection = await inspectTextCatalog(snapshot, createEditorProjectStorage(), language, assetFiles());
     if (!current() || submitted !== options.readCsv() || language !== locale.value.trim()) return;
     inspection = nextInspection;
     preview = next; differences.replaceChildren(); render(); renderBindings();
     for (const issue of next.issues) differences.append(h('p', 'error', `第 ${issue.line} 行 ${issue.key ?? ''}：${issue.message}`));
-    for (const row of next.rows.filter(row => row.changed)) differences.append(h('p', undefined, `${row.key}：${row.before || '（未翻译）'} → ${row.after}`));
+    for (const row of next.rows.filter(row => row.changed)) differences.append(h('p', undefined, `${row.key}${row.voiceAction ? ' · 配音' : ''}：${row.before || '（无）'} → ${row.after || '（解除）'}`));
     status.textContent = next.ready ? '差异预览通过，确认后才能写入项目。' : '导入未通过，项目未修改。';
   });
   button('确认导入并保存', async () => {
@@ -175,7 +183,7 @@ export function renderTextCatalogSection(options: {
   }
   const csvField = h('label', 'config-field'); csvField.append(h('span', undefined, '译稿表格'), csv);
   section.append(header, fields, h('p', 'config-section-help', '重新绑定已有键前，请明确核对当前来源；旧译稿会保留并提示是否需要重译。'), controls, status, bindingList, table,
-    h('p', 'config-section-help', '编辑表格文本后先预览差异，再确认导入。保存全部不会自动导入译稿；切换工作面会保留未确认文字。'), upload, csvField, differences);
+    h('p', 'config-section-help', '译稿与配音清单均先预览差异，再确认导入。配音仅支持已确认对白和现有 voice 素材；源语言配音可将译文语言填写为源语言。保存全部不会自动批准；切换工作面保留未确认文字。'), upload, csvField, differences);
   renderBindings();
   return section;
 }

@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import {
   compileScene,
   SourceError,
@@ -52,12 +53,12 @@ function makeAuthoringSnapshot(
 ): ProjectSnapshot {
   const files = [...scenes.values()].map((scene) => {
     const scenePath = scene.instructions[0]?.file ?? path.join(root, 'content/scenario', `${scene.sceneId}.gal`);
-    const text = fs.readFileSync(scenePath, 'utf8').replace(/^\uFEFF/, '');
+    const text = fs.readFileSync(scenePath, 'utf8');
     return {
       path: scenePath,
       text,
       bytes: Buffer.byteLength(text, 'utf8'),
-      sha256: authoringDigest(text),
+      sha256: createHash('sha256').update(text).digest('hex'),
     };
   });
   const configPath = path.join(root, 'game.config.json');
@@ -71,6 +72,11 @@ function makeAuthoringSnapshot(
   // Phase 2C：磁盘真实 timelines 进入 snapshot（lint 是完整项目静态检查，complete scope）。
   const timelineFiles = collectTimelineFiles(root);
   const allFiles = [...files, ...(configFile === null ? [] : [configFile]), ...timelineFiles];
+  const terminologyPath = path.join(root, 'content/config/terminology.json');
+  if (fs.existsSync(terminologyPath)) {
+    const text = fs.readFileSync(terminologyPath, 'utf8');
+    allFiles.push({ path: 'content/config/terminology.json', text, bytes: Buffer.byteLength(text, 'utf8'), sha256: createHash('sha256').update(text).digest('hex') });
+  }
   const variables = config && typeof config['variables'] === 'object' && config['variables'] !== null && !Array.isArray(config['variables'])
     ? config['variables'] as Record<string, unknown>
     : {};

@@ -1,6 +1,6 @@
 /**
  * 校验 Web Worker（自我迭代 ①b）：全项目校验移出主线程，大型项目编辑不再卡顿。
- * 与主线程同步回退共用同一 validateProject（core scene-lint），行为完全一致；
+ * 与主线程回退共用同一 validateProject（core scene-lint），行为完全一致；
  * 结果按 seq 对齐，过期结果直接丢弃（校验永远以最新编辑快照为准）。
  */
 import { validateProject } from './validate.js';
@@ -20,10 +20,10 @@ interface SceneEdge {
   kind: 'jump' | 'call';
 }
 
-self.onmessage = (e: MessageEvent<ValidateRequest>) => {
+self.onmessage = async (e: MessageEvent<ValidateRequest>) => {
   const { seq, sources, entryScene, config, timelines } = e.data;
   try {
-    const result = validateProject(sources, entryScene, config, timelines ?? []);
+    const result = await validateProject(sources, entryScene, config, timelines ?? []);
     // 引用图谱在 Worker 内算好，只回传纯数据（structuredClone 友好）
     const edges: SceneEdge[] = [];
     for (const [sceneId, scene] of result.scenes) {

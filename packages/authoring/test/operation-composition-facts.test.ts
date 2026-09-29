@@ -42,9 +42,9 @@ async function seal(change: ChangeSession) {
   }, hasher);
 }
 
-async function candidate(baseAssetRefs: string[] = []) {
+async function candidate(baseAssetRefs: string[] = [], extraConfig: Record<string, unknown> = {}) {
   const files = {
-    'game.config.json': '{"entryScene":"A","variables":{},"characters":{}}',
+    'game.config.json': JSON.stringify({ entryScene: 'A', variables: {}, characters: {}, ...extraConfig }),
     'content/scenario/A.gal': '@scene A\n旁白：开场。\n@end\n',
   };
   const snapshot = await loadProjectSnapshot({
@@ -70,6 +70,16 @@ async function insert(change: ChangeSession, operationId: string, sceneId: strin
 }
 
 describe('candidate operation-time facts', () => {
+  it('requires catalog voice assets even when a new scene has no explicit voice command', async () => {
+    const version = sha('words');
+    const extra = { textCatalog: { version: 1, sourceLocale: 'zh-CN', entries: [{ key: 'opening', source: { kind: 'dialogue', sceneId: 'A', label: null, ordinal: 0, sceneVersion: sha('scene'), version, speaker: '旁白', text: '开场。' }, translations: {}, voices: { 'zh-CN': { asset: 'opening', sourceVersion: version, text: '开场。' } } }] } };
+    const missing = await candidate([], extra), before = structuredClone(missing.record);
+    await expect(applySceneCreate(missing, { operationId: 'voice-dependency', sceneId: 'B', blocks: [{ kind: 'text', value: '新章节。' }] }, hasher)).rejects.toMatchObject({ code: 'CANDIDATE_DEPENDENCY_NOT_READY' });
+    expect(missing.record).toEqual(before);
+    const ready = await candidate(['asset:voice:opening'], extra);
+    await applySceneCreate(ready, { operationId: 'voice-dependency', sceneId: 'B', blocks: [{ kind: 'text', value: '新章节。' }] }, hasher);
+    expect(facts(ready, 'voice-dependency').requiredObjects).toContainEqual({ objectRef: 'asset:voice:opening', source: 'base' });
+  });
   it('rejects unresolved media before writing, then seals scene and audio timeline dependencies', async () => {
     const blocks: SceneBlockInput[] = ['bgm', 'ambience', 'se', 'voice', 'video'].map(name => ({ kind: 'instruction', name, args: ['"同名 素材"'] }));
     const missing = await candidate(); const before = structuredClone(missing.record);

@@ -8,9 +8,9 @@
       "renderer": "n/a",
       "editor": "implemented",
       "host": "n/a",
-      "tests": ["packages/authoring/test/text-catalog.test.ts", "packages/cli/test/candidate-composition-readiness.test.ts", "packages/cli/test/composition-service.test.ts", "packages/editor/test/authoring-project-storage.test.ts", "packages/editor/test/config-draft-state.test.ts"],
+      "tests": ["packages/core/test/project-texts.test.ts", "packages/authoring/test/text-catalog.test.ts", "packages/authoring/test/operation-composition-facts.test.ts", "packages/cli/test/lint.test.ts", "packages/editor/test/authoring-project-storage.test.ts", "packages/editor/test/config-draft-state.test.ts", "packages/editor/test/validate.test.ts", "packages/renderer/test/audio-manager.test.ts", "packages/renderer/test/legacy/presentation-controller.test.ts"],
       "docs": ["docs/AI-GUIDE.md"],
-      "limitation": "P6a 的正文/选项制作目录与 CSV 往返，Authoring/CLI/Editor 共用 direct-only 操作。完整场景正文版本变化后须明确重新绑定；不会猜测跨版本对应，也不迁移存档。Player 语言切换、人物/UI/词条译文消费及配音管理属于后续 P6b/P6c，当前未实现。"
+      "limitation": "Authoring/CLI/Editor 共用 direct-only 目录与译稿/配音 CSV；正文、选项、人物/UI/词条译文由共享 Player 按设备语言消费。对白可按语言关联已有录音，缺失/过期录音不阻塞阅读。来源变化需显式重新绑定，不猜跨版本对应、不生成翻译或音频。读档用当前语言从句首播放，不保存采样级声音位置。"
     },
     {
       "id": "project-ui-designer",

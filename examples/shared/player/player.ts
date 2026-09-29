@@ -263,6 +263,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     const profile = id ?? (names.length === 1 ? names[0] : undefined);
     return profile ? projectTexts.field('character', `character:${profile.id}`, gameConfig.characters?.[profile.id]?.name ?? profile.name, textLocale) : source.text;
   });
+  interp.setVoiceResolver(source => projectTexts.voice(source.sceneId, source.line, source.text, textLocale, source.sceneVersion ?? ''));
 
   // Backlog + Renderer v2 Runtime（设置投影：文本速度/自动停留/音量）
   const backlog = new Backlog();
@@ -1026,7 +1027,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
           if (accepted) syncStoryWorkUi();
           return accepted;
         }
-        if (source === 'backlog') { const voice = queries.dialogue.backlogEntries()[Number(item.id)]?.voice; if (voice) audio.playVoice(voice); return true; }
+        if (source === 'backlog') { const voice = queries.dialogue.backlogEntries()[Number(item.id)]?.voice; if (voice) audio.playVoice(voice, { replay: true }); return true; }
         if (source === 'settings') { onSettingsChange(item.id, 1); return true; }
         const views = galleryView();
         if (source === 'gallery-music') {

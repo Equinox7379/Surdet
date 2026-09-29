@@ -76,6 +76,8 @@ export interface TextEventPayload {
   value: string;
   /** Display-only caption; speaker still owns character/portrait identity. */
   displaySpeaker?: string;
+  /** undefined retains explicit @voice; null explicitly silences a catalog-managed line. */
+  voice?: string | null;
   /** 该文本在本次发出前是否已读过（快进"遇未读即停"用；渲染层仅在 false 时停）。
    *  可选：解释器始终提供；宿主/测试直发事件可省略（渲染层按 undefined 兼容处理） */
   wasRead?: boolean;
@@ -91,6 +93,7 @@ export interface RuntimeTextContext {
   kind: 'dialogue' | 'choice' | 'speaker'; text: string;
 }
 export type RuntimeTextResolver = (source: RuntimeTextContext) => string;
+export type RuntimeVoiceResolver = (source: RuntimeTextContext) => string | null | undefined;
 
 /** 通用指令事件载荷（bg/show/voice 等展示类，由渲染层消费） */
 export interface InstrEventPayload {
@@ -180,6 +183,7 @@ export class Interpreter {
   #pendingChoice: ChoiceInstr | null = null;
   #visibleChoiceIndices: number[] = [];
   #textResolver: RuntimeTextResolver | null = null;
+  #voiceResolver: RuntimeVoiceResolver | null = null;
   /** @call 子场景调用栈（返回点序列，栈顶在末尾；随存档持久化） */
   #callStack: SavePosition[] = [];
   /** 主循环执行中标志：事件回调内重入推进时置 resume 而非递归 */
@@ -243,6 +247,7 @@ export class Interpreter {
   }
 
   setTextResolver(resolver: RuntimeTextResolver | null): void { this.#textResolver = resolver; }
+  setVoiceResolver(resolver: RuntimeVoiceResolver | null): void { this.#voiceResolver = resolver; }
 
   #displayText(kind: RuntimeTextContext['kind'], text: string, line: number): string {
     return this.#textResolver?.({ sceneId: this.#scene!.sceneId, sceneVersion: this.#scene!.textSourceVersion, line, kind, text }) ?? text;
@@ -250,8 +255,9 @@ export class Interpreter {
   #textPayload(instr: TextInstr): TextEventPayload {
     const speaker = instr.speaker === null ? null : interpolate(instr.speaker, this.#store);
     const displaySpeaker = speaker === null ? null : this.#displayText('speaker', speaker, instr.line);
+    const voice = this.#voiceResolver?.({ sceneId: this.#scene!.sceneId, sceneVersion: this.#scene!.textSourceVersion, line: instr.line, kind: 'dialogue', text: instr.value });
     return { speaker, value: interpolate(this.#displayText('dialogue', instr.value, instr.line), this.#store),
-      ...(displaySpeaker !== null && displaySpeaker !== speaker ? { displaySpeaker } : {}) };
+      ...(displaySpeaker !== null && displaySpeaker !== speaker ? { displaySpeaker } : {}), ...(voice !== undefined ? { voice } : {}) };
   }
   #displayChoices(instr: ChoiceInstr, indices: readonly number[]): ChoiceEventPayload {
     return { options: indices.map(index => ({ index, label: interpolate(this.#displayText('choice', instr.options[index]!.label, instr.options[index]!.pos.line), this.#store) })) };

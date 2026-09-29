@@ -124,6 +124,29 @@ function controllerFor(
 }
 
 describe('PresentationController', () => {
+  it('projects localized voices, waits for completion, keeps historical bindings, and stops on refresh/skip/reset/dispose', () => {
+    const stage = stageHarness(), ports = createPresentationPorts(stage), backlog = new Backlog(), advance = vi.fn();
+    let busy = false;
+    const audio = { ...NULL_AUDIO, playVoice: vi.fn(() => { busy = true; }), stopVoice: vi.fn(() => { busy = false; }),
+      setVoicePaused: vi.fn(), isVoicePlaying: () => busy };
+    const controller = new PresentationController(ports.commands, ports.queries, audio, { backlog, onAdvance: advance });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus); controller.setAutoWait(0, 0);
+    bus.emit('text', { speaker: 'rin', value: 'Hello', voice: 'hello_en' });
+    controller.advance(); controller.toggleAuto(); controller.update(100);
+    expect(advance).not.toHaveBeenCalled(); expect(backlog.entries()[0]!.voice).toBe('hello_en');
+    controller.setPresentationPaused(true);
+    bus.emit('textRefresh', { text: { speaker: 'rin', value: 'こんにちは', voice: 'hello_ja' } });
+    expect(audio.playVoice).toHaveBeenLastCalledWith('hello_ja'); expect(audio.setVoicePaused).toHaveBeenLastCalledWith(true);
+    expect(backlog.size).toBe(1); expect(backlog.entries()[0]!.voice).toBe('hello_en');
+    controller.setPresentationPaused(false); controller.update(100); expect(advance).not.toHaveBeenCalled();
+    busy = false; controller.update(100); expect(advance).toHaveBeenCalledOnce();
+    bus.emit('text', { speaker: 'rin', value: 'Other', voice: 'next' });
+    controller.toggleSkipAll(); expect(busy).toBe(false);
+    bus.emit('text', { speaker: null, value: 'Skipped', voice: 'skipped' }); expect(audio.playVoice).not.toHaveBeenCalledWith('skipped');
+    bus.emit('stateReset', { reason: 'load' }); expect(busy).toBe(false);
+    bus.emit('text', { speaker: null, value: 'Missing', voice: null }); expect(busy).toBe(false);
+    controller.dispose(); expect(busy).toBe(false);
+  });
   it('reprojects a paused ADV line without adding history, advancing, or changing typing progress', () => {
     const stage = stageHarness(), backlog = new Backlog(), onAdvance = vi.fn();
     const controller = controllerFor(stage, { backlog, onAdvance });

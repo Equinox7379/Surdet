@@ -1,4 +1,4 @@
-import { projectPortraitOverrides, projectStageAssetKeys, readProjectStage, resolveProjectTitleLogo, resolveProjectTheme, projectThemeAssetKeys, readProjectUi, projectUiAssetKeys, projectUiVariableNames, resolveProjectFontPaths } from '@surdet/core';
+import { projectPortraitOverrides, projectStageAssetKeys, readProjectStage, resolveProjectTitleLogo, resolveProjectTheme, projectThemeAssetKeys, readProjectUi, projectUiAssetKeys, projectUiVariableNames, resolveProjectFontPaths, readTextCatalog } from '@surdet/core';
 import type { OperationCompositionDraft } from './composition-contracts.js';
 import type { TextHasher } from './project-storage.js';
 import { stableStringify } from './change-session.js';
@@ -26,6 +26,11 @@ function themeAssetReferences(config: unknown) {
   const keys = [...projectThemeAssetKeys(resolveProjectTheme(config)), resolveProjectTitleLogo(config)].filter((key): key is string => Boolean(key));
   return [...new Set(keys)].map(key => ({ kind: 'background-asset' as const, scope: 'candidate-external' as const,
     token: key, objectRef: `asset:bg:${key}`, source: { path: 'game.config.json' } }));
+}
+function textVoiceReferences(config: Record<string, unknown>) {
+  const keys = new Set((readTextCatalog(config)?.entries ?? []).flatMap(entry => Object.values(entry.voices ?? {}).map(voice => voice.asset)));
+  return [...keys].map(key => ({ kind: 'audio-asset' as const, scope: 'candidate-external' as const,
+    token: key, objectRef: `asset:voice:${key}`, source: { path: 'game.config.json' } }));
 }
 
 function uiReferences(config: Record<string, unknown>) {
@@ -59,7 +64,7 @@ export async function buildSceneOperationCompositionDraft(input: {
   const objectFingerprintAfter = await input.hasher.sha256(input.afterText);
   return {
     capabilityId: input.capabilityId, primaryObject,
-    rawReferences: [...themeAssetReferences({ theme: input.themeConfig, player: { titleLogo: input.titleLogo ?? undefined } }), ...uiReferences({ ui: input.uiConfig, variables: input.variables ?? {} }), ...analyzeSceneCompositionReferences({
+    rawReferences: [...textVoiceReferences({ textCatalog: input.textCatalog }), ...themeAssetReferences({ theme: input.themeConfig, player: { titleLogo: input.titleLogo ?? undefined } }), ...uiReferences({ ui: input.uiConfig, variables: input.variables ?? {} }), ...analyzeSceneCompositionReferences({
       sceneId: input.sceneId, path: input.path,
       text: input.afterText, characters: input.characters,
     }), ...[...new Set(Object.values(input.fontPaths))].map(path => ({
@@ -107,7 +112,7 @@ export async function buildTimelineOperationCompositionDraft(input: {
   });
   return {
     capabilityId: input.capabilityId, primaryObject,
-    rawReferences: [...rawReferences, ...themeAssetReferences(input.config), ...uiReferences(input.config),
+    rawReferences: [...rawReferences, ...textVoiceReferences(input.config), ...themeAssetReferences(input.config), ...uiReferences(input.config),
       ...[...new Set(Object.values(resolveProjectFontPaths(input.config)))].map(fontPath => ({ kind: 'font-asset' as const, scope: 'candidate-external' as const,
         token: fontPath, objectRef: `asset:font:${fontPath}`, source: { path: 'game.config.json' } }))],
     producedObjects: [{ objectRef: primaryObject, disposition: input.capabilityId === 'timeline.create' ? 'create' : 'update', finalFingerprint: objectFingerprintAfter }],
@@ -170,9 +175,9 @@ export async function buildCharacterOperationCompositionDraft(input: {
   });
   return {
     capabilityId: input.capabilityId, primaryObject,
-    rawReferences: input.capabilityId === 'character.remove' ? [] : analyzeCharacterCompositionReferences({
+    rawReferences: [...(migratedScenes.length ? textVoiceReferences(parseProjectConfigDocument(input.workingFilesBefore!['game.config.json'] ?? '{}')) : []), ...(input.capabilityId === 'character.remove' ? [] : analyzeCharacterCompositionReferences({
       id: input.id, ...(typeof avatar === 'string' ? { avatar } : {}),
-    }),
+    }))],
     replayStatePreconditions: [
       { objectRef: 'config:characters', expectedFingerprint: input.charactersFingerprintBefore },
       ...(migratedScenes.length === 0 ? [] : [{ objectRef: 'config:textCatalog', expectedFingerprint: await input.hasher.sha256(stableStringify(parseProjectConfigDocument(input.workingFilesBefore!['game.config.json'] ?? '{}').textCatalog ?? null)) }]),

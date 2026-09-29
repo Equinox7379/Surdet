@@ -54,6 +54,17 @@ it('does not rename text catalog prose or identities that happen to equal an ass
   expect(JSON.parse(result.textChanges.find(change => change.path === 'game.config.json')!.afterText).textCatalog).toEqual(textCatalog);
 });
 
+it('renames all voice-language references while preserving text keys, words and confirmation facts', async () => {
+  const sourcePath = 'content/assets/voice/hello.wav', targetPath = 'content/assets/voice/greeting.wav';
+  const source = { sceneId: 'start', label: null, ordinal: 0, sceneVersion: 'a'.repeat(64), kind: 'dialogue', speaker: 'hello', text: 'hello', version: 'b'.repeat(64) };
+  const binding = { asset: 'hello', sourceVersion: source.version, text: 'hello' };
+  const config = { textCatalog: { version: 1, sourceLocale: 'en', entries: [{ key: 'hello', source, translations: {}, voices: { en: binding, ja: binding } }] } };
+  const result = await planProjectAssetRelocation(await makeInput({ files: { 'game.config.json': JSON.stringify(config) }, assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath, assetDirectories: ['content/assets/voice'] }), hasher);
+  expect(result.plan.blockers).toEqual([]);
+  const entry = JSON.parse(result.textChanges.find(change => change.path === 'game.config.json')!.afterText).textCatalog.entries[0];
+  expect(entry).toEqual({ key: 'hello', source, translations: {}, voices: { en: { ...binding, asset: 'greeting' }, ja: { ...binding, asset: 'greeting' } } });
+});
+
 it.each(['sequence', 'layered'] as const)('moves every %s image reference without rewriting logical identity or prose', async kind => {
   const a = 'content/assets/portrait/rin_parts_a.png', b = 'content/assets/portrait/rin_parts_b.png';
   const movedB = 'content/assets/portrait/cast/rin_parts_b.png';

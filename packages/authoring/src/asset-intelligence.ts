@@ -1,4 +1,4 @@
-import { readProjectStage } from '@surdet/core';
+import { readProjectStage, readTextCatalog } from '@surdet/core';
 import { parsePortraitFileName, portraitSourcePaths, projectPortraitOverrides, resolveProjectPortraits, resolveProjectFontPaths, resolveProjectTheme, type GenericInstr } from '@surdet/core';
 import type {
   ProjectAssetFileFact,
@@ -252,6 +252,12 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
   };
 
   const gallery = galleryConfig(snapshot, galleryInput);
+  try {
+    for (const entry of readTextCatalog(snapshot.config)?.entries ?? []) for (const [locale, voice] of Object.entries(entry.voices ?? {})) {
+      add('voice', voice.asset, { referenceId: `text-key:${entry.key}:voice:${locale}`, sourceKind: 'config',
+        sourceLabel: `对白 ${entry.key} · ${locale} 配音`, sourcePath: 'game.config.json', objectRef: `text-key:${entry.key}` });
+    }
+  } catch { /* Shared text-catalog validation reports malformed data. */ }
   const gallerySources = new Map<string, { kind: ProjectAssetKind; key: string }[]>();
   for (const [field, kind] of [['cgs', 'background'], ['music', 'music']] as const) {
     for (const [entryIndex, entry] of galleryEntries(gallery, field).entries()) {

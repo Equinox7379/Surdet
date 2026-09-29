@@ -623,7 +623,7 @@ export async function commitTextCatalogPatch(input: TextCatalogPatchInput): Prom
   if (state.dirHandle !== root || state.handles.gameConfig !== handle || state.gameConfigText !== source) throw new Error('读取期间项目已经变化');
   const session = await beginChange(snapshot, new InMemoryChangeRepository());
   session.record.composition = { ...session.record.composition!, mode: 'direct' };
-  await applyTextCatalogPatch(session, input, storage);
+  await applyTextCatalogPatch(session, input, storage, (await storage.listFiles()).filter(path => path.startsWith('content/assets/')).map(path => ({ path })));
   const changed = await loadProjectSnapshot(workingFilesStorage(session.record, storage), storage);
   const validation = validateSnapshot(changed, buildObjectIndex(changed), { assetCatalog: buildAssetCatalog(await storage.listFiles(), changed, { gallery: state.configFiles.gallery }) });
   if (!validation.ok) throw new Error(validation.issues.filter(issue => issue.severity === 'error').map(issue => issue.text).join('\n'));
