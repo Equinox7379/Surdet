@@ -186,7 +186,7 @@ export function renderAssetsPanel(container: HTMLElement): void {
       const cpBtn = h('button', undefined, '复制');
       cpBtn.type = 'button';
       cpBtn.setAttribute('data-action', 'copy-asset-key');
-      cpBtn.title = '复制素材 key';
+      cpBtn.title = '复制素材键';
       cpBtn.onclick = () => {
         void navigator.clipboard?.writeText(entry.key);
         setStatus(`已复制 ${entry.key}`, true, 2500);

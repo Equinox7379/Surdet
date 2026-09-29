@@ -103,7 +103,7 @@ export class PreviewReplayController {
     if (this.#replay !== undefined) {
       if (this.#replay.seed !== this.#seed) {
         eligible = false;
-        this.#notify('试玩续接已停止：保存的随机 seed 与当前入口不一致。');
+        this.#notify('试玩续接已停止：保存的随机种子 与当前入口不一致。');
       } else if (this.#replay.sceneId !== this.#sceneId || !sameOptionalLabel(this.#replay.label, this.#label)) {
         eligible = false;
         this.#notify('试玩续接已停止：保存的场景或入口标签与当前入口不一致。');
@@ -248,7 +248,7 @@ export class PreviewReplayController {
 
     const available = this.#availableOptions;
     if (available !== null && !available.some((option) => option.index === selected.optionIndex && option.label === selected.label)) {
-      this.#invalidateRecording('Core 选择事件不在当前可见选项中，已停在真实选择肢。');
+      this.#invalidateRecording('引擎选择事件不在当前可见选项中，已停在真实选择肢。');
       return;
     }
     const sourceOption = point.options?.filter((option) => option.index === selected.optionIndex && option.label === selected.label) ?? [];

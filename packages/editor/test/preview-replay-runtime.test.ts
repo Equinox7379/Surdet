@@ -105,7 +105,7 @@ describe('PreviewReplayController', () => {
     const runtime = makeRuntime([{ id: 'intro', text: replayScene() }]);
     let visibleChoices: { index: number; label: string }[] = [];
     let text = '';
-    const commands = { dialogue: {
+    const commands = { world: { setPortraitSkipping: () => {}, setPortraitSpeaking: () => {} }, dialogue: {
       showText: (_speaker: string | null, value: string) => { text = value; },
       showChoices: (options: { index: number; label: string }[]) => { visibleChoices = options; },
       hideChoices: () => { visibleChoices = []; },

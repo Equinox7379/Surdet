@@ -197,7 +197,7 @@ export class LegacyStageAdapter implements AdvStage {
     if (restoreCommandRail) this.host.restoreCommandRail();
     else this.hideCommandRail();
   }
-  showEnding(text = 'THE END'): void {
+  showEnding(text = '全篇完'): void {
     this.hideCommandRail();
     this.hideChoices();
     this.hideBacklog();

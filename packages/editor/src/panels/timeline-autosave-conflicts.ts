@@ -12,13 +12,13 @@ export interface TimelineAutosaveConflictPanelActions {
 type TimelineAutosaveConflictReason = TimelineAutosaveRestoreConflict['reason'] | 'quarantined-backup';
 
 const REASON_LABELS: Record<string, string> = {
-  'recovered-json-invalid': '自动备份 JSON 无法解析',
-  'recovered-id-mismatch': '自动备份的名称、文件与内部 ID 不一致',
-  'current-json-invalid': '当前项目 JSON 无法解析',
-  'current-id-mismatch': '当前项目的名称、文件与内部 ID 不一致',
+  'recovered-json-invalid': '自动备份配置文本 无法解析',
+  'recovered-id-mismatch': '自动备份的名称、文件与内部标识 不一致',
+  'current-json-invalid': '当前项目配置文本 无法解析',
+  'current-id-mismatch': '当前项目的名称、文件与内部标识 不一致',
   'same-file-different-id': '同一文件对应了不同名称',
   'same-id-different-file': '同一名称对应了不同文件',
-  'definition-id-collision': '内部 ID 与其他时间轴冲突',
+  'definition-id-collision': '内部标识 与其他时间轴冲突',
   'quarantined-backup': '这份备份此前发生过身份冲突，需要重新确认',
 };
 
@@ -82,8 +82,8 @@ function appendIdentitySide(
     return;
   }
   appendIdentityField(section, '文件', document.file);
-  appendIdentityField(section, '稳定 ID', document.id);
-  appendIdentityField(section, 'JSON 内部 ID', displayIdentityValue(identity.definitionId));
+  appendIdentityField(section, '稳定标识', document.id);
+  appendIdentityField(section, 'JSON 内部标识', displayIdentityValue(identity.definitionId));
   appendIdentityField(section, '换行', document.eol === '\r\n' ? 'CRLF' : 'LF');
   container.appendChild(section);
 }
@@ -102,10 +102,10 @@ function appendTechnicalDetails(
   technicalBody.appendChild(h('div', undefined, `冲突键：${conflict.key}`));
   technicalBody.appendChild(h('div', undefined, `机器原因：${conflict.reason}`));
   if (conflict.current !== null) {
-    technicalBody.appendChild(h('h4', undefined, '当前项目 JSON'));
+    technicalBody.appendChild(h('h4', undefined, '当前项目配置文本'));
     technicalBody.appendChild(h('pre', undefined, conflict.current.text));
   }
-  technicalBody.appendChild(h('h4', undefined, '自动备份 JSON'));
+  technicalBody.appendChild(h('h4', undefined, '自动备份配置文本'));
   technicalBody.appendChild(h('pre', undefined, conflict.recovered.text));
   details.appendChild(technicalBody);
   card.appendChild(details);
@@ -139,7 +139,7 @@ function appendActions(
   );
   actionRow.appendChild(replace);
 
-  const newIdLabel = h('label', 'timeline-autosave-conflict-new-id-label', '新时间轴 ID');
+  const newIdLabel = h('label', 'timeline-autosave-conflict-new-id-label', '新时间轴标识');
   const newId = h('input', 'timeline-autosave-conflict-new-id') as HTMLInputElement;
   newId.type = 'text';
   newId.setAttribute('type', 'text');

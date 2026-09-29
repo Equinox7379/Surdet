@@ -23,7 +23,7 @@ const OBJECT_KIND_LABELS: Record<string, string> = {
   label: '标签',
   asset: '素材',
   track: '轨道',
-  cue: 'Cue',
+  cue: '演出动作',
 };
 
 const REVIEW_STATE_LABELS: Record<string, string> = {
@@ -81,7 +81,7 @@ export function labelForUnknownCode(code: string): string {
 
 /** 把稳定 objectRef 转成面向人的短标签；原始 ref 仍可放在技术详情中。 */
 export function labelForObjectRef(objectRef: string): string {
-  if (objectRef.startsWith('gallery:cgs:')) return `CG ${objectRef.slice('gallery:cgs:'.length)}`;
+  if (objectRef.startsWith('gallery:cgs:')) return `鉴赏图片 ${objectRef.slice('gallery:cgs:'.length)}`;
   if (objectRef === 'config:entryScene') return '项目入口场景';
   const separator = objectRef.indexOf(':');
   if (separator < 0) return `对象 ${objectRef}`;

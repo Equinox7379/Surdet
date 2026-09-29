@@ -1066,7 +1066,7 @@ export function repairTimelineAutosaveConflict(
     || entry.file === newFile
     || timelineDefinitionId(entry) === newId
   ));
-  if (currentCollision) return repairFailure(`演出 ID 或文件已存在：${newId}`);
+  if (currentCollision) return repairFailure(`演出标识 或文件已存在：${newId}`);
 
   const deletedCollision = state.pendingTimelineDeletes.some((entry) => (
     entry.id === newId || entry.file === newFile

@@ -239,7 +239,7 @@ export const v4WorkbenchCases: BrowserCase[] = [
     const original = fixture(); state.configReadErrors = {}; state.pendingSceneCommit = null; state.pendingSceneDeletes = [];
     state.gameConfigText = '{"entryScene":"start","characters":{"rin":{"name":"凛"}}}';
     openScriptImport(control('#sidebar'), key => { state.current = key; renderEditor(); });
-    input('[aria-label="新场景 ID"]', 'imported');
+    input('[aria-label="新场景标识"]', 'imported');
     input('[aria-label="格式"]', 'csv', 'change');
     input('[aria-label="原始文字"]', '备注,text,text,speaker\r\n不导入,错列,"你好,雨停了。",rin');
     clickText('.script-import-dialog', '预览导入');
@@ -266,7 +266,7 @@ export const v4WorkbenchCases: BrowserCase[] = [
     ]) {
       const original = fixture(); state.configReadErrors = {}; state.pendingSceneCommit = null; state.pendingSceneDeletes = [];
       openScriptImport(control('#sidebar'), () => {});
-      input('[aria-label="新场景 ID"]', 'imported'); input('[aria-label="原始文字"]', '旁白：保留的文本。');
+      input('[aria-label="新场景标识"]', 'imported'); input('[aria-label="原始文字"]', '旁白：保留的文本。');
       clickText('.script-import-dialog', '预览导入'); mutate();
       const before = [...state.scenes].map(([key, scene]) => [key, scene.text]);
       clickText('.script-import-dialog', '确认导入新草稿'); await nextTask();

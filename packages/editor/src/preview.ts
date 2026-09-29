@@ -597,11 +597,11 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
 
   function refreshCommandRail(): void {
     dialogue.setCommandRailItems([
-      { id: 'auto', icon: 'A', label: '自动', active: controller.autoPlay, tooltip: '自动播放' },
+      { id: 'auto', icon: '自', label: '自动', active: controller.autoPlay, tooltip: '自动播放' },
       { id: 'skip', icon: '»', label: '快进', active: controller.skipMode, tooltip: '快进已读文本' },
       { id: 'backlog', icon: '▤', label: '记录', active: controller.backlogOpen, tooltip: '打开文字记录' },
-      { id: 'qsave', icon: 'S', label: '快存', tooltip: '快速存档' },
-      { id: 'qload', icon: 'L', label: '快读', tooltip: '快速读档' },
+      { id: 'qsave', icon: '存', label: '快存', tooltip: '快速存档' },
+      { id: 'qload', icon: '读', label: '快读', tooltip: '快速读档' },
       { id: 'settings', icon: '⚙', label: '设置', active: settingsOpen, tooltip: '打开设置' },
       { id: 'hide', icon: '□', label: '界面', active: controller.interfaceHidden, tooltip: '隐藏界面' },
       { id: 'menu', icon: '≡', label: '菜单', tooltip: '打开系统菜单' },
@@ -898,7 +898,7 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
   // @exp：成长结果横幅 + levelEvents 场景跳转（配置驱动；场景存在才跳）
   bus.on('growth', (p) => {
     if (p.levelsGained > 0) {
-      dialogue.showBanner(`${p.characterId} 升级！Lv.${p.levelBefore} → Lv.${p.levelAfter}`, 'chapter');
+      dialogue.showBanner(`${p.characterId} 升级！等级 ${p.levelBefore} → Lv.${p.levelAfter}`, 'chapter');
       if (growth) {
         for (const lv of p.passedLevels) {
           const scene = growth.levelEventFor(p.characterId, lv);

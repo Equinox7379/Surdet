@@ -10,6 +10,7 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string): HTMLE
   const element = document.createElement(tag); if (text !== undefined) element.textContent = text; return element;
 };
 const sourceKey = (source: StageSource | null) => JSON.stringify(source);
+const PROPERTY_NAMES: Record<string, string> = { x: '横坐标', y: '纵坐标', scale: '缩放', opacity: '透明度', z: '层内顺序', facing: '朝向' };
 
 export function createStageWorkspace(options: {
   frame: HTMLIFrameElement;
@@ -35,7 +36,7 @@ export function createStageWorkspace(options: {
   const clipLabel = el('label', '确认修改片段定义，这会影响其全部引用'); clipLabel.prepend(clipConfirm);
   const upgrade = el('input'); upgrade.type = 'checkbox';
   const upgradeLabel = el('label', '需要时将所选旧时间轴升级为版本 2'); upgradeLabel.prepend(upgrade);
-  root.append(status, actions, el('p', '对象列表包括透明、重叠和画面外的对象；拖动选中的对象时，只接管当前来源的 X / Y。'), objectList, sourceList, provenance, fields, clipLabel, upgradeLabel);
+  root.append(status, actions, el('p', '对象列表包括透明、重叠和画面外的对象；拖动选中的对象时，只接管当前来源的横、纵坐标。'), objectList, sourceList, provenance, fields, clipLabel, upgradeLabel);
   let token: string | null = null, baseline: StageEditBaseline | null = null, inspection: StageInspection | null = null;
   let selected: StageInspectionObject | null = null, source: StageSource | null = null;
   let sources: StageSource[] = [], values: StageEditValues = {}, disposed = false, busy = false;
@@ -55,9 +56,9 @@ export function createStageWorkspace(options: {
     source = sources[Number(sourceList.value)] ?? null; fields.replaceChildren(); controls.clear(); values = {};
     if (!selected) { sync(); return; }
     const target = selected;
-    provenance.textContent = [...new Set(['x', 'y', 'scale', 'opacity', 'z', ...(target.kind === 'portrait' ? ['facing'] : [])].map(property => `${property}: ${stageSourceLabel(sourceForStageProperty(target, property))}`))].join('；');
+    provenance.textContent = [...new Set(['x', 'y', 'scale', 'opacity', 'z', ...(target.kind === 'portrait' ? ['facing'] : [])].map(property => `${PROPERTY_NAMES[property]}：${stageSourceLabel(sourceForStageProperty(target, property))}`))].join('；');
     for (const property of ['x', 'y', 'scale', 'opacity', 'z', ...(target.kind === 'portrait' ? ['facing'] : [])]) {
-      const label = el('label', ({ x: '横坐标', y: '纵坐标', scale: '缩放', opacity: '透明度', z: '层内顺序', facing: '朝向' } as Record<string, string>)[property]);
+      const label = el('label', PROPERTY_NAMES[property]);
       let control: HTMLInputElement | HTMLSelectElement;
       if (property === 'facing') {
         const select = el('select'); for (const [value, name] of [['right', '向右'], ['left', '向左']]) { const option = el('option', name); option.value = value!; select.append(option); } control = select;

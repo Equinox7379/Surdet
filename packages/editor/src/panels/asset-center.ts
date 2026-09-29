@@ -503,7 +503,7 @@ function renderRelocation(
   if (detail?.plan.replacement) {
     const facts = detail.plan.replacement;
     section.append(h('p', '', `原位替换：${detail.request.targetPath}`), h('p', 'hint', '保持路径、素材键和原许可证不变；不会用移动或普通导入冒充替换。'),
-      h('p', 'mono', `原 SHA-256: ${facts.beforeSha256}`), h('p', 'mono', `新 SHA-256: ${facts.afterSha256}`),
+      h('p', 'mono', `原文件指纹： ${facts.beforeSha256}`), h('p', 'mono', `新文件指纹： ${facts.afterSha256}`),
       h('p', '', facts.noChange ? '内容相同，无需改变原文件。' : `${formatAssetBytes(facts.bytes)}；${facts.references.length} 处已知使用位置将读取新内容。`));
     const confirm = h('button', 'asset-relocation-primary', facts.noChange ? '确认无变化' : '确认替换文件内容') as HTMLButtonElement;
     confirm.type = 'button'; confirm.disabled = projection.busy; confirm.onclick = hooks.assetRelocation.onCommit;
@@ -855,7 +855,7 @@ function renderInspector(host: HTMLElement, item: ProjectAssetItem | null, items
   };
   addTechnical('素材键', item.key);
   addTechnical('项目路径', item.sourcePath ?? '无物理文件');
-  addTechnical('素材 ID', item.assetId);
+  addTechnical('素材标识', item.assetId);
   addTechnical('问题代码', item.issues.length > 0 ? item.issues.join('、') : '无');
   technical.appendChild(technicalFacts);
 

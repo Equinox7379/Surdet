@@ -223,7 +223,7 @@ describe('configuration draft state', () => {
   it('keeps malformed stored visual JSON visible so the author can repair it', async () => {
     const visuals = { uniform: { broken: { version: 1, kind: 'sequence', frames: [], loop: true } } };
     const root = await renderFixture(JSON.stringify({ ...JSON.parse(INITIAL_GAME_CONFIG), characters: { lynn: { name: '凛', visuals } } }));
-    const field = byAttribute(root, 'aria-label', 'lynn 分层 / 帧动画 JSON');
+    const field = byAttribute(root, 'aria-label', 'lynn 分层 / 帧动画配置');
     expect(JSON.parse(field.value)).toEqual(visuals);
     expect(byAttribute(root, 'aria-label', 'lynn 的显示名称').value).toBe('凛');
   });
@@ -255,7 +255,7 @@ describe('configuration draft state', () => {
       { key: 'portrait:talk', kind: 'portrait', isImage: true, handle: null, sourcePath: visualPath },
     ];
     const root = await renderFixture(gameConfigText);
-    const field = () => byAttribute(root, 'aria-label', 'lynn 分层 / 帧动画 JSON');
+    const field = () => byAttribute(root, 'aria-label', 'lynn 分层 / 帧动画配置');
 
     expect(byText(root, '1 项显式绑定')).toBeDefined();
     expect(JSON.parse(field().value)).toEqual(visuals);

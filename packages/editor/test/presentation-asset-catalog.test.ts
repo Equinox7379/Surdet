@@ -78,7 +78,7 @@ describe('presentation asset catalog', () => {
     expect(describeAuthoringReference('asset:bg:night_field')).toBe('背景 night_field');
     expect(describeAuthoringReference('asset:portrait:lynn:uniform:night')).toBe('立绘 lynn:uniform（night）');
     expect(describeAuthoringReference('timeline:agent_blackout/track:1')).toBe('轨道（agent_blackout · #1）');
-    expect(describeAuthoringReference('timeline:agent_blackout/track:1/cue:0')).toBe('Cue（agent_blackout · 轨道 1 · #0）');
+    expect(describeAuthoringReference('timeline:agent_blackout/track:1/cue:0')).toBe('演出动作（agent_blackout · 轨道 1 · 编号 0）');
     expect(describeAuthoringReference('timeline:agent_blackout')).toBe('时间轴 agent_blackout');
   });
 

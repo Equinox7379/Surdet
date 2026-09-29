@@ -236,6 +236,25 @@ function projectionSignature(root: Container): unknown {
 }
 
 describe('Menu v2 characterization contract', () => {
+  it('uses Chinese default copy while preserving authored titles and callback identifiers', () => {
+    const runtime = makeRealMenuRuntime();
+    const select = vi.fn();
+    try {
+      runtime.layer.showEnding();
+      expect(findTextDeep(runtime.root, '全篇完')).toBeDefined();
+      runtime.layer.hideEnding();
+      runtime.layer.showTitle({ title: 'My Story', items: [{ id: 'continue-story', label: 'Continue my story' }] }, select);
+      expect(findTextDeep(runtime.root, 'My Story')).toBeDefined();
+      findTextDeep(runtime.root, 'Continue my story').emit('pointerdown', pointerEvent);
+      expect(select).toHaveBeenCalledWith('continue-story');
+      runtime.layer.hideTitle();
+      runtime.layer.showSaveLoad({ mode: 'save', slots: [] }, () => {}, () => {});
+      expect(findTextDeep(runtime.root, '记录进度')).toBeDefined();
+      runtime.layer.showSaveLoad({ mode: 'load', slots: [] }, () => {}, () => {});
+      expect(findTextDeep(runtime.root, '继续故事')).toBeDefined();
+    } finally { disposeRealMenuRuntime(runtime); }
+  });
+
   it('uses a registered title wordmark without losing controls, falls back to text, and does not own its texture', async () => {
     const runtime = makeRealMenuRuntime();
     const logo = new Texture();

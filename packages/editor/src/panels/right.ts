@@ -12,6 +12,12 @@ import {
 } from '../causal-selection.js';
 import { parseProjectConfigDocument, type HumanReviewProjection } from '@surdet/authoring';
 import { labelForObjectKind } from '../review-model.js';
+import { flowEdgeKindLabel } from '../flow-presentation.js';
+
+const VARIABLE_TYPE_LABELS: Record<string, string> = {
+  number: '数字', string: '文本', boolean: '布尔值', flag: '开关',
+  'string[]': '文本列表', 'number[]': '数字列表', object: '对象',
+};
 
 let onSceneJumpHook: (sceneKey: string) => void = () => {};
 
@@ -114,7 +120,7 @@ export function renderRightExtras(): void {
       const vars = Object.entries(cfg.variables ?? {});
       if (vars.length === 0) chips.appendChild(h('span', 'empty', '无变量声明'));
       for (const [name, decl] of vars) {
-        const chip = h('span', 'chip', `${name}：${decl?.type ?? '?'}`);
+        const chip = h('span', 'chip', `${name}：${VARIABLE_TYPE_LABELS[decl?.type ?? ''] ?? decl?.type ?? '未声明类型'}`);
         chip.title = '点击复制变量名';
         chip.onclick = () => { void navigator.clipboard?.writeText(name); setStatus(`已复制 ${name}`, true); };
         chips.appendChild(chip);
@@ -188,7 +194,7 @@ export function updateCausalPanel(): void {
     return;
   }
   if (!object) {
-    box.appendChild(h('div', 'empty', '对象索引正在更新，或当前 objectRef 已过期'));
+    box.appendChild(h('div', 'empty', '对象索引正在更新，或当前对象引用已过期'));
     return;
   }
   box.appendChild(h('div', 'causal-label', '当前对象'));
@@ -202,17 +208,17 @@ export function updateCausalPanel(): void {
   if (object.kind === 'timeline' && index) {
     const children = index.objects.filter((candidate) => candidate.parentRef === object.objectRef && (candidate.kind === 'track' || candidate.kind === 'cue'));
     if (children.length > 0) {
-      refList(box, '轨道 / Cue', children.map((candidate) => candidate.objectRef));
+      refList(box, '轨道 / 演出动作', children.map((candidate) => candidate.objectRef));
     }
   }
   refList(box, '直接引用', object.references);
   refList(box, '直接被引用', object.referencedBy);
   const potential = h('div', 'causal-impact');
-  potential.appendChild(h('div', 'causal-label', 'potentialImpact'));
+  potential.appendChild(h('div', 'causal-label', '可能影响'));
   potential.appendChild(h('div', undefined, object.references.length > 0 ? `可能影响 ${object.references.length} 个直接目标` : '当前对象没有直接引用目标'));
   box.appendChild(potential);
   const observed = h('div', 'causal-impact');
-  observed.appendChild(h('div', 'causal-label', 'observedImpact'));
+  observed.appendChild(h('div', 'causal-label', '实际观察'));
   const trace = state.previewTrace.map((event, step) => ({ step, event })) satisfies CausalTraceEvent[];
   const hits = filterTraceByObject(object.objectRef, trace, index ?? undefined);
   if (state.previewTrace.length === 0) observed.appendChild(h('div', 'empty', '尚无本次预览观察证据'));
@@ -346,6 +352,6 @@ export function updateEdges(): void {
     return;
   }
   for (const e of state.lastEdges) {
-    box.appendChild(h('div', 'edge', `${e.from} → ${e.to}（${e.kind}）`));
+    box.appendChild(h('div', 'edge', `${e.from} → ${e.to}（${flowEdgeKindLabel(e.kind)}）`));
   }
 }

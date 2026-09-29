@@ -964,7 +964,7 @@ function renderCharactersSection(): HTMLElement {
   const rows = ensureCharRows();
   const revision = configSessionRevision;
   const createFields = h('div', 'config-character-create');
-  const newId = h('input', 'mono'); newId.placeholder = '角色 ID'; newId.setAttribute('aria-label', '新角色 ID');
+  const newId = h('input', 'mono'); newId.placeholder = '角色标识'; newId.setAttribute('aria-label', '新角色标识');
   const newName = h('input'); newName.placeholder = '显示名称'; newName.setAttribute('aria-label', '新角色显示名称');
   const addCharacter = h('button', 'config-row-add', '添加角色'); addCharacter.type = 'button';
   const canCreate = () => {
@@ -976,18 +976,18 @@ function renderCharactersSection(): HTMLElement {
   addCharacter.onclick = () => {
     if (!canCreate()) return;
     const id = newId.value.trim(), name = newName.value.trim();
-    if (!id || !name) { setStatus('请填写角色 ID 与显示名称。', false); return; }
-    if (rows.some(row => row.id === id)) { setStatus(`角色 ID 已存在：${id}`, false); return; }
+    if (!id || !name) { setStatus('请填写角色标识与显示名称。', false); return; }
+    if (rows.some(row => row.id === id)) { setStatus(`角色标识已存在：${id}`, false); return; }
     pushConfigHistory(false);
     rows.push({ id, name, avatar: '', portraits: [], visualsText: '{}', create: true });
     rerenderConfig();
   };
   const idField = h('label', 'config-field'), nameField = h('label', 'config-field');
-  idField.append(h('span', undefined, '角色 ID'), newId);
+  idField.append(h('span', undefined, '角色标识'), newId);
   nameField.append(h('span', undefined, '显示名称'), newName);
   createFields.append(idField, nameField, addCharacter);
-  sec.append(createFields, h('p', 'hint', '添加后先保存在角色表草稿中；点击保存角色表才写入项目。已有角色 ID 不在这里改名或删除。'));
-  if (rows.length === 0) sec.appendChild(h('div', 'config-empty', '暂无角色。填写 ID 与显示名称后添加首个角色。'));
+  sec.append(createFields, h('p', 'hint', '添加后先保存在角色表草稿中；点击保存角色表才写入项目。已有角色标识不在这里改名或删除。'));
+  if (rows.length === 0) sec.appendChild(h('div', 'config-empty', '暂无角色。填写标识与显示名称后添加首个角色。'));
   const table = h('table', 'config-table') as HTMLTableElement;
   const thead = h('thead');
   const hr = h('tr');
@@ -1002,7 +1002,7 @@ function renderCharactersSection(): HTMLElement {
   rows.forEach((row, i) => {
     const tr = h('tr');
     const tdId = h('td', 'mono', row.id);
-    tdId.title = '角色 ID 是语义身份（speaker/因果/avatar 引用键），暂不支持在编辑器改名';
+    tdId.title = '角色标识用于台词、引用关系与头像绑定，暂不支持在编辑器改名';
     if (row.create) {
       const cancel = h('button', '', '取消新增'); cancel.type = 'button';
       cancel.setAttribute('aria-label', `取消新增角色 ${row.id}`);
@@ -1093,8 +1093,8 @@ function renderCharactersSection(): HTMLElement {
     const visualsText = h('textarea') as HTMLTextAreaElement;
     visualsText.value = row.visualsText ?? '';
     visualsText.rows = 8;
-    visualsText.setAttribute('aria-label', `${row.id} 分层 / 帧动画 JSON`);
-    visualsText.placeholder = '在此编辑 outfit → expression → PortraitVisualDefinition；输入 null 可移除已有配置。';
+    visualsText.setAttribute('aria-label', `${row.id} 分层 / 帧动画配置`);
+    visualsText.placeholder = '在此按“服装 → 表情”编辑立绘配置；输入 null 可移除已有配置。';
     const visualImagePaths = [...new Set(state.dirAssets.flatMap(asset =>
       asset.kind === 'portrait' && asset.isImage && asset.sourcePath ? [asset.sourcePath] : []
     ))].sort();
@@ -1152,10 +1152,10 @@ function renderCharactersSection(): HTMLElement {
     sequenceExample.onclick = () => fillVisualExample('sequence');
     layeredExample.onclick = () => fillVisualExample('layered');
     const visualsLabel = h('label', 'config-field');
-    visualsLabel.append(h('span', undefined, 'outfit → expression JSON'), visualsText);
+    visualsLabel.append(h('span', undefined, '服装 → 表情配置'), visualsText);
     visualsDetails.append(
       visualsSummary,
-      h('p', 'hint', '顶层按 outfit → expression 映射，值为 sequence 或 layered 定义；layers 数组从后向前排列。所有分层素材须使用同尺寸透明画布。保存 null 会移除 visuals，保存对象会整体替换。'),
+      h('p', 'hint', '顶层按“服装 → 表情”组织，每项定义帧动画（sequence）或分层立绘（layered）；图层数组从后向前排列。所有分层素材须使用同尺寸透明画布。保存 null 会移除立绘配置，保存对象会整体替换。'),
       visualsLabel,
       sequenceExample,
       layeredExample,
@@ -1219,7 +1219,7 @@ async function saveCharactersUnlocked(): Promise<boolean> {
     }
     markConfigSectionSaved('characters', submittedRows, sessionRevision);
     requestValidateHook();
-    const migrationNote = result.speakerMigrations.length > 0 ? `，同步迁移 ${result.speakerMigrations.length} 处台词 speaker` : '';
+    const migrationNote = result.speakerMigrations.length > 0 ? `，同步迁移 ${result.speakerMigrations.length} 处台词说话人` : '';
     setStatus(`角色表已保存（${result.changed} 个角色更新${migrationNote}）`, true, 4000);
     return true;
   } catch (err) {
@@ -1683,12 +1683,12 @@ function importTerminology(file: File): void {
 
 function renderThemeSection(): HTMLElement {
   const { sec, ops } = sectionShell('theme');
-  sec.appendChild(h('p', 'config-section-help', 'theme 配置颜色、透明度、字号、皮肤与布局；titleLogo/titleBackground 使用背景素材键；fonts 使用 body/title/ui 对应的项目字体完整路径，font 为旧式统一字体。null 恢复默认。删除 theme 内已支持字段即恢复默认，其他来源字段保留；省略 font/fonts/titleBackground 保持原值。'));
+  sec.appendChild(h('p', 'config-section-help', '可配置颜色、透明度、字号、皮肤与布局，以及标题字标、标题背景和字体。下方配置文本中的字段名须保留原样；图片填背景素材键，字体填项目内完整路径。主题字段填 null 或删除已支持的主题字段可恢复默认；未涉及的来源字段会保留，省略字体或标题背景字段会保持原值。'));
   const form = h('textarea');
   form.rows = 18;
   form.spellcheck = false;
   form.className = 'theme-config-json';
-  form.setAttribute('aria-label', '主题配置 JSON');
+  form.setAttribute('aria-label', '主题配置文本');
   form.value = readThemeConfigDraft();
   const status = h('p', 'dim');
   form.oninput = () => {
@@ -1700,7 +1700,7 @@ function renderThemeSection(): HTMLElement {
     status.textContent = '正在保存…';
     try {
       await runProjectWriteOperation(saveThemeConfigDraftUnlocked);
-      status.textContent = '主题配置已通过共享事务保存。重新播放后使用新配置。';
+      status.textContent = '主题配置已保存。重新播放后使用新配置。';
     } catch (error) {
       status.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
     }
@@ -1846,7 +1846,7 @@ export async function saveDirtyConfigSections(): Promise<ConfigSaveOutcome> {
     try {
       switch (section) {
         case 'texts':
-          throw new Error('译稿 CSV 尚未确认，请先在“文本与译稿”预览差异并确认导入；草稿已保留。');
+          throw new Error('译稿表格尚未确认，请先在“文本与译稿”预览差异并确认导入；草稿已保留。');
         case 'stage':
           await saveStageConfigDraftUnlocked();
           ok = true;

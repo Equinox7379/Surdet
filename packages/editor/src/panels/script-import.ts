@@ -13,7 +13,7 @@ export function openScriptImport(host: HTMLElement, onCreated: (key: string) => 
   const current = (): boolean => dialog.isConnected && host.contains(dialog) && state.dirHandle === root && state.autosaveProjectId === projectId;
   const writable = (): boolean => current() && allowedToEdit(dialog) && !state.reviewPreviewReadOnly;
   const format = h('select');
-  for (const [value, label] of [['text', 'UTF-8 纯文本'], ['csv', 'CSV 表格']]) {
+  for (const [value, label] of [['text', '纯文本（UTF-8 编码）'], ['csv', '表格文件（.csv）']]) {
     const option = h('option', undefined, label); option.value = value!; format.append(option);
   }
   const upload = h('input'); upload.type = 'file'; upload.accept = '.txt,.csv,text/plain,text/csv';
@@ -76,7 +76,7 @@ export function openScriptImport(host: HTMLElement, onCreated: (key: string) => 
         item.style.whiteSpace = 'pre-wrap'; item.style.overflowWrap = 'anywhere'; lines.append(item);
       }
       preview.append(lines); apply.disabled = !value.ready;
-      message.textContent = value.ready ? '请核对台词、角色映射及新场景 ID，再确认导入。' : '请修正上述错误后重新预览。';
+      message.textContent = value.ready ? '请核对台词、角色映射及新场景标识，再确认导入。' : '请修正上述错误后重新预览。';
     } catch (error) { shown = null; apply.disabled = true; message.textContent = error instanceof Error ? error.message : String(error); }
   };
   const apply = button('确认导入新草稿', () => {
@@ -86,8 +86,8 @@ export function openScriptImport(host: HTMLElement, onCreated: (key: string) => 
       if (!writable() || state.pendingSceneCommit !== null) throw new Error('项目当前不可修改，请完成保存或恢复后重试。');
       assertConfigSourcesReadable(['gameConfig']);
       if (pending.config !== state.gameConfigText || JSON.stringify(pending.request) !== JSON.stringify(request()) || pending.id !== name.value.trim()) throw new Error('正文、角色配置或导入设置已变化，请重新预览。');
-      if (!isValidSceneId(pending.id)) throw new Error('场景 ID 须以字母或数字开头，只含字母、数字、下划线或连字符。');
-      if ([...state.scenes.values()].some(scene => scene.id.toLowerCase() === pending.id.toLowerCase()) || isSceneFilePathReserved(`${pending.id}.gal`)) throw new Error('同名场景已存在或正在等待保存／删除，请换一个新 ID。');
+      if (!isValidSceneId(pending.id)) throw new Error('场景标识 须以字母或数字开头，只含字母、数字、下划线或连字符。');
+      if ([...state.scenes.values()].some(scene => scene.id.toLowerCase() === pending.id.toLowerCase()) || isSceneFilePathReserved(`${pending.id}.gal`)) throw new Error('同名场景已存在或正在等待保存／删除，请换一个新标识。');
     };
     try { check(); } catch (error) { message.textContent = String((error as Error).message); return; }
     busy = true; apply.disabled = true; cancel.disabled = true;
@@ -104,8 +104,8 @@ export function openScriptImport(host: HTMLElement, onCreated: (key: string) => 
   apply.disabled = true;
   const cancel = button('取消', close), inspect = button('预览导入', show);
   const footer = h('footer'); footer.append(cancel, inspect, apply);
-  dialog.append(h('h2', undefined, '导入剧本'), field('格式', format), field('选择 UTF-8 文件', upload), field('原始文字', source),
-    field('新场景 ID', name), mapping, speakers, message, preview, footer);
+  dialog.append(h('h2', undefined, '导入剧本'), field('格式', format), field('选择文本或表格文件', upload), field('原始文字', source),
+    field('新场景标识', name), mapping, speakers, message, preview, footer);
   mapping.hidden = true;
   format.onchange = () => { if (writable()) { mapping.hidden = format.value !== 'csv'; textColumn.replaceChildren(); speakerColumn.replaceChildren(); invalidate(); } };
   source.oninput = () => { if (writable()) { fileRead++; invalidate(); } };
@@ -120,7 +120,7 @@ export function openScriptImport(host: HTMLElement, onCreated: (key: string) => 
       source.value = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
       format.value = file.name.toLowerCase().endsWith('.csv') ? 'csv' : 'text'; mapping.hidden = format.value !== 'csv';
       textColumn.replaceChildren(); speakerColumn.replaceChildren(); speakerMap = Object.create(null);
-      message.textContent = '文件已读取，请填写新场景 ID 并预览。';
+      message.textContent = '文件已读取，请填写新场景标识 并预览。';
     }).catch(error => { if (current() && token === fileRead) message.textContent = `文件读取失败：${error instanceof Error ? error.message : String(error)}`; });
   };
   dialog.oncancel = event => { event.preventDefault(); close(); };
