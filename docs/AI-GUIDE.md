@@ -175,7 +175,7 @@ candidate/integration 明确拒绝该跨文件操作，既有候选创建/修改
 
 字体修改只支持 direct；candidate 场景引用基线字体路径并记录有效角色配置的重放指纹，不得伴随写配置。未封存旧草稿若缺少新增字体事实，须保留原记录并新建候选，不能补写历史；已封存胶囊不改写。隔离工作版本试玩读取未写回的配置，坏字体明确显示文件与失败原因并记失败；Player 会报告失败并使用默认字体，不能把回退当作字体加载成功。字体许可原件随附方式见下文素材导入。
 
-**阅读排版检查：** 字体成功加载不代表覆盖所有字形。Editor「预览 → 检查当前排版」检查当前已显示的文字；逐字显示结束后再检查完整段落。`FONT_MISSING_GLYPHS` 列出配置字体缺字及 Unicode 编号，系统回退有画面不算配置字体通过；`FONT_COVERAGE_UNAVAILABLE` 表示系统字体或覆盖表不可读取，不能当作零缺字。`TEXT_OVERFLOW` 是横向/节点越界，`TEXT_SCROLL` 仅表示 ADV/NVL/选项需要滚动，不是丢字。没有画布的环境明确返回 `TEXT_MEASUREMENT_UNAVAILABLE`。
+**阅读排版检查：** 字体成功加载不代表覆盖所有字形。Editor「预览 → 检查当前排版」检查当前已显示的文字；逐字显示结束后再检查完整段落。`FONT_MISSING_GLYPHS` 列出配置字体缺字及 Unicode 编号，系统回退有画面不算配置字体通过；`FONT_COVERAGE_UNAVAILABLE` 表示系统字体或覆盖表不可读取，不能当作零缺字。`TEXT_OVERFLOW` 是横向/节点内部溢出，`TEXT_CLIPPED` 表示自定义文字/按钮的实际文字片段被画面或上层 hidden/clip 区域裁切，不以空白节点边界代替文字边界；滚动容器先取其可见片段，不把可滚到的内容直接判成裁切。`TEXT_SCROLL` 仅表示 ADV/NVL/选项需要滚动，不是丢字。检查不判断其他节点遮挡、所有控件或未播放章节，没有警告不等于全作品所有文字均可读。没有画布的环境明确返回 `TEXT_MEASUREMENT_UNAVAILABLE`。
 
 既有 Renderer `queries.diagnostics.projectionSnapshot().dialogue.readingDiagnostics` 返回原生正文/名字/选项/NVL 的实际投影检查。Editor 只读 `surdetPreviewDebug.readingDiagnostics` 额外给出当前步骤 `source`、`typing` 和 `issues`；`source` 是当前阅读位置，不是 NVL 所有旧段或仍显示的上一句各自的来源。既有 `runtime.read-preview` 的 `presentationBefore/After.projection.dialogue.readingDiagnostics` 保留**事件发生时**的快照，打字中的快照不是整句终态。完整作品 UI 请用「试玩草稿」或 Player，`window.__surdetDebug.readingDiagnostics` 合并当前原生层与自定义文字/按钮的检查，`ui:页面.组件ID` 定位真实节点；已被自定义 UI 替代的原生层不重复报错。检查不遍历未播放剧情，不验证复杂文字塑形质量、所有系统回退字体或不可见分页，不能据此声称全作品排版已通过。
 

@@ -1,6 +1,6 @@
 import { Container, EventBoundary, FederatedEvent, FederatedPointerEvent, Rectangle } from 'pixi.js';
 import { describe, expect, it, vi } from 'vitest';
-import { bindPlayerControl, markPlayerModal, PlayerFocusScope } from '../src/player-controls.js';
+import { bindPlayerControl, markPlayerModal, PlayerFocusScope, isPlayerControlPointer } from '../src/player-controls.js';
 
 function makeFocusHarness() {
   const root = new Container();
@@ -62,6 +62,31 @@ function makeFocusHarness() {
 }
 
 describe('player control projection', () => {
+  it('retains only the consumed native event after microtasks and control destruction', async () => {
+    const target = new Container();
+    bindPlayerControl(target, { label: '选择', width: 100, height: 40 });
+    const event = new FederatedPointerEvent(new EventBoundary(target));
+    const native = { button: 0, type: 'pointerdown' } as PointerEvent;
+    event.nativeEvent = native;
+    target.emit('pointerdowncapture', event);
+    target.destroy();
+    await Promise.resolve();
+    expect(isPlayerControlPointer(native)).toBe(true);
+    expect(isPlayerControlPointer({ button: 0, type: 'pointerdown' })).toBe(false);
+  });
+
+  it('marks modal backdrop events before a close/reset can detach the modal', async () => {
+    const root = new Container(); markPlayerModal(root, {}); markPlayerModal(root, {});
+    expect(root.listenerCount('pointerdowncapture')).toBe(1);
+    root.removeAllListeners(); // backlog clears owned listeners when rebuilt
+    markPlayerModal(root, {});
+    expect(root.listenerCount('pointerdowncapture')).toBe(1);
+    const event = new FederatedPointerEvent(new EventBoundary(root));
+    event.nativeEvent = { button: 0 } as PointerEvent;
+    root.emit('pointerdowncapture', event); root.destroy();
+    await Promise.resolve();
+    expect(isPlayerControlPointer(event.nativeEvent)).toBe(true);
+  });
   it('excludes a replaced, non-rendered default modal from keyboard routing and native focus', async () => {
     const harness = makeFocusHarness();
     harness.modalControls[0]!.parent!.renderable = false;
