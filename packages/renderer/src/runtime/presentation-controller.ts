@@ -412,6 +412,7 @@ export class PresentationController {
     const unsubs = [
       bus.on('text', (p) => { this.#onText(p); this.#requestFrame(); }),
       bus.on('choice', (p) => { this.#onChoice(p); this.#requestFrame(); }),
+      bus.on('textRefresh', (p) => { this.#refreshDisplayedText(p); this.#requestFrame(); }),
       bus.on('runtimeTrace', event => { if (event.kind === 'instruction') this.#instructionOrigin = { kind: 'scene', file: event.source.file, line: event.source.line, sceneId: event.source.sceneId, instructionIndex: event.source.index }; }),
       bus.on('instr', (p) => { this.#onInstr(p); this.#requestFrame(); }),
       bus.on('wait', (p) => { this.#onWait(p); this.#requestFrame(); }),
@@ -804,6 +805,28 @@ export class PresentationController {
     return true;
   }
 
+  #refreshDisplayedText(p: { text?: TextEventPayload; choices?: ChoiceEventPayload }): void {
+    if (p.choices && this.#status === 'choice') {
+      this.#commands.dialogue.showChoices(p.choices.options);
+      this.#commands.dialogue.setChoiceHighlight(this.#choiceCursor);
+    }
+    if (!p.text || (this.#status !== 'typing' && this.#status !== 'awaiting')) return;
+    if (this.#nvl) {
+      const entries = this.#queries.dialogue.nvlPresentationEntries();
+      const prior = withoutReplayedCurrentNvlLine(entries, this.#current, true);
+      this.#commands.dialogue.clearNvlText();
+      for (const entry of prior) this.#commands.dialogue.appendNvlText(entry.speaker, entry.text);
+      this.#commands.dialogue.appendNvlText(p.text.speaker, stripRuby(p.text.value));
+    } else {
+      this.#tw.replaceText(p.text.value);
+      this.#commands.dialogue.showText(p.text.speaker, this.#tw.text);
+      if (this.#status === 'typing' && this.#tw.isDone) {
+        this.#status = 'awaiting'; this.#awaitSince = this.#pausedSince ?? nowMs();
+      }
+    }
+    this.#current = { speaker: p.text.speaker, value: p.text.value };
+  }
+
   #onText(p: TextEventPayload): void {
     // 遇未读即停：快进中遇到从未播放过的文本（wasRead === false）时自动退出快进，
     // 按正常打字显示给玩家。旧载荷缺 wasRead（undefined）时保持旧行为（连续推进），向后兼容。
@@ -811,7 +834,7 @@ export class PresentationController {
     if (this.#skipMode && !this.#skipAll && p.wasRead === false) this.#skipMode = false;
     this.#commands.world.setPortraitSkipping?.(this.#skipMode);
     // Backlog 语音关联：@voice 紧跟的文本行带上语音 key（回看可重播）
-    this.#backlog?.add(p.speaker, stripRuby(p.value), this.#pendingVoice ?? undefined);
+    this.#backlog?.add(p.displaySpeaker ?? p.speaker, stripRuby(p.value), this.#pendingVoice ?? undefined);
     if (this.#backlogOpen) this.#renderBacklog();
     this.#pendingVoice = null;
     this.#current = { speaker: p.speaker, value: p.value };

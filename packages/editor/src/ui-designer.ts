@@ -39,11 +39,12 @@ const DATA_FIELDS: Record<string, string> = {
 };
 const SETTING_NAMES: Record<string, string> = {
   ...Object.fromEntries(SETTING_STEPS.map(setting => [setting.key, setting.label])),
-  autoPerCharMs: '自动播放每字停留', keyPreset: '快捷键方案',
+  autoPerCharMs: '自动播放每字停留', keyPreset: '快捷键方案', locale: '作品语言',
 };
 const SOURCE_NAMES: Record<NonNullable<ProjectUiNode['source']>, string> = {
   'save-slots': '存档列表', settings: '阅读设置', backlog: '文字记录', choices: '剧情选项',
   'gallery-cgs': '图片鉴赏', 'gallery-music': '音乐鉴赏', 'gallery-texts': '剧情回想',
+  terms: '名词表',
 };
 const ACTION_NAMES: Record<NonNullable<ProjectUiNode['action']>['kind'], string> = {
   start: '开始游戏', continue: '继续游戏', open: '打开页面', back: '返回', close: '关闭',
@@ -357,7 +358,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     }
     if (node.source) {
       const select = element('select');
-      const sources = selectedPage === 'gallery' ? ['gallery-cgs', 'gallery-music', 'gallery-texts'] : [node.source];
+      const sources = selectedPage === 'gallery' ? ['gallery-cgs', 'gallery-music', 'gallery-texts', 'terms'] : [node.source];
       sources.forEach(source => select.appendChild(option(source, SOURCE_NAMES[source as keyof typeof SOURCE_NAMES])));
       select.value = node.source;
       select.onchange = () => apply({ type: 'node.update', page: selectedPage, id: node.id, patch: { source: select.value as ProjectUiNode['source'] } });
@@ -370,7 +371,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       if (arg instanceof HTMLSelectElement) {
         const names = node.action?.kind === 'open'
           ? Object.fromEntries(['system-menu', 'save-load', 'settings', 'gallery', 'backlog'].map(page => [page, PAGE_NAMES[page as ProjectUiPageId]]))
-          : Object.fromEntries(SETTING_STEPS.map(setting => [setting.key, setting.label]));
+          : { ...Object.fromEntries(SETTING_STEPS.map(setting => [setting.key, setting.label])), locale: '作品语言' };
         Object.entries(names).forEach(([value, label]) => arg.appendChild(option(value, label)));
         const current = node.action?.kind === 'open' ? node.action.page : node.action?.kind === 'setting-step' ? node.action.name : '';
         if (!(current in names)) arg.appendChild(option(current, current));

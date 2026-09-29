@@ -137,6 +137,20 @@ function boundsOverlap(
 }
 
 describe('DialogueLayer visual layout contracts', () => {
+  it('translates speaker display names without changing identity, including unchanged ADV text and NVL', () => {
+    const runtime = makeRuntime();
+    try {
+      runtime.layer.setSpeakerProfiles([{ id: 'rin', name: '凛' }]);
+      runtime.layer.showText('凛', 'same');
+      runtime.layer.setSpeakerProfiles([{ id: 'rin', sourceName: '凛', name: 'Rin' }, { id: 'other', name: 'Rin' }]);
+      runtime.layer.showText('凛', 'same');
+      expect(runtime.layer.activeSpeakerId).toBe('rin');
+      expect(runtime.layer.debugSnapshot()).toMatchObject({ speakerText: 'Rin' });
+      runtime.layer.setNvlMode(true); runtime.layer.appendNvlText('凛', 'paragraph');
+      expect(runtime.layer.activeSpeakerId).toBe('rin');
+      expect(runtime.layer.nvlLines.map(line => line.text)).toContain('Rin：paragraph');
+    } finally { disposeRuntime(runtime); }
+  });
   it('centers choice groups around the logical canvas midpoint', () => {
     const runtime = makeRuntime();
     try {

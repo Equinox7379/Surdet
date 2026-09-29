@@ -6,6 +6,7 @@ import type {
   SetInstr,
   SwitchInstr,
   TimelineInstr,
+  TextInstr,
 } from '../dsl/ast.js';
 import type { SourcePos } from '../dsl/token.js';
 import { SourceError } from '../dsl/token.js';
@@ -73,6 +74,8 @@ const MAX_CALL_DEPTH = 64;
 export interface TextEventPayload {
   speaker: string | null;
   value: string;
+  /** Display-only caption; speaker still owns character/portrait identity. */
+  displaySpeaker?: string;
   /** 该文本在本次发出前是否已读过（快进"遇未读即停"用；渲染层仅在 false 时停）。
    *  可选：解释器始终提供；宿主/测试直发事件可省略（渲染层按 undefined 兼容处理） */
   wasRead?: boolean;
@@ -82,6 +85,12 @@ export interface TextEventPayload {
 export interface ChoiceEventPayload {
   options: { index: number; label: string }[];
 }
+
+export interface RuntimeTextContext {
+  sceneId: string; sceneVersion?: string; line: number;
+  kind: 'dialogue' | 'choice' | 'speaker'; text: string;
+}
+export type RuntimeTextResolver = (source: RuntimeTextContext) => string;
 
 /** 通用指令事件载荷（bg/show/voice 等展示类，由渲染层消费） */
 export interface InstrEventPayload {
@@ -113,6 +122,8 @@ export interface RuntimeTraceEventPayload {
 export interface CoreEventMap extends EventMap {
   text: TextEventPayload;
   choice: ChoiceEventPayload;
+  /** Display-only refresh: no read marks, history insertion, variable changes or execution. */
+  textRefresh: { text?: TextEventPayload; choices?: ChoiceEventPayload };
   instr: InstrEventPayload;
   /** @timeline 时间轴启动；blocking 时解释器保持 awaiting-timer，宿主完成后调 finishWait() */
   timeline: { id: string; blocking: boolean; durationMs?: number; definition?: TimelineDefinition };
@@ -167,6 +178,8 @@ export class Interpreter {
   #scene: CompiledScene | null = null;
   #pc = 0;
   #pendingChoice: ChoiceInstr | null = null;
+  #visibleChoiceIndices: number[] = [];
+  #textResolver: RuntimeTextResolver | null = null;
   /** @call 子场景调用栈（返回点序列，栈顶在末尾；随存档持久化） */
   #callStack: SavePosition[] = [];
   /** 主循环执行中标志：事件回调内重入推进时置 resume 而非递归 */
@@ -227,6 +240,30 @@ export class Interpreter {
   /** 宿主可在 renderer 创建后注入演出快照钩子，兼容旧项目初始化顺序。 */
   setPresentationHooks(hooks: PresentationSnapshotHooks | null): void {
     this.#presentationHooks = hooks;
+  }
+
+  setTextResolver(resolver: RuntimeTextResolver | null): void { this.#textResolver = resolver; }
+
+  #displayText(kind: RuntimeTextContext['kind'], text: string, line: number): string {
+    return this.#textResolver?.({ sceneId: this.#scene!.sceneId, sceneVersion: this.#scene!.textSourceVersion, line, kind, text }) ?? text;
+  }
+  #textPayload(instr: TextInstr): TextEventPayload {
+    const speaker = instr.speaker === null ? null : interpolate(instr.speaker, this.#store);
+    const displaySpeaker = speaker === null ? null : this.#displayText('speaker', speaker, instr.line);
+    return { speaker, value: interpolate(this.#displayText('dialogue', instr.value, instr.line), this.#store),
+      ...(displaySpeaker !== null && displaySpeaker !== speaker ? { displaySpeaker } : {}) };
+  }
+  #displayChoices(instr: ChoiceInstr, indices: readonly number[]): ChoiceEventPayload {
+    return { options: indices.map(index => ({ index, label: interpolate(this.#displayText('choice', instr.options[index]!.label, instr.options[index]!.pos.line), this.#store) })) };
+  }
+  refreshDisplayedText(): void {
+    if (this.#stepping || !this.#scene) return;
+    if (this.#status === 'awaiting-advance') {
+      const instr = this.#scene.instructions[this.#pc - 1];
+      if (instr?.op === 'text') this.#bus.emit('textRefresh', { text: this.#textPayload(instr) });
+    } else if (this.#status === 'awaiting-choice' && this.#pendingChoice) {
+      this.#bus.emit('textRefresh', { choices: this.#displayChoices(this.#pendingChoice, this.#visibleChoiceIndices) });
+    }
   }
 
   /** 注入有状态随机源；只能在一轮运行开始前或结束后切换，避免静默重置运行中序列。 */
@@ -648,8 +685,7 @@ export class Interpreter {
             this.readTracker.mark(readKey);
             this.#resumeRequested = false;
             this.#bus.emit('text', {
-              speaker: instr.speaker === null ? null : interpolate(instr.speaker, this.#store),
-              value: interpolate(instr.value, this.#store),
+              ...this.#textPayload(instr),
               wasRead,
             });
             if (this.#jumpOverride) {
@@ -809,7 +845,7 @@ export class Interpreter {
             const available = instr.options
               .map((o, i) => ({ o, i }))
               .filter(({ o }) => o.when === null || evalExprBoolean(o.when, this.#store))
-              .map(({ o, i }) => ({ index: i, label: o.label }));
+              .map(({ i }) => i);
 
             if (available.length === 0) {
               // 无可用选项：落到 choice 之后继续
@@ -819,9 +855,10 @@ export class Interpreter {
 
             // 先置挂起状态再发事件：回调内可直接 choose()
             this.#pendingChoice = instr;
+            this.#visibleChoiceIndices = available;
             this.#status = 'awaiting-choice';
             this.#resumeRequested = false;
-            this.#bus.emit('choice', { options: available });
+            this.#bus.emit('choice', this.#displayChoices(instr, available));
             if (this.#jumpOverride) {
               this.#jumpOverride = false; // hostJump 回调重入（审计修复 M2）
               this.#status = 'running';

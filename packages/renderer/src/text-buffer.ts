@@ -48,6 +48,14 @@ export class Typewriter {
     return this.#full;
   }
 
+  /** Language reprojection preserves progress without completing/advancing the story. */
+  replaceText(value: string): void {
+    const progress = this.#full.length ? this.#shown / this.#full.length : 1;
+    this.#full = value;
+    this.#done = this.#done || value.length === 0;
+    this.#shown = this.#done ? value.length : Math.floor(value.length * progress);
+  }
+
   /** 当前已显示的文本 */
   get text(): string {
     return this.#full.slice(0, this.#shown);

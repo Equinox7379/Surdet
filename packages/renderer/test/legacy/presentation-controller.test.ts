@@ -124,6 +124,51 @@ function controllerFor(
 }
 
 describe('PresentationController', () => {
+  it('reprojects a paused ADV line without adding history, advancing, or changing typing progress', () => {
+    const stage = stageHarness(), backlog = new Backlog(), onAdvance = vi.fn();
+    const controller = controllerFor(stage, { backlog, onAdvance });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus);
+    try {
+      bus.emit('text', { speaker: 'rin', displaySpeaker: 'Rin', value: 'abcdefghij' }); controller.update(100);
+      const shown = stage.texts.at(-1)!.length;
+      controller.setPresentationPaused(true);
+      bus.emit('textRefresh', { text: { speaker: 'rin', value: '01234567890123456789' } });
+      expect(stage.texts.at(-1)!.length).toBe(shown * 2);
+      controller.update(1000);
+      expect(stage.texts.at(-1)!.length).toBe(shown * 2);
+      expect(backlog.size).toBe(1); expect(onAdvance).not.toHaveBeenCalled();
+      expect(backlog.entries()[0]!.speaker).toBe('Rin');
+      controller.setPresentationPaused(false); controller.update(1000);
+      expect(stage.texts.at(-1)).toBe('01234567890123456789');
+    } finally { controller.dispose(); }
+  });
+  it('reprojects choice captions without resetting the original indices or highlighted choice', () => {
+    const stage = stageHarness(), onSelect = vi.fn(), controller = controllerFor(stage, { onSelect });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus);
+    try {
+      bus.emit('choice', choiceEvent()); controller.choiceDown(); controller.setPresentationPaused(true);
+      bus.emit('textRefresh', { choices: { options: [{ index: 10, label: 'Left' }, { index: 20, label: 'Right' }] } });
+      expect(stage.choices[0]).toEqual({ index: 10, label: 'Left' }); expect(stage.highlights.at(-1)).toBe(0);
+      expect(controller.select(10)).toBe(false); controller.setPresentationPaused(false); controller.choiceConfirm();
+      expect(onSelect).toHaveBeenCalledWith(10);
+    } finally { controller.dispose(); }
+  });
+  it('refreshes only the current NVL line and keeps older text and snapshot replay boundaries', () => {
+    const stage = stageHarness(), backlog = new Backlog();
+    const ports = createPresentationPorts(stage);
+    const queries = { ...ports.queries, dialogue: { ...ports.queries.dialogue, nvlPresentationEntries: () => stage.nvlEntries.map(entry => ({ ...entry })) } };
+    const controller = new PresentationController(ports.commands, queries, undefined, { backlog, commands: ports.commands, queries });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus);
+    try {
+      bus.emit('instr', { name: 'nvl', args: ['on'], modifiers: new Map(), pos: { file: 'intro.gal', line: 1, col: 1 } });
+      bus.emit('text', { speaker: 'rin', value: '旧段' }); bus.emit('text', { speaker: 'rin', value: '当前段' });
+      controller.setPresentationPaused(true);
+      bus.emit('textRefresh', { text: { speaker: 'rin', value: 'Current paragraph' } });
+      expect(stage.nvlEntries).toEqual([{ speaker: 'rin', text: '旧段' }, { speaker: 'rin', text: 'Current paragraph' }]);
+      expect(backlog.size).toBe(2);
+      expect(controller.snapshotPresentation({ replayCurrentText: true })).toMatchObject({ dialogue: { nvlEntries: [{ speaker: 'rin', text: '旧段' }] } });
+    } finally { controller.dispose(); }
+  });
   it('projects audio failures through the runtime error callback and detaches on disposal', () => {
     const stage = stageHarness(); stage.showBanner = vi.fn();
     const ports = createPresentationPorts(stage), onError = vi.fn(), detach = vi.fn();

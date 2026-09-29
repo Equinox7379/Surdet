@@ -19,7 +19,7 @@ export interface PreviewTraceCompleteMessage {
 }
 export type PreviewTraceMessage = PreviewTraceStartMessage | PreviewTraceEventMessage | PreviewTraceCompleteMessage;
 
-export const PREVIEW_CONFIG_PATHS = ['calendar', 'events', 'growth', 'achievements', 'gallery'].map(name => `content/config/${name}.json`);
+export const PREVIEW_CONFIG_PATHS = ['calendar', 'events', 'growth', 'achievements', 'gallery', 'terminology'].map(name => `content/config/${name}.json`);
 export const PREVIEW_MAX_EVENTS = 2_000;
 export interface PreviewFileFact { path: string; sha256: string }
 export interface PreviewSourceFacts { files: PreviewFileFact[]; assets: PreviewFileFact[] }

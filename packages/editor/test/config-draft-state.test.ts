@@ -228,7 +228,7 @@ describe('configuration draft state', () => {
 
   async function queueBinding(root: FakeElement, key = 'greeting', index = 0): Promise<void> {
     await action(root, '读取文本目录');
-    const source = byAttribute(root, 'aria-label', '当前剧本文本');
+    const source = byAttribute(root, 'aria-label', '当前文本来源');
     expect(source.children.length, root.textContent.slice(-1800)).toBeGreaterThan(index);
     source.value = source.children[index]!.value;
     byAttribute(root, 'aria-label', '稳定文本键').value = key;

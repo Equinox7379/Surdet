@@ -50,6 +50,7 @@ export async function buildSceneOperationCompositionDraft(input: {
   themeConfig?: unknown;
   uiConfig?: unknown;
   textCatalog?: unknown;
+  terminologyText?: string;
   variables?: Record<string, unknown>;
   titleLogo?: string | null;
   hasher: TextHasher;
@@ -74,6 +75,7 @@ export async function buildSceneOperationCompositionDraft(input: {
       { objectRef: 'config:theme', expectedFingerprint: await input.hasher.sha256(stableStringify({ theme: input.themeConfig ?? null, titleLogo: input.titleLogo ?? null })) },
       { objectRef: 'config:ui', expectedFingerprint: await input.hasher.sha256(stableStringify(input.uiConfig ?? null)) },
       { objectRef: 'config:textCatalog', expectedFingerprint: await input.hasher.sha256(stableStringify(input.textCatalog ?? null)) },
+      { objectRef: 'config:terminology', expectedFingerprint: await input.hasher.sha256(stableStringify(input.terminologyText ?? null)) },
       { objectRef: 'config:portraits', expectedFingerprint: await input.hasher.sha256(stableStringify(projectPortraitOverrides({ characters: input.characters }))) },
       ...(input.beforeText === undefined ? [] : [{ objectRef: primaryObject, expectedFingerprint: await input.hasher.sha256(input.beforeText) }]),
     ],
@@ -124,6 +126,7 @@ export async function buildTimelineOperationCompositionDraft(input: {
       { objectRef: 'config:theme', expectedFingerprint: await input.hasher.sha256(stableStringify({ theme: input.config.theme ?? null, titleLogo: resolveProjectTitleLogo(input.config) })) },
       { objectRef: 'config:ui', expectedFingerprint: await input.hasher.sha256(stableStringify(input.config.ui ?? null)) },
       { objectRef: 'config:textCatalog', expectedFingerprint: await input.hasher.sha256(stableStringify(input.config.textCatalog ?? null)) },
+      { objectRef: 'config:terminology', expectedFingerprint: await input.hasher.sha256(stableStringify(input.workingFiles?.['content/config/terminology.json'] ?? null)) },
       { objectRef: 'config:portraits', expectedFingerprint: await input.hasher.sha256(stableStringify(projectPortraitOverrides(input.config))) },
     ],
   };
@@ -173,6 +176,7 @@ export async function buildCharacterOperationCompositionDraft(input: {
     replayStatePreconditions: [
       { objectRef: 'config:characters', expectedFingerprint: input.charactersFingerprintBefore },
       ...(migratedScenes.length === 0 ? [] : [{ objectRef: 'config:textCatalog', expectedFingerprint: await input.hasher.sha256(stableStringify(parseProjectConfigDocument(input.workingFilesBefore!['game.config.json'] ?? '{}').textCatalog ?? null)) }]),
+      ...(migratedScenes.length === 0 ? [] : [{ objectRef: 'config:terminology', expectedFingerprint: await input.hasher.sha256(stableStringify(input.workingFilesBefore!['content/config/terminology.json'] ?? null)) }]),
       ...await Promise.all(migratedScenes.map(async ({ path, objectRef }) => ({
         objectRef,
         expectedFingerprint: await input.hasher.sha256(input.workingFilesBefore![path]!),

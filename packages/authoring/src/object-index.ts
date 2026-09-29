@@ -6,7 +6,8 @@ import type { ProjectSnapshot, ProjectSnapshotScene } from './project-snapshot.j
 import { GALLERY_PATH, readGalleryDocument, type GalleryCgEntry } from './gallery-operations.js';
 import { AuthoringOperationError } from './change-session.js';
 import { timelineIdFromPath } from './timeline-identity.js';
-import { PROJECT_UI_PAGES, readProjectUi, resolveProjectFontPaths, type ProjectUiNode } from '@surdet/core';
+import { PROJECT_UI_PAGES, readProjectUi, resolveProjectFontPaths, isStoryTextSource, parseTerminology, type ProjectUiNode } from '@surdet/core';
+import { parseProjectConfigDocument } from './config-document.js';
 import {
   analyzeCharacterCompositionReferences,
   analyzeSceneCompositionReferences,
@@ -582,6 +583,16 @@ export function buildObjectIndex(snapshot: ProjectSnapshot): ObjectIndex {
   }
   addConfigObjects(snapshot, objects, candidates);
   addUiObjects(snapshot, objects, candidates);
+  const terminology = snapshot.files.find(file => file.path === 'content/config/terminology.json');
+  if (terminology) {
+    try {
+      for (const term of parseTerminology(parseProjectConfigDocument(terminology.text, terminology.path))) {
+        const ref = `term:${term.canonical}`;
+        addObject(objects, { kind: 'term', objectRef: ref, semanticId: ref, details: term,
+          source: sourceOf(terminology.path, 1, JSON.stringify(term)), fingerprint: fingerprint(JSON.stringify(term)), references: [], referencedBy: [] }, candidates);
+      }
+    } catch { /* Config validation reports malformed terminology; other objects remain inspectable. */ }
+  }
   try {
     const catalog = readTextCatalog(snapshot.config);
     addObject(objects, { kind: 'text-catalog', objectRef: 'config:textCatalog', references: [], referencedBy: [], details: catalog }, candidates);
@@ -589,8 +600,10 @@ export function buildObjectIndex(snapshot: ProjectSnapshot): ObjectIndex {
       const ref = `text-key:${entry.key}`;
       addObject(objects, { kind: 'text-key', objectRef: ref, semanticId: ref, parentRef: 'config:textCatalog',
         references: [], referencedBy: [], details: entry }, candidates);
-      addReferenceCandidate(candidates, ref, `scene:${entry.source.sceneId}`);
-      if (entry.source.label !== null) addReferenceCandidate(candidates, ref, `label:${entry.source.sceneId}.${entry.source.label}`);
+      if (isStoryTextSource(entry.source)) {
+        addReferenceCandidate(candidates, ref, `scene:${entry.source.sceneId}`);
+        if (entry.source.label !== null) addReferenceCandidate(candidates, ref, `label:${entry.source.sceneId}.${entry.source.label}`);
+      } else addReferenceCandidate(candidates, ref, entry.source.objectRef);
     }
   } catch { /* Shared validation reports malformed catalog data; keep other objects inspectable. */ }
   let cgs: GalleryCgEntry[] = [];

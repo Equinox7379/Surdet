@@ -2,6 +2,8 @@ import { inspectTextCatalog, exportTextCatalogCsv, previewTextCatalogImport, typ
 import { createEditorProjectStorage, loadEditorProjectSnapshot, commitTextCatalogPatch } from '../authoring-project-storage.js';
 import { runProjectWriteOperation } from '../project-io.js';
 import { state, h } from '../state.js';
+import { isStoryTextSource } from '@surdet/core';
+import { openUiPlayerPreview } from '../ui-player-preview.js';
 
 export interface TextBindingDraft {
   key: string; sourceId: string; sourceText: string;
@@ -22,7 +24,7 @@ export function renderTextCatalogSection(options: {
   let busy = false;
   const locale = h('input'); locale.value = 'en'; locale.setAttribute('aria-label', '译文语言');
   const sourceLocale = h('input'); sourceLocale.value = options.readBindings()[0]?.sourceLocale ?? 'zh-CN'; sourceLocale.setAttribute('aria-label', '源语言');
-  const source = h('select'); source.setAttribute('aria-label', '当前剧本文本');
+  const source = h('select'); source.setAttribute('aria-label', '当前文本来源');
   const key = h('input'); key.placeholder = '例如 intro.greeting'; key.setAttribute('aria-label', '稳定文本键');
   const csv = h('textarea'); csv.value = options.readCsv(); csv.rows = 9; csv.setAttribute('aria-label', '译稿表格'); csv.style.width = '100%';
   const differences = h('div');
@@ -44,7 +46,9 @@ export function renderTextCatalogSection(options: {
     if (!inspection) return;
     source.replaceChildren(...inspection.sources.map(item => {
       const option = h('option'); option.value = item.sourceId;
-      option.textContent = `${item.sceneId} / ${item.label ?? '开头'} / ${item.line}：${item.speaker ? item.speaker + '：' : ''}${item.text}`;
+      const context = isStoryTextSource(item) ? `${item.sceneId} / ${item.label ?? '开头'} / ${item.line}`
+        : `${{ character: '人物显示名', ui: '界面文字', term: '词条' }[item.kind]} / ${item.objectRef}`;
+      option.textContent = `${context}：${item.speaker ? item.speaker + '：' : ''}${item.text}`;
       return option;
     }));
     if (inspection.sourceLocale && !options.readBindings().length) sourceLocale.value = inspection.sourceLocale;
@@ -80,6 +84,7 @@ export function renderTextCatalogSection(options: {
     const control = h('button', undefined, label); control.type = 'button'; control.onclick = () => run(action); controls.append(control);
   };
   button('读取文本目录', async () => { await refresh(); status.textContent = '已读取当前来源；正文结构变动后需要显式确认原键的新对应。'; });
+  button('试玩已确认译稿', () => openUiPlayerPreview(state.gameConfigText));
   button('加入绑定清单', async () => {
     if (!inspection || !key.value.trim() || !source.value) throw new Error('先读取目录，填写文本键并选择当前来源');
     const selected = inspection.sources.find(item => item.sourceId === source.value);
@@ -162,10 +167,10 @@ export function renderTextCatalogSection(options: {
     if (current()) { csv.value = value; options.editCsv(value); preview = undefined; differences.replaceChildren(); status.textContent = '表格已读取，尚未修改项目；请预览导入差异。'; }
   });
   const header = h('header', 'config-ledger-header'), copy = h('div', 'config-section-copy');
-  copy.append(h('h1', 'config-section-heading', '文本与译稿'), h('p', 'config-section-description', '管理正文和选项的译稿。固定文本键不随行号改变；此处不切换游戏播放语言。'));
+  copy.append(h('h1', 'config-section-heading', '文本与译稿'), h('p', 'config-section-description', '管理正文、选项、人物显示名、界面文字和词条的译稿。固定文本键不随行号改变；播放语言在游戏设置中切换。'));
   header.append(copy);
   const fields = h('div', 'config-field-grid');
-  for (const [name, input] of [['源语言', sourceLocale], ['译文语言', locale], ['当前剧本文本', source], ['稳定文本键', key]] as const) {
+  for (const [name, input] of [['源语言', sourceLocale], ['译文语言', locale], ['当前文本来源', source], ['稳定文本键', key]] as const) {
     const field = h('label', 'config-field'); field.append(h('span', undefined, name), input); fields.append(field);
   }
   const csvField = h('label', 'config-field'); csvField.append(h('span', undefined, '译稿表格'), csv);

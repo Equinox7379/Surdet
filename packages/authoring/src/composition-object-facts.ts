@@ -31,6 +31,7 @@ export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, has
     { objectRef: 'config:theme', expectedFingerprint: await hasher.sha256(stableStringify({ theme: snapshot.config.theme ?? null, titleLogo: resolveProjectTitleLogo(snapshot.config) })) },
     { objectRef: 'config:ui', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.config.ui ?? null)) },
     { objectRef: 'config:textCatalog', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.config.textCatalog ?? null)) },
+    { objectRef: 'config:terminology', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.files.find(file => file.path === 'content/config/terminology.json')?.text ?? null)) },
     { objectRef: 'config:portraits', expectedFingerprint: await hasher.sha256(stableStringify(projectPortraitOverrides(snapshot.config))) },
     ...snapshot.scenes.map((scene) => ({ objectRef: `scene:${scene.id}`, expectedFingerprint: scene.file.sha256 })),
     ...timelineObjects,

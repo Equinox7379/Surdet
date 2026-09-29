@@ -59,11 +59,11 @@ export function compositionFactIdentityIssue(input: JsonValue | undefined, facts
   const replay = facts.replayStateRequirements ?? [];
   if (!Array.isArray(preconditions) || !Array.isArray(replay)) return '重放状态事实形状无效';
     const expectedRefs = facts.capabilityId === 'character.ensure' || facts.capabilityId === 'character.remove'
-      ? ['config:characters', ...(facts.producedObjects.some(item => item.objectRef.startsWith('scene:')) ? ['config:textCatalog'] : []), ...facts.producedObjects.filter((item) => item.objectRef.startsWith('scene:')).map((item) => item.objectRef)]
-      : facts.capabilityId === 'scene.create' ? ['config:fonts', 'config:portraits', 'config:stage', 'config:theme', 'config:ui', 'config:textCatalog']
-      : facts.capabilityId === 'scene.patch' ? ['config:fonts', 'config:portraits', 'config:stage', 'config:theme', 'config:ui', 'config:textCatalog', facts.primaryObject]
-      : facts.capabilityId === 'timeline.create' ? ['config:portraits', 'config:stage', 'config:theme', 'config:ui', 'config:textCatalog', 'config:fonts']
-      : facts.capabilityId === 'timeline.patch' ? [facts.primaryObject, 'config:portraits', 'config:stage', 'config:theme', 'config:ui', 'config:textCatalog', 'config:fonts']
+      ? ['config:characters', ...(facts.producedObjects.some(item => item.objectRef.startsWith('scene:')) ? ['config:textCatalog', 'config:terminology'] : []), ...facts.producedObjects.filter((item) => item.objectRef.startsWith('scene:')).map((item) => item.objectRef)]
+      : facts.capabilityId === 'scene.create' ? ['config:fonts', 'config:portraits', 'config:stage', 'config:theme', 'config:ui', 'config:textCatalog', 'config:terminology']
+      : facts.capabilityId === 'scene.patch' ? ['config:fonts', 'config:portraits', 'config:stage', 'config:theme', 'config:ui', 'config:textCatalog', 'config:terminology', facts.primaryObject]
+      : facts.capabilityId === 'timeline.create' ? ['config:portraits', 'config:stage', 'config:theme', 'config:ui', 'config:textCatalog', 'config:terminology', 'config:fonts']
+      : facts.capabilityId === 'timeline.patch' ? [facts.primaryObject, 'config:portraits', 'config:stage', 'config:theme', 'config:ui', 'config:textCatalog', 'config:terminology', 'config:fonts']
       : facts.capabilityId === 'gallery.cg.patch' || facts.capabilityId === 'variable.patch-initial'
         ? [facts.primaryObject] : [];
   if (facts.capabilityId === 'timeline.create' || facts.capabilityId === 'timeline.patch') {
