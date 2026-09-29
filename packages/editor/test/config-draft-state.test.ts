@@ -4,6 +4,7 @@ vi.mock('../src/panels/calendar-map.js', () => ({ renderCalendarMap: vi.fn() }))
 vi.mock('../src/v4/surfaces.js', () => ({ enhanceConfigTables: vi.fn() }));
 vi.mock('../src/project-io.js', () => ({
   assertProjectWriteUnlocked: vi.fn(),
+  workingGameConfigText: (source: { gameConfigText: string }) => source.gameConfigText,
   runProjectWriteOperation: vi.fn((operation: () => Promise<unknown>) => operation()),
   readProjectSourceText: async (handle: FileSystemFileHandle) => new TextDecoder('utf-8', { ignoreBOM: true }).decode(await (await handle.getFile()).arrayBuffer()),
   writeProjectText: async (_path: string, value: unknown, handle: { createWritable: () => Promise<{ write: (value: unknown) => Promise<void>; close: () => Promise<void> }> }) => {
@@ -18,6 +19,7 @@ vi.mock('../src/authoring-project-storage.js', async (importOriginal) => ({
   commitCharacterTable: vi.fn(),
   commitStageConfiguration: vi.fn(),
   commitThemeConfiguration: vi.fn(),
+  commitTextCatalogPatch: vi.fn(),
   parseCharacterVisualsDraft: (_id: string, text: string) => JSON.parse(text),
 }));
 
@@ -168,6 +170,7 @@ const {
   editTextCsvDraft, readTextCsvDraft,
 } = await import('../src/panels/config.js');
 const { commitStageConfiguration, commitThemeConfiguration } = await import('../src/authoring-project-storage.js');
+const { commitTextCatalogPatch } = await import('../src/authoring-project-storage.js');
 const { runProjectWriteOperation } = await import('../src/project-io.js');
 
 async function renderFixture(gameConfigText = INITIAL_GAME_CONFIG): Promise<FakeElement> {
@@ -200,19 +203,196 @@ beforeEach(() => {
 
 afterEach(() => {
   configRoot = null;
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe('configuration draft state', () => {
+  async function textFixture(): Promise<FakeElement> {
+    state.scenes = new Map([['start', { id: 'start', file: 'start.gal', text: '@scene start\n旁白：你好。\n旁白：再见。\n@end\n', eol: '\n', dirty: false, handle: null }]]);
+    state.timelines = []; state.dirAssets = [];
+    vi.mocked(commitTextCatalogPatch).mockReset();
+    vi.mocked(commitTextCatalogPatch).mockImplementation(async () => ({ text: state.gameConfigText }));
+    return renderFixture();
+  }
+
+  async function action(root: FakeElement, label: string): Promise<void> {
+    const button = byText(root, label);
+    button.click();
+    await vi.waitFor(() => expect(button.disabled).toBe(false));
+  }
+
+  async function queueBinding(root: FakeElement, key = 'greeting', index = 0): Promise<void> {
+    await action(root, '读取文本目录');
+    const source = byAttribute(root, 'aria-label', '当前剧本文本');
+    expect(source.children.length, root.textContent.slice(-1800)).toBeGreaterThan(index);
+    source.value = source.children[index]!.value;
+    byAttribute(root, 'aria-label', '稳定文本键').value = key;
+    await action(root, '加入绑定清单');
+  }
+
+  it('exporting the saved catalog does not replace a CSV draft, its dirty state or undo history', async () => {
+    const root = await textFixture();
+    const csv = byAttribute(root, 'aria-label', '译稿表格');
+    csv.value = 'my unpublished translation'; csv.oninput?.();
+    const history = configHistoryDepth();
+    await action(root, '导出译稿表格');
+    expect(root.textContent).toContain('已导出');
+    expect(csv.value).toBe('my unpublished translation');
+    expect(readTextCsvDraft()).toBe(csv.value);
+    expect(inspectConfigDraftState().dirtySections).toEqual(['texts']);
+    expect(configHistoryDepth()).toEqual(history);
+    expect(commitTextCatalogPatch).not.toHaveBeenCalled();
+  });
+
+  it('keeps pending bindings dirty and recoverable through a real configuration rebuild and undo/redo', async () => {
+    const root = await textFixture();
+    await queueBinding(root);
+    expect(root.textContent).toContain('greeting → 你好。');
+    expect(inspectConfigDraftState().dirtySections).toEqual(['texts']);
+    byText(root, '＋ 新增变量').click();
+    expect(root.textContent).toContain('greeting → 你好。');
+    configUndo(); // Undo the unrelated row, not the binding.
+    expect(root.textContent).toContain('greeting → 你好。');
+    configUndo();
+    expect(root.textContent).not.toContain('greeting → 你好。');
+    configRedo();
+    expect(root.textContent).toContain('greeting → 你好。');
+    await action(root, '绑定清单并保存');
+    expect(commitTextCatalogPatch).toHaveBeenCalledWith(expect.objectContaining({ patch: expect.objectContaining({ type: 'bind', bindings: [expect.objectContaining({ key: 'greeting' })] }) }));
+    expect(inspectConfigDraftState().dirty).toBe(false);
+  });
+
+  it('downloads clean saved data or the exact working CSV without changing pending bindings or import approval', async () => {
+    const root = await textFixture();
+    const downloads: Blob[] = [];
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => { downloads.push(blob as Blob); return 'blob:test'; });
+    await action(root, '导出译稿表格');
+    expect(readTextCsvDraft()).toBe('');
+    expect(inspectConfigDraftState().dirty).toBe(false);
+    await action(root, '载入已保存译稿');
+    await queueBinding(root);
+    await action(root, '预览导入差异');
+    expect(root.textContent).toContain('差异预览通过');
+    const csv = readTextCsvDraft(), history = configHistoryDepth();
+    await action(root, '导出译稿表格');
+    await action(root, '下载当前工作稿');
+    expect(new Uint8Array(await downloads.at(-1)!.arrayBuffer())).toEqual(new TextEncoder().encode(csv));
+    expect(root.textContent).toContain('greeting → 你好。');
+    expect(configHistoryDepth()).toEqual(history);
+    await action(root, '确认导入并保存'); // Export did not invalidate the preview.
+    expect(commitTextCatalogPatch).toHaveBeenCalledWith(expect.objectContaining({ patch: expect.objectContaining({ type: 'import', csv }) }));
+    expect(inspectConfigDraftState().dirtySections).toEqual(['texts']); // Binding is still pending.
+  });
+
+  it('requires explicit replacement of a CSV draft and leaves it intact when cancelled', async () => {
+    const root = await textFixture();
+    editTextCsvDraft('unpublished'); renderConfig(root as unknown as HTMLElement);
+    const confirm = vi.fn(() => false); vi.stubGlobal('window', { confirm });
+    const history = configHistoryDepth();
+    await action(root, '载入已保存译稿');
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(readTextCsvDraft()).toBe('unpublished');
+    expect(byAttribute(root, 'aria-label', '译稿表格').value).toBe('unpublished');
+    expect(configHistoryDepth()).toEqual(history);
+    confirm.mockReturnValue(true);
+    await action(root, '载入已保存译稿');
+    expect(readTextCsvDraft()).toContain('key,locale,sourceVersion');
+    expect(inspectConfigDraftState().dirtySections).toEqual(['texts']);
+    configUndo(); expect(readTextCsvDraft()).toBe('unpublished');
+  });
+
+  it('retains multiple bindings on read/export, rejects changed source versions, and requires each stale binding to be reconfirmed', async () => {
+    const root = await textFixture();
+    await queueBinding(root);
+    await queueBinding(root, 'farewell', 1);
+    await action(root, '导出译稿表格');
+    expect(root.textContent).toContain('greeting → 你好。');
+    expect(root.textContent).toContain('farewell → 再见。');
+    const outcome = await saveDirtyConfigSections();
+    expect(outcome).toEqual({ saved: 0, failures: 1, remainingDirty: true });
+    state.scenes.get('start')!.text = '@scene start\n旁白：改稿了。\n旁白：再见。\n@end\n';
+    await action(root, '绑定清单并保存');
+    expect(commitTextCatalogPatch).not.toHaveBeenCalled();
+    expect(root.textContent).toContain('来源版本已经变化');
+    expect(root.textContent).toContain('greeting → 你好。');
+    await queueBinding(root); // Same key explicitly selected against the new source.
+    await action(root, '绑定清单并保存');
+    expect(commitTextCatalogPatch).not.toHaveBeenCalled(); // The other row is still stale.
+    await queueBinding(root, 'farewell', 1);
+    await action(root, '绑定清单并保存');
+    expect(commitTextCatalogPatch).toHaveBeenCalledOnce();
+    expect(inspectConfigDraftState().dirty).toBe(false);
+  });
+
+  it('keeps failed bindings and source language, and clears only submitted bindings after a detached-panel save', async () => {
+    const root = await textFixture();
+    await queueBinding(root);
+    const language = byAttribute(root, 'aria-label', '源语言'); language.value = 'ja'; language.oninput?.();
+    renderConfig(root as unknown as HTMLElement);
+    expect(byAttribute(root, 'aria-label', '源语言').value).toBe('ja');
+    vi.mocked(commitTextCatalogPatch).mockRejectedValueOnce(new Error('写入失败'));
+    await action(root, '绑定清单并保存');
+    expect(root.textContent).toContain('写入失败');
+    expect(root.textContent).toContain('greeting → 你好。');
+    expect(inspectConfigDraftState().dirtySections).toEqual(['texts']);
+    vi.mocked(commitTextCatalogPatch).mockClear();
+    let release!: (result: { text: string }) => void;
+    vi.mocked(commitTextCatalogPatch).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const save = byText(root, '绑定清单并保存'); save.click();
+    await vi.waitFor(() => expect(commitTextCatalogPatch).toHaveBeenCalledOnce());
+    const panel = save.parentElement!.parentElement!;
+    descendants(panel).forEach(node => { node.isConnected = false; });
+    byText(root, '＋ 新增变量').click();
+    editTextCsvDraft('newer CSV');
+    release({ text: state.gameConfigText });
+    await vi.waitFor(() => expect(save.disabled).toBe(false));
+    expect(root.textContent).not.toContain('greeting → 你好。');
+    expect(readTextCsvDraft()).toBe('newer CSV');
+    expect(inspectConfigDraftState().dirtySections).toEqual(['variables', 'texts']);
+    configUndo(); configUndo(); // Saved binding must not reappear via unrelated history.
+    expect(root.textContent).not.toContain('greeting → 你好。');
+    expect(inspectConfigDraftState().dirty).toBe(false);
+  });
+
+  it('keeps edits made during an import dirty and ignores a save callback from a previous project session', async () => {
+    const root = await textFixture();
+    await action(root, '载入已保存译稿');
+    await action(root, '预览导入差异');
+    let release!: (result: { text: string }) => void;
+    vi.mocked(commitTextCatalogPatch).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const save = byText(root, '确认导入并保存'); save.click();
+    await vi.waitFor(() => expect(commitTextCatalogPatch).toHaveBeenCalledOnce());
+    const csv = byAttribute(root, 'aria-label', '译稿表格'); csv.value = 'typed during save'; csv.oninput?.();
+    release({ text: state.gameConfigText });
+    await vi.waitFor(() => expect(save.disabled).toBe(false));
+    expect(readTextCsvDraft()).toBe('typed during save');
+    expect(inspectConfigDraftState().dirtySections).toEqual(['texts']);
+
+    await queueBinding(root);
+    vi.mocked(commitTextCatalogPatch).mockClear();
+    vi.mocked(commitTextCatalogPatch).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const bindingSave = byText(root, '绑定清单并保存'); bindingSave.click();
+    await vi.waitFor(() => expect(commitTextCatalogPatch).toHaveBeenCalledOnce());
+    const priorSource = state.gameConfigText;
+    resetConfigSession();
+    const next = await renderFixture(JSON.stringify({ ...JSON.parse(INITIAL_GAME_CONFIG), title: 'Another project' }));
+    editTextCsvDraft('other project draft');
+    release({ text: priorSource });
+    await vi.waitFor(() => expect(bindingSave.disabled).toBe(false));
+    expect(state.gameConfigText).toContain('Another project');
+    expect(readTextCsvDraft()).toBe('other project draft');
+    expect(inspectConfigDraftState().dirtySections).toEqual(['texts']);
+    expect(next.textContent).not.toContain('greeting → 你好。');
+  });
+
   it('preserves unconfirmed CSV across workbench changes and undo, and never imports it via save-all', async () => {
     const root = await renderFixture();
-    editTextCsvDraft('key,locale\nexported', true);
-    expect(inspectConfigDraftState().dirty).toBe(false);
     editTextCsvDraft('key,locale\nmy unfinished translation');
     expect(inspectConfigDraftState().dirtySections).toEqual(['texts']);
     renderConfig(root as unknown as HTMLElement);
     expect(readTextCsvDraft()).toContain('unfinished');
-    configUndo(); expect(readTextCsvDraft()).toContain('exported'); expect(inspectConfigDraftState().dirty).toBe(false);
+    configUndo(); expect(readTextCsvDraft()).toBe(''); expect(inspectConfigDraftState().dirty).toBe(false);
     configRedo(); expect(readTextCsvDraft()).toContain('unfinished');
     const source = state.gameConfigText;
     const outcome = await saveDirtyConfigSections();
