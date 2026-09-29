@@ -607,6 +607,16 @@ export class DialogueLayer implements DialogueProjectionPort {
       });
       if (this.#choiceFadeRemain === 0) this.#lifecycle.release('dialogue', 'tween', 'choice-fade');
     }
+    this.#updateBanner(deltaMs);
+  }
+
+  /** Menu feedback may animate while story dialogue/choices stay frozen. */
+  updateFeedback(deltaMs: number): boolean {
+    if (this.#disposed || this.#bannerLayer.parent !== this.#root) return false;
+    return this.#updateBanner(deltaMs);
+  }
+
+  #updateBanner(deltaMs: number): boolean {
     if (this.#bannerRemain > 0) {
       this.#bannerRemain = Math.max(0, this.#bannerRemain - deltaMs);
       const elapsed = this.#bannerDur - this.#bannerRemain;
@@ -616,6 +626,7 @@ export class DialogueLayer implements DialogueProjectionPort {
         this.#lifecycle.release('dialogue', 'tween', 'banner');
       }
     }
+    return this.#bannerRemain > 0;
   }
 
   showText(speaker: string | null, value: string): void {

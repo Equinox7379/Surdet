@@ -7,6 +7,7 @@ export function createSettingsStorage(label: string, browserPrefix: string): Set
         load: async () => (await desktopSettings.read().catch(() => null)) as Partial<GameSettings> | null,
         save: (settings) => desktopSettings.write(settings).catch((error) => {
           console.error(`[${label}] 设置写入失败：`, error);
+          throw error;
         }),
       }
     : {
@@ -23,6 +24,7 @@ export function createSettingsStorage(label: string, browserPrefix: string): Set
             localStorage.setItem(`${browserPrefix}settings`, JSON.stringify(settings));
           } catch (error) {
             console.error(`[${label}] 设置写入失败：`, error);
+            throw error;
           }
         },
       };

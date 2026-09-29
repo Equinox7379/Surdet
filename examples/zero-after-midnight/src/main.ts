@@ -45,6 +45,7 @@ import {
   Backlog,
   Typewriter,
   SettingsStore,
+  createSettingsUpdateHandler,
   SETTING_STEPS,
   stepSetting,
   SKIP_STRATEGY_ALL,
@@ -1386,14 +1387,19 @@ async function main(): Promise<void> {
     menu.showSettings(view.rows, view.onChange, view.onClose);
   }
 
+  const updateSettings = createSettingsUpdateHandler(settings, {
+    isActive: () => !gameResourcesDisposed && !queries.diagnostics.isDisposed(),
+    apply: confirmed => {
+      settings.apply(typewriter, audio);
+      renderer.setAutoWait(confirmed.autoBaseDelayMs, confirmed.autoPerCharMs);
+      refreshSettingsPanel();
+    },
+    onError: error => dialogue.showBanner(`设置保存失败，已保留原设置：${error instanceof Error ? error.message : String(error)}`, 'tip'),
+  });
+
   function onSettingsChange(id: string, dir: -1 | 1): void {
     playerShell!.commands.consumePointer();
-    const next = stepSetting(settings.settings, id as NumericSettingKey, dir);
-    void settings.update({ [id]: next[id as keyof GameSettings] } as Partial<GameSettings>).then(() => {
-      settings.apply(typewriter, audio);
-      renderer.setAutoWait(settings.settings.autoBaseDelayMs, settings.settings.autoPerCharMs);
-      refreshSettingsPanel();
-    });
+    void updateSettings(confirmed => stepSetting(confirmed, id as NumericSettingKey, dir));
   }
 
   function closeSettings(): void {
@@ -1695,11 +1701,7 @@ async function main(): Promise<void> {
       refreshCommandRail();
     } else if (e.key === '[' || e.key === ']') {
       // 文本速度调整（即时持久化）：[ 减速 / ] 加速
-      const next = Math.max(1, Math.min(200, settings.settings.textSpeedCps + (e.key === ']' ? 6 : -6)));
-      void settings.update({ textSpeedCps: next }).then(() => {
-        renderer.setTextSpeed(next);
-        console.info('[zero] 文本速度', next);
-      });
+      void updateSettings(confirmed => ({ textSpeedCps: Math.max(1, Math.min(200, confirmed.textSpeedCps + (e.key === ']' ? 6 : -6))) }));
     }
   });
 

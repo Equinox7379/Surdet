@@ -56,6 +56,7 @@ import {
   Backlog,
   Typewriter,
   SettingsStore,
+  createSettingsUpdateHandler,
   SETTING_STEPS,
   stepSetting,
   SKIP_STRATEGY_ALL,
@@ -979,10 +980,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         if (binding.kind === 'variable') { store.set(binding.name, value); return; }
         const key = binding.name as keyof GameSettings;
         const nextValue = key === 'skipStrategy' && typeof value === 'boolean' ? (value ? 1 : 0) : value;
-        await settings.update({ [key]: nextValue } as Partial<GameSettings>);
-        settings.apply(typewriter, audio);
-        renderer.setAutoWait(settings.settings.autoBaseDelayMs, settings.settings.autoPerCharMs);
-        refreshSettingsPanel();
+        await updateSettings({ [key]: nextValue } as Partial<GameSettings>);
       },
       bounds(binding) {
         if (binding.kind === 'setting') {
@@ -1491,26 +1489,34 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     menu.showSettings(view.rows, view.onChange, view.onClose);
   }
 
+  const updateSettings = createSettingsUpdateHandler(settings, {
+    isActive: () => !ownerTeardown.disposed && !queries.diagnostics.isDisposed(),
+    apply: confirmed => {
+      settings.apply(typewriter, audio);
+      renderer.setAutoWait(confirmed.autoBaseDelayMs, confirmed.autoPerCharMs);
+      const locale = projectTexts.locales.includes(confirmed.locale) ? confirmed.locale : projectTexts.sourceLocale;
+      if (locale !== textLocale) {
+        textLocale = locale;
+        projectSpeakerNames(); interp.refreshDisplayedText();
+        const issues = projectTexts.diagnostics(textLocale);
+        if (issues.length) { console.warn('[文本目录]', ...issues); dialogue.showBanner('部分译文未确认，暂时显示原文', 'tip'); }
+      }
+      refreshSettingsPanel(); uiDom?.refresh();
+    },
+    onError: error => dialogue.showBanner(`设置保存失败，已保留原设置：${error instanceof Error ? error.message : String(error)}`, 'tip'),
+  });
+
   function onSettingsChange(id: string, dir: -1 | 1): void {
     playerShell!.commands.consumePointer();
     if (id === 'locale') {
       const locales = projectTexts.locales;
-      const nextLocale = locales[(locales.indexOf(textLocale) + dir + locales.length) % locales.length]!;
-      void settings.update({ locale: nextLocale }).then(() => {
-        textLocale = settings.settings.locale;
-        projectSpeakerNames(); interp.refreshDisplayedText();
-        refreshSettingsPanel(); uiDom?.refresh();
-        const issues = projectTexts.diagnostics(textLocale);
-        if (issues.length) { console.warn('[文本目录]', ...issues); dialogue.showBanner('部分译文未确认，暂时显示原文', 'tip'); }
-      }).catch(error => dialogue.showBanner(`语言偏好保存失败：${error instanceof Error ? error.message : String(error)}`, 'tip'));
+      void updateSettings(confirmed => {
+        const current = locales.includes(confirmed.locale) ? confirmed.locale : projectTexts.sourceLocale;
+        return { locale: locales[(locales.indexOf(current) + dir + locales.length) % locales.length]! };
+      });
       return;
     }
-    const next = stepSetting(settings.settings, id as NumericSettingKey, dir);
-    void settings.update({ [id]: next[id as keyof GameSettings] } as Partial<GameSettings>).then(() => {
-      settings.apply(typewriter, audio);
-      renderer.setAutoWait(settings.settings.autoBaseDelayMs, settings.settings.autoPerCharMs);
-      refreshSettingsPanel();
-    });
+    void updateSettings(confirmed => stepSetting(confirmed, id as NumericSettingKey, dir));
   }
 
   function closeSettings(): void {
@@ -1821,11 +1827,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       refreshCommandRail();
     } else if (e.key === '[' || e.key === ']') {
       // 文本速度调整（即时持久化）：[ 减速 / ] 加速
-      const next = Math.max(1, Math.min(200, settings.settings.textSpeedCps + (e.key === ']' ? 6 : -6)));
-      void settings.update({ textSpeedCps: next }).then(() => {
-        renderer.setTextSpeed(next);
-        console.info('[starter] 文本速度', next);
-      });
+      void updateSettings(confirmed => ({ textSpeedCps: Math.max(1, Math.min(200, confirmed.textSpeedCps + (e.key === ']' ? 6 : -6))) }));
     }
   };
   window.addEventListener('keydown', keyboardHandler);

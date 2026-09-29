@@ -79,6 +79,27 @@ it('shows tips above an existing menu without raising dialogue, and resets and d
   expect(runtime.root.children).toEqual([menu]);
 });
 
+it('advances paused menu feedback without advancing choices or chapter presentation', () => {
+  const runtime = makeRuntime();
+  try {
+    runtime.layer.showChoices([{ index: 0, label: '继续' }, { index: 1, label: '停留' }]);
+    const choices = runtime.layer.debugSnapshot().visibleChoiceCount;
+    runtime.layer.showBanner('设置保存失败，已保留原设置', 'tip');
+    const texts = (node: Container): PText[] => [...(node instanceof PText ? [node] : []), ...node.children.flatMap(texts)];
+    const tip = texts(runtime.root).find(text => text.text.includes('设置保存失败'))!;
+    expect(tip.parent!.alpha).toBe(0);
+    expect(runtime.layer.updateFeedback(300)).toBe(true);
+    expect(tip.parent!.alpha).toBe(1);
+    expect(runtime.layer.debugSnapshot().visibleChoiceCount).toBe(choices);
+    expect(runtime.layer.updateFeedback(1500)).toBe(false);
+    expect(tip.parent!.visible).toBe(false);
+    runtime.layer.showBanner('暂停中的章节', 'chapter');
+    expect(runtime.layer.updateFeedback(1000)).toBe(false);
+    expect(tip.parent!.alpha).toBe(0);
+    runtime.layer.update(300); expect(tip.parent!.alpha).toBe(1);
+  } finally { disposeRuntime(runtime); }
+});
+
 function disposeRuntime(runtime: DialogueRuntime): void {
   runtime.layer.dispose();
   runtime.assets.dispose();

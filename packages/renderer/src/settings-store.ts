@@ -56,6 +56,8 @@ export interface SettingsStorage {
   save(s: GameSettings): void | Promise<void>;
 }
 
+export type SettingsPatch = Partial<GameSettings> | ((confirmed: GameSettings) => Partial<GameSettings>);
+
 /** 内存存储（默认/测试用） */
 export class MemorySettingsStorage implements SettingsStorage {
   #data: Partial<GameSettings> | null = null;
@@ -124,6 +126,7 @@ export function stepSetting(current: GameSettings, key: NumericSettingKey, dir: 
 export class SettingsStore {
   #settings: GameSettings = { ...DEFAULT_SETTINGS };
   #storage: SettingsStorage;
+  #writes: Promise<void> = Promise.resolve();
 
   constructor(storage: SettingsStorage = new MemorySettingsStorage()) {
     this.#storage = storage;
@@ -154,16 +157,24 @@ export class SettingsStore {
     return this.settings;
   }
 
-  /** 更新部分设置并持久化 */
-  async update(patch: Partial<GameSettings>): Promise<GameSettings> {
-    this.#settings = { ...this.#settings, ...patch };
-    await this.persist();
-    return this.settings;
+  /** 串行持久化后才确认内存；步进从前一笔成功值计算，失败不会污染下一笔。 */
+  update(patch: SettingsPatch): Promise<GameSettings> {
+    const input = typeof patch === 'function' ? patch : { ...patch };
+    const write = this.#writes.then(async () => {
+      const next = { ...this.#settings, ...(typeof input === 'function' ? input(this.settings) : input) };
+      await this.#storage.save({ ...next });
+      this.#settings = next;
+      return this.settings;
+    });
+    // Caller receives the original rejection; only the internal tail recovers
+    // so one failed save cannot prevent later explicitly requested writes.
+    this.#writes = write.then(() => {}, () => {});
+    return write;
   }
 
   /** 仅持久化当前设置 */
   async persist(): Promise<void> {
-    await this.#storage.save({ ...this.#settings });
+    await this.update({});
   }
 
   /** 把当前设置投影到打字机与音频（宿主在 load/设置变更后调用） */
@@ -175,4 +186,25 @@ export class SettingsStore {
     audio.setSeVolume(this.#settings.seVolume);
     audio.setVoiceVolume(this.#settings.voiceVolume);
   }
+}
+
+/** Shared Player/legacy/Editor callbacks may outlive a request or their renderer. */
+export function createSettingsUpdateHandler(store: SettingsStore, options: {
+  isActive(): boolean;
+  apply(settings: GameSettings): void;
+  onError(error: unknown): void;
+}): (patch: SettingsPatch) => Promise<void> {
+  let sequence = 0;
+  return async patch => {
+    if (!options.isActive()) return;
+    const request = ++sequence;
+    let failed = false, failure: unknown;
+    try { await store.update(patch); }
+    catch (error) { failed = true; failure = error; }
+    if (request !== sequence || !options.isActive()) return;
+    // Also project the last confirmed value after failure: an earlier queued
+    // success may have deliberately skipped its superseded callback.
+    options.apply(store.settings);
+    if (failed && request === sequence && options.isActive()) options.onError(failure);
+  };
 }

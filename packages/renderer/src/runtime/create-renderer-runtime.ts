@@ -207,8 +207,7 @@ function createControllerOptions(
       stage.updateContinuePulse?.(deltaMs);
       stage.updateEffects?.(deltaMs);
     },
-    // 暂停期间（系统菜单/存读档/设置打开时）只推进菜单层自身的界面反馈，
-    // 不经由 updateEffects 继续推进被冻结的 World/Dialogue 演出。
+    // 暂停期间只推进菜单与顶层提示，不经由 updateEffects 推进剧情演出。
     updateMenuProjection: (deltaMs) => stage.updateMenu?.(deltaMs),
     canScrollBacklog: () => stage.scrollBacklog !== undefined,
     bindStageCallbacks: (handlers) => {

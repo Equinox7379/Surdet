@@ -129,7 +129,7 @@ describe('PresentationController', () => {
     let busy = false;
     const audio = { ...NULL_AUDIO, playVoice: vi.fn(() => { busy = true; }), stopVoice: vi.fn(() => { busy = false; }),
       setVoicePaused: vi.fn(), isVoicePlaying: () => busy };
-    const controller = new PresentationController(ports.commands, ports.queries, audio, { backlog, onAdvance: advance });
+    const controller = new PresentationController(ports.commands, ports.queries, audio, { commands: ports.commands, queries: ports.queries, backlog, onAdvance: advance });
     const bus = new EventBus<CoreEventMap>(); controller.connect(bus); controller.setAutoWait(0, 0);
     bus.emit('text', { speaker: 'rin', value: 'Hello', voice: 'hello_en' });
     controller.advance(); controller.toggleAuto(); controller.update(100);
