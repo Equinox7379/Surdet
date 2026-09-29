@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Typewriter } from '../src/text-buffer.js';
 import type { AudioHandle } from '../src/types.js';
 import {
   SettingsStore,
+  createSettingsUpdateHandler,
   MemorySettingsStorage,
   DEFAULT_SETTINGS,
   SKIP_STRATEGY_READ,
@@ -45,6 +46,37 @@ class RecAudio implements AudioHandle {
 }
 
 describe('SettingsStore', () => {
+  it('serializes writes and computes rapid steps from confirmed values after failure', async () => {
+    const pending: { value: GameSettings; resolve(): void; reject(error: Error): void }[] = [];
+    let saved: GameSettings | null = null;
+    const store = new SettingsStore({ load: () => null, save: value => new Promise<void>((resolve, reject) => {
+      pending.push({ value, resolve: () => { saved = value; resolve(); }, reject });
+    }) });
+    const first = store.update({ locale: 'en' }), failure = expect(first).rejects.toThrow('denied');
+    const second = store.update(current => ({ textSpeedCps: current.textSpeedCps + 6 }));
+    const third = store.update(current => ({ textSpeedCps: current.textSpeedCps + 6, locale: 'ja' }));
+    await Promise.resolve();
+    expect(pending).toHaveLength(1); expect(store.settings).toEqual(DEFAULT_SETTINGS);
+    pending[0]!.reject(new Error('denied')); await failure;
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    expect(pending[1]!.value.locale).toBe(''); pending[1]!.resolve(); await second;
+    await vi.waitFor(() => expect(pending).toHaveLength(3));
+    expect(pending[2]!.value.textSpeedCps).toBe(36); pending[2]!.resolve(); await third;
+    expect(store.settings).toEqual(saved); expect(store.settings.locale).toBe('ja');
+  });
+  it('keeps the last confirmed settings after a rejected write and permits the next success', async () => {
+    let fail = true, saved: GameSettings | null = null;
+    const store = new SettingsStore({ load: () => null, save: async value => {
+      if (fail) throw new Error('quota'); saved = { ...value };
+    } });
+    await expect(store.update({ locale: 'en', masterVolume: 0.2 })).rejects.toThrow('quota');
+    expect(store.settings).toEqual(DEFAULT_SETTINGS);
+    fail = false;
+    await store.update({ locale: 'ja' });
+    expect(store.settings.locale).toBe('ja');
+    expect(store.settings.masterVolume).toBe(DEFAULT_SETTINGS.masterVolume);
+    expect(saved).toEqual(store.settings);
+  });
   it('缺省为默认设置；update 合并并持久化', async () => {
     const storage = new MemorySettingsStorage();
     const store = new SettingsStore(storage);
@@ -140,5 +172,35 @@ describe('SettingsStore', () => {
     expect(audio.ambience).toEqual([0.3]);
     expect(audio.se).toEqual([0.4]);
     expect(audio.voice).toEqual([0.6]);
+  });
+});
+
+describe('settings completion ownership', () => {
+  it.each(['resolve', 'reject'] as const)('does not project or report late %s into a disposed owner or its replacement', async outcome => {
+    let finish!: () => void, fail!: (error: Error) => void, active = true;
+    const old = new SettingsStore({ load: () => null, save: () => new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; }) });
+    const apply = vi.fn(), onError = vi.fn();
+    const update = createSettingsUpdateHandler(old, { isActive: () => active, apply, onError });
+    const task = update({ locale: 'en' }); await Promise.resolve(); active = false;
+    const next = new SettingsStore(), nextApply = vi.fn();
+    await createSettingsUpdateHandler(next, { isActive: () => true, apply: nextApply, onError: vi.fn() })({ locale: 'ja' });
+    if (outcome === 'resolve') finish(); else fail(new Error('late failure'));
+    await expect(task).resolves.toBeUndefined();
+    expect(apply).not.toHaveBeenCalled(); expect(onError).not.toHaveBeenCalled();
+    expect(next.settings.locale).toBe('ja'); expect(nextApply).toHaveBeenCalledTimes(1);
+    await update({ locale: 'fr' }); expect(old.settings.locale).not.toBe('fr');
+  });
+  it.each(['resolve', 'reject'] as const)('ignores superseded %s callbacks and projects confirmed settings when the last request fails', async outcome => {
+    const pending: { resolve(): void; reject(error: Error): void }[] = [];
+    const store = new SettingsStore({ load: () => null, save: () => new Promise<void>((resolve, reject) => pending.push({ resolve, reject })) });
+    const apply = vi.fn(), onError = vi.fn(), update = createSettingsUpdateHandler(store, { isActive: () => true, apply, onError });
+    const first = update({ locale: 'en' }), last = update({ masterVolume: 0.3 });
+    await Promise.resolve();
+    if (outcome === 'resolve') pending[0]!.resolve(); else pending[0]!.reject(new Error('old failure'));
+    await first; expect(apply).not.toHaveBeenCalled(); expect(onError).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    pending[1]!.reject(new Error('latest failure')); await last;
+    expect(apply).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, locale: outcome === 'resolve' ? 'en' : '' });
+    expect(onError).toHaveBeenCalledTimes(1); expect(onError.mock.calls[0]![0].message).toBe('latest failure');
   });
 });

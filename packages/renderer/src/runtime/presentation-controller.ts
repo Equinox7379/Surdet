@@ -553,7 +553,7 @@ export class PresentationController {
     this.#audio.setVoicePaused?.(this.presentationPaused);
     if (this.presentationPaused) {
       this.#pausedSince ??= nowMs();
-      // 只推进菜单层自身的界面反馈，不触碰 World/Dialogue（整组旧回调会继续推进被暂停的演出）。
+      // 只推进菜单和顶层提示，不推进世界、打字、选项或章节演出。
       this.#menuProjectionBusy = this.#updateMenuProjection?.(deltaMs) === true;
       return;
     }

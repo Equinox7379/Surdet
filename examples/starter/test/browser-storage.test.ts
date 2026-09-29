@@ -4,6 +4,7 @@ import { LocalStorageProfileStorage } from '@surdet/host';
 import { createBrowserSaveStorage, gameStoragePrefix } from '../../shared/player/browser-save-storage.js';
 import { listPlayerSaveSlots } from '../../shared/player/save-slot-list.js';
 import { createSettingsStorage } from '../../shared/settings-storage.js';
+import { DEFAULT_SETTINGS } from '@surdet/renderer';
 
 function memoryStorage(): Storage {
   const data: Record<string, string> = {};
@@ -26,6 +27,15 @@ function snapshot(value: number): SaveSnapshot {
 }
 
 describe('browser game ownership', () => {
+  it.each(['browser', 'desktop'])('propagates %s settings write rejection instead of reporting success', async kind => {
+    const error = new Error('settings write denied');
+    vi.stubGlobal('window', kind === 'desktop' ? { surdetSettings: { read: async () => null, write: async () => { throw error; } } } : {});
+    vi.stubGlobal('localStorage', { setItem: () => { throw error; } });
+    try {
+      const adapter = createSettingsStorage('test', 'isolated:');
+      await expect(Promise.resolve().then(() => adapter.save({ ...DEFAULT_SETTINGS, locale: 'en' }))).rejects.toBe(error);
+    } finally { vi.unstubAllGlobals(); }
+  });
   it('isolates saves, backups, settings and profiles while retaining unowned old data', async () => {
     const storage = memoryStorage();
     storage.setItem('surdet:save:1', 'unowned legacy data');

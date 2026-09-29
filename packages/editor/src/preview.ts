@@ -34,7 +34,7 @@ import { PreviewReplayController } from './preview-replay-runtime.js';
 import { previewTextHash } from './preview-content.js';
 import {
   AudioManager, Backlog, Typewriter, RenderPerformanceMonitor, buildMapView, createRendererRuntime,
-  SettingsStore, SETTING_STEPS, stepSetting,
+  SettingsStore, SETTING_STEPS, stepSetting, createSettingsUpdateHandler,
 } from '@surdet/renderer';
 import type { AudioHandle, FontRole, GameSettings, RendererRuntime, SaveSlotView, SettingsStorage, SpeakerProfile, NumericSettingKey } from '@surdet/renderer';
 import { PreviewGeneration, type PreviewDiagnostic } from './preview-diagnostics.js';
@@ -349,11 +349,9 @@ function makePreviewSettingsStorage(): SettingsStorage {
       }
     },
     save: (settings) => {
-      try {
-        browserStorage()?.setItem(key, JSON.stringify(settings));
-      } catch {
-        // 隐私模式/禁用存储时设置仍在本次预览内生效，只是不持久化。
-      }
+      const storage = browserStorage();
+      if (!storage) throw new Error('预览设置存储不可用');
+      storage.setItem(key, JSON.stringify(settings));
     },
   };
 }
@@ -512,6 +510,16 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
     });
   }
 
+  const updateSettings = createSettingsUpdateHandler(settings, {
+    isActive: () => runtime === activeRuntime && !queries.diagnostics.isDisposed(),
+    apply: confirmed => {
+      settings.apply(typewriter, previewAudio);
+      controller.setAutoWait(confirmed.autoBaseDelayMs, confirmed.autoPerCharMs);
+      if (settingsOpen) refreshSettingsPanel();
+    },
+    onError: error => showError(`预览设置保存失败，已保留原设置：${error instanceof Error ? error.message : String(error)}`),
+  });
+
   function refreshSettingsPanel(): void {
     const current = settings.settings;
     menu.showSettings(
@@ -521,14 +529,7 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
         display: def.format(current[def.key]),
       })),
       (id, dir) => {
-        const next = stepSetting(settings.settings, id as NumericSettingKey, dir);
-        void settings.update({ [id]: next[id as keyof GameSettings] } as Partial<GameSettings>).then(() => {
-          settings.apply(typewriter, previewAudio);
-          controller.setAutoWait(settings.settings.autoBaseDelayMs, settings.settings.autoPerCharMs);
-          if (settingsOpen) refreshSettingsPanel();
-        }).catch((err) => {
-          showError(`预览设置保存失败：${err instanceof Error ? err.message : String(err)}`);
-        });
+        void updateSettings(confirmed => stepSetting(confirmed, id as NumericSettingKey, dir));
       },
       () => {
         settingsOpen = false;
