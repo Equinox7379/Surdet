@@ -105,8 +105,10 @@ describe('AudioManager', () => {
     expect(report).toHaveBeenCalledWith(expect.objectContaining({ code: 'MEDIA_PLAYBACK_FAILED', domain: 'audio',
       message: expect.stringContaining(`content/assets/${channel}/损坏 声音.WAV`),
       cause: expect.objectContaining({ channel, type: 'loaderror', source: 'blob:broken', reason: 'decode failed' }) }));
-    if (channel === 'voice') { expect(am.isVoicePlaying()).toBe(false); play(); }
-    handlers.onplayerror(channel === 'voice' ? 2 : 1, 'playback blocked'); expect(report).toHaveBeenCalledTimes(2);
+    if (channel === 'voice') expect(am.isVoicePlaying()).toBe(false);
+    play(); // A load-failed Howl is gone; only the explicit new request may fail again.
+    const retried = mockHowl.mock.calls.at(-1)![0];
+    retried.onplayerror(1, 'playback blocked'); expect(report).toHaveBeenCalledTimes(2);
     am.stopAll(); handlers.onloaderror(null, 'late after stop'); expect(report).toHaveBeenCalledTimes(2);
     play(); const old = handlers; am.dispose(); play();
     old.onloaderror(null, 'late from disposed Howl'); expect(report).toHaveBeenCalledTimes(2);
@@ -120,6 +122,74 @@ describe('AudioManager', () => {
     expect(am.snapshotBgmDiagnostics().errors).toEqual([]); expect(report).not.toHaveBeenCalled();
     mockHowl.mock.calls.at(-1)![0].onplayerror(1, 'blocked');
     expect(am.snapshotBgmDiagnostics().errors).toEqual([{ type: 'playerror', message: 'blocked' }]);
+  });
+
+  it.each(['bgm', 'ambience', 'se', 'voice'] as const)('%s discards a failed load and settles every explicit retry', channel => {
+    const am = new AudioManager(), report = vi.fn(); am.onError(report);
+    const play = () => ({ bgm: () => am.playBgm('retry.wav'), ambience: () => am.playAmbience('retry.wav'),
+      se: () => am.playSe('retry.wav'), voice: () => am.playVoice('retry.wav') })[channel]();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      play();
+      expect(mockInstances).toHaveLength(attempt + 1);
+      const failed = mockInstances.at(-1)!;
+      if (channel === 'voice') expect(am.isVoicePlaying()).toBe(true);
+      mockHowl.mock.calls.at(-1)![0].onloaderror(null, '503');
+      expect(failed.unload).toHaveBeenCalledOnce();
+      expect(report).toHaveBeenCalledTimes(attempt + 1);
+      if (channel === 'voice') expect(am.isVoicePlaying()).toBe(false);
+    }
+    play(); expect(mockInstances).toHaveLength(3);
+    const recovered = mockInstances[2]!; recovered.setPlaying(true); recovered.emit('play');
+    // The original object must neither evict the replacement nor clear its current playback.
+    mockHowl.mock.calls[0]![0].onloaderror(null, 'late failure');
+    mockInstances[0]!.emit('end', 1);
+    expect(recovered.unload).not.toHaveBeenCalled(); expect(report).toHaveBeenCalledTimes(2);
+    if (channel === 'voice') {
+      expect(am.isVoicePlaying()).toBe(true);
+      recovered.setPlaying(false); recovered.emit('end'); expect(am.isVoicePlaying()).toBe(false);
+    }
+    am.dispose();
+  });
+
+  it('cleans failed inactive and previous-session voices without touching current playback or other channels', () => {
+    const am = new AudioManager(), report = vi.fn(); am.onError(report);
+    am.playBgm('bed.wav'); am.playAmbience('rain.wav', 0); am.playSe('tap.wav');
+    const beds = mockInstances.slice(); beds.forEach(h => { h.setPlaying(true); h.stop.mockClear(); });
+    am.playVoice('old.wav'); const old = mockInstances[3]!, oldCallbacks = mockHowl.mock.calls[3]![0];
+    am.playVoice('new.wav'); const current = mockInstances[4]!;
+    oldCallbacks.onloaderror(null, 'late inactive error');
+    expect(old.unload).toHaveBeenCalledOnce(); expect(current.unload).not.toHaveBeenCalled();
+    expect(am.isVoicePlaying()).toBe(true); expect(report).not.toHaveBeenCalled();
+    am.playVoice('old.wav'); expect(mockInstances).toHaveLength(6);
+    beds.forEach(h => { expect(h.unload).not.toHaveBeenCalled(); expect(h.stop).not.toHaveBeenCalled(); expect(h.playing()).toBe(true); });
+    const stoppedCallbacks = mockHowl.mock.calls.at(-1)![0];
+    am.stopAll(); stoppedCallbacks.onloaderror(null, 'old session failure');
+    expect(report).not.toHaveBeenCalled(); am.playVoice('old.wav'); expect(mockInstances).toHaveLength(7);
+    am.dispose();
+  });
+
+  it('keeps a recovering voice pending while paused and resumes only that new instance', () => {
+    const am = new AudioManager(); am.onError(() => {});
+    am.playVoice('retry.wav'); mockHowl.mock.calls[0]![0].onloaderror(null, '503');
+    am.setVoicePaused(true); mockPlay.mockClear(); am.playVoice('retry.wav');
+    expect(mockInstances).toHaveLength(2); expect(mockPlay).not.toHaveBeenCalled(); expect(am.isVoicePlaying()).toBe(true);
+    am.setVoicePaused(false); expect(mockPlay).toHaveBeenCalledOnce();
+    mockInstances[1]!.emit('play'); mockInstances[1]!.setPlaying(true); expect(am.isVoicePlaying()).toBe(true);
+    mockInstances[1]!.setPlaying(false); mockInstances[1]!.emit('end'); expect(am.isVoicePlaying()).toBe(false);
+    am.dispose();
+  });
+
+  it('retires only the failed channel and allows immediate same-source replay from the error callback', () => {
+    const am = new AudioManager();
+    am.playBgm('shared.wav'); am.playAmbience('shared.wav', 0); am.playSe('shared.wav');
+    const healthy = mockInstances.slice(); healthy.forEach(h => { h.setPlaying(true); h.stop.mockClear(); });
+    am.onError(() => am.playVoice('shared.wav', { replay: true }));
+    am.playVoice('shared.wav'); const first = mockInstances[3]!;
+    mockHowl.mock.calls[3]![0].onloaderror(null, '503');
+    expect(first.unload).toHaveBeenCalledOnce(); expect(mockInstances).toHaveLength(5);
+    expect(am.isVoicePlaying()).toBe(true);
+    healthy.forEach(h => { expect(h.stop).not.toHaveBeenCalled(); expect(h.unload).not.toHaveBeenCalled(); expect(h.playing()).toBe(true); });
+    am.dispose();
   });
 
   it('playBgm 切到新 src 时停止旧 BGM（交叉淡出：fade + 延时 stop）', () => {
