@@ -26,7 +26,12 @@ export function parseRuby(text: string): RubySegment[] {
       out.push({ base: rest });
       break;
     }
-    const base = rest.slice(0, open);
+    let base = rest.slice(0, open);
+    const breakAt = Math.max(base.lastIndexOf('\n'), base.lastIndexOf('\r'));
+    if (breakAt >= 0) {
+      out.push({ base: base.slice(0, breakAt + 1) });
+      base = base.slice(breakAt + 1);
+    }
     const ruby = rest.slice(open + 1, close);
     if (base.length > 0 || ruby.length > 0) {
       out.push(base.length > 0 ? { base, ruby: ruby.length > 0 ? ruby : undefined } : { base: ruby.length > 0 ? ruby : '' });

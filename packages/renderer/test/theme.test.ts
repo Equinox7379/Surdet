@@ -522,7 +522,7 @@ describe('live Pixi player-layer theme projection', () => {
       music: [],
       texts: [],
     });
-    const tab = findText(root, 'CG');
+    const tab = findText(root, '图片');
     const content = findText(root, '夜景');
     layer.setTheme(theme);
     expect(tab.style.fill).toBe(theme.colors.accent);

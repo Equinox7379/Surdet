@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Texture, TextureSource } from 'pixi.js';
 import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
+import * as coverageReader from '../../src/reading-diagnostics.js';
 
 function fakeTexture(label: string): Texture {
   return {
@@ -36,6 +37,44 @@ afterEach(() => {
 });
 
 describe('RenderAssetRegistry', () => {
+  it('does not fail a usable font when the coverage decoder times out', async () => {
+    vi.useFakeTimers();
+    const coverage = vi.spyOn(coverageReader, 'readFontCoverage').mockImplementationOnce(() => new Promise(() => {}));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1, 2, 3]))));
+    class FakeFontFace { async load(): Promise<this> { return this; } }
+    vi.stubGlobal('FontFace', FakeFontFace);
+    vi.stubGlobal('document', { fonts: { add: vi.fn(), delete: vi.fn() } });
+    const registry = new RenderAssetRegistry();
+    try {
+      const loading = registry.registerFontRole('body', 'font', 'Usable', 30);
+      await vi.waitFor(() => expect(coverage).toHaveBeenCalled(), { interval: 1 });
+      await vi.advanceTimersByTimeAsync(30);
+      expect(await loading).toBe(true); expect(registry.fontFamily('body')).toBe('Usable');
+      expect(registry.fontDiagnostics('body', '海', 'dialogue')[0]).toMatchObject({ code: 'FONT_COVERAGE_UNAVAILABLE' });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { registry.dispose(); vi.useRealTimers(); }
+  });
+  it('keeps font ownership on failure, rejects late reset work, and reports uninspectable coverage honestly', async () => {
+    const registry = new RenderAssetRegistry();
+    class FakeFontFace { async load(): Promise<this> { return this; } }
+    const add = vi.fn(); const remove = vi.fn();
+    vi.stubGlobal('FontFace', FakeFontFace);
+    vi.stubGlobal('document', { fonts: { add, delete: remove } });
+    const fetcher = vi.fn(async () => new Response(new Uint8Array([1, 2, 3])));
+    vi.stubGlobal('fetch', fetcher);
+    expect(await registry.registerFontRole('body', 'old', 'Old')).toBe(true);
+    expect(registry.fontDiagnostics('body', '海', 'dialogue')[0]?.code).toBe('FONT_COVERAGE_UNAVAILABLE');
+    fetcher.mockRejectedValueOnce(new Error('offline'));
+    expect(await registry.registerFontRole('body', 'failed', 'Bad')).toBe(false);
+    expect(registry.fontFamily('body')).toBe('Old'); expect(remove).not.toHaveBeenCalled();
+    let complete!: (response: Response) => void;
+    fetcher.mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+    const late = registry.registerFontRole('body', 'late', 'Late');
+    registry.resetFonts(); complete(new Response(new Uint8Array([1, 2, 3])));
+    expect(await late).toBe(false); expect(add).toHaveBeenCalledTimes(1);
+    expect(registry.fontFamily('body')).not.toBe('Old');
+    registry.dispose();
+  });
   it('registers all visual frames atomically and preserves ownership on dimension/load failure', async () => {
     const { registry, unload } = registryHarness();
     const a = 'content/assets/portrait/rin_parts_a.png', b = 'content/assets/portrait/rin_parts_b.png';
@@ -299,6 +338,7 @@ describe('RenderAssetRegistry', () => {
   });
 
   it('shares one font role and removes it exactly once on repeated dispose', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([0, 1, 2]))));
     class FakeFontFace {
       constructor(readonly family: string, readonly source: string) {}
       async load(): Promise<this> { return this; }
@@ -319,6 +359,7 @@ describe('RenderAssetRegistry', () => {
   });
 
   it('clears the font deadline once loading has completed', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([0, 1, 2]))));
     vi.useFakeTimers();
     try {
       class FakeFontFace { async load(): Promise<this> { return this; } }

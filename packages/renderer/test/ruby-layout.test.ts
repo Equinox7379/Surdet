@@ -8,6 +8,15 @@ const mono = {
 };
 
 describe('layoutRuby', () => {
+  it('respects hard breaks around ruby and does not attach the preceding paragraph as its base', () => {
+    const layout = layoutRuby(parseRuby('前文\n\n海《うみ》へ\n帰る'), 100, mono, 40);
+    expect(layout.map(({ base, ruby, line }) => ({ base, ruby, line }))).toEqual([
+      { base: '前文', ruby: undefined, line: 0 },
+      { base: '海', ruby: 'うみ', line: 2 },
+      { base: 'へ', ruby: undefined, line: 2 },
+      { base: '帰る', ruby: undefined, line: 3 },
+    ]);
+  });
   it('keeps ruby segments together and wraps them as units', () => {
     expect(layoutRuby(parseRuby('甲《こう》乙《おつ》'), 15, mono, 40).map((item) => item.line))
       .toEqual([0, 1]);

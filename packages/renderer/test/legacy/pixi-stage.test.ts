@@ -299,6 +299,7 @@ describe('PixiStage 时间轴镜头与屏幕补间', () => {
 
 describe('PixiStage 字体角色', () => {
   function mockFontApi(): void {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1, 2, 3]))));
     class FakeFontFace {
       constructor(readonly family: string, readonly source: string) {}
       async load(): Promise<this> { return this; }

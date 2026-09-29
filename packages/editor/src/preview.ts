@@ -37,7 +37,7 @@ import {
   SettingsStore, SETTING_STEPS, stepSetting, createSettingsUpdateHandler,
 } from '@surdet/renderer';
 import type { AudioHandle, FontRole, GameSettings, RendererRuntime, SaveSlotView, SettingsStorage, SpeakerProfile, NumericSettingKey } from '@surdet/renderer';
-import { PreviewGeneration, type PreviewDiagnostic } from './preview-diagnostics.js';
+import { PreviewGeneration, readingPreviewDiagnostic, type PreviewDiagnostic } from './preview-diagnostics.js';
 import { createDirectTimelinePreviewScene } from './preview-direct-timeline.js';
 import { PreviewRuntimeLifecycle } from './preview-runtime-lifecycle.js';
 import {
@@ -194,6 +194,9 @@ function captureRuntimeTrace(event: RuntimeTraceEvent, evidenceSnapshot: () => P
   queueMicrotask(() => {
     if (previewDisposed || activePreviewTrace !== trace) return;
     const presentationAfter = evidenceSnapshot();
+    const reading = (presentationAfter.projection as import('@surdet/renderer').RendererProjectionSnapshot).dialogue?.readingDiagnostics;
+    const diagnostic = readingPreviewDiagnostic(trace.generation, event.source, reading ?? []);
+    if (diagnostic) postPreviewDiagnostic(diagnostic);
     trace.events.push(event);
     window.parent.postMessage({
       type: 'surdet-preview-trace-event',
@@ -1205,7 +1208,22 @@ window.addEventListener('message', (e: MessageEvent) => {
     void loadQueue;
   }
   if (d.type === 'surdet-preview-fast') runtime?.controller.setTextSpeed(d.fast ? FAST_CPS : NORMAL_CPS);
+  if (d.type === 'surdet-preview-reading-check' && e.source === window.parent) {
+    const reading = readCurrentReading();
+    if (!reading) return;
+    postPreviewDiagnostic(readingPreviewDiagnostic(previewGeneration.current, reading.source, reading.issues)
+      ?? { generation: previewGeneration.current, phase: 'runtime', level: 'info',
+        message: reading.issues.length ? '当前文字未发现越界；所用系统字体或无法解析的字体未获缺字验证。'
+          : `当前已显示文字未发现缺字或越界${reading.typing ? '（仍在逐字显示，请结束后再检查）' : ''}。` });
+  }
 });
+
+function readCurrentReading() {
+  if (previewDisposed || !runtime || !activePreviewTrace) return null;
+  return { source: activePreviewTrace.events.at(-1)?.source ?? { sceneId: activePreviewTrace.sceneId },
+    typing: runtime.controller.status === 'typing',
+    issues: runtime.queries.diagnostics.projectionSnapshot().dialogue?.readingDiagnostics ?? [] };
+}
 
 // 调试探针（对齐 starter surdetDebug / 编辑器 surdetEditorDebug 惯例）：只暴露语义运行态
 (window as unknown as Record<string, unknown>).surdetPreviewDebug = {
@@ -1214,6 +1232,7 @@ window.addEventListener('message', (e: MessageEvent) => {
   get rendererStatus(): RendererRuntime['controller']['status'] | null { return runtime?.controller.status ?? null; },
   get resourceSnapshot() { return runtime?.queries.diagnostics.resourceSnapshot() ?? null; },
   get presentationSnapshot() { return runtime?.queries.presentation.snapshot() ?? null; },
+  get readingDiagnostics() { return readCurrentReading(); },
   get calendar(): CalendarRunner | null { return calendar; },
 };
 

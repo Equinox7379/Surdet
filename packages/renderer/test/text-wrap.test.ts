@@ -79,6 +79,16 @@ describe('wrapCjk（断行禁则）', () => {
 });
 
 describe('wrapCjkMeasure（像素级断行）', () => {
+  it('honors explicit CRLF/newlines and blank lines without counting them as glyph width', () => {
+    expect(wrapCjk('甲乙\r\n\n丙丁\n', 2)).toEqual(['甲乙', '', '丙丁', '']);
+    expect(wrapCjkMeasure('甲乙\n\n丙丁\n', 20, s => [...s].length * 10)).toEqual(['甲乙', '', '丙丁', '']);
+  });
+
+  it('keeps grapheme clusters and ordinary English words together when they fit a line', () => {
+    const text = 'e\u0301👩‍👩‍👧‍👦甲';
+    expect(wrapCjk(text, 1)).toEqual(['e\u0301', '👩‍👩‍👧‍👦', '甲']);
+    expect(wrapCjkMeasure('Hello world here', 90, s => s.length * 10)).toEqual(['Hello ', 'world ', 'here']);
+  });
   /** 等宽测量：每字 10px → 与字数版 wrapCjk(perLine=maxWidth/10) 完全同构 */
   const mono = (s: string): number => s.length * 10;
 
@@ -172,6 +182,8 @@ describe('wrapCjk Unicode 与边界输入安全', () => {
 
   it('NaN 宽度明确拒绝，不进入同步死循环', () => {
     expect(() => wrapCjk('甲', Number.NaN)).toThrow(/perLine/);
+    expect(() => wrapCjk('\n', Number.NaN)).toThrow(/perLine/);
+    expect(() => wrapCjkMeasure('\n', Number.NaN, () => 0)).toThrow(/maxWidth/);
     expect(() => wrapCjkMeasure('甲', Number.NaN, () => 10)).toThrow(/maxWidth/);
   });
 });

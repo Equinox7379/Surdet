@@ -427,6 +427,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     get resourceLedger() { return queries.diagnostics.resourceLedger?.() ?? null; },
     get presentationSnapshot() { return queries.presentation.snapshot(); },
     get dialogueProjection() { return queries.diagnostics.projectionSnapshot().dialogue; },
+    get readingDiagnostics() { return [...(queries.diagnostics.projectionSnapshot().dialogue?.readingDiagnostics ?? []), ...(uiDom?.readingDiagnostics() ?? [])]; },
     get commandRailVisible() { return queries.diagnostics.projectionSnapshot().dialogue?.commandRailVisible === true; },
     get uiSession() { return Object.freeze({ ...uiSnapshot() }); },
     get queries() { return queries; },
@@ -1876,6 +1877,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     uiDom = createProjectUiDom({ canvas: runtime.canvas, document: workUi,
       theme: playerTheme,
       fontFamily: role => queries.preferences.fontFamily(role),
+      fontDiagnostics: queries.diagnostics.fontText,
       imageUrl: key => backgroundUrls.get(key),
       titleBackgroundUrl: backgroundUrls.get(playerConfig.titleBackground),
       isPageVisible: page => {

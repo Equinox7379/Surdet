@@ -67,6 +67,7 @@ import type {
 } from '../api/renderer-queries.js';
 import type { PresentationController, ResetSessionOptions } from '../api/renderer-runtime.js';
 import type { RenderAssetRegistry } from '../services/render-asset-registry.js';
+import { fontTextDiagnostics } from '../reading-diagnostics.js';
 import type { PresentationStage } from './presentation-ports.js';
 import { createRendererTheme, type RendererTheme, type RendererThemeOverrides } from '../theme.js';
 
@@ -844,6 +845,8 @@ export class RendererFacade {
       },
     };
     const diagnosticQueries: RendererDiagnosticQueries = {
+      fontText: (role, text, target) => this.#assetRegistry?.fontDiagnostics(role, text, target)
+        ?? fontTextDiagnostics(undefined, role, '', text, target),
       resourceSnapshot: () => cloneResourceSnapshot(
         this.#resourceSnapshot?.() ?? EMPTY_RESOURCE_SNAPSHOT(this.#disposed),
         this.#disposed,

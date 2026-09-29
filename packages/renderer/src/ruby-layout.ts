@@ -48,10 +48,12 @@ export function layoutRuby(
       continue;
     }
 
-    let rest = segment.base;
+    let rest = segment.base.replace(/\r\n?/g, '\n');
     while (rest.length > 0) {
+      if (rest.startsWith('\n')) { nextLine(); rest = rest.slice(1); continue; }
       const available = x > 0 ? limit - x : limit;
-      const chunk = wrapCjkMeasure(rest, available, measure.base)[0] ?? rest[0]!;
+      const paragraph = rest.split('\n', 1)[0]!;
+      const chunk = wrapCjkMeasure(paragraph, available, measure.base)[0]!;
       const width = measure.base(chunk);
       // A punctuation hang may exceed the remaining space. Keep it with the
       // preceding text when starting a line, but never overflow a used line.
@@ -61,7 +63,7 @@ export function layoutRuby(
       }
       append(chunk, undefined, width);
       rest = rest.slice(chunk.length);
-      if (rest.length > 0) nextLine();
+      if (rest.length > 0 && !rest.startsWith('\n')) nextLine();
     }
   }
 

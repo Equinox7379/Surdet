@@ -1,5 +1,6 @@
 import { PROJECT_UI_TAB_BAR_HEIGHT, projectUiChildrenRect, projectUiRect, type ProjectUiAction, type ProjectUiBinding, type ProjectUiContentSource, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId, type ProjectUiRect, type ProjectUiText } from '@surdet/core';
 import type { RendererTheme } from './theme.js';
+import { fontTextDiagnostics, type ReadingDiagnostic } from './reading-diagnostics.js';
 
 export interface ProjectUiItem {
   id: string;
@@ -31,6 +32,7 @@ export interface ProjectUiDomOptions {
   document: ProjectUiDocument;
   theme: RendererTheme;
   fontFamily: (role: 'body' | 'title' | 'ui') => string;
+  fontDiagnostics?: (role: 'body' | 'title' | 'ui', text: string, target: string) => readonly ReadingDiagnostic[];
   imageUrl: (key: string) => string | undefined;
   titleBackgroundUrl?: string;
   isPageVisible?: (page: ProjectUiPageId) => boolean;
@@ -41,6 +43,7 @@ export interface ProjectUiDom {
   show(page: ProjectUiPageId, context: ProjectUiContext): void;
   hide(page: ProjectUiPageId): void;
   refresh(): void;
+  readingDiagnostics(): ReadingDiagnostic[];
   resize(): void;
   ownsInput(target: EventTarget | null): boolean;
   showGalleryImage(assetKey: string, label: string): void;
@@ -138,6 +141,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     const rect = projectUiRect(parentRect, node.frame);
     const element = document.createElement(node.type === 'button' ? 'button' : 'div');
     element.dataset.uiNode = node.id;
+    if (node.type === 'text' || node.type === 'button') element.dataset.uiReadingRole = node.style?.fontRole ?? 'ui';
     place(element, rect, parentRect);
     applyStyle(element, node);
     element.style.whiteSpace = 'pre-wrap';
@@ -360,6 +364,26 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
   frame = window.requestAnimationFrame(tick);
 
   return {
+    readingDiagnostics() {
+      if (disposed) return [];
+      const issues: ReadingDiagnostic[] = [];
+      for (const [page, display] of pages) {
+        if (display.element.hidden) continue;
+        for (const element of Array.from(display.element.querySelectorAll<HTMLElement>('[data-ui-reading-role]'))) {
+          if (element.closest('[hidden]') || !element.getClientRects().length) continue;
+          const text = element.textContent ?? '';
+          const target = `ui:${page}.${element.dataset.uiNode}`;
+          const role = element.dataset.uiReadingRole as 'body' | 'title' | 'ui';
+          issues.push(...(options.fontDiagnostics?.(role, text, target)
+            ?? fontTextDiagnostics(undefined, role, options.fontFamily(role), text, target)));
+          if (element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1) {
+            issues.push({ code: 'TEXT_OVERFLOW', severity: 'warning', target, text,
+              message: '文字超过作品界面节点的可用区域，请调整该节点尺寸、字号或文案。' });
+          }
+        }
+      }
+      return issues;
+    },
     show(page, context) {
       if (disposed) throw new Error('Project UI disposed');
       errorStatus.textContent = '';

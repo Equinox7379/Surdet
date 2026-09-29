@@ -4,7 +4,7 @@
  *  - 行首禁则：逗号/句号/问号/叹号/后引号/后括号等不出现在行首（收进行尾，允许该行超宽 1~2 字）
  *  - 行尾禁则：前引号/前括号不出现在行尾（推到下一行行首）
  *  - 连续符不拆：……、—— 不被拆到两行
- *  - 无损往返：所有行拼接后等于原文（不丢字、不改字）
+ *  - 软换行无损；显式换行（含空行）单独分段，不占字宽
  * 用于对话框预断行与 Backlog 软换行（替代 Pixi wordWrap / 定长 slice 的裸断行）。
  */
 
@@ -24,6 +24,15 @@ const NO_LINE_END = new Set([
 
 /** 连续出现时不可被拆散的连接符 */
 const UNBREAKABLE_RUN = new Set(['…', '—']);
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+function wordBoundary(units: string[], start: number, end: number): number {
+  // Keep ordinary Latin words together; a word wider than a whole line still breaks.
+  const latin = /[\p{Script=Latin}\p{Number}]/u;
+  if (end >= units.length || !latin.test(units[end - 1]!) || !latin.test(units[end]!)) return end;
+  for (let i = end - 1; i > start; i--) if (/\s/u.test(units[i]!)) return i + 1;
+  return end;
+}
 
 function normalizePerLine(value: number): number {
   if (Number.isNaN(value)) throw new RangeError('perLine 必须是有限数字或 Infinity');
@@ -45,8 +54,9 @@ function normalizeMaxWidth(value: number): number {
  */
 export function wrapCjk(text: string, perLine: number): string[] {
   if (text.length === 0) return [];
-  const units = Array.from(text);
   const width = normalizePerLine(perLine);
+  if (/[\r\n]/.test(text)) return text.split(/\r\n?|\n/).flatMap(part => part ? wrapCjk(part, perLine) : ['']);
+  const units = Array.from(graphemes.segment(text), item => item.segment);
   const lines: string[] = [];
   let i = 0;
   while (i < units.length) {
@@ -65,6 +75,7 @@ export function wrapCjk(text: string, perLine: number): string[] {
       }
     }
     if (end <= i) end = i + 1; // 防御：永不零宽/倒退
+    end = wordBoundary(units, i, end);
     lines.push(units.slice(i, end).join(''));
     i = end;
   }
@@ -78,8 +89,9 @@ export function wrapCjk(text: string, perLine: number): string[] {
  */
 export function wrapCjkMeasure(text: string, maxWidth: number, measure: (s: string) => number): string[] {
   if (text.length === 0) return [];
-  const units = Array.from(text);
   const limit = normalizeMaxWidth(maxWidth);
+  if (/[\r\n]/.test(text)) return text.split(/\r\n?|\n/).flatMap(part => part ? wrapCjkMeasure(part, maxWidth, measure) : ['']);
+  const units = Array.from(graphemes.segment(text), item => item.segment);
   const lines: string[] = [];
   let i = 0;
   while (i < units.length) {
@@ -103,6 +115,7 @@ export function wrapCjkMeasure(text: string, maxWidth: number, measure: (s: stri
       }
     }
     if (end <= i) end = i + 1;
+    end = wordBoundary(units, i, end);
     lines.push(units.slice(i, end).join(''));
     i = end;
   }

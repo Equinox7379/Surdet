@@ -16,6 +16,7 @@ export * from './ruby.js';
 export * from './ruby-layout.js';
 export * from './settings-store.js';
 export * from './text-wrap.js';
+export * from './reading-diagnostics.js';
 export * from './ui-views.js';
 export * from './frame-scheduler.js';
 export * from './performance.js';
