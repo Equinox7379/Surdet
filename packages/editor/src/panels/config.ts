@@ -283,7 +283,7 @@ function editTextBindingsDraft(value: TextBindingDraft[]): void {
 function renderTextCatalogConfig(): HTMLElement {
   const revision = configSessionRevision;
   const panel = renderTextCatalogSection({
-    csv: textCsvDraft, editCsv: editTextCsvDraft,
+    readCsv: readTextCsvDraft, editCsv: editTextCsvDraft,
     readBindings: () => textBindingsDraft, editBindings: editTextBindingsDraft,
     isCurrent: () => revision === configSessionRevision,
     onSaved: (text, submitted) => {

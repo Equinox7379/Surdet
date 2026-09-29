@@ -33,7 +33,10 @@ class FakeElement {
   className = '';
   id = '';
   type = '';
-  value = '';
+  private storedValue = '';
+  get value(): string { return this.storedValue; }
+  set value(value: string) { this.storedValue = this.tagName === 'TEXTAREA' ? value.replace(/\r\n?/g, '\n') : value; }
+  files: File[] = [];
   checked = false;
   hidden = false;
   disabled = false;
@@ -301,6 +304,38 @@ describe('configuration draft state', () => {
     expect(readTextCsvDraft()).toContain('key,locale,sourceVersion');
     expect(inspectConfigDraftState().dirtySections).toEqual(['texts']);
     configUndo(); expect(readTextCsvDraft()).toBe('unpublished');
+  });
+
+  it.each(['built-in', 'CRLF', 'LF'])('uses the exact %s working draft for preview, download and the successful baseline', async (input) => {
+    await textFixture();
+    const view = await inspectTextCatalog(await loadEditorProjectSnapshot(), createEditorProjectStorage());
+    const { sourceId: _id, path: _path, line: _line, ...source } = view.sources[0]!;
+    const config = { ...JSON.parse(INITIAL_GAME_CONFIG), textCatalog: { version: 1, sourceLocale: 'zh-CN', entries: [
+      { key: 'greeting', source, translations: { en: { value: 'Hello, "friend".\nNext line.', sourceVersion: source.version } } },
+    ] } };
+    const root = await renderFixture(JSON.stringify(config));
+    await action(root, '载入已保存译稿');
+    let submitted = readTextCsvDraft();
+    if (input !== 'built-in') {
+      submitted = submitted.replace('Hello,', 'Welcome,');
+      if (input === 'LF') submitted = submitted.replaceAll('\r\n', '\n');
+      const upload = byAttribute(root, 'aria-label', '选择译稿表格');
+      upload.files = [new File([submitted], 'translation.csv')]; upload.onchange?.();
+      await vi.waitFor(() => expect(root.textContent).toContain('表格已读取'));
+    }
+    expect(readTextCsvDraft()).toBe(submitted);
+    expect(submitted.startsWith('\uFEFF')).toBe(true);
+    const csv = byAttribute(root, 'aria-label', '译稿表格');
+    expect(csv.value).not.toContain('\r'); // Real textarea normalization must not change the draft.
+    const downloads: Blob[] = [];
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => { downloads.push(blob as Blob); return 'blob:test'; });
+    await action(root, '下载当前工作稿');
+    expect(new Uint8Array(await downloads[0]!.arrayBuffer())).toEqual(new TextEncoder().encode(submitted));
+    await action(root, '预览导入差异'); expect(root.textContent).toContain('差异预览通过');
+    await action(root, '确认导入并保存');
+    expect(commitTextCatalogPatch).toHaveBeenCalledWith(expect.objectContaining({ patch: expect.objectContaining({ type: 'import', csv: submitted }) }));
+    expect(inspectConfigDraftState().dirty).toBe(false);
+    expect(await saveDirtyConfigSections()).toEqual({ saved: 0, failures: 0, remainingDirty: false });
   });
 
   it('retains multiple bindings on read/export, rejects changed source versions, and requires each stale binding to be reconfirmed', async () => {

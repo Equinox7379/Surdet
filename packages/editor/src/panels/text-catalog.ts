@@ -10,7 +10,7 @@ export interface TextBindingDraft {
 
 /** CSV preparation uses the Editor's existing draft history; preview never writes source. */
 export function renderTextCatalogSection(options: {
-  csv: string; editCsv(value: string): void;
+  readCsv(): string; editCsv(value: string): void;
   readBindings(): readonly TextBindingDraft[]; editBindings(value: TextBindingDraft[]): void;
   isCurrent(): boolean;
   onSaved(text: string, submitted: { csv?: string; bindings?: readonly TextBindingDraft[] }): void;
@@ -24,7 +24,7 @@ export function renderTextCatalogSection(options: {
   const sourceLocale = h('input'); sourceLocale.value = options.readBindings()[0]?.sourceLocale ?? 'zh-CN'; sourceLocale.setAttribute('aria-label', '源语言');
   const source = h('select'); source.setAttribute('aria-label', '当前剧本文本');
   const key = h('input'); key.placeholder = '例如 intro.greeting'; key.setAttribute('aria-label', '稳定文本键');
-  const csv = h('textarea'); csv.value = options.csv; csv.rows = 9; csv.setAttribute('aria-label', '译稿表格'); csv.style.width = '100%';
+  const csv = h('textarea'); csv.value = options.readCsv(); csv.rows = 9; csv.setAttribute('aria-label', '译稿表格'); csv.style.width = '100%';
   const differences = h('div');
   const bindingList = h('div');
   const controls = h('div', 'config-actions');
@@ -118,15 +118,16 @@ export function renderTextCatalogSection(options: {
     status.textContent = '已导出文本目录中的译稿，不含编辑框中未确认的修改；工作稿、绑定清单和导入预览均未改变。';
   });
   button('下载当前工作稿', async () => {
-    if (!csv.value) throw new Error('当前工作稿为空，请先载入或选择译稿表格');
-    download(csv.value, 'surdet-texts-draft.csv');
+    const value = options.readCsv();
+    if (!value) throw new Error('当前工作稿为空，请先载入或选择译稿表格');
+    download(value, 'surdet-texts-draft.csv');
     status.textContent = '已下载当前工作稿，未校验或写入项目；未确认内容仍保留。';
   });
   button('载入已保存译稿', async () => {
-    const previous = csv.value, language = locale.value.trim();
+    const previous = options.readCsv(), language = locale.value.trim();
     const saved = await savedCatalog();
     if (!current()) return;
-    if (csv.value !== previous || locale.value.trim() !== language) throw new Error('读取期间工作稿或语言已改变，未替换编辑内容');
+    if (options.readCsv() !== previous || locale.value.trim() !== language) throw new Error('读取期间工作稿或语言已改变，未替换编辑内容');
     const value = exportTextCatalogCsv(saved);
     if (previous === value) return;
     if (previous && !window.confirm('用文本目录中的译稿替换当前工作稿？尚未确认的内容会被替换，可通过撤销找回。')) return;
@@ -134,11 +135,11 @@ export function renderTextCatalogSection(options: {
     status.textContent = '已载入编辑工作稿；只编辑译文列（translation），预览差异并确认后才能保存。';
   });
   button('预览导入差异', async () => {
-    const submitted = csv.value, language = locale.value.trim(), snapshot = await loadEditorProjectSnapshot();
+    const submitted = options.readCsv(), language = locale.value.trim(), snapshot = await loadEditorProjectSnapshot();
     const next = await previewTextCatalogImport(snapshot, createEditorProjectStorage(), language, submitted);
-    if (!current() || submitted !== csv.value || language !== locale.value.trim()) return;
+    if (!current() || submitted !== options.readCsv() || language !== locale.value.trim()) return;
     const nextInspection = await inspectTextCatalog(snapshot, createEditorProjectStorage(), language);
-    if (!current() || submitted !== csv.value || language !== locale.value.trim()) return;
+    if (!current() || submitted !== options.readCsv() || language !== locale.value.trim()) return;
     inspection = nextInspection;
     preview = next; differences.replaceChildren(); render(); renderBindings();
     for (const issue of next.issues) differences.append(h('p', 'error', `第 ${issue.line} 行 ${issue.key ?? ''}：${issue.message}`));
@@ -147,7 +148,7 @@ export function renderTextCatalogSection(options: {
   });
   button('确认导入并保存', async () => {
     if (!preview?.ready) throw new Error('请先取得通过的差异预览');
-    await save({ type: 'import', locale: locale.value.trim(), csv: csv.value, previewFingerprint: preview.previewFingerprint });
+    await save({ type: 'import', locale: locale.value.trim(), csv: options.readCsv(), previewFingerprint: preview.previewFingerprint });
   });
   locale.oninput = () => { preview = undefined; differences.replaceChildren(); };
   sourceLocale.oninput = () => {
@@ -157,7 +158,7 @@ export function renderTextCatalogSection(options: {
   const upload = h('input'); upload.type = 'file'; upload.accept = '.csv,text/csv'; upload.setAttribute('aria-label', '选择译稿表格');
   upload.onchange = () => run(async () => {
     const file = upload.files?.[0]; if (!file) return;
-    const value = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
+    const value = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await file.arrayBuffer());
     if (current()) { csv.value = value; options.editCsv(value); preview = undefined; differences.replaceChildren(); status.textContent = '表格已读取，尚未修改项目；请预览导入差异。'; }
   });
   const header = h('header', 'config-ledger-header'), copy = h('div', 'config-section-copy');
