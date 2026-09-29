@@ -45,6 +45,8 @@ describe('FileProfileStore', () => {
     fs.writeFileSync(path.join(dir, 'profile', 'clear-record.json'), '{broken');
     expect(await store.read('clear-record')).toBeNull();
     expect(warnings).toHaveLength(1);
+    await expect(store.read('clear-record', { strict: true })).rejects.toThrow('损坏');
+    expect(fs.readFileSync(path.join(dir, 'profile', 'clear-record.json'), 'utf8')).toBe('{broken');
   });
 
   it('deletes only the requested profile key and rejects invalid keys', async () => {

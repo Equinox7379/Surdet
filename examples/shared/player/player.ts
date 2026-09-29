@@ -4,6 +4,7 @@
  */
 import {
   compileScene,
+  readGalleryUnlockPolicy, effectiveGalleryUnlocks,
   collectProjectTextRows, projectTextSources, createProjectTextResolver, readTextCatalog, parseTerminology,
   type TextSceneSource,
   resolveProjectPortraits,
@@ -75,6 +76,7 @@ import type { GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerPro
 import { resolvePlayerTheme } from '@surdet/core';
 import {
   LocalStorageProfileStorage,
+  MemoryProfileStorage, createGalleryCollection, galleryCollectionKey,
   connectSystemRouter,
   createDefaultHost,
   connectInterpreterPresentation,
@@ -100,6 +102,8 @@ import { showPlayerRecovery } from './recovery-screen.js';
 import type {} from './window.js';
 
 export interface PlayerProject {
+  /** Editor previews use an ephemeral collection, never the player's profile. */
+  preview?: boolean;
   /** Stable package name; changing the display title must not change save ownership. */
   id: string;
   config: {
@@ -163,6 +167,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   const sceneFiles = project.sceneFiles;
   const timelineFiles = project.timelineFiles ?? {};
   const galleryConfig = project.gallery ?? { cgs: [], music: [], texts: [] };
+  const galleryPolicy = readGalleryUnlockPolicy(galleryConfig);
   const appEl = document.getElementById('app')!;
 
   const debugSessionId = `starter-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -761,6 +766,31 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   }
   const CLEAR_KEY = window.surdetProfile ? 'surdet:clearRecord' : `${browserPrefix}clearRecord`;
   const profileStorage = new LocalStorageProfileStorage(localStorage, `${browserPrefix}profile:`);
+  let galleryCollection: Awaited<ReturnType<typeof createGalleryCollection>> | undefined;
+  let galleryReplay = false;
+  let collectionDisposed = false;
+  let collectionNotice: HTMLElement | undefined;
+  const collectionError = (error: unknown): void => {
+    console.error('[收藏]', error);
+    if (collectionDisposed || signal?.aborted) return;
+    collectionNotice ??= document.createElement('div');
+    collectionNotice.setAttribute('role', 'alert');
+    collectionNotice.style.cssText = 'position:fixed;z-index:10000;bottom:16px;left:50%;transform:translateX(-50%);max-width:85vw;padding:12px 20px;background:#fff8ed;color:#573c2f;border-radius:8px;font:16px/1.6 sans-serif';
+    collectionNotice.textContent = '永久收藏未能保存或读取，原记录未修改。本次解锁仍可随剧情存档保存；请检查存储空间与访问权限后重开游戏。';
+    document.body.append(collectionNotice);
+  };
+  if (galleryPolicy.cgs === 'profile' || galleryPolicy.music === 'profile') {
+    try {
+      const storage = project.preview ? new MemoryProfileStorage() : window.surdetProfile ?? profileStorage;
+      galleryCollection = await createGalleryCollection(storage, await galleryCollectionKey(project.id), galleryPolicy);
+    } catch (error) { collectionError(error); }
+  }
+  bus.on('gallery', event => {
+    if (!galleryCollection || galleryReplay || rollbackRuntime.isRestoring() || event.type === 'text') return;
+    const section = event.type === 'cg' ? 'cgs' : 'music';
+    if (!galleryConfig[section].some(entry => entry.id === event.id)) return;
+    void galleryCollection.unlock(section, event.id).catch(collectionError);
+  });
   async function loadLegacyClearRecord(): Promise<GlobalClearRecord | null> {
     try {
       const raw = localStorage.getItem(CLEAR_KEY);
@@ -926,12 +956,14 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   }
 
   function galleryView() {
-    const views = buildGalleryViews(galleryConfig as GalleryConfig, interp.gallery.snapshot());
+    const views = buildGalleryViews(galleryConfig as GalleryConfig, effectiveGalleryUnlocks(
+      interp.gallery.snapshot(), galleryCollection?.snapshot() ?? { cgs: [], music: [] }, galleryPolicy));
     return {
       ...views,
       onPlayMusic: (id: string, src?: string) => audio.playBgm(src ?? id, { restart: true }),
       onReplayText: (item: (typeof views.texts)[number]) => {
         if (!item.scene) return;
+        galleryReplay = true;
         playerShell!.commands.reset('game');
         clearRollback();
         host.reset();
@@ -1156,6 +1188,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     switch (id) {
       case entry?.id:
       case 'new': {
+        galleryReplay = false;
         playerShell!.commands.reset('game');
         clearRollback();
         host.reset();
@@ -1163,6 +1196,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         presentation.clear();
         menu.hideTitle();
         store.reset();
+        interp.gallery.restore({ cgs: [], music: [], texts: [] });
         systemHooks.restore!(structuredClone(initialSystems));
         if (growth && initialGrowth) growth.restore(structuredClone(initialGrowth));
         clearCountedThisSession = false; // 新周目会话开始，周目计数重新可用
@@ -1376,6 +1410,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   function completeLoadedSnapshot(snap: SaveSnapshot): void {
     clearRollback();
     interp.loadSnapshot(snap);
+    galleryReplay = false;
     sessionStart = Date.now() - Math.max(0, snap.meta.playTimeSec ?? 0) * 1000;
     playerShell!.commands.completeOperation({ base: 'game', overlay: 'none' });
     menu.hideTitle();
@@ -1627,6 +1662,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     assetBlobUrls,
     revokeObjectUrl: (url) => URL.revokeObjectURL(url),
   });
+  ownerTeardown.trackListener(() => { collectionDisposed = true; collectionNotice?.remove(); });
   ownerTeardown.trackListener(() => window.removeEventListener('resize', resizeHandler));
   ownerTeardown.trackListener(() => runtime.canvas.removeEventListener('pointerdown', canvasPointerDown));
   ownerTeardown.trackListener(() => runtime.canvas.removeEventListener('wheel', canvasWheel, canvasWheelOptions));

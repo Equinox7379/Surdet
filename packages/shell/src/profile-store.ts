@@ -28,14 +28,15 @@ export class FileProfileStore implements ProfileStorage {
     return path.join(this.dir, `${name}.json`);
   }
 
-  async read<T = unknown>(key: string): Promise<T | null> {
+  async read<T = unknown>(key: string, options?: { strict?: boolean }): Promise<T | null> {
     const file = this.#fileFor(key);
     if (!fs.existsSync(file)) return null;
     try {
-      const value = parseProfileEnvelope<T>(fs.readFileSync(file, 'utf8'));
+      const value = parseProfileEnvelope<T>(fs.readFileSync(file, 'utf8'), options);
       if (value === null) this.#warn(`Profile 数据损坏，已忽略：${file}`);
       return value;
     } catch (error) {
+      if (options?.strict) throw error;
       this.#warn(`Profile 数据读取失败，已忽略：${file}（${error instanceof Error ? error.message : String(error)}）`);
       return null;
     }

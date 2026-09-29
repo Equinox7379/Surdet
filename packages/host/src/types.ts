@@ -2,7 +2,7 @@ import type { Interpreter, SystemHooks } from '@surdet/core';
 import type { RendererRuntime } from '@surdet/renderer';
 
 export interface ProfileStorage {
-  read<T = unknown>(key: string): Promise<T | null>;
+  read<T = unknown>(key: string, options?: { strict?: boolean }): Promise<T | null>;
   write(key: string, value: unknown): Promise<void>;
   delete(key: string): Promise<void>;
 }

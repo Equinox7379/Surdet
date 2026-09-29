@@ -1,4 +1,5 @@
 export type { BrowserKeyValueStorage, ProfileEnvelope, ProfileStorage } from './types.js';
+export { createGalleryCollection, galleryCollectionKey } from './gallery-collection.js';
 export type {
   DefaultHostController,
   DefaultHostOptions,

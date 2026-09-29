@@ -13,6 +13,7 @@ import {
   applyCharacterEnsure,
   applyGalleryCgCreate,
   applyGalleryCgPatch,
+  applyGalleryPolicyPatch, type GalleryPolicyPatchInput,
   inspectGallery,
   inspectPlayerConfig,
   inspectStageConfig, applyStageConfigPatch, type StageConfigPatchInput,
@@ -822,6 +823,13 @@ export class AuthoringService {
   async galleryCgPatch(changeId: string, input: GalleryCgPatchInput): Promise<ServiceResult<unknown>> {
     return this.withOpenChange(changeId, async (context) => {
       const result = await applyGalleryCgPatch(context.session, input, { sha256: async (text) => hashText(text) });
+      return { ...metadataForChange(context.session), result };
+    });
+  }
+
+  async galleryPolicyPatch(changeId: string, input: GalleryPolicyPatchInput): Promise<ServiceResult<unknown>> {
+    return this.withOpenChange(changeId, async context => {
+      const result = await applyGalleryPolicyPatch(context.session, input, { sha256: async text => hashText(text) });
       return { ...metadataForChange(context.session), result };
     });
   }

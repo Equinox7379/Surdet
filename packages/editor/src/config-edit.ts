@@ -2,7 +2,7 @@
  * 配置编辑纯逻辑（E3）：变量表（game.config.json variables）与成就表（achievements.json）
  * 的行模型 ⇄ JSON 双向转换与校验。UI 只管表格，落盘前全部经此处校验（编辑器不产出非法配置）。
  */
-import { parseProjectConfigDocument } from '@surdet/authoring';
+import { parseProjectConfigDocument, patchGalleryUnlockPolicy } from '@surdet/authoring';
 import { parseExpr, collectVars, validateVarDecl, type LintIssue } from '@surdet/core';
 import type { CompiledScene, GenericInstr, ChoiceInstr, CondJumpInstr, SetInstr, ModifyInstr, SwitchInstr, TextInstr } from '@surdet/core';
 
@@ -535,6 +535,7 @@ export const GALLERY_CG_KEYS = ['id', 'name', 'src'];
 export const GALLERY_TEXT_KEYS = ['id', 'name', 'scene', 'label'];
 
 export interface GalleryRows {
+  unlockPolicy?: Partial<import('@surdet/core').GalleryUnlockPolicy>;
   cgs: RowMap[];
   music: RowMap[];
   texts: RowMap[];
@@ -542,6 +543,7 @@ export interface GalleryRows {
 
 export function parseGalleryRows(raw: unknown): GalleryRows {
   return {
+    ...((raw as { unlockPolicy?: unknown } | null)?.unlockPolicy === undefined ? {} : { unlockPolicy: structuredClone((raw as GalleryRows).unlockPolicy) }),
     cgs: listToRows(raw, 'cgs', GALLERY_CG_KEYS),
     music: listToRows(raw, 'music', GALLERY_CG_KEYS),
     texts: listToRows(raw, 'texts', GALLERY_TEXT_KEYS),
@@ -558,7 +560,10 @@ export function rowsToGallery(raw: unknown, rows: GalleryRows): { json: Record<s
   checkUniqueId(rows.cgs, 'id', 'CG', errors);
   checkUniqueId(rows.music, 'id', '鉴赏音乐', errors);
   checkUniqueId(rows.texts, 'id', '回想', errors);
-  return { json, errors };
+  try {
+    const configured = patchGalleryUnlockPolicy(json, { cgs: rows.unlockPolicy?.cgs ?? null, music: rows.unlockPolicy?.music ?? null });
+    return { json: configured, errors };
+  } catch (error) { errors.push(String(error)); return { json, errors }; }
 }
 
 /* ============================ terminology.json ============================ */

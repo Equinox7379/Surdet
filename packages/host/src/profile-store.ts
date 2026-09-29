@@ -51,26 +51,27 @@ export function serializeProfileEnvelope(value: unknown): string {
   return serializedEnvelope;
 }
 
-export function parseProfileEnvelope<T>(raw: string | null): T | null {
+export function parseProfileEnvelope<T>(raw: string | null, options?: { strict?: boolean }): T | null {
   if (raw === null) return null;
+  const invalid = (): null => { if (options?.strict) throw new Error('Profile 数据损坏，原记录未修改'); return null; };
   try {
-    if (jsonBytes(raw) > MAX_SERIALIZED_BYTES) return null;
+    if (jsonBytes(raw) > MAX_SERIALIZED_BYTES) return invalid();
     const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return invalid();
     const envelope = parsed as Partial<ProfileEnvelope<T>>;
-    if (envelope.schemaVersion !== 1 || typeof envelope.updatedAt !== 'string' || !Object.prototype.hasOwnProperty.call(envelope, 'value')) return null;
+    if (envelope.schemaVersion !== 1 || typeof envelope.updatedAt !== 'string' || !Object.prototype.hasOwnProperty.call(envelope, 'value') || (options?.strict && envelope.value === null)) return invalid();
     return JSON.parse(serializeValue(envelope.value)) as T;
   } catch {
-    return null;
+    return invalid();
   }
 }
 
 export class MemoryProfileStorage implements ProfileStorage {
   readonly #values = new Map<string, string>();
 
-  async read<T = unknown>(key: string): Promise<T | null> {
+  async read<T = unknown>(key: string, options?: { strict?: boolean }): Promise<T | null> {
     assertProfileKey(key);
-    return parseProfileEnvelope<T>(this.#values.get(key) ?? null);
+    return parseProfileEnvelope<T>(this.#values.get(key) ?? null, options);
   }
 
   async write(key: string, value: unknown): Promise<void> {
@@ -93,9 +94,9 @@ export class LocalStorageProfileStorage implements ProfileStorage {
     this.#prefix = prefix;
   }
 
-  async read<T = unknown>(key: string): Promise<T | null> {
+  async read<T = unknown>(key: string, options?: { strict?: boolean }): Promise<T | null> {
     assertProfileKey(key);
-    return parseProfileEnvelope<T>(this.#storage.getItem(`${this.#prefix}${key}`));
+    return parseProfileEnvelope<T>(this.#storage.getItem(`${this.#prefix}${key}`), options);
   }
 
   async write(key: string, value: unknown): Promise<void> {

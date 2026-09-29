@@ -12,6 +12,7 @@ import { InMemoryChangeRepository } from '../src/change-session.js';
 import {
   applyGalleryCgCreate,
   applyGalleryCgPatch,
+  applyGalleryPolicyPatch,
   inspectGallery,
   GALLERY_PATH,
 } from '../src/gallery-operations.js';
@@ -76,6 +77,31 @@ async function fingerprintOf(change: ChangeSession, id: string): Promise<string>
 }
 
 describe('gallery.cg authoring operations', () => {
+  it('reads, narrowly patches and fingerprints collection policies without rewriting gallery entries', async () => {
+    const { change } = await open();
+    const original = workingGallery(change);
+    const before = (await inspectGallery(change.record.workingFiles[GALLERY_PATH], hasher)).unlockPolicy;
+    expect(before).toMatchObject({ value: null, effective: { cgs: 'save', music: 'save' } });
+    const input = { operationId: 'policy', expectedFingerprint: before.fingerprint, patch: { cgs: 'profile' as const } };
+    const result = await applyGalleryPolicyPatch(change, input, hasher);
+    expect(workingGallery(change)).toEqual({ ...original, unlockPolicy: { cgs: 'profile' } });
+    expect(result.unlockPolicy.effective).toEqual({ cgs: 'profile', music: 'save' });
+    await applyGalleryPolicyPatch(change, input, hasher); // idempotency
+    const saved = structuredClone(change.record);
+    await expect(applyGalleryPolicyPatch(change, { ...input, operationId: 'stale' }, hasher)).rejects.toMatchObject({ code: 'OBJECT_REF_STALE' });
+    expect(change.record).toEqual(saved);
+    await applyGalleryPolicyPatch(change, { operationId: 'clear', expectedFingerprint: result.unlockPolicy.fingerprint, patch: { cgs: null } }, hasher);
+    expect(workingGallery(change)).toEqual(original);
+  });
+
+  it('rejects candidate policies before changing content or operation records', async () => {
+    const repo = new InMemoryChangeRepository();
+    const change = await beginChange(snapshot(), repo, undefined, undefined, { composition: { mode: 'candidate', operationFactsVersion: '1.0.0', baseAssetRefs: [] } });
+    const before = structuredClone(change.record);
+    const policy = (await inspectGallery(change.record.workingFiles[GALLERY_PATH], hasher)).unlockPolicy;
+    await expect(applyGalleryPolicyPatch(change, { operationId: 'blocked', expectedFingerprint: policy.fingerprint, patch: { music: 'profile' } }, hasher)).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
+    expect(change.record).toEqual(before);
+  });
   it('adds and patches one CG while preserving root, sibling, music, text, and unknown fields', async () => {
     const { change } = await open();
 

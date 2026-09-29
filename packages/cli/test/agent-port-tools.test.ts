@@ -186,12 +186,12 @@ describe('Surdet Agent Port MCP tool projection', () => {
       expect(names).not.toContain('surdet_change_commit');
       expect(names).not.toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
       for (const action of ['commit', 'recover', 'undo'] as const) expect(names).not.toContain(nativeCapabilityToMcpTool(`asset.relocation.${action}`));
-      expect(names).toHaveLength(54);
+      expect(names).toHaveLength(55);
    }
    if (policy === 'apply') {
      expect(names).toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
       for (const action of ['commit', 'recover', 'undo'] as const) expect(names).toContain(nativeCapabilityToMcpTool(`asset.relocation.${action}`));
-      expect(names).toHaveLength(61);
+      expect(names).toHaveLength(62);
    }
    const described = await client.callTool({ name: 'surdet_session_describe', arguments: {} });
     expect(described.isError).not.toBe(true);
@@ -199,7 +199,7 @@ describe('Surdet Agent Port MCP tool projection', () => {
     const capabilities = await client.callTool({ name: 'surdet_capabilities_describe', arguments: {} });
     expect(capabilities.isError).not.toBe(true);
     expect((capabilities.structuredContent as any).ok).toBe(true);
-    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(59);
+    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(60);
     expect(names).not.toContain('surdet_review_write_decision');
     expect(names).not.toContain('surdet_review_approve');
     if (policy === 'stage') {

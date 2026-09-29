@@ -1,4 +1,5 @@
 import type { CompiledScene, LintIssue } from '@surdet/core';
+import { readGalleryUnlockPolicy } from '@surdet/core';
 
 type GallerySection = 'cgs' | 'music' | 'texts';
 type UnlockInstruction = 'unlock_cg' | 'unlock_music' | 'unlock_text';
@@ -129,6 +130,8 @@ export function validateGalleryConfig(input: GalleryValidationInput): LintIssue[
     return issues;
   }
 
+  try { readGalleryUnlockPolicy(raw); }
+  catch (error) { addIssue(issues, 'G001', String(error), input.galleryPath); }
   const cgs = parseEntries(raw.cgs, 'cgs', input.galleryPath, issues);
   const music = parseEntries(raw.music, 'music', input.galleryPath, issues);
   const texts = raw.texts === undefined ? [] : parseEntries(raw.texts, 'texts', input.galleryPath, issues);

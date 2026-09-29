@@ -11,7 +11,7 @@ window.addEventListener('message', event => {
     terminology?: unknown;
     timelineFiles: Record<string, unknown>; assetFiles: Record<string, string>; fontFiles: Record<string, string>; gallery: PlayerProject['gallery'];
   };
-  void startPlayer({ id: data.id, config: data.config, assetFiles: data.assetFiles, fontFiles: data.fontFiles,
+  void startPlayer({ id: data.id, preview: true, config: data.config, assetFiles: data.assetFiles, fontFiles: data.fontFiles,
     sceneFiles: Object.fromEntries(Object.entries(data.sceneTexts).map(([path, text]) => [path, async () => text])),
     timelineFiles: data.timelineFiles, gallery: data.gallery, terminology: data.terminology,
     resolveSceneUrl: path => new URL(path, location.href).href,
