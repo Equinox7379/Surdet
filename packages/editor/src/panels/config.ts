@@ -12,7 +12,7 @@ import { projectPortraitOverrides, readProjectStage, readProjectUi, type Project
 import { assertConfigSourcesReadable, configSourceError, configSourcePath, parseConfigSource, type ConfigSourceName } from '../config-source.js';
 import { assetPathForHandle, assertProjectWriteUnlocked, readProjectSourceText, runProjectWriteOperation, writeProjectText } from '../project-io.js';
 import { editorWorkspaceStatus } from '../editor-workspace.js';
-import { AuthoringOperationError, parseProjectConfigDocument, patchUiDocument, renameConfigReferences, renameGalleryLabel, type UiPatch } from '@surdet/authoring';
+import { AuthoringOperationError, parseProjectConfigDocument, patchUiDocument, renameConfigReferences, renameGalleryLabel, applyConfigReferenceRename, type UiPatch } from '@surdet/authoring';
 import { commitCharacterTable, commitStageConfiguration, commitThemeConfiguration, commitUiConfiguration, parseCharacterVisualsDraft, parseThemeEditorDraft, projectThemeEditorDraft, type CharacterTableEditRow } from '../authoring-project-storage.js';
 import { disposeUiDesigner, renderUiDesigner } from '../ui-designer.js';
 import { renderTextCatalogSection, type TextBindingDraft } from './text-catalog.js';
@@ -680,14 +680,19 @@ function assertConfigSaveReady(name: ConfigSourceName): void {
   if (state.pendingSceneConfigRenames.length > 0) throw new Error('场景改名尚未写盘，请使用“保存全部”一起保存场景和配置引用');
 }
 
-/** Keep unsaved gallery rows and their independent undo stack aligned with label identity. */
+/** Rebase saved catalog identities and gallery drafts without confirming pending text work. */
 export function prepareConfigLabelRename(sceneId: string, from: string, to?: string): () => void {
   const rewrite = (rows: GalleryRows | null): GalleryRows | null => rows === null ? null
     : JSON.parse(renameGalleryLabel(JSON.stringify(rows), sceneId, from, to)) as GalleryRows;
   const current = rewrite(gaRows);
   if (to === undefined) return () => {};
-  const past = configHist.past.map(snapshot => ({ ...snapshot, gaRows: rewrite(snapshot.gaRows) }));
-  const future = configHist.future.map(snapshot => ({ ...snapshot, gaRows: rewrite(snapshot.gaRows) }));
+  const rewriteSnapshot = (snapshot: ConfigSnapshot): ConfigSnapshot => {
+    const files = { 'game.config.json': snapshot.gameConfigText || '{}' };
+    applyConfigReferenceRename(files, { from, to, labelScene: sceneId }, sceneId);
+    return { ...snapshot, gameConfigText: files['game.config.json'], gaRows: rewrite(snapshot.gaRows) };
+  };
+  const past = configHist.past.map(rewriteSnapshot);
+  const future = configHist.future.map(rewriteSnapshot);
   const baseline = configBaselines.gallery === undefined ? undefined : JSON.stringify(rewrite(JSON.parse(configBaselines.gallery) as GalleryRows));
   return () => {
     gaRows = current; configHist.past = past; configHist.future = future;

@@ -17,7 +17,7 @@ import {
   type TimelineAutosaveDocument,
   type TimelineAutosaveIdentity,
 } from './timeline-autosave-identity.js';
-import { parseProjectConfigDocument, renameConfigReferences, renameGalleryLabel, applyConfigReferenceRename, sceneReferenceConfigPaths, serializeProjectConfigDocument, stableStringify, timelinePathFor } from '@surdet/authoring';
+import { parseProjectConfigDocument, renameConfigReferences, applyConfigReferenceRename, sceneReferenceConfigPaths, serializeProjectConfigDocument, stableStringify, timelinePathFor } from '@surdet/authoring';
 import { kindOfDir, parsePortraitFileName } from './assets.js';
 import type { AssetKind, DirAsset } from './assets.js';
 
@@ -748,21 +748,34 @@ export async function prepareSceneConfigRename(from: string, to: string, fallbac
   };
 }
 
-/** Prepare gallery backing source and the in-memory projection without publishing either. */
+/** Prepare catalog/gallery backing sources and memory without publishing either. */
 export async function prepareSceneLabelConfigRename(sceneId: string, from: string, to: string): Promise<() => void> {
-  assertConfigSourcesReadable(['gallery']);
-  const path = 'content/config/gallery.json';
-  const pending = state.pendingSceneConfigWrites.find(write => write.path === path), handle = state.handles.gallery;
-  const before = pending?.text ?? (handle ? await readProjectSourceText(handle) : undefined);
-  const after = before === undefined ? undefined : renameGalleryLabel(before, sceneId, from, to);
-  const expectedSha256 = pending ? pending.expectedSha256 : (before === undefined ? null : await sceneTextSha256(before));
-  const memory = state.configFiles.gallery === null ? null : parseConfigSource('gallery', renameGalleryLabel(JSON.stringify(state.configFiles.gallery), sceneId, from, to));
+  assertConfigSourcesReadable(['gameConfig', 'gallery']);
+  const before: Record<string, string> = {};
+  const baselines = new Map<string, string | null>();
+  for (const path of ['game.config.json', 'content/config/gallery.json']) {
+    const pending = state.pendingSceneConfigWrites.find(write => write.path === path);
+    const handle = state.handles[configNameForPath(path)];
+    const text = pending?.text ?? (handle ? await readProjectSourceText(handle) : undefined);
+    if (text !== undefined) before[path] = text;
+    baselines.set(path, pending ? pending.expectedSha256 : (text === undefined ? null : await sceneTextSha256(text)));
+  }
+  const rename = { from, to, labelScene: sceneId };
+  const after = { ...before };
+  applyConfigReferenceRename(after, rename, sceneId);
+  const writes = new Map(state.pendingSceneConfigWrites.map(write => [write.path, write]));
+  for (const path of baselines.keys()) if (after[path] !== before[path]) {
+    writes.set(path, { path, text: after[path]!, expectedSha256: baselines.get(path)! });
+  }
+  const memory: Record<string, string> = { 'game.config.json': workingGameConfigText() || '{}' };
+  if (state.configFiles.gallery !== null) memory['content/config/gallery.json'] = JSON.stringify(state.configFiles.gallery);
+  applyConfigReferenceRename(memory, rename, sceneId);
+  const gallery = memory['content/config/gallery.json'] === undefined ? null : parseConfigSource('gallery', memory['content/config/gallery.json']!);
   return () => {
-    if (after !== before) {
-      state.pendingSceneConfigWrites = [...state.pendingSceneConfigWrites.filter(write => write.path !== path), { path, text: after!, expectedSha256 }];
-    }
-    state.configFiles.gallery = memory;
-    state.pendingSceneConfigRenames.push({ from, to, labelScene: sceneId });
+    state.gameConfigText = memory['game.config.json']!;
+    state.configFiles.gallery = gallery;
+    state.pendingSceneConfigWrites = [...writes.values()];
+    state.pendingSceneConfigRenames.push(rename);
   };
 }
 
