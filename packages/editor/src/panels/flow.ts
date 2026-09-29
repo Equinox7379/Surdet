@@ -23,7 +23,7 @@ import {
   workingGameConfigText,
 } from '../project-io.js';
 import { collectConfigSceneRoots } from '@surdet/core';
-import { parseProjectConfigDocument, renameSceneDefinition, sceneMoveTargetPath, visitSceneReferences } from '@surdet/authoring';
+import { assertTextCatalogTargetRemovable, parseProjectConfigDocument, renameSceneDefinition, sceneMoveTargetPath, visitSceneReferences } from '@surdet/authoring';
 import { buildFlowGraph } from '../graph/build.js';
 import type { FlowGraph, FlowNode, FlowEdge } from '../graph/build.js';
 import { histories, setSceneText } from '../history.js';
@@ -454,6 +454,7 @@ async function deleteSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
   }
   const sceneId = scene.id;
   if (blockConfiguredSceneOperation(sceneId)) return;
+  assertTextCatalogTargetRemovable(parseProjectConfigDocument(workingGameConfigText() || '{}'), sceneId);
   let refs = 0;
   for (const [key, candidate] of state.scenes) {
     if (key === sceneKey) continue;

@@ -2,7 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { isValidSceneId } from '@surdet/core';
-import { parseProjectConfigDocument, applyConfigReferenceRename, validateLabelRenameBatch, isValidLabelName, sceneReferenceConfigPaths as sceneConfigPaths, sceneDirectorySegments, stableStringify } from '@surdet/authoring';
+import { assertTextCatalogTargetRemovable, parseProjectConfigDocument, applyConfigReferenceRename, validateLabelRenameBatch, isValidLabelName, sceneReferenceConfigPaths as sceneConfigPaths, sceneDirectorySegments, stableStringify } from '@surdet/authoring';
 import { NodeProjectStorage } from '../authoring/node-project-storage.js';
 import { createJsonRecord, readJsonRecord, replaceJsonRecord } from '../authoring/node-json-record.js';
 import { syncFileAndParent, syncParentDirectories } from '../authoring/node-durable-file.js';
@@ -951,6 +951,19 @@ export class ProjectSceneLifecycleAuthority {
       }
       if (writes.some((write) => sourcePaths.has(portableFold(write.path)))) {
         throw new AssetImportAuthorityError('INVALID_REQUEST', '待删除源路径不能同时写入');
+      }
+
+      const deletions = records.filter(record => record.request.kind === 'delete');
+      if (deletions.length > 0) {
+        // Plans pin scene bytes, not the catalog: check the current source again before publishing.
+        const configPath = 'game.config.json';
+        const config = parseProjectConfigDocument(await fileEvidence(this.paths, configPath)
+          ? await fs.readFile((await safeParent(this.paths, configPath)).absolutePath, 'utf8') : '{}');
+        try {
+          for (const record of deletions) assertTextCatalogTargetRemovable(config, path.posix.basename(record.request.sourcePath).slice(0, -4));
+        } catch (error) {
+          throw new AssetImportAuthorityError('INVALID_REQUEST', error instanceof Error ? error.message : String(error));
+        }
       }
 
       if (configRenames !== undefined) {

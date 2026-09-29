@@ -2,7 +2,7 @@ import { editProjectLabel, renameLabelDefinition, rewriteLabelReferences } from 
 import { state } from './state.js';
 import { histories, setSceneText } from './history.js';
 import { assertConfigSourcesReadable } from './config-source.js';
-import { prepareSceneLabelConfigRename, readProjectSourceText, runProjectWriteOperation, sceneProjectPath, sceneTextSha256 } from './project-io.js';
+import { prepareSceneLabelConfigRename, readProjectSourceText, runProjectWriteOperation, sceneProjectPath, sceneTextSha256, workingGameConfigText } from './project-io.js';
 import { parseScript } from './model.js';
 
 let prepareRows: (sceneId: string, from: string, to?: string) => () => void = () => () => {};
@@ -21,7 +21,7 @@ export async function editSceneLabel(key: string, index: number, expectedRaw: st
     if (line?.kind !== 'label' || line.raw !== expectedRaw) throw new Error('标签或正文位置已变化，请重新选择后再试');
     if (to === undefined && state.pendingSceneConfigRenames.some(rename => rename.labelScene === scene.id && (rename.from === line.name || rename.to === line.name))) throw new Error('请先保存这个标签的改名，再删除标签');
     if (to !== undefined && project !== null && (!scene.handle || !scene.persistedSha256)) throw new Error('请先保存新建场景，再同步改名标签');
-    assertConfigSourcesReadable(['gallery']); return line.name;
+    assertConfigSourcesReadable(['gameConfig', 'gallery']); return line.name;
   };
   check();
   await runProjectWriteOperation(async () => {
@@ -42,7 +42,7 @@ export async function editSceneLabel(key: string, index: number, expectedRaw: st
     const applyConfig = to === undefined ? () => {} : await prepareSceneLabelConfigRename(scene!.id, from, to);
     check();
     const applyRows = prepareRows(scene!.id, from, to);
-    const files: Record<string, string> = {};
+    const files: Record<string, string> = { 'game.config.json': workingGameConfigText() || '{}' };
     for (const entry of state.scenes.values()) files[sceneProjectPath(entry.file)] = entry.text;
     if (state.configFiles.gallery !== null) files['content/config/gallery.json'] = JSON.stringify(state.configFiles.gallery);
     const result = editProjectLabel(files, scene!.id, from, to);

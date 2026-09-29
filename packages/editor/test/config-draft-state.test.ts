@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { inspectTextCatalog, applyConfigReferenceRename } from '@surdet/authoring';
 
 vi.mock('../src/panels/calendar-map.js', () => ({ renderCalendarMap: vi.fn() }));
 vi.mock('../src/v4/surfaces.js', () => ({ enhanceConfigTables: vi.fn() }));
@@ -170,7 +171,7 @@ const {
   editTextCsvDraft, readTextCsvDraft,
 } = await import('../src/panels/config.js');
 const { commitStageConfiguration, commitThemeConfiguration } = await import('../src/authoring-project-storage.js');
-const { commitTextCatalogPatch } = await import('../src/authoring-project-storage.js');
+const { commitTextCatalogPatch, loadEditorProjectSnapshot, createEditorProjectStorage } = await import('../src/authoring-project-storage.js');
 const { runProjectWriteOperation } = await import('../src/project-io.js');
 
 async function renderFixture(gameConfigText = INITIAL_GAME_CONFIG): Promise<FakeElement> {
@@ -602,6 +603,39 @@ describe('configuration draft state', () => {
     expect(inspectConfigDraftState().dirtySections).toEqual(['gallery']);
     expect(state.configFiles.gallery).toEqual({ cgs: [], music: [], texts: [] });
   });
+  it('rebases catalog references in past/future without confirming CSV or pending bindings', async () => {
+    await textFixture();
+    state.scenes.get('start')!.text = '@scene start\n@label opening\n旁白：你好。\n旁白：再见。\n@end\n';
+    const view = await inspectTextCatalog(await loadEditorProjectSnapshot(), createEditorProjectStorage());
+    const { sourceId: _id, path: _path, line: _line, ...source } = view.sources[0]!;
+    const catalog = { version: 1, sourceLocale: 'zh-CN', entries: [{ key: 'greeting', source, translations: { en: { value: 'Hello.', sourceVersion: source.version } } }] };
+    const root = await renderFixture(JSON.stringify({ ...JSON.parse(INITIAL_GAME_CONFIG), textCatalog: catalog }));
+    await queueBinding(root, 'farewell', 1);
+    editTextCsvDraft('unconfirmed CSV');
+    editThemeConfigDraft('{"theme":{"colors":{"accent":7}},"titleLogo":null}');
+    configUndo(); // Keep both past and future snapshots across the identity change.
+    const depth = configHistoryDepth();
+    const apply = prepareConfigLabelRename('start', 'opening', 'arrival');
+    const files = { 'game.config.json': state.gameConfigText };
+    applyConfigReferenceRename(files, { from: 'opening', to: 'arrival', labelScene: 'start' }, 'start');
+    state.gameConfigText = files['game.config.json'];
+    state.scenes.get('start')!.text = state.scenes.get('start')!.text.replace('@label opening', '@label arrival');
+    apply();
+    expect(configHistoryDepth()).toEqual(depth);
+    for (const step of [configRedo, configUndo]) {
+      step();
+      expect(JSON.parse(state.gameConfigText).textCatalog.entries[0]).toEqual({ ...catalog.entries[0], source: { ...source, label: 'arrival' } });
+      expect(readTextCsvDraft()).toBe('unconfirmed CSV');
+      expect(root.textContent).toContain('farewell → 再见。');
+      expect(inspectConfigDraftState().dirtySections).toContain('texts');
+    }
+    await action(root, '绑定清单并保存');
+    expect(commitTextCatalogPatch).not.toHaveBeenCalled();
+    expect(root.textContent).toContain('来源版本已经变化');
+    expect(root.textContent).toContain('farewell → 再见。');
+    expect(readTextCsvDraft()).toBe('unconfirmed CSV');
+  });
+
   it('rebases live scene references and undo/redo without losing unrelated unfinished fields', async () => {
     const root = await renderFixture();
     const scene = byAttribute(root, 'aria-label', '场景，第 1 行');
