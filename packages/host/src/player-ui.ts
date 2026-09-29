@@ -1,3 +1,5 @@
+import { isPlayerControlPointer } from '@surdet/renderer';
+
 export type PlayerBase = 'title' | 'game';
 
 export type PlayerOverlay =
@@ -426,9 +428,8 @@ export interface PlayerInputGateSnapshot {
 }
 
 /**
- * Shared synchronous pointer-consumption protocol for game canvases.
- * UI handlers mark the current event before the canvas decides whether the
- * interpreter may advance; exactly one decision consumes the mark.
+ * Controls retain native event identity across listener/microtask boundaries.
+ * The no-argument mark remains for existing synchronous/programmatic callers.
  */
 export class PlayerInputGate {
   #currentPointerConsumed = false;
@@ -439,7 +440,7 @@ export class PlayerInputGate {
 
   consumeCurrentPointer(): void {
     this.#currentPointerConsumed = true;
-    // DOM 冒泡在同一任务内完成；键盘触发控件也可能调用这里，不能吞掉未来的鼠标点击。
+    // 旧无参数/键盘调用只保留同步标记；原生事件另按身份识别，不吞未来点击。
     void Promise.resolve().then(() => { this.#currentPointerConsumed = false; });
   }
 
@@ -451,7 +452,7 @@ export class PlayerInputGate {
     const consumed = this.#currentPointerConsumed;
     this.#currentPointerConsumed = false;
 
-    if (pointer.button !== 0 || consumed) return 'ignore';
+    if (pointer.button !== 0 || consumed || isPlayerControlPointer(pointer)) return 'ignore';
     if (shouldRestoreInterfaceOnPointer(snapshot)) return 'restore-interface';
     if (canAdvance(snapshot)) return 'advance';
     return 'ignore';

@@ -1,7 +1,7 @@
 import type { RendererFontRole } from './api/renderer-commands.js';
 
 export interface ReadingDiagnostic {
-  code: 'TEXT_OVERFLOW' | 'TEXT_SCROLL' | 'TEXT_MEASUREMENT_UNAVAILABLE' | 'FONT_MISSING_GLYPHS' | 'FONT_COVERAGE_UNAVAILABLE';
+  code: 'TEXT_OVERFLOW' | 'TEXT_CLIPPED' | 'TEXT_SCROLL' | 'TEXT_MEASUREMENT_UNAVAILABLE' | 'FONT_MISSING_GLYPHS' | 'FONT_COVERAGE_UNAVAILABLE';
   severity: 'info' | 'warning';
   target: string;
   message: string;
@@ -13,6 +13,30 @@ export interface ReadingDiagnostic {
 export interface FontCoverage {
   characters: ReadonlySet<number> | null;
   error?: string;
+}
+
+/** Measure actual text fragments, not the (possibly mostly empty) node box.
+ * Scrollports trim the currently visible fragments before checking outer clips,
+ * so text reachable by scrolling is not mistaken for permanently cropped text.
+ */
+export function isUiTextClipped(element: HTMLElement, root: HTMLElement): boolean {
+  const range = element.ownerDocument.createRange();
+  range.selectNodeContents(element);
+  let fragments = Array.from(range.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0)
+    .map(({ left, top, right, bottom }) => ({ left, top, right, bottom }));
+  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+    const style = getComputedStyle(parent), clip = parent.getBoundingClientRect();
+    const clipX = ['hidden', 'clip'].includes(style.overflowX), clipY = ['hidden', 'clip'].includes(style.overflowY);
+    if (fragments.some(rect => (clipX && (rect.left < clip.left - 1 || rect.right > clip.right + 1))
+      || (clipY && (rect.top < clip.top - 1 || rect.bottom > clip.bottom + 1)))) return true;
+    const scrollX = ['auto', 'scroll'].includes(style.overflowX), scrollY = ['auto', 'scroll'].includes(style.overflowY);
+    if (scrollX || scrollY) fragments = fragments.map(rect => ({
+      left: scrollX ? Math.max(rect.left, clip.left) : rect.left, right: scrollX ? Math.min(rect.right, clip.right) : rect.right,
+      top: scrollY ? Math.max(rect.top, clip.top) : rect.top, bottom: scrollY ? Math.min(rect.bottom, clip.bottom) : rect.bottom,
+    })).filter(rect => rect.right > rect.left && rect.bottom > rect.top);
+    if (parent === root) break;
+  }
+  return false;
 }
 
 export async function readFontCoverage(bytes: Uint8Array): Promise<FontCoverage> {

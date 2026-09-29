@@ -86,3 +86,4 @@ export { PixiStage, LegacyStageAdapter } from './pixi-stage.js';
  * Compatibility is retained for Wave 2 and scheduled for removal in the next major version.
  */
 export type { BattleHandlers, FontRole } from './pixi-stage.js';
+export { isPlayerControlPointer } from './player-controls.js';

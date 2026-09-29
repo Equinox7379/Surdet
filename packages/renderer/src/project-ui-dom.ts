@@ -1,6 +1,6 @@
 import { PROJECT_UI_TAB_BAR_HEIGHT, projectUiChildrenRect, projectUiRect, type ProjectUiAction, type ProjectUiBinding, type ProjectUiContentSource, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId, type ProjectUiRect, type ProjectUiText } from '@surdet/core';
 import type { RendererTheme } from './theme.js';
-import { fontTextDiagnostics, type ReadingDiagnostic } from './reading-diagnostics.js';
+import { fontTextDiagnostics, isUiTextClipped, type ReadingDiagnostic } from './reading-diagnostics.js';
 
 export interface ProjectUiItem {
   id: string;
@@ -379,6 +379,10 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
           if (element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1) {
             issues.push({ code: 'TEXT_OVERFLOW', severity: 'warning', target, text,
               message: '文字超过作品界面节点的可用区域，请调整该节点尺寸、字号或文案。' });
+          }
+          if (isUiTextClipped(element, root)) {
+            issues.push({ code: 'TEXT_CLIPPED', severity: 'warning', target, text,
+              message: '部分文字被画面或上层区域裁掉，请调整节点位置或上层可见范围。' });
           }
         }
       }

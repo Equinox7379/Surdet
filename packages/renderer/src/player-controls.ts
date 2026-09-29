@@ -16,12 +16,25 @@ interface PlayerModal {
 
 const controls = new WeakMap<Container, PlayerControl>();
 const modals = new WeakMap<Container, PlayerModal>();
+const controlPointers = new WeakSet<object>();
+
+function rememberControlPointer(event: FederatedPointerEvent): void {
+  // Pixi may finish its listener (and flush microtasks) before the host's
+  // native canvas listener. Retain the source event, not a timer or pointer ID.
+  if (event.nativeEvent) controlPointers.add(event.nativeEvent);
+}
+
+/** Whether this exact native event was handled by a player control/modal. */
+export function isPlayerControlPointer(event: object): boolean {
+  return controlPointers.has(event);
+}
 
 /** Project the same Pixi control to the built-in accessibility layer. No action state is stored here. */
 export function bindPlayerControl(
   target: Container,
   options: PlayerControl & { width: number; height: number; x?: number; y?: number },
 ): void {
+  if (!target.listeners('pointerdowncapture').includes(rememberControlPointer)) target.on('pointerdowncapture', rememberControlPointer);
   target.hitArea = new Rectangle(options.x ?? 0, options.y ?? 0, options.width, options.height);
   target.accessible = true;
   target.accessibleType = 'button';
@@ -52,6 +65,7 @@ export function bindPlayerControl(
 }
 
 export function markPlayerModal(root: Container, options: PlayerModal): void {
+  if (!root.listeners('pointerdowncapture').includes(rememberControlPointer)) root.on('pointerdowncapture', rememberControlPointer);
   modals.set(root, options);
 }
 
