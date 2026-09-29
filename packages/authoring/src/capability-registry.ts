@@ -1234,6 +1234,28 @@ const definitions = {
     outputSchema: strictObject({ themeConfig: themeConfigSchema, diffEntry: diffEntrySchema }, ['themeConfig', 'diffEntry']),
     example: { input: { operationId: 'op_theme', expectedFingerprint: '...', patch: { colors: { accent: 0x8b1e3f }, opacity: { panel: 0.88 }, titleLogo: 'title_logo' } }, expectedResultShape: { themeConfig: { value: {}, effective: { tokens: {}, skins: {}, layout: {} }, titleLogo: 'title_logo', fingerprint: '...' }, diffEntry: {} } },
   },
+  texts: {
+    inputSchema: strictObject({ view: readViewSchema, locale: stringSchema, format: { enum: ['json', 'csv'] }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 100 }, expectedRevision: stringSchema }),
+    outputSchema: strictObject({ view: readViewSchema, revision: stringSchema, fingerprint: stringSchema, sourceLocale: { type: ['string', 'null'] }, locale: stringSchema,
+      sources: arrayOf(jsonObjectSchema), entries: arrayOf(jsonObjectSchema), sourceCount: integerSchema, entryCount: integerSchema, offset: integerSchema, hasMore: booleanSchema, csv: stringSchema },
+    ['view', 'revision', 'fingerprint', 'sourceLocale', 'locale', 'sources', 'entries', 'sourceCount', 'entryCount', 'offset', 'hasMore']),
+    example: { input: { view: 'working', locale: 'en' }, expectedResultShape: { view: 'working', revision: '...', fingerprint: '...', sourceLocale: null, locale: 'en', sources: [], entries: [], sourceCount: 0, entryCount: 0, offset: 0, hasMore: false } },
+  },
+  textsImportPreview: {
+    inputSchema: strictObject({ view: readViewSchema, locale: stringSchema, csv: stringSchema }, ['locale', 'csv']),
+    outputSchema: strictObject({ view: readViewSchema, ready: booleanSchema, revision: stringSchema, fingerprint: stringSchema, locale: stringSchema,
+      rows: arrayOf(jsonObjectSchema), issues: arrayOf(jsonObjectSchema), previewFingerprint: stringSchema }, ['view', 'ready', 'revision', 'fingerprint', 'locale', 'rows', 'issues', 'previewFingerprint']),
+    example: { input: { view: 'working', locale: 'en', csv: 'key,locale,sourceVersion,speaker,context,source,translation,status\n' }, expectedResultShape: { view: 'working', ready: true, revision: '...', fingerprint: '...', locale: 'en', rows: [], issues: [], previewFingerprint: '...' } },
+  },
+  textsPatch: {
+    inputSchema: strictObject({ operationId: stringSchema, expectedRevision: stringSchema, expectedFingerprint: stringSchema, patch: { oneOf: [
+      strictObject({ type: { const: 'bind' }, sourceLocale: stringSchema, bindings: { ...arrayOf(strictObject({ key: stringSchema, sourceId: stringSchema }, ['key', 'sourceId'])), minItems: 1, maxItems: 100 } }, ['type', 'sourceLocale', 'bindings']),
+      strictObject({ type: { const: 'remove' }, keys: { ...stringArraySchema, minItems: 1, maxItems: 100 } }, ['type', 'keys']),
+      strictObject({ type: { const: 'import' }, locale: stringSchema, csv: stringSchema, previewFingerprint: stringSchema }, ['type', 'locale', 'csv', 'previewFingerprint']),
+    ] } }, ['operationId', 'expectedRevision', 'expectedFingerprint', 'patch']),
+    outputSchema: strictObject({ keys: stringArraySchema, fingerprint: stringSchema, diffEntry: diffEntrySchema }, ['keys', 'fingerprint', 'diffEntry']),
+    example: { input: { operationId: 'text-bind-1', expectedRevision: '...', expectedFingerprint: '...', patch: { type: 'bind', sourceLocale: 'zh-CN', bindings: [{ key: 'intro.greeting', sourceId: '["intro",null,0]' }] } }, expectedResultShape: { keys: ['intro.greeting'], fingerprint: '...', diffEntry: {} } },
+  },
   ui: {
     inputSchema: readViewInputSchema,
     outputSchema: uiInspectionSchema,
@@ -1362,6 +1384,9 @@ export const AUTHORING_CAPABILITY_IDS = [
   'capabilities.describe',
   'project.inspect',
   'project.ui',
+  'project.texts',
+  'project.texts.import.preview',
+  'project.texts.patch',
   'project.assets',
   'project.gallery',
   'script.import.preview',
@@ -1454,6 +1479,9 @@ const mutateRepair = [
 const imageImportErrors = ["IMPORT_OPERATION_NOT_FOUND","IMPORT_OPERATION_CONFLICT","IMPORT_PLAN_BLOCKED","IMPORT_PLAN_STALE","IMPORT_PROJECT_STALE","IMPORT_TARGET_UNSAFE","IMPORT_TARGET_EXISTS","IMPORT_RECOVERY_REQUIRED","IMPORT_LIMIT_EXCEEDED","IMPORT_UPLOAD_BUSY","IMPORT_UPLOAD_TIMEOUT","IMPORT_UPLOAD_MISMATCH","IMPORT_AUTHORITY_NOT_READY","IMPORT_FILESYSTEM_UNSUPPORTED","IMPORT_PUBLICATION_FAILED","IMPORT_IO_FAILED","ASSET_SOURCE_FORBIDDEN","ASSET_SOURCE_CHANGED","ASSET_IMAGE_INVALID","ASSET_MEDIA_INVALID","PROJECT_BUSY","HUMAN_WORKSPACE_DIRTY","HUMAN_WORKSPACE_BUSY","HUMAN_WORKSPACE_STATE_CORRUPT","SESSION_STATE_INVALID","POLICY_BLOCKED"] as const;
 
 const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
+  'project.texts': { title: 'Read text catalog or export CSV', purpose: 'Read enrolled dialogue/choice keys and current source coordinates. Coordinates are valid only in returned revision. JSON sources and entries are paged independently with the same offset/limit; carry expectedRevision for every later page. format=csv returns the complete enrolled catalog; do not paginate CSV. Source scene edits require explicit rebind, never fuzzy matching.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false, preconditions: ['working view requires an active change'], possibleErrors: [...commonErrors, 'TEXT_CATALOG_INVALID', 'OBJECT_REF_STALE'], repairRecipes: ['Copy actual sourceId, revision and fingerprint into a direct binding operation. Re-read from offset zero if revision changes.', 'CSV cells starting with spreadsheet formula prefixes are apostrophe escaped; preserve the export columns and source facts.'] },
+  'project.texts.import.preview': { title: 'Preview translation CSV import', purpose: 'Read-only full-catalog CSV difference and diagnostics. Reject missing/duplicate/unknown keys, stale sources, changed placeholders or malformed Ruby. Does not write source, translations or audio.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false, preconditions: ['valid UTF-8 CSV text', 'target locale differs from source locale'], possibleErrors: [...commonErrors, 'TEXT_CATALOG_INVALID'], repairRecipes: ['Correct every issue and preview again. Use the ready previewFingerprint with the same CSV in project.texts.patch.'] },
+  'project.texts.patch': { title: 'Bind texts or import reviewed translations', purpose: 'Direct-only text catalog changes. bind explicitly enrolls or rebinds a stable key to a current sourceId while retaining old translations; remove explicitly removes selected keys; import requires a matching ready preview. Writes only game.config.json in the isolated change, never the script or language preference.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['OPEN direct, not integration', 'current revision and catalog fingerprint', 'import requires current ready preview'], possibleErrors: [...commonErrors, 'TEXT_CATALOG_INVALID', 'UNSUPPORTED_OPERATION', 'OBJECT_REF_STALE', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Re-read working catalog and explicitly select the new source when rebind is needed. Preserve translation keys, not old line numbers.', 'Validate the change before separately authorized source commit.'] },
   'asset.relocation.replace': { title: 'Prepare same-path asset replacement', purpose: 'Prepare a byte replacement of one existing, exact same-format project asset while retaining its key/path, original license and structured references. Read the permitted source bytes/hash from asset.sources. This is not a move, ordinary import overwrite, or source publication. The original relocation commit/recover/undo APIs apply the exact plan after separate apply permission. No change is reported for identical content.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['no active story change', 'human workspaces clean', 'authorized local source and current SHA-256', 'exact existing target with supported unambiguous format'], possibleErrors: imageImportErrors, repairRecipes: ['Inspect the original operationId after interruption; do not prepare another replacement to hide uncertain state.', 'Changed targets and unowned files are preserved. Use the original receipts for recovery or undo.'] },
   'project.stage-config.patch': { title: 'Patch stage configuration', purpose: 'Configure design coordinates, named positions/distances, character calibration and compositions. Read project.inspect.stageConfig for current value/effective defaults and fingerprint. Supplied top-level tables replace; missing tables retain; null clears a table, and patch:null removes the stage opt-in. No model, arbitrary JSON, source write or candidate configuration mutation.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['OPEN direct, not integration', 'current working stageConfig fingerprint', 'all configured assets resolve'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Read the complete current table before replacing it. Use project assets keys, not display names or guessed paths.', 'Validate and preview the working draft before separately authorized apply.'] },
   'project.theme-config.patch': { title: 'Patch work theme configuration', purpose: 'Configure theme tokens (colors/opacity/typography/spacing/radius), dialog/button skins, basic layout and title wordmark. Read project.inspect.themeConfig for value/effective/fingerprint. Token groups replace as tables; null deletes a group. Skin and titleLogo keys reference project.assets backgrounds. patch:null removes theme (titleLogo unaffected). Direct only; default appearance is preserved when fields are omitted.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['OPEN direct, not integration', 'current working themeConfig fingerprint', 'all configured asset keys resolve'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Read project.inspect.themeConfig with view=working and copy the fingerprint. Omitted fields keep current values; null clears skins/layout/titleLogo or deletes a token group.', 'Use background asset keys from project.assets, not file paths or display names.'] },
@@ -1520,6 +1548,9 @@ function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition
   const schema = definitions[id === 'project.ui' ? 'ui' : id === 'project.ui.patch' ? 'uiPatch' : id === 'project.stage-config.patch' ? 'stageConfigPatch' : id === 'project.player-config.patch' ? 'playerConfigPatch' : id === 'project.theme-config.patch' ? 'themeConfigPatch' : id === 'asset.sources' ? 'assetSources'
     : id === 'project.gallery' ? 'gallery'
     : id === 'script.import.preview' ? 'scriptImportPreview'
+    : id === 'project.texts' ? 'texts'
+    : id === 'project.texts.import.preview' ? 'textsImportPreview'
+    : id === 'project.texts.patch' ? 'textsPatch'
     : id === 'gallery.cg.create' ? 'galleryCgCreate'
     : id === 'gallery.cg.patch' ? 'galleryCgPatch'
     : id === 'asset.relocation.replace' ? 'assetRelocationReplace'

@@ -1,4 +1,5 @@
 import { stagePinnedSourcePaths } from '@surdet/core';
+import { inspectTextCatalog, exportTextCatalogCsv, previewTextCatalogImport, applyTextCatalogPatch, type TextCatalogPatchInput } from '@surdet/authoring';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -631,6 +632,31 @@ export class AuthoringService {
     return { ...metadata, result: { ...await inspectUi(snapshot.config, { sha256: async text => hashText(text) }), view } };
   }
 
+  async projectTexts(projectRoot: string, input: { locale?: string; format?: 'json' | 'csv'; offset?: number; limit?: number; expectedRevision?: string }, changeId?: string): Promise<ServiceResult<unknown>> {
+    const { snapshot, metadata, view } = await this.readProjectView(projectRoot, changeId, false);
+    const offset = input.offset ?? 0, limit = input.limit ?? 50;
+    if ((offset > 0 && !input.expectedRevision) || (input.expectedRevision !== undefined && input.expectedRevision !== snapshot.revision))
+      throw new AuthoringOperationError('OBJECT_REF_STALE', '文本目录分页版本变化或缺失，请从第一页重新读取');
+    if (input.format === 'csv' && (input.offset !== undefined || input.limit !== undefined)) throw new AuthoringOperationError('INVALID_REQUEST', 'CSV 完整导出不能分页');
+    const all = await inspectTextCatalog(snapshot, { sha256: async text => hashText(text) }, input.locale);
+    return { ...metadata, result: { ...all, view, sources: input.format === 'csv' ? [] : all.sources.slice(offset, offset + limit),
+      entries: input.format === 'csv' ? [] : all.entries.slice(offset, offset + limit), sourceCount: all.sources.length, entryCount: all.entries.length, offset,
+      hasMore: input.format !== 'csv' && Math.max(all.sources.length, all.entries.length) > offset + limit,
+      ...(input.format === 'csv' ? { csv: exportTextCatalogCsv(all) } : {}) } };
+  }
+
+  async textsImportPreview(projectRoot: string, input: { locale: string; csv: string }, changeId?: string): Promise<ServiceResult<unknown>> {
+    const { snapshot, metadata, view } = await this.readProjectView(projectRoot, changeId, false);
+    return { ...metadata, result: { ...await previewTextCatalogImport(snapshot, { sha256: async text => hashText(text) }, input.locale, input.csv), view } };
+  }
+
+  async textsPatch(changeId: string, input: TextCatalogPatchInput): Promise<ServiceResult<unknown>> {
+    return this.withOpenChange(changeId, async context => {
+      const result = await applyTextCatalogPatch(context.session, input, { sha256: async text => hashText(text) });
+      return { ...metadataForChange(context.session), result };
+    });
+  }
+
   async projectAssets(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof buildAssetCatalog> & { view: 'project' | 'working' }>> {
     const { snapshot, assetFiles, gallery, metadata, view } = await this.readProjectView(projectRoot, changeId, true);
     return {
@@ -742,6 +768,7 @@ export class AuthoringService {
       }
     }
     if (object.kind === 'gallery-cg') object.fingerprint = hashText(stableStringify(object.details));
+    if (object.kind === 'text-catalog' || object.kind === 'text-key') object.fingerprint = hashText(stableStringify(object.details));
     return { ...metadata, result: { ...object, view, ...(page === undefined ? {} : { fragment: page }) } };
   }
 

@@ -15,6 +15,7 @@ import { editorWorkspaceStatus } from '../editor-workspace.js';
 import { AuthoringOperationError, parseProjectConfigDocument, patchUiDocument, renameConfigReferences, renameGalleryLabel, type UiPatch } from '@surdet/authoring';
 import { commitCharacterTable, commitStageConfiguration, commitThemeConfiguration, commitUiConfiguration, parseCharacterVisualsDraft, parseThemeEditorDraft, projectThemeEditorDraft, type CharacterTableEditRow } from '../authoring-project-storage.js';
 import { disposeUiDesigner, renderUiDesigner } from '../ui-designer.js';
+import { renderTextCatalogSection } from './text-catalog.js';
 import { openUiPlayerPreview } from '../ui-player-preview.js';
 import { copySharedFragment, exportUiShare, missingUiShareAssets, readUiShare, type ShareAsset } from '../ui-sharing.js';
 import {
@@ -55,6 +56,7 @@ export type ConfigSectionId =
   | 'terminology'
   | 'stage'
   | 'theme'
+  | 'texts'
   | 'ui';
 
 export interface ConfigDraftInspection {
@@ -75,6 +77,13 @@ const CONFIG_SECTIONS: readonly ConfigSectionDescriptor[] = [
   { id: 'variables', label: '变量', description: '定义剧情状态、初始值、范围和只读约束。', file: 'game.config.json', render: renderVariablesSection },
   { id: 'theme', label: '主题外观', description: '配置颜色、字体大小、对话框/按钮皮肤、字标与基础布局。', file: 'game.config.json', render: renderThemeSection },
   { id: 'ui', label: '界面设计', description: '为作品页面排布组件并设置数据与操作。', file: 'game.config.json', render: renderUiSection },
+  { id: 'texts', label: '文本与译稿', description: '登记固定文本键，导出译稿并在核对差异后导入。', file: 'game.config.json', render: () => renderTextCatalogSection({
+    csv: textCsvDraft, editCsv: editTextCsvDraft, onSaved: (text, importedCsv) => {
+      for (const snapshot of [...configHist.past, ...configHist.future]) snapshot.gameConfigText = text;
+      if (importedCsv !== undefined) markConfigSectionSaved('texts', importedCsv, configSessionRevision);
+      requestValidateHook();
+    },
+  }) },
   { id: 'achievements', label: '成就', description: '整理成就文案、触发条件与隐藏状态。', file: 'content/config/achievements.json', render: renderAchievementsSection },
   { id: 'calendar', label: '日历与地图', description: '安排回合规则、地图节点、前置关系与据点指令。', file: 'content/config/calendar.json', render: renderCalendarSection },
   { id: 'growth', label: '角色成长', description: '设置经验曲线、等级范围和成长事件。', file: 'content/config/growth.json', render: renderGrowthSection },
@@ -91,7 +100,7 @@ function configDescriptor(id: ConfigSectionId): ConfigSectionDescriptor {
 }
 
 function sectionSource(id: ConfigSectionId): ConfigSourceName {
-  return id === 'characters' || id === 'variables' || id === 'stage' || id === 'theme' || id === 'ui' ? 'gameConfig' : id;
+  return id === 'characters' || id === 'variables' || id === 'stage' || id === 'theme' || id === 'ui' || id === 'texts' ? 'gameConfig' : id;
 }
 
 function renderConfigWorkspace(root: HTMLElement): void {
@@ -191,6 +200,7 @@ let themeDraft: string | null = null;
 let themeSourceBaseline: string | undefined;
 let uiDraft: ProjectUiDocument | null | undefined;
 let uiSourceBaseline: string | undefined;
+let textCsvDraft = '';
 let configSessionRevision = 0;
 let configSessionLoaded = false;
 const configBaselines: Partial<Record<ConfigSectionId, string>> = {};
@@ -218,6 +228,7 @@ function serializeConfigSection(sectionId: ConfigSectionId): string {
     case 'stage': return JSON.stringify(readStageConfigDraft());
     case 'theme': return JSON.stringify(readThemeConfigDraft());
     case 'ui': return JSON.stringify(readUiConfigDraft());
+    case 'texts': return JSON.stringify(textCsvDraft);
   }
 }
 
@@ -255,6 +266,15 @@ export function inspectConfigDraftState(): ConfigDraftInspection {
   if (configBaselines.stage !== undefined && configBaselines.stage !== serializeConfigSection('stage')) dirtySections.push('stage');
   return { dirty: dirtySections.length > 0, dirtySections };
 }
+
+export function editTextCsvDraft(value: string, exported = false): void {
+  assertProjectWriteUnlocked();
+  if (configBaselines.texts === undefined) configBaselines.texts = JSON.stringify(textCsvDraft);
+  if (value !== textCsvDraft) { pushConfigHistory(false); textCsvDraft = value; configSessionLoaded = true; }
+  if (exported) configBaselines.texts = JSON.stringify(value);
+  scheduleConfigDraftStateChanged();
+}
+export function readTextCsvDraft(): string { return textCsvDraft; }
 
 export function readStageConfigDraft(): string {
   if (stageDraft === null) {
@@ -532,6 +552,7 @@ interface ConfigSnapshot {
   stageDraft: string | null;
   themeDraft: string | null;
   uiDraft: ProjectUiDocument | null | undefined;
+  textCsvDraft: string;
   gameConfigText: string;
 }
 
@@ -552,6 +573,7 @@ function clearConfigRowsAndHistory(): void {
   themeSourceBaseline = undefined;
   uiDraft = undefined;
   uiSourceBaseline = undefined;
+  textCsvDraft = '';
   configSessionLoaded = false;
   for (const sectionId of Object.keys(configBaselines) as ConfigSectionId[]) delete configBaselines[sectionId];
   configHist.past = [];
@@ -571,7 +593,7 @@ function clone<T>(v: T): T {
 }
 
 function takeConfigSnapshot(): ConfigSnapshot {
-  return { ...clone({ charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows, stageDraft, themeDraft, uiDraft }), gameConfigText: state.gameConfigText };
+  return { ...clone({ charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows, stageDraft, themeDraft, uiDraft, textCsvDraft }), gameConfigText: state.gameConfigText };
 }
 
 /** Rebase live rows, clean baselines and undo/redo together; never save unrelated edits. */
@@ -662,6 +684,7 @@ function restoreConfigSnapshot(snap: ConfigSnapshot): void {
   stageDraft = snap.stageDraft;
   themeDraft = snap.themeDraft;
   uiDraft = snap.uiDraft;
+  textCsvDraft = snap.textCsvDraft;
   state.gameConfigText = snap.gameConfigText; // 内存态同步回退（磁盘不回滚，与行模型同语义）
   rerenderConfig();
 }
@@ -1822,6 +1845,8 @@ export async function saveDirtyConfigSections(): Promise<ConfigSaveOutcome> {
     let ok = false;
     try {
       switch (section) {
+        case 'texts':
+          throw new Error('译稿 CSV 尚未确认，请先在“文本与译稿”预览差异并确认导入；草稿已保留。');
         case 'stage':
           await saveStageConfigDraftUnlocked();
           ok = true;

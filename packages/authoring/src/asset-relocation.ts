@@ -1,4 +1,5 @@
 import { decodeStageToken, findChoiceArrow, projectPortraitOverrides, splitOutsideQuotes, stageCommandFromInstruction } from '@surdet/core';
+import { readTextCatalog } from './text-catalog.js';
 import type {
   ProjectAssetFileFact,
   ProjectAssetKind,
@@ -726,6 +727,13 @@ function configRewrite(
   const replacements: JsonReplacement[] = [];
   const knownPaths = new Set<string>();
   const characters = isRecord(root.characters) ? root.characters : {};
+  try {
+    readTextCatalog(root);
+    // Validated catalog fields are prose, source identities and versions, never media references.
+    for (const location of jsonStringLocations(file.text)) if (location.path[0] === 'textCatalog') knownPaths.add(`${location.kind}:${pathKey(location.path)}`);
+  } catch (error) {
+    addBlocker(blockers, 'ASSET_RELOCATION_OPAQUE_REFERENCE', `文本目录无法安全解析：${error instanceof Error ? error.message : String(error)}`, file.path);
+  }
   collectStageRelocation(root, file, source, target, replacements, knownPaths, blockers);
   // Preserve dormant paths too: deleting the modern table later must not
   // reactivate a legacy reference to the old location.

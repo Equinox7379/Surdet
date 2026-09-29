@@ -1,6 +1,6 @@
 import { describe, expect, it, afterEach } from 'vitest';
-import { buildObjectIndex } from '@surdet/authoring';
-import { commitThemeConfiguration, commitUiConfiguration, createEditorProjectStorage, loadEditorProjectSnapshot, parseThemeEditorDraft, projectThemeEditorDraft } from '../src/authoring-project-storage.js';
+import { buildObjectIndex, inspectTextCatalog, exportTextCatalogCsv, previewTextCatalogImport } from '@surdet/authoring';
+import { commitTextCatalogPatch, commitThemeConfiguration, commitUiConfiguration, createEditorProjectStorage, loadEditorProjectSnapshot, parseThemeEditorDraft, projectThemeEditorDraft } from '../src/authoring-project-storage.js';
 import type { ProjectUiDocument } from '@surdet/core';
 import { state } from '../src/state.js';
 
@@ -35,6 +35,36 @@ afterEach(() => {
 });
 
 describe('editor authoring project storage', () => {
+  it('saves a reviewed translation through the shared transaction and preserves disk on stale/external changes', async () => {
+    let disk = JSON.stringify({ entryScene: 'intro', variables: {}, future: 'preserve' }), writes = 0;
+    const handle = { getFile: async () => new File([disk], 'game.config.json'), createWritable: async () => ({
+      write: async (text: unknown) => { disk = String(text); writes++; }, close: async () => {},
+    }) } as unknown as FileSystemFileHandle;
+    Object.assign(state, { dirName: 'texts', dirHandle: { name: 'texts' }, handles: { ...state.handles, gameConfig: handle }, gameConfigText: disk,
+      scenes: new Map([['intro', { id: 'intro', file: 'intro.gal', text: '@scene intro\n旁白：你好。\n@end\n', eol: '\n', dirty: false, handle: null }]]), timelines: [],
+      configFiles: { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null }, configReadErrors: {}, dirAssets: [],
+      reviewWorkspace: null, reviewPreviewReadOnly: false, projectLoading: false });
+    const hasher = createEditorProjectStorage(), first = await inspectTextCatalog(await loadEditorProjectSnapshot(), hasher);
+    const binding = { operationId: 'bind', expectedRevision: first.revision, expectedFingerprint: first.fingerprint,
+      patch: { type: 'bind' as const, sourceLocale: 'zh-CN', bindings: [{ key: 'hello', sourceId: first.sources[0]!.sourceId }] } };
+    state.scenes.get('intro')!.dirty = true;
+    await expect(commitTextCatalogPatch(binding)).rejects.toThrow('先保存剧本'); expect(writes).toBe(0);
+    state.scenes.get('intro')!.dirty = false;
+    await commitTextCatalogPatch(binding); expect(writes).toBe(1);
+    await expect(commitTextCatalogPatch(binding)).rejects.toThrow('项目版本变化'); expect(writes).toBe(1);
+    const view = await inspectTextCatalog(await loadEditorProjectSnapshot(), hasher);
+    const csv = exportTextCatalogCsv(view).replace('"","untranslated"', '"Hello.","untranslated"');
+    const preview = await previewTextCatalogImport(await loadEditorProjectSnapshot(), hasher, 'en', csv);
+    expect(preview.ready).toBe(true); expect(writes).toBe(1);
+    await commitTextCatalogPatch({ operationId: 'import', expectedRevision: preview.revision, expectedFingerprint: preview.fingerprint,
+      patch: { type: 'import', locale: 'en', csv, previewFingerprint: preview.previewFingerprint } });
+    expect(writes).toBe(2); expect(JSON.parse(disk).future).toBe('preserve');
+    expect((await inspectTextCatalog(await loadEditorProjectSnapshot(), hasher)).entries[0]).toMatchObject({ status: 'translated', translations: { en: { value: 'Hello.' } } });
+    const saved = state.gameConfigText, fresh = await inspectTextCatalog(await loadEditorProjectSnapshot(), hasher);
+    disk = JSON.stringify({ ...JSON.parse(disk), future: 'external' });
+    await expect(commitTextCatalogPatch({ operationId: 'remove', expectedRevision: fresh.revision, expectedFingerprint: fresh.fingerprint, patch: { type: 'remove', keys: ['hello'] } })).rejects.toThrow();
+    expect(writes).toBe(2); expect(state.gameConfigText).toBe(saved); expect(JSON.parse(disk).future).toBe('external');
+  });
   it.each(['remove-all', 'replace-both', 'still-missing'] as const)('validates only the final multi-page UI repair: %s', async mode => {
     const frame = { x: 0, y: 0, width: 1280, height: 720 };
     const ui: ProjectUiDocument = { version: 1, pages: {

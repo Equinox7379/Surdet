@@ -5,6 +5,7 @@ import type { SceneMoveInput, SceneRenameInput, TextHasher } from './contracts.j
 import { compositionTextHasher } from './operation-composition-facts.js';
 import { decodeInstructionArgument, instructionArgumentSpans, parseSceneDocument, serializeSceneDocument, splitInstruction } from './scene-document.js';
 import { resolveUniqueScenarioPath, sceneIdFromScenarioPath } from './scenario-identity.js';
+import { renameTextCatalogReferences } from './text-catalog.js';
 
 /** Source-preserving flow target editing, shared with Editor. Never replace prose,
  * quoted choice conditions, arbitrary config strings or Core-ignored extra jumps.
@@ -92,6 +93,7 @@ export function renameConfigReferences(files: Record<string, string>, oldId: str
       if (value === oldId) { object[key] = newId; changed = true; }
     };
     if (path === gamePath) {
+      if (renameTextCatalogReferences(config, oldId, newId)) changed = true;
       field(config, 'entryScene');
       if (config['entryScene'] === undefined || config['entryScene'] === '') {
         // Renaming changes filename sorting. Pin the former implicit entry;

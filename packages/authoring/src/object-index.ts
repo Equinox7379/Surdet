@@ -1,4 +1,5 @@
 import { parseSceneStructure, serializeSceneDocument, splitInstruction } from './scene-document.js';
+import { readTextCatalog } from './text-catalog.js';
 import { buildAssetCatalog } from './asset-catalog.js';
 import type { AuthoringObject, ProjectAssetCatalog, ProjectAssetFileFact } from './contracts.js';
 import type { ProjectSnapshot, ProjectSnapshotScene } from './project-snapshot.js';
@@ -581,6 +582,17 @@ export function buildObjectIndex(snapshot: ProjectSnapshot): ObjectIndex {
   }
   addConfigObjects(snapshot, objects, candidates);
   addUiObjects(snapshot, objects, candidates);
+  try {
+    const catalog = readTextCatalog(snapshot.config);
+    addObject(objects, { kind: 'text-catalog', objectRef: 'config:textCatalog', references: [], referencedBy: [], details: catalog }, candidates);
+    for (const entry of catalog?.entries ?? []) {
+      const ref = `text-key:${entry.key}`;
+      addObject(objects, { kind: 'text-key', objectRef: ref, semanticId: ref, parentRef: 'config:textCatalog',
+        references: [], referencedBy: [], details: entry }, candidates);
+      addReferenceCandidate(candidates, ref, `scene:${entry.source.sceneId}`);
+      if (entry.source.label !== null) addReferenceCandidate(candidates, ref, `label:${entry.source.sceneId}.${entry.source.label}`);
+    }
+  } catch { /* Shared validation reports malformed catalog data; keep other objects inspectable. */ }
   let cgs: GalleryCgEntry[] = [];
   try {
     cgs = readGalleryDocument(snapshot.files.find((file) => file.path === GALLERY_PATH)?.text).cgs;

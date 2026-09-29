@@ -11,6 +11,7 @@ import type { AuthoringCapabilityId } from './capability-registry.js';
 import { AuthoringOperationError } from './change-session.js';
 
 export const AUTHORING_ERROR_CODES = [
+  'TEXT_CATALOG_INVALID',
   'PREVIEW_OBSERVATION_UNAVAILABLE', 'PREVIEW_OBSERVATION_STALE', 'PREVIEW_OBSERVATION_CORRUPT', 'PREVIEW_OBSERVATION_LIMIT',
   'IMPORT_OPERATION_NOT_FOUND',
   'IMPORT_OPERATION_CONFLICT',
@@ -100,6 +101,7 @@ const jsonObjectValueSchema: JsonSchema = {
 };
 
 const defaultDefinitions: Record<AuthoringErrorCode, Omit<AuthoringErrorDefinition, 'code'>> = {
+  TEXT_CATALOG_INVALID: { category: 'validation', retryDisposition: 'after-repair', repairActions: [action('project.texts', '读取当前文本目录与来源；修正映射或 CSV 后重新预览导入。')] },
   PREVIEW_OBSERVATION_UNAVAILABLE: { category: 'not-found', retryDisposition: 'after-refresh', repairActions: [action('runtime.read-preview', '在正常绑定的 Editor 中实际播放已保存项目，再读取观察。')] },
   PREVIEW_OBSERVATION_STALE: { category: 'conflict', retryDisposition: 'after-refresh', repairActions: [action('runtime.read-preview', '核对当前保存版本并重新播放；旧预览不能替代新事实。')] },
   PREVIEW_OBSERVATION_CORRUPT: { category: 'runtime', retryDisposition: 'after-inspect', repairActions: [terminalAction('预览记录无法核对，保留原记录，不能当作成功运行或自行覆盖。')] },

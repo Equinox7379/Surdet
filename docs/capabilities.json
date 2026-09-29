@@ -2,6 +2,17 @@
   "version": 1,
   "capabilities": [
     {
+      "id": "text-catalog-authoring",
+      "kind": "tooling",
+      "core": "n/a",
+      "renderer": "n/a",
+      "editor": "implemented",
+      "host": "n/a",
+      "tests": ["packages/authoring/test/text-catalog.test.ts", "packages/cli/test/candidate-composition-readiness.test.ts", "packages/cli/test/composition-service.test.ts", "packages/editor/test/authoring-project-storage.test.ts", "packages/editor/test/config-draft-state.test.ts"],
+      "docs": ["docs/AI-GUIDE.md"],
+      "limitation": "P6a 的正文/选项制作目录与 CSV 往返，Authoring/CLI/Editor 共用 direct-only 操作。完整场景正文版本变化后须明确重新绑定；不会猜测跨版本对应，也不迁移存档。Player 语言切换、人物/UI/词条译文消费及配音管理属于后续 P6b/P6c，当前未实现。"
+    },
+    {
       "id": "project-ui-designer",
       "kind": "ui",
       "core": "implemented",

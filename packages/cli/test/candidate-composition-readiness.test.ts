@@ -65,6 +65,55 @@ async function insertJump(session: AgentPortSession, operationId: string, sceneI
 }
 
 describe('Wave 8 candidate readiness through Agent Port', () => {
+  it('binds and imports translations through public tools, guards pagination and commits only the reviewed catalog', async () => {
+    const { root } = fixture(), configPath = path.join(root, 'game.config.json');
+    const original = fs.readFileSync(configPath, 'utf8');
+    const session = await openAgentPortSession({ projectRoot: root, policy: 'apply' });
+    try {
+      result(await session.invoke('change.begin', { compositionMode: 'direct' }));
+      const view = result<any>(await session.invoke('project.texts', { view: 'working', locale: 'en', limit: 1 }));
+      const stale = await session.invoke('project.texts', { view: 'working', offset: 1 });
+      expect(stale.ok).toBe(false);
+      expect(result<any>(await session.invoke('project.texts', { view: 'working', offset: 1, expectedRevision: view.revision })).sources).toEqual([]);
+      const binding = { operationId: 'text-bind', expectedRevision: view.revision, expectedFingerprint: view.fingerprint,
+        patch: { type: 'bind', sourceLocale: 'zh-CN', bindings: [{ key: 'start.hello', sourceId: view.sources[0].sourceId }] } };
+      result(await session.invoke('project.texts.patch', binding));
+      expect(result<any>(await session.invoke('project.texts', { view: 'project' })).entries).toEqual([]);
+      const exported = result<any>(await session.invoke('project.texts', { view: 'working', format: 'csv', locale: 'en' }));
+      const csv = exported.csv.replace('"","untranslated"', '"Hello.","untranslated"');
+      expect(csv).not.toBe(exported.csv);
+      const preview = result<any>(await session.invoke('project.texts.import.preview', { view: 'working', locale: 'en', csv }));
+      expect(preview.ready).toBe(true); expect(preview.rows[0].after).toBe('Hello.');
+      result(await session.invoke('project.texts.patch', { operationId: 'text-import', expectedRevision: preview.revision, expectedFingerprint: preview.fingerprint,
+        patch: { type: 'import', locale: 'en', csv, previewFingerprint: preview.previewFingerprint } }));
+      const saved = result<any>(await session.invoke('project.texts', { view: 'working' }));
+      expect(saved.entries[0].status).toBe('translated');
+      expect(fs.readFileSync(configPath, 'utf8')).toBe(original);
+      expect((await session.invoke('project.texts', { view: 'working', offset: 1, expectedRevision: view.revision })).ok).toBe(false);
+      expect(result<any>(await session.invoke('project.validate', {})).ok).toBe(true);
+      result(await session.invoke('project.simulate', {}));
+      result(await session.invoke('runtime.run-from', { sceneId: 'start', choices: [] }));
+      result(await session.invoke('change.diff', {}));
+      result(await session.invoke('change.commit', {}));
+      expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).textCatalog.entries[0].translations.en.value).toBe('Hello.');
+    } finally { await session.close(); }
+    const candidate = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
+    try {
+      result(await candidate.invoke('change.begin', {}));
+      const view = result<any>(await candidate.invoke('project.texts', { view: 'working' }));
+      const before = result<any>(await candidate.invoke('change.diff', {}));
+      expect((await candidate.invoke('project.texts.patch', { operationId: 'forbidden', expectedRevision: view.revision, expectedFingerprint: view.fingerprint, patch: { type: 'remove', keys: ['start.hello'] } })).ok).toBe(false);
+      expect(result<any>(await candidate.invoke('change.diff', {})).files).toEqual(before.files);
+      const scene = result<AuthoringObject>(await candidate.invoke('object.inspect', { objectRef: 'scene:start' }));
+      const objects = await Promise.all(scene.childRefs!.map(objectRef => candidate.invoke('object.inspect', { objectRef })));
+      const text = objects.map(object => result<AuthoringObject>(object)).find(object => object.kind === 'text')!;
+      result(await candidate.invoke('scene.patch', { operationId: 'candidate-prose', sceneId: 'start', patch: { kind: 'replaceText', target: text.objectRef, expectedFingerprint: text.fingerprint, value: '返修。' } }));
+      const changed = result<any>(await candidate.invoke('project.texts', { view: 'working' }));
+      expect(changed.entries[0].status).toBe('needs-rebind');
+      expect(changed.fingerprint).toBe(view.fingerprint);
+      expect(result<any>(await candidate.invoke('project.validate', {})).issues).toContainEqual(expect.objectContaining({ code: 'TEXT_SOURCE_STALE', severity: 'warning' }));
+    } finally { await candidate.close(); }
+  });
   it('rejects ambiguous theme keys through public writes and validation without changing source or draft', async () => {
     const { root } = fixture();
     for (const folder of ['one', 'two']) {
@@ -449,7 +498,7 @@ describe('Wave 8 candidate readiness through Agent Port', () => {
   });
 
   it('validates strict mode/status and nested readiness fields under contract 2.5', async () => {
-    expect(AUTHORING_CONTRACT_VERSION).toBe('2.19.0');
+    expect(AUTHORING_CONTRACT_VERSION).toBe('2.20.0');
     const schema = standardSchemaFromJson(CANDIDATE_COMPOSITION_READINESS_SCHEMA);
     const readiness = { mode: 'candidate', status: 'ready', operationFactsVersion: '1.0.0', operationCount: 0, issueCount: 0, issues: [], truncated: false };
     expect((await schema['~standard'].validate(readiness)).issues).toBeUndefined();
