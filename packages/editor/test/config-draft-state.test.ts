@@ -165,6 +165,7 @@ const {
   saveDirtyConfigSections,
   readStageConfigDraft, editStageConfigDraft, saveStageConfigDraftUnlocked, previewStageConfigText,
   readThemeConfigDraft, editThemeConfigDraft, saveThemeConfigDraftUnlocked, previewThemeConfigText,
+  editTextCsvDraft, readTextCsvDraft,
 } = await import('../src/panels/config.js');
 const { commitStageConfiguration, commitThemeConfiguration } = await import('../src/authoring-project-storage.js');
 const { runProjectWriteOperation } = await import('../src/project-io.js');
@@ -203,6 +204,22 @@ afterEach(() => {
 });
 
 describe('configuration draft state', () => {
+  it('preserves unconfirmed CSV across workbench changes and undo, and never imports it via save-all', async () => {
+    const root = await renderFixture();
+    editTextCsvDraft('key,locale\nexported', true);
+    expect(inspectConfigDraftState().dirty).toBe(false);
+    editTextCsvDraft('key,locale\nmy unfinished translation');
+    expect(inspectConfigDraftState().dirtySections).toEqual(['texts']);
+    renderConfig(root as unknown as HTMLElement);
+    expect(readTextCsvDraft()).toContain('unfinished');
+    configUndo(); expect(readTextCsvDraft()).toContain('exported'); expect(inspectConfigDraftState().dirty).toBe(false);
+    configRedo(); expect(readTextCsvDraft()).toContain('unfinished');
+    const source = state.gameConfigText;
+    const outcome = await saveDirtyConfigSections();
+    expect(outcome.failures).toBe(1); expect(inspectConfigDraftState().dirtySections).toEqual(['texts']);
+    expect(state.gameConfigText).toBe(source);
+    resetConfigSession(); expect(readTextCsvDraft()).toBe('');
+  });
   it('keeps malformed stored visual JSON visible so the author can repair it', async () => {
     const visuals = { uniform: { broken: { version: 1, kind: 'sequence', frames: [], loop: true } } };
     const root = await renderFixture(JSON.stringify({ ...JSON.parse(INITIAL_GAME_CONFIG), characters: { lynn: { name: '凛', visuals } } }));

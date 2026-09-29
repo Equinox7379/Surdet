@@ -23,7 +23,7 @@ export interface ScriptImportPreview {
 }
 
 /** Strict comma-separated records with quoted commas/newlines and doubled quotes. */
-function csvRecords(source: string): { records: { line: number; cells: string[] }[]; issues: ScriptImportIssue[] } {
+export function csvRecords(source: string): { records: { line: number; cells: string[] }[]; issues: ScriptImportIssue[] } {
   const records: { line: number; cells: string[] }[] = [], issues: ScriptImportIssue[] = [];
   let cells: string[] = [], value = '', quoted = false, closed = false, line = 1, start = 1, pending = false;
   const fail = (message: string): void => { issues.push({ line, severity: 'error', code: 'INVALID_CSV', message }); };

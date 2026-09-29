@@ -2,7 +2,7 @@
 
 本指南面向编写剧情、配置与演出的内容作者。默认使用正式 Agent Port 工具，在隔离草稿中修改、验证和试玩；不需要先读引擎源码、长期台账或重新接线播放器。已有项目保持原位，新项目使用现有模板。
 
-本批公开创作合同为 **2.19.0**，新增作品界面读取与窄修改（共 56 项公开能力），保留作品主题配置、分层立绘、逐帧动画、素材整理／原位替换及有限舞台配置能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+本批公开创作合同为 **2.20.0**，新增文本目录与译稿 CSV 往返（共 59 项公开能力），保留作品主题配置、分层立绘、逐帧动画、素材整理／原位替换及有限舞台配置能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
 
 ## 0. 准备项目与会话
 
@@ -231,6 +231,22 @@ Editor「配置 → 界面设计」可接管同一文档，选中、拖动/缩�
 本地 `surdet-ui` JSON 支持导出作品主题或所选片段。主题含支持的主题字段、页面、字体及必要图片；片段只带组件和图片，继承目标作品主题/字体。共享资源与现有素材 authority 同范围：PNG/JPEG/WebP、TTF/OTF/WOFF2，其他格式明确拒绝。包内不含剧情、存档、变量初始值、未知项目字段或绝对来源路径。目标须已有同名同类型变量；片段导入同类页面并产生新 ID。相同字节资源可复用，内容冲突拒绝覆盖。缺失资源先加入素材导入待选区，确认导入后再次导入共享文件生成草稿；authority 不可用时不绕过写入边界。草稿保存才写盘，素材依原回执撤销。分享许可与许可证原文仍按既有素材流程处理。
 
 Editor 的合法场景改名会同步已知引用及 `player.endScenes` 等结束配置：改名先更新工作稿，点击“保存全部”后一起写入。删除仍被引用的场景会被拒绝并指出来源，应先调整引用；异常配置也不会绕过检查。
+
+### 文本目录与译稿 CSV
+
+正文和选项可按需登记到 `game.config.json.textCatalog`，不改剧本，也不自动为每行创建永久 ID。当前是译稿制作能力，不会切换 Player 播放语言、翻译人物/UI 文案或生成配音。
+
+1. `project.texts({view:"working",locale:"en"})` 读取当前来源和已登记键。复制 **result.revision**、`fingerprint` 和真实 `sources[].sourceId`，不要用外层的来源项目版本或猜行号。JSON 的 sources/entries 分别按同一 offset/limit 分页；后续页必须携带首个 result.revision 作为 expectedRevision，变化则从头重读。
+2. 在 direct 草稿调用 `project.texts.patch`，传 `operationId / expectedRevision / expectedFingerprint`，patch 为 `{type:"bind",sourceLocale:"zh-CN",bindings:[{key:"intro.greeting",sourceId:"复制读取值"}]}`。同一键可显式重新绑定；交换多个键的来源必须同批提交。候选/integration 在修改前拒绝。
+3. `project.texts({view:"working",locale:"en",format:"csv"})` 完整导出已登记的键，不传分页参数。只编辑 `translation` 列，保留 key、locale、sourceVersion、speaker、context、source；status 只供阅读。
+4. `project.texts.import.preview({view:"working",locale:"en",csv:"完整CSV文字"})` 返回逐行差异和问题。必须 ready=true，再把相同 CSV、locale、previewFingerprint 放入 `{type:"import",...}` patch，使用预览返回的 revision/fingerprint。预览后修改 CSV 或源项目，需要重新预览。
+5. 沿原 `project.validate → project.simulate → runtime.run-from → change.diff → 封装/获授权 commit` 完成。目录修改不授予来源写权限，不跳过正常交付检查。
+
+CSV 支持 UTF-8 BOM、双引号转义、逗号和字段内换行；导出对公式前缀或原有首撇号添加一层 `'` 转义，回导还原这一层，不把内容当公式执行。缺行、重复/未知键、旧源文、变量占位符不一致或错误 Ruby 会整批拒绝。空译文表示未翻译，不能用空单元格清除已有译文；仅在明确要删除对应关系及其全部译稿时使用 `{type:"remove",keys:[...]}`。
+
+**改稿规则：** 文本键是固定身份，sourceId 的段内序号只是当前已确认场景版本的坐标。场景正文 SHA-256 变化后，旧目录保持不变并显示 needs-rebind；不得按当前行号、全文相似度或序号直接认定原键属于下一句。先对照旧源文与当前 sources，显式重新绑定原键。绑定确认后，文本/说话人改变会标 needs-translation，原译文仍保留；未改变的文字可以继续使用旧译文。目录不参与存档位置迁移。
+
+Editor「配置 → 文本与译稿」使用同一操作：读取目录→填写文本键/选择来源→加入绑定清单→绑定清单并保存；CSV 可下载、复制或选择文件导入，必须先预览差异，再确认保存。未确认 CSV 复用配置草稿与撤销/切换保护；保存全部不会擅自批准导入。登记前先保存剧本。改名同步场景/标签引用，但仍需确认新场景版本；删除仍被目录引用的场景/标签会拒绝。
 
 ### 场景结束、通关记录与回到标题
 

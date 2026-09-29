@@ -201,6 +201,28 @@ describe('CompositionService compare/plan/dry-run', () => {
     expect(fs.readFileSync(path.join(fixture.projectRoot, 'game.config.json'), 'utf8')).toBe(edited);
   });
 
+  it('seals text catalog state and rejects replay after its baseline changes', async () => {
+    const fixture = await setup('text-catalog-baseline');
+    const configPath = path.join(fixture.projectRoot, 'game.config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    config.textCatalog = { version: 1, sourceLocale: 'zh-CN', entries: [] };
+    fs.writeFileSync(configPath, JSON.stringify(config));
+    const refs = [];
+    for (const name of ['texts_one', 'texts_two']) {
+      const sealed = await sealCandidate(fixture.projectRoot, name, async session => {
+        expect((await session.invoke('scene.create', { operationId: name, sceneId: name, blocks: [{ kind: 'text', value: '译稿依赖。' }] })).ok).toBe(true);
+      });
+      refs.push(sealed.ref);
+    }
+    const compared = await fixture.service.compare(refs);
+    const operation = Object.values(compared.comparison.candidateManifests!)[0]!.operations[0]!;
+    expect(operation.replayStateRequirements).toContainEqual({ objectRef: 'config:textCatalog', source: 'base', expectedFingerprint: await realHasher.sha256(stableStringify(config.textCatalog)) });
+    expect((await planFromComparison(fixture, refs)).plan.dryRun.status).toBe('passed');
+    config.textCatalog.sourceLocale = 'ja';
+    fs.writeFileSync(configPath, JSON.stringify(config));
+    expect((await fixture.service.compare(refs)).comparison.status).toBe('review-only');
+  });
+
   it('keeps two sealed versions of one change distinct and reserves one concurrent integration target', async () => {
     const fixture = await setup('sealed-version-identity');
     const session = await openAgentPortSession({ projectRoot: fixture.projectRoot, policy: 'stage' });

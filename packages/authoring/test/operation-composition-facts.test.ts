@@ -32,6 +32,7 @@ async function seal(change: ChangeSession) {
         { objectRef: 'config:stage', expectedFingerprint: sha('null') },
         { objectRef: 'config:theme', expectedFingerprint: sha('{"theme":null,"titleLogo":null}') },
         { objectRef: 'config:ui', expectedFingerprint: sha('null') },
+      { objectRef: 'config:textCatalog', expectedFingerprint: sha('null') },
         { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
         { objectRef: 'scene:A', expectedFingerprint: sha('@scene A\n旁白：开场。\n@end\n') },
       ],
@@ -226,6 +227,7 @@ describe('candidate operation-time facts', () => {
     const renamed = structuredClone(facts(change, 'rename'));
     expect(renamed.replayStateRequirements).toEqual([
       { objectRef: 'config:characters', source: 'candidate', candidateOperationSequence: 1, expectedFingerprint: created.producedObjects.find((item) => item.objectRef === 'config:characters')!.finalFingerprint },
+      { objectRef: 'config:textCatalog', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'scene:A', source: 'candidate', candidateOperationSequence: 0, expectedFingerprint: facts(change, 'dialogue').objectFingerprintAfter },
     ]);
     expect(renamed.producedObjects).toContainEqual({ objectRef: 'scene:A', disposition: 'update', finalFingerprint: sha(change.record.workingFiles['content/scenario/A.gal']!) });
@@ -341,12 +343,14 @@ describe('candidate operation-time facts', () => {
       { objectRef: 'config:fonts', expectedFingerprint: sha('{}') },
       { objectRef: 'config:theme', expectedFingerprint: sha('{"theme":null,"titleLogo":null}') },
       { objectRef: 'config:ui', expectedFingerprint: sha('null') },
+      { objectRef: 'config:textCatalog', expectedFingerprint: sha('null') },
       { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
     ]);
     expect(facts(change, 'timeline-duration').replayStateRequirements).toEqual([
       { objectRef: 'config:fonts', source: 'base', expectedFingerprint: sha('{}') },
       { objectRef: 'config:portraits', source: 'base', expectedFingerprint: sha('[]') },
       { objectRef: 'config:stage', source: 'base', expectedFingerprint: sha('null') },
+      { objectRef: 'config:textCatalog', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'config:theme', source: 'base', expectedFingerprint: sha('{"theme":null,"titleLogo":null}') },
       { objectRef: 'config:ui', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'timeline:authoring_timeline', source: 'candidate', candidateOperationSequence: 0, expectedFingerprint: created.fingerprint },
@@ -357,12 +361,14 @@ describe('candidate operation-time facts', () => {
       { objectRef: 'config:fonts', expectedFingerprint: sha('{}') },
       { objectRef: 'config:theme', expectedFingerprint: sha('{"theme":null,"titleLogo":null}') },
       { objectRef: 'config:ui', expectedFingerprint: sha('null') },
+      { objectRef: 'config:textCatalog', expectedFingerprint: sha('null') },
       { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
     ]);
     expect(facts(change, 'timeline-target').replayStateRequirements).toEqual([
       { objectRef: 'config:fonts', source: 'base', expectedFingerprint: sha('{}') },
       { objectRef: 'config:portraits', source: 'base', expectedFingerprint: sha('[]') },
       { objectRef: 'config:stage', source: 'base', expectedFingerprint: sha('null') },
+      { objectRef: 'config:textCatalog', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'config:theme', source: 'base', expectedFingerprint: sha('{"theme":null,"titleLogo":null}') },
       { objectRef: 'config:ui', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'timeline:authoring_timeline', source: 'candidate', candidateOperationSequence: 1, expectedFingerprint: durationPatch.fingerprint },

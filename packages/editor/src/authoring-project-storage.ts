@@ -23,6 +23,7 @@ import {
   type TextHasher,
 } from '@surdet/authoring';
 import { state, type SceneEntry, type TimelineEntry } from './state.js';
+import { applyTextCatalogPatch, type TextCatalogPatchInput } from '@surdet/authoring';
 import { assertConfigSourcesReadable } from './config-source.js';
 import { assetPathForHandle, readProjectSourceText, workingGameConfigText, writeFileHandle } from './project-io.js';
 
@@ -604,4 +605,28 @@ export async function commitUiConfiguration(value: ProjectUiDocument | null, exp
     throw new Error('原项目界面已写入，但当前项目已切换；没有覆盖当前项目内存。');
   state.gameConfigText = actual;
   return { text: actual, before, after };
+}
+
+/** Explicit text-catalog saves use the same isolated authoring operation and disk transaction as Agents. */
+export async function commitTextCatalogPatch(input: TextCatalogPatchInput): Promise<{ text: string }> {
+  const root = state.dirHandle, handle = state.handles.gameConfig, source = state.gameConfigText;
+  if (!root || !handle || state.reviewWorkspace || state.reviewPreviewReadOnly || state.projectLoading) throw new Error('译稿只可保存到当前可写项目');
+  if ([...state.scenes.values()].some(scene => scene.dirty || scene.pendingEntryScene)) throw new Error('请先保存剧本，再登记或导入译稿');
+  const storage = createEditorProjectStorage(), snapshot = await loadProjectSnapshot(storage, storage);
+  if (state.dirHandle !== root || state.handles.gameConfig !== handle || state.gameConfigText !== source) throw new Error('读取期间项目已经变化');
+  const session = await beginChange(snapshot, new InMemoryChangeRepository());
+  session.record.composition = { ...session.record.composition!, mode: 'direct' };
+  await applyTextCatalogPatch(session, input, storage);
+  const changed = await loadProjectSnapshot(workingFilesStorage(session.record, storage), storage);
+  const validation = validateSnapshot(changed, buildObjectIndex(changed), { assetCatalog: buildAssetCatalog(await storage.listFiles(), changed, { gallery: state.configFiles.gallery }) });
+  if (!validation.ok) throw new Error(validation.issues.filter(issue => issue.severity === 'error').map(issue => issue.text).join('\n'));
+  await recordValidation(session, { evidenceId: `editor-texts-${crypto.randomUUID()}`, errors: 0 });
+  const sceneHandles = new Map<string, FileSystemFileHandle>();
+  for (const scene of state.scenes.values()) if (scene.handle) sceneHandles.set(scenarioPath(scene), scene.handle);
+  if (state.dirHandle !== root || state.handles.gameConfig !== handle || state.gameConfigText !== source) throw new Error('保存前项目已经变化');
+  await commitChange(session, new EditorWriteStorage(storage, handle, sceneHandles));
+  const text = session.record.workingFiles[CONFIG_PATH]!;
+  if (state.dirHandle !== root || state.handles.gameConfig !== handle) throw new Error('原项目译稿已写入，但当前项目已切换；未覆盖当前内存');
+  state.gameConfigText = text;
+  return { text };
 }

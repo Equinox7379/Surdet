@@ -1,3 +1,4 @@
+import { staleTextCatalogKeys } from './text-catalog.js';
 import { validateProjectStageContent } from './stage-validation.js';
 import { resolveProjectTheme, resolveProjectTitleLogo, readProjectUi } from '@surdet/core';
 import { validateThemeAssetBindings } from './theme-operations.js';
@@ -450,6 +451,14 @@ export function validateSnapshot(
     if (options.assetCatalog) validateUiAssets(ui, options.assetCatalog);
   } catch (error) {
     rawIssues.push({ severity: 'error', code: 'UI_INVALID', text: error instanceof Error ? error.message : String(error), file: configPath, line: 1, col: 1 });
+  }
+  try {
+    for (const key of staleTextCatalogKeys(snapshot)) {
+      rawIssues.push({ severity: 'warning', code: 'TEXT_SOURCE_STALE',
+        text: `译稿 ${key} 的来源版本或对应关系变化，请明确重新绑定；旧译稿保留，未自动配给其他台词。`, file: configPath, line: 1, col: 1 });
+    }
+  } catch (error) {
+    rawIssues.push({ severity: 'error', code: 'TEXT_CATALOG_INVALID', text: error instanceof Error ? error.message : String(error), file: configPath, line: 1, col: 1 });
   }
   attachHints(rawIssues);
   const issues = rawIssues.map((issue) => enrich(index, issue));

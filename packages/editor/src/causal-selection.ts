@@ -138,6 +138,8 @@ function quotedSummary(kind: AuthoringObject['kind'], raw: string): string {
 export function describeAuthoringObject(object: AuthoringObject): AuthoringObjectDisplay {
   const raw = object.source?.raw ?? object.semanticId ?? object.objectRef;
   const kindNames: Record<AuthoringObject['kind'], string> = {
+    'text-catalog': '文本目录',
+    'text-key': '文本键',
     scene: '场景',
     label: '标签',
     text: '台词',

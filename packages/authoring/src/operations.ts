@@ -38,6 +38,7 @@ import { GALLERY_PATH } from './gallery-operations.js';
 import { analyzeSceneCompositionReferences } from './composition-reference-analysis.js';
 import { inspectPlayerConfig } from './config-operations.js';
 import { renameConfigReferences } from './scene-relocation.js';
+import { assertTextCatalogTargetRemovable, renameTextCatalogReferences } from './text-catalog.js';
 
 function sceneCharacters(files: Record<string, string>): Record<string, unknown> {
   const characters = parseProjectConfigDocument(files['game.config.json'] ?? '{}')['characters'];
@@ -579,6 +580,7 @@ export async function applySceneCreate(change: ChangeSession, input: SceneCreate
         stageConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').stage,
         themeConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').theme,
         uiConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').ui,
+        textCatalog: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').textCatalog,
         variables: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').variables as Record<string, unknown> | undefined,
         titleLogo: resolveProjectTitleLogo(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')),
         characters: sceneCharacters(record.workingFiles), fontPaths: resolveProjectFontPaths(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')), hasher,
@@ -603,6 +605,7 @@ export async function applySceneRemove(change: ChangeSession, input: SceneRemove
     const references: Array<{ path: string; line?: number; kind: string; target: string }> = [];
     const config = parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}');
     const scenes = Object.keys(record.workingFiles).filter(file => file.startsWith('content/scenario/') && file.toLowerCase().endsWith('.gal')).sort();
+    assertTextCatalogTargetRemovable(config, input.sceneId);
     const entryScene = typeof config['entryScene'] === 'string' && config['entryScene'].length > 0
       ? config['entryScene'] : sceneIdFromScenarioPath(scenes[0]!);
     if (entryScene === input.sceneId) references.push({ path: 'game.config.json', kind: 'entryScene', target: input.sceneId });
@@ -672,7 +675,11 @@ export function isValidLabelName(name: unknown): name is string {
 
 export function applyConfigReferenceRename(files: Record<string, string>, rename: ProjectReferenceRename, fallbackEntry: string): void {
   if (rename.labelScene === undefined) renameConfigReferences(files, rename.from, rename.to, fallbackEntry);
-  else if (files[GALLERY_PATH] !== undefined) files[GALLERY_PATH] = renameGalleryLabel(files[GALLERY_PATH]!, rename.labelScene, rename.from, rename.to);
+  else {
+    if (files[GALLERY_PATH] !== undefined) files[GALLERY_PATH] = renameGalleryLabel(files[GALLERY_PATH]!, rename.labelScene, rename.from, rename.to);
+    const config = parseProjectConfigDocument(files['game.config.json'] ?? '{}');
+    if (renameTextCatalogReferences(config, rename.from, rename.to, rename.labelScene)) files['game.config.json'] = serializeProjectConfigDocument(config, files['game.config.json'] ?? '{}');
+  }
 }
 
 /** Identity rebasing for current source and existing Editor undo/redo snapshots. */
@@ -707,6 +714,9 @@ export function editProjectLabel(files: Record<string, string>, sceneId: string,
     if (rewritten !== text) { workingFiles[filePath] = rewritten; affectedScenes.add(id); }
   }
   const gallery = workingFiles[GALLERY_PATH];
+  const config = parseProjectConfigDocument(workingFiles['game.config.json'] ?? '{}');
+  if (newName === undefined) assertTextCatalogTargetRemovable(config, sceneId, oldName);
+  else if (renameTextCatalogReferences(config, oldName, newName, sceneId)) workingFiles['game.config.json'] = serializeProjectConfigDocument(config, workingFiles['game.config.json'] ?? '{}');
   if (gallery !== undefined) workingFiles[GALLERY_PATH] = renameGalleryLabel(gallery, sceneId, oldName, newName, references);
   if (newName === undefined && references.length) throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '标签仍有引用，不能删除', { references });
   if (newName === undefined) {
@@ -815,6 +825,7 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
           stageConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').stage,
         themeConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').theme,
         uiConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').ui,
+        textCatalog: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').textCatalog,
         variables: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').variables as Record<string, unknown> | undefined,
         titleLogo: resolveProjectTitleLogo(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')),
         characters: sceneCharacters(record.workingFiles), fontPaths: resolveProjectFontPaths(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')), hasher,
@@ -877,6 +888,7 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
         stageConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').stage,
         themeConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').theme,
         uiConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').ui,
+        textCatalog: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').textCatalog,
         variables: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').variables as Record<string, unknown> | undefined,
         titleLogo: resolveProjectTitleLogo(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')),
         characters: sceneCharacters(record.workingFiles), fontPaths: resolveProjectFontPaths(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')), hasher,

@@ -43,6 +43,17 @@ it('renames nested UI image references without treating same-named node IDs or l
   expect(updated.ui.pages.title.children[1].text.value).toBe('paper');
 });
 
+it('does not rename text catalog prose or identities that happen to equal an asset key', async () => {
+  const sourcePath = 'content/assets/bg/paper.png', targetPath = 'content/assets/bg/new-paper.png';
+  const textCatalog = { version: 1, sourceLocale: 'zh-CN', entries: [{ key: 'paper', source: {
+    sceneId: 'paper', label: null, ordinal: 0, sceneVersion: 'a'.repeat(64), kind: 'dialogue', speaker: 'paper', text: 'paper', version: 'b'.repeat(64),
+  }, translations: { en: { value: 'paper', sourceVersion: 'b'.repeat(64) } } }] };
+  const config = { player: { titleBackground: 'paper' }, textCatalog };
+  const result = await planProjectAssetRelocation(await makeInput({ files: { 'game.config.json': JSON.stringify(config) }, assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath }), hasher);
+  expect(result.plan.blockers).toEqual([]);
+  expect(JSON.parse(result.textChanges.find(change => change.path === 'game.config.json')!.afterText).textCatalog).toEqual(textCatalog);
+});
+
 it.each(['sequence', 'layered'] as const)('moves every %s image reference without rewriting logical identity or prose', async kind => {
   const a = 'content/assets/portrait/rin_parts_a.png', b = 'content/assets/portrait/rin_parts_b.png';
   const movedB = 'content/assets/portrait/cast/rin_parts_b.png';
