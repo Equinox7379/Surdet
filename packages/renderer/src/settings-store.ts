@@ -91,7 +91,7 @@ export const SETTING_STEPS: {
   { key: 'textSpeedCps', label: '文本速度', step: 6, min: 1, max: 199, format: (v) => String(Math.round(v)) },
   { key: 'autoBaseDelayMs', label: '自动停留', step: 200, min: 0, max: 6000, format: (v) => `${(v / 1000).toFixed(1)} 秒` },
   { key: 'masterVolume', label: '主音量', step: 0.1, min: 0, max: 1, format: pct },
-  { key: 'bgmVolume', label: 'BGM 音量', step: 0.1, min: 0, max: 1, format: pct },
+  { key: 'bgmVolume', label: '背景音乐音量', step: 0.1, min: 0, max: 1, format: pct },
   { key: 'ambienceVolume', label: '环境音量', step: 0.1, min: 0, max: 1, format: pct },
   { key: 'seVolume', label: '音效音量', step: 0.1, min: 0, max: 1, format: pct },
   { key: 'voiceVolume', label: '语音音量', step: 0.1, min: 0, max: 1, format: pct },

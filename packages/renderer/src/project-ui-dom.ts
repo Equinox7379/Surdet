@@ -106,7 +106,11 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
   const visibleText = (binding: ProjectUiText | undefined, context: ProjectUiContext, item?: ProjectUiItem): string => {
     if (!binding) return '';
     if (binding.kind === 'literal') return binding.value;
-    if (binding.kind === 'data') return String(item?.[binding.field as keyof ProjectUiItem] ?? context.data(binding.field) ?? '');
+    if (binding.kind === 'data') {
+      const value = item?.[binding.field as keyof ProjectUiItem] ?? context.data(binding.field) ?? '';
+      if (binding.field === 'mode') return value === 'save' ? '存档' : value === 'load' ? '读档' : String(value);
+      return String(value);
+    }
     return String(context.read(binding.name, binding.kind) ?? '');
   };
 
@@ -167,7 +171,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       if (node.text && node.text.kind !== 'literal') bindings.push(() => { element.textContent = visibleText(node.text, display.context, item); });
     } else if (node.type === 'image') {
       const url = options.imageUrl(node.asset!);
-      if (!url) throw new Error(`UI 图片未加载：${node.asset}`);
+      if (!url) throw new Error(`界面图片未加载：${node.asset}`);
       const image = document.createElement('img');
       image.src = url;
       image.alt = node.text?.kind === 'literal' ? node.text.value : '';

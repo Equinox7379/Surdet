@@ -16,7 +16,7 @@ export function renderTextCatalogSection(options: {
   const sourceLocale = h('input'); sourceLocale.value = 'zh-CN'; sourceLocale.setAttribute('aria-label', '源语言');
   const source = h('select'); source.setAttribute('aria-label', '当前剧本文本');
   const key = h('input'); key.placeholder = '例如 intro.greeting'; key.setAttribute('aria-label', '稳定文本键');
-  const csv = h('textarea'); csv.value = options.csv; csv.rows = 9; csv.setAttribute('aria-label', '译稿 CSV'); csv.style.width = '100%';
+  const csv = h('textarea'); csv.value = options.csv; csv.rows = 9; csv.setAttribute('aria-label', '译稿表格'); csv.style.width = '100%';
   const differences = h('div');
   const bindingList = h('div');
   let bindings: { key: string; sourceId: string }[] = [];
@@ -76,14 +76,14 @@ export function renderTextCatalogSection(options: {
     await save({ type: 'bind', sourceLocale: sourceLocale.value.trim(), bindings });
   });
   button('移除文本键并保存', async () => { await save({ type: 'remove', keys: [key.value.trim()] }); });
-  button('导出译稿 CSV', async () => {
+  button('导出译稿表格', async () => {
     await refresh(); if (!current() || !inspection) return;
     csv.value = exportTextCatalogCsv(inspection);
     options.editCsv(csv.value, true);
     const url = URL.createObjectURL(new Blob([csv.value], { type: 'text/csv;charset=utf-8' }));
     const link = h('a'); link.href = url; link.download = `surdet-texts-${inspection.locale}.csv`; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    status.textContent = '已导出；也可直接复制下方 CSV。只编辑 translation 列，保留其余来源信息。';
+    status.textContent = '已导出；也可直接复制下方表格文本。只编辑译文列（translation），保留其余来源信息。';
   });
   button('预览导入差异', async () => {
     const submitted = csv.value, language = locale.value.trim(), snapshot = await loadEditorProjectSnapshot();
@@ -103,11 +103,11 @@ export function renderTextCatalogSection(options: {
   });
   locale.oninput = () => { preview = undefined; differences.replaceChildren(); };
   csv.oninput = () => { options.editCsv(csv.value); preview = undefined; differences.replaceChildren(); };
-  const upload = h('input'); upload.type = 'file'; upload.accept = '.csv,text/csv'; upload.setAttribute('aria-label', '选择译稿 CSV');
+  const upload = h('input'); upload.type = 'file'; upload.accept = '.csv,text/csv'; upload.setAttribute('aria-label', '选择译稿表格');
   upload.onchange = () => run(async () => {
     const file = upload.files?.[0]; if (!file) return;
     const value = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
-    if (current()) { csv.value = value; options.editCsv(value); preview = undefined; differences.replaceChildren(); status.textContent = 'CSV 已读取，尚未修改项目；请预览导入差异。'; }
+    if (current()) { csv.value = value; options.editCsv(value); preview = undefined; differences.replaceChildren(); status.textContent = '表格已读取，尚未修改项目；请预览导入差异。'; }
   });
   const header = h('header', 'config-ledger-header'), copy = h('div', 'config-section-copy');
   copy.append(h('h1', 'config-section-heading', '文本与译稿'), h('p', 'config-section-description', '管理正文和选项的译稿。固定文本键不随行号改变；此处不切换游戏播放语言。'));
@@ -116,8 +116,8 @@ export function renderTextCatalogSection(options: {
   for (const [name, input] of [['源语言', sourceLocale], ['译文语言', locale], ['当前剧本文本', source], ['稳定文本键', key]] as const) {
     const field = h('label', 'config-field'); field.append(h('span', undefined, name), input); fields.append(field);
   }
-  const csvField = h('label', 'config-field'); csvField.append(h('span', undefined, '译稿 CSV'), csv);
+  const csvField = h('label', 'config-field'); csvField.append(h('span', undefined, '译稿表格'), csv);
   section.append(header, fields, h('p', 'config-section-help', '重新绑定已有键前，请明确核对当前来源；旧译稿会保留并提示是否需要重译。'), controls, status, bindingList, table,
-    h('p', 'config-section-help', '编辑 CSV 后先预览差异，再确认导入。保存全部不会自动导入译稿；切换工作面会保留未确认文字。'), upload, csvField, differences);
+    h('p', 'config-section-help', '编辑表格文本后先预览差异，再确认导入。保存全部不会自动导入译稿；切换工作面会保留未确认文字。'), upload, csvField, differences);
   return section;
 }

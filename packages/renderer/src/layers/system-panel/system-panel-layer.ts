@@ -579,7 +579,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
       const reasonText = !cmd.enabled ? this.#text(reason, nameWidth, 'textDisabled', 'captionSize') : null;
       if (reasonText) row.addChild(reasonText);
       const info = bindThemeTextProjection(new PText({
-        text: `AP ${cmd.apCost}${cmd.remaining !== undefined && cmd.remaining !== null ? `（剩 ${cmd.remaining} 次）` : ''}`,
+        text: `行动力 ${cmd.apCost}${cmd.remaining !== undefined && cmd.remaining !== null ? `（剩 ${cmd.remaining} 次）` : ''}`,
         style: { fontFamily: this.#assets.fontFamily('ui'), fontSize: this.#theme.typography.captionSize, fill: cmd.enabled ? 0xffd77a : this.#theme.colors.textDisabled } satisfies TextStyleOptions,
       }), { fill: cmd.enabled ? null : 'textDisabled' });
       row.addChild(info);

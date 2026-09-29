@@ -728,7 +728,7 @@ export class RendererStageHost {
   }
 
   /** 全黑结局卡；旧 API 的跨层隐藏顺序保持在兼容包装器。 */
-  showEnding(text = 'THE END'): void {
+  showEnding(text = '全篇完'): void {
     this.#requestFrame();
     this.#menu.showEnding(text);
   }

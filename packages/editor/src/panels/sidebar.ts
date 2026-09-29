@@ -137,12 +137,12 @@ export function bindSidebarHooks(opts: {
   onDeleteSceneHook = opts.onDeleteScene ?? (() => {});
 }
 
-/** 新建场景模板（M6 E5-4）：带注释的 .gal 片段，{id} 占位替换为场景 ID */
+/** 新建场景模板（M6 E5-4）：带注释的 .gal 片段，{id} 占位替换为场景标识 */
 const SCENE_TEMPLATES: { name: string; body: string }[] = [
   { name: '空白', body: '@scene {id}\n凛：' },
   {
     name: '纯对话',
-    body: '@scene {id}\n@bg 背景key\n@bgm 音乐key\n凛：……\n主角：……\n',
+    body: '@scene {id}\n@bg 背景素材键\n@bgm 音乐素材键\n凛：……\n主角：……\n',
   },
   {
     name: '选择分支',
@@ -150,7 +150,7 @@ const SCENE_TEMPLATES: { name: string; body: string }[] = [
   },
   {
     name: '演出制作',
-    body: '@scene {id}\n@bg 背景key\n@bgm 音乐key\n@shake 400 8\n@flash 250\n@wait 500\n凛：……\n',
+    body: '@scene {id}\n@bg 背景素材键\n@bgm 音乐素材键\n@shake 400 8\n@flash 250\n@wait 500\n凛：……\n',
   },
   {
     name: '结局',
@@ -163,11 +163,11 @@ async function newSceneUnlocked(): Promise<void> {
     setStatus('上一次场景保存正在收束，请先重试“保存全部”', false, 6000);
     return;
   }
-  const name = window.prompt('新场景 ID（文件名，不含 .gal）');
+  const name = window.prompt('新场景标识（文件名，不含 .gal）');
   if (!name || name.trim().length === 0) return;
   const id = name.trim();
   if (!/^[^\s.<>:"/\\|?*\u0000-\u001f]+$/u.test(id)) {
-    setStatus('场景 ID 不能包含空格、点号或文件名保留字符', false, 5000);
+    setStatus('场景标识 不能包含空格、点号或文件名保留字符', false, 5000);
     return;
   }
   if ([...state.scenes.values()].some((scene) => scene.id === id)) {

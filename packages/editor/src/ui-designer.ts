@@ -1,5 +1,6 @@
 import { PROJECT_UI_NODE_TYPES, PROJECT_UI_PAGES, PROJECT_UI_TAB_BAR_HEIGHT, projectUiChildrenRect, projectUiRect, type ProjectUiDocument, type ProjectUiNode, type ProjectUiNodeType, type ProjectUiPageId, type ProjectUiRect } from '@surdet/core';
 import { buildAssetCatalog, parseProjectConfigDocument, type UiPatch } from '@surdet/authoring';
+import { SETTING_STEPS } from '@surdet/renderer';
 import { state } from './state.js';
 import { ImageScope } from './v4/ui.js';
 
@@ -26,13 +27,30 @@ interface UiDesignerOptions {
 
 const PAGE_NAMES: Record<ProjectUiPageId, string> = {
   title: '标题', 'system-menu': '系统菜单', 'save-load': '存读档', settings: '设置', gallery: '鉴赏', backlog: '历史',
-  dialogue: '对白', choices: '选项', toolbar: '阅读工具栏', hud: '剧情 HUD',
+  dialogue: '对白', choices: '选项', toolbar: '阅读工具栏', hud: '剧情信息栏',
 };
 const TYPE_NAMES: Record<ProjectUiNodeType, string> = {
   container: '容器', image: '图片', text: '文本', button: '按钮', toggle: '开关', slider: '滑条',
   input: '输入框', scroll: '滚动列表', tabs: '页签', content: '公共内容',
 };
-const DATA_FIELDS = ['id', 'label', 'description', 'value', 'date', 'speaker', 'dialogue', 'title', 'subtitle', 'mode'];
+const DATA_FIELDS: Record<string, string> = {
+  id: '标识', label: '名称', description: '说明', value: '当前值', date: '日期',
+  speaker: '说话人', dialogue: '台词', title: '标题', subtitle: '副标题', mode: '存读档模式',
+};
+const SETTING_NAMES: Record<string, string> = {
+  ...Object.fromEntries(SETTING_STEPS.map(setting => [setting.key, setting.label])),
+  autoPerCharMs: '自动播放每字停留', keyPreset: '快捷键方案',
+};
+const SOURCE_NAMES: Record<NonNullable<ProjectUiNode['source']>, string> = {
+  'save-slots': '存档列表', settings: '阅读设置', backlog: '文字记录', choices: '剧情选项',
+  'gallery-cgs': '图片鉴赏', 'gallery-music': '音乐鉴赏', 'gallery-texts': '剧情回想',
+};
+const ACTION_NAMES: Record<NonNullable<ProjectUiNode['action']>['kind'], string> = {
+  start: '开始游戏', continue: '继续游戏', open: '打开页面', back: '返回', close: '关闭',
+  save: '保存进度', load: '读取进度', choice: '选择选项', 'gallery-item': '打开鉴赏条目',
+  'setting-step': '调整阅读设置', advance: '继续阅读', rollback: '回退一句',
+  auto: '自动播放', skip: '快进', hide: '隐藏界面',
+};
 const DESIGN_FRAME: ProjectUiRect = { x: 0, y: 0, width: 1280, height: 720 };
 let selectedPage: ProjectUiPageId = 'title';
 let selectedNodeId: string | null = null;
@@ -113,7 +131,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
   root.dataset.uiDesigner = 'true';
   const toolbar = element('div', 'ui-designer-toolbar');
   const pageSelect = element('select');
-  pageSelect.setAttribute('aria-label', '作品 UI 页面');
+  pageSelect.setAttribute('aria-label', '作品界面页面');
   for (const page of PROJECT_UI_PAGES) pageSelect.appendChild(option(page, PAGE_NAMES[page]));
   pageSelect.value = selectedPage;
   pageSelect.onchange = () => { selectedPage = pageSelect.value as ProjectUiPageId; selectedNodeId = null; draw(); };
@@ -262,7 +280,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       input.onchange = () => set(Number(input.value));
       wrap.appendChild(input); frame.appendChild(wrap);
     };
-    for (const [label, key] of [['X', 'x'], ['Y', 'y'], ['宽', 'width'], ['高', 'height'], ['锚点 X', 'anchorX'], ['锚点 Y', 'anchorY']] as const) {
+    for (const [label, key] of [['横坐标', 'x'], ['纵坐标', 'y'], ['宽', 'width'], ['高', 'height'], ['横向锚点', 'anchorX'], ['纵向锚点', 'anchorY']] as const) {
       field(label, node.frame[key] ?? 0, value => apply({ type: 'node.update', page: selectedPage, id: node.id,
         patch: { frame: { ...node.frame, [key]: value } } }));
     }
@@ -288,7 +306,13 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       const kind = element('select');
       for (const [value, label] of [['literal', '固定文字'], ['variable', '剧情变量'], ['setting', '阅读设置'], ['data', '当前页面内容']]) kind.appendChild(option(value!, label!));
       kind.value = node.text.kind;
-      const textInput = element('input');
+      const textInput = node.text.kind === 'data' || node.text.kind === 'setting' ? element('select') : element('input');
+      if (textInput instanceof HTMLSelectElement) {
+        const names = node.text.kind === 'data' ? DATA_FIELDS : SETTING_NAMES;
+        Object.entries(names).forEach(([value, label]) => textInput.appendChild(option(value, label)));
+        const current = node.text.kind === 'data' ? node.text.field : node.text.kind === 'setting' ? node.text.name : '';
+        if (!(current in names)) textInput.appendChild(option(current, current));
+      }
       textInput.setAttribute('aria-label', '文字或数据字段');
       textInput.value = node.text.kind === 'literal' ? node.text.value : node.text.kind === 'data' ? node.text.field : node.text.name;
       const changeText = (): void => {
@@ -297,7 +321,13 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
           : { kind: kind.value as 'variable' | 'setting', name: textInput.value };
         apply({ type: 'node.update', page: selectedPage, id: node.id, patch: { text } });
       };
-      kind.onchange = () => { textInput.value = kind.value === 'data' ? (selectedPage === 'dialogue' ? 'dialogue' : selectedPage === 'title' ? 'title' : 'label') : kind.value === 'variable' ? availableVariables()[0] ?? '' : kind.value === 'setting' ? 'textSpeedCps' : ''; changeText(); };
+      kind.onchange = () => {
+        const value = kind.value === 'data' ? (selectedPage === 'dialogue' ? 'dialogue' : selectedPage === 'title' ? 'title' : 'label') : kind.value === 'variable' ? availableVariables()[0] ?? '' : kind.value === 'setting' ? 'textSpeedCps' : '';
+        const text = kind.value === 'literal' ? { kind: 'literal' as const, value }
+          : kind.value === 'data' ? { kind: 'data' as const, field: value as 'label' }
+          : { kind: kind.value as 'variable' | 'setting', name: value };
+        apply({ type: 'node.update', page: selectedPage, id: node.id, patch: { text } });
+      };
       textInput.onchange = changeText;
       const text = element('label', 'ui-property-line', '文字 / 数据来源'); text.append(kind, textInput); parent.appendChild(text);
     }
@@ -315,9 +345,9 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       const name = element('select');
       const renderNames = (): void => {
         name.replaceChildren();
-        const names = bindingKind.value === 'setting' ? (node.type === 'toggle' ? ['skipStrategy'] : ['textSpeedCps', 'masterVolume', 'bgmVolume', 'seVolume', 'voiceVolume'])
+        const names = bindingKind.value === 'setting' ? (node.type === 'toggle' ? ['skipStrategy'] : SETTING_STEPS.map(setting => setting.key))
           : availableVariables(node.type === 'input' ? 'string' : node.type === 'slider' ? 'number' : 'flag');
-        names.forEach(value => name.appendChild(option(value, value)));
+        names.forEach(value => name.appendChild(option(value, bindingKind.value === 'setting' ? SETTING_NAMES[value] ?? value : value)));
         name.value = names.includes(node.binding!.name) ? node.binding!.name : names[0] ?? '';
       };
       renderNames();
@@ -328,16 +358,23 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     if (node.source) {
       const select = element('select');
       const sources = selectedPage === 'gallery' ? ['gallery-cgs', 'gallery-music', 'gallery-texts'] : [node.source];
-      sources.forEach(source => select.appendChild(option(source, source)));
+      sources.forEach(source => select.appendChild(option(source, SOURCE_NAMES[source as keyof typeof SOURCE_NAMES])));
       select.value = node.source;
       select.onchange = () => apply({ type: 'node.update', page: selectedPage, id: node.id, patch: { source: select.value as ProjectUiNode['source'] } });
       const label = element('label', 'ui-property-line', '公开内容'); label.appendChild(select); parent.appendChild(label);
     }
     if (node.type === 'button') {
-      const kinds = ['start', 'continue', 'open', 'back', 'close', 'save', 'load', 'choice', 'gallery-item', 'setting-step', 'advance', 'rollback', 'auto', 'skip', 'hide'];
-      const select = element('select'); kinds.forEach(kind => select.appendChild(option(kind, kind)));
+      const select = element('select'); Object.entries(ACTION_NAMES).forEach(([kind, name]) => select.appendChild(option(kind, name)));
       select.value = node.action?.kind ?? '';
-      const arg = element('input'); arg.placeholder = '页面、槽位或设置名';
+      const arg = node.action?.kind === 'open' || node.action?.kind === 'setting-step' ? element('select') : element('input');
+      if (arg instanceof HTMLSelectElement) {
+        const names = node.action?.kind === 'open'
+          ? Object.fromEntries(['system-menu', 'save-load', 'settings', 'gallery', 'backlog'].map(page => [page, PAGE_NAMES[page as ProjectUiPageId]]))
+          : Object.fromEntries(SETTING_STEPS.map(setting => [setting.key, setting.label]));
+        Object.entries(names).forEach(([value, label]) => arg.appendChild(option(value, label)));
+        const current = node.action?.kind === 'open' ? node.action.page : node.action?.kind === 'setting-step' ? node.action.name : '';
+        if (!(current in names)) arg.appendChild(option(current, current));
+      } else arg.placeholder = '槽位或条目标识（留空使用当前项）';
       arg.setAttribute('aria-label', '操作目标');
       arg.value = node.action?.kind === 'open' ? node.action.page : 'id' in (node.action ?? {}) ? String((node.action as { id?: string }).id ?? '') : node.action?.kind === 'setting-step' ? node.action.name : '';
       const mode = element('select'); mode.setAttribute('aria-label', '存读档模式');
@@ -348,17 +385,17 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       direction.append(option('1', '增加'), option('-1', '减少'));
       direction.value = String(node.action?.kind === 'setting-step' ? node.action.direction : 1);
       direction.hidden = node.action?.kind !== 'setting-step';
-      const update = (): void => {
+      const update = (value = arg.value): void => {
         const kind = select.value;
-        const action = kind === 'open' ? { kind: 'open' as const, page: (arg.value || 'settings') as 'settings', ...(arg.value === 'save-load' ? { mode: mode.value as 'save' | 'load' } : {}) }
-          : kind === 'setting-step' ? { kind: 'setting-step' as const, name: arg.value || 'textSpeedCps', direction: Number(direction.value) as -1 | 1 }
-          : ['save', 'load', 'choice', 'gallery-item'].includes(kind) ? { kind: kind as 'save', ...(arg.value ? { id: arg.value } : {}) }
+        const action = kind === 'open' ? { kind: 'open' as const, page: (value || 'settings') as 'settings', ...(value === 'save-load' ? { mode: mode.value as 'save' | 'load' } : {}) }
+          : kind === 'setting-step' ? { kind: 'setting-step' as const, name: value || 'textSpeedCps', direction: Number(direction.value) as -1 | 1 }
+          : ['save', 'load', 'choice', 'gallery-item'].includes(kind) ? { kind: kind as 'save', ...(value ? { id: value } : {}) }
           : { kind: kind as 'start' };
         apply({ type: 'node.update', page: selectedPage, id: node.id, patch: { action } });
       };
-      select.onchange = () => { if (select.value === 'open') arg.value = 'settings'; else if (select.value === 'setting-step') arg.value = 'textSpeedCps'; else arg.value = ''; update(); };
-      arg.onchange = update;
-      mode.onchange = update; direction.onchange = update;
+      select.onchange = () => update(select.value === 'open' ? 'settings' : select.value === 'setting-step' ? 'textSpeedCps' : '');
+      arg.onchange = () => update();
+      mode.onchange = () => update(); direction.onchange = () => update();
       const label = element('label', 'ui-property-line', '点击操作'); label.append(select, arg, mode, direction); parent.appendChild(label);
     }
     if (node.tab !== undefined || (parentId && findNode(rootNode, parentId)?.node.type === 'tabs')) {

@@ -15,9 +15,9 @@ export function createStageCalibrationPanel(onSaved: () => void, isEditable: () 
   const root = node('details'); root.className = 'stage-configuration';
   root.append(node('summary', '舞台配置与图片校准'));
   const status = node('p'); status.setAttribute('role', 'status');
-  const form = node('textarea'); form.rows = 13; form.spellcheck = false; form.setAttribute('aria-label', '舞台配置 JSON');
+  const form = node('textarea'); form.rows = 13; form.spellcheck = false; form.setAttribute('aria-label', '舞台配置文本');
   const technical = node('details'); technical.append(node('summary', '位置、距离与构图配置'),
-    node('p', '只编辑 stage 对象。positions 为命名坐标，distances 为命名倍率，compositions 为背景和图层。其他项目字段保持原样。'), form);
+    node('p', '这里只编辑舞台配置。命名坐标、距离倍率和场景构图分别对应 positions、distances、compositions 字段；配置文本中的字段名须保留原样，其他项目字段不会改变。'), form);
   let configText = state.gameConfigText, projectRoot = state.dirHandle, projectName = state.dirName, disposed = false, busy = false;
   let bitmap: ImageBitmap | null = null;
   let loaded: { path: string; sha256: string; width: number; height: number; role: string; outfit: string; expression: string; fileHandle: FileSystemFileHandle;
@@ -58,7 +58,7 @@ export function createStageCalibrationPanel(onSaved: () => void, isEditable: () 
     button('保存舞台配置', save),
     button('撤销配置编辑', () => { configUndo(); form.value = readStageConfigDraft(); status.textContent = '已撤销草稿编辑；保存后才改变项目文件。'; }),
     button('重做配置编辑', () => { configRedo(); form.value = readStageConfigDraft(); }),
-    button('关闭新舞台配置', () => { if (window.confirm('仅在草稿中移除 stage 配置，不删除图片或剧情。保存后生效。')) setDraft(null); }));
+    button('关闭新舞台配置', () => { if (window.confirm('仅在草稿中移除舞台配置，不删除图片或剧情。保存后生效。')) setDraft(null); }));
   root.append(status, controls, technical);
 
   const presets = node('details'); presets.append(node('summary', '添加位置或距离方案'));

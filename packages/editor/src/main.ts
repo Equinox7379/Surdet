@@ -1703,7 +1703,7 @@ bindConfigHooks({
     if (assetImportFileSetLocked()) throw new Error('当前素材导入尚未结束，请完成或取消后重试');
     const added = assetImportWorkspace.addFiles(files);
     for (const item of added) assetImportWorkspace.updateFile(item.itemId, { kind: /\.(?:ttf|otf|woff2)$/i.test(item.fileName) ? 'font' : 'background' });
-    assetImportWorkspace.setMessage('来自 UI 共享文件的依赖。保持文件名称，完成导入后再次导入该共享文件。');
+    assetImportWorkspace.setMessage('来自界面共享文件的依赖。保持文件名称，完成导入后再次导入该共享文件。');
     assetImportPanelOpen = true; state.mainTab = 'assets'; renderMainArea();
   },
   // 配置保存后重新调度校验（新变量/成就即刻参与 lint）
@@ -1908,7 +1908,7 @@ function renderAll(): void {
 
   if (!state.fsSupported && state.scenes.size === 0) {
     const banner = h('div', 'banner');
-    banner.textContent = '未检测到 File System Access 支持：请使用 Chrome/Edge 打开并点击「打开游戏目录」选择游戏项目根目录（如 examples/starter）；当前环境可先加载演示项目体验编辑与校验。';
+    banner.textContent = '当前浏览器不支持直接读写本地目录。请使用 Chrome 或 Edge 浏览器打开，点击「打开项目」选择游戏项目根目录；也可先加载演示项目体验编辑与校验。';
     appEl.appendChild(banner);
   }
 
@@ -1983,7 +1983,7 @@ function renderMainArea(): void {
     if (state.scenes.size === 0 && state.dirHandle === null) {
       const welcome = h('section', 'editor-welcome');
       const introduction = h('div');
-      introduction.append(h('h1', undefined, 'Surdet 工作台'), h('p', undefined, '打开一个项目，继续编写剧情、安排演出，或接手 Agent 交付的创作结果。'));
+      introduction.append(h('h1', undefined, 'Surdet 工作台'), h('p', undefined, '打开一个项目，继续编写剧情、安排演出，或接手智能体交付的创作结果。'));
       const actions = h('div', 'editor-welcome-actions');
       for (const [action, title, description] of [
         [state.fsSupported ? 'open-project' : 'load-demo', state.fsSupported ? '打开项目' : '加载演示项目', '剧本、素材与演出，在同一个工作区编辑'],

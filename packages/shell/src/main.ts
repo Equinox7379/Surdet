@@ -131,9 +131,9 @@ function gameRoot(): string {
 function readGameTitle(): string {
   try {
     const cfg = JSON.parse(fs.readFileSync(path.join(gameRoot(), 'game.config.json'), 'utf8')) as { title?: string };
-    return cfg.title && cfg.title.length > 0 ? cfg.title : 'Surdet Game';
+    return cfg.title && cfg.title.length > 0 ? cfg.title : 'Surdet 游戏';
   } catch {
-    return 'Surdet Game';
+    return 'Surdet 游戏';
   }
 }
 

@@ -153,7 +153,7 @@ describe('preview causal trace contract', () => {
     })).toEqual({
       title: '显示台词',
       sourceLabel: 'intro 场景 · 第 12 行',
-      technicalLabel: '事件 4 · instruction / text',
+      technicalLabel: '事件 4 · 执行剧情指令',
     });
 
     expect(projectPreviewTraceRow({

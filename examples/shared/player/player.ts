@@ -789,7 +789,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   // @exp：角色成长结果 → 升级演出（横幅）+ levelEvents 场景跳转（配置驱动）
   bus.on('growth', (p) => {
     if (p.levelsGained > 0) {
-      dialogue.showBanner(`${p.characterId} 升级！Lv.${p.levelBefore} → Lv.${p.levelAfter}`, 'chapter');
+      dialogue.showBanner(`${p.characterId} 升级！等级 ${p.levelBefore} → Lv.${p.levelAfter}`, 'chapter');
       console.info(`[starter] growth: ${p.characterId} Lv.${p.levelBefore} → Lv.${p.levelAfter}（+${p.gained} exp）`);
       // 途经等级触发 levelEvents（升多级时逐级检查；场景存在才跳转，避免配置缺场景卡死剧情）
       for (const lv of p.passedLevels) {
@@ -832,7 +832,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   function titleView() {
     return {
       view: {
-        title: (gameConfig as { title?: string }).title ?? 'Surdet Game',
+        title: (gameConfig as { title?: string }).title ?? 'Surdet 游戏',
         subtitle: playerConfig.subtitle,
         backgroundKey: playerConfig.titleBackground,
         logoKey: playerConfig.titleLogo || undefined,
@@ -956,16 +956,17 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       bounds(binding) {
         if (binding.kind === 'setting') {
           const step = SETTING_STEPS.find(item => item.key === binding.name);
-          if (!step) throw new Error(`UI 设置项不支持滑条：${binding.name}`);
+          if (!step) throw new Error(`界面设置项不支持滑条：${binding.name}`);
           return { min: step.min, max: step.max, step: step.step };
         }
         const declaration = decls.find(item => item.name === binding.name);
-        if (!declaration || declaration.type !== 'number') throw new Error(`UI 变量不支持滑条：${binding.name}`);
+        if (!declaration || declaration.type !== 'number') throw new Error(`界面变量不支持滑条：${binding.name}`);
         return { min: declaration.min ?? 0, max: declaration.max ?? 100, step: 1 };
       },
       content(source: ProjectUiContentSource): ProjectUiItem[] {
         if (source === 'save-slots') return (activeSaveLoad?.slots ?? []).map(slot => ({
-          id: slot.id, label: slot.label ?? (slot.empty ? `空槽位 ${slot.id}` : `槽位 ${slot.id}`),
+          id: slot.id, label: slot.label ?? (slot.id === 'quick' ? `快速存档${slot.empty ? '（空）' : ''}`
+            : slot.id === 'auto' ? `自动存档${slot.empty ? '（空）' : ''}` : slot.empty ? `空槽位 ${slot.id}` : `槽位 ${slot.id}`),
           description: slot.readError ?? (slot.updatedAt ? new Date(slot.updatedAt).toLocaleString() : ''),
           date: slot.updatedAt ? new Date(slot.updatedAt).toLocaleString() : '',
           empty: slot.empty, readError: slot.readError, backupAvailable: slot.backupAvailable,
@@ -1030,7 +1031,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         else if (page === 'settings') closeSettings();
         else if (page === 'gallery') closeGallery();
         else if (page === 'backlog') openBacklog();
-        else throw new Error(`UI 页面 ${page} 没有返回操作`);
+        else throw new Error(`界面页面 ${page} 没有返回操作`);
         return;
       case 'open':
         if (action.page === 'system-menu') { openSystemMenu(); return; }
@@ -1061,7 +1062,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         if (!renderer.dispatchInput({ type: 'choice.select', index: Number(action.id ?? item?.id) })) throw new Error('当前剧情选项不可用');
         syncStoryWorkUi(); return;
       case 'gallery-item':
-        if (!action.id && !item) throw new Error('鉴赏动作缺少条目 ID');
+        if (!action.id && !item) throw new Error('鉴赏动作缺少条目标识');
         await uiContext(page).select(item?.source?.startsWith('gallery-') ? item.source : 'gallery-cgs',
           { ...item, id: action.id ?? item!.id, label: item?.label ?? action.id! });
         return;
@@ -1479,9 +1480,9 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   function refreshCommandRail(): void {
     dialogue.setCommandRailItems([
       { id: 'backlog', icon: '▤', label: '回看', active: renderer.backlogOpen, tooltip: '打开文字记录' },
-      { id: 'auto', icon: 'A', label: '自动', active: renderer.autoPlay, tooltip: '自动播放' },
+      { id: 'auto', icon: '自', label: '自动', active: renderer.autoPlay, tooltip: '自动播放' },
       { id: 'skip', icon: '»', label: '快进', active: renderer.skipMode, tooltip: '快进已读文本' },
-      { id: 'save', icon: 'S', label: '存档', tooltip: '存档' },
+      { id: 'save', icon: '存', label: '存档', tooltip: '存档' },
       { id: 'settings', icon: '⚙', label: '设置', active: isOverlay('settings'), tooltip: '打开设置' },
     ]);
   }
@@ -1823,7 +1824,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   if (ownerTeardown.disposed) return;
   commands.preferences.setTheme(playerTheme);
   if (workUi) {
-    for (const key of projectUiAssetKeys(workUi)) if (!backgroundUrls.has(key)) throw new Error(`UI 图片不存在或格式不受支持：${key}`);
+    for (const key of projectUiAssetKeys(workUi)) if (!backgroundUrls.has(key)) throw new Error(`界面图片不存在或格式不受支持：${key}`);
     uiDom = createProjectUiDom({ canvas: runtime.canvas, document: workUi,
       theme: playerTheme,
       fontFamily: role => queries.preferences.fontFamily(role),

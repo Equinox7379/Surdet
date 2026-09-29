@@ -102,7 +102,8 @@ export function enhanceConfigTables(root: HTMLElement): void {
     const rows = [...table.querySelectorAll<HTMLTableRowElement>('tbody tr')];
     const section = table.closest<HTMLElement>('[data-config-section]')?.dataset.configSection ?? 'config';
     const key = `${section}:${ordinal}`;
-    const nav = h('nav', 'v4-object-index'); nav.setAttribute('aria-label', `${section}对象`);
+    const sectionName = table.closest('[data-config-section]')?.querySelector('.config-section-heading')?.textContent ?? '配置';
+    const nav = h('nav', 'v4-object-index'); nav.setAttribute('aria-label', `${sectionName}对象`);
     const heading = table.closest('.config-subsection')?.querySelector('h2')?.textContent ?? '对象';
     nav.append(h('h3', undefined, heading));
     const controls: HTMLButtonElement[] = [];

@@ -135,7 +135,7 @@ export function layoutFlowGraph(
 
 /* ============================ 校验状态映射 ============================ */
 
-/** 场景 → error/warning 计数（issues.file 按 basename 对齐场景 ID，与 renderIssue 跳转同规则） */
+/** 场景 → error/warning 计数（issues.file 按 basename 对齐场景标识，与 renderIssue 跳转同规则） */
 function sceneIssueStats(): Map<string, { errors: number; warnings: number }> {
   const stats = new Map<string, { errors: number; warnings: number }>();
   for (const issue of state.lastValidation?.issues ?? []) {
@@ -219,7 +219,7 @@ function sceneConfigReferences(sceneId: string): string[] {
     }
     const endings = (player as Record<string, unknown>)['endScenes'];
     if (endings !== undefined && (!Array.isArray(endings) || !endings.every(id => typeof id === 'string'))) {
-      throw new Error('game.config.json 的 player.endScenes 必须是场景 ID 数组；修正配置后再改名或删除场景');
+      throw new Error('game.config.json 的 player.endScenes 必须是场景标识 数组；修正配置后再改名或删除场景');
     }
     if (Array.isArray(endings) && endings.includes(sceneId)) references.push('game.config.json 的 player.endScenes（结束场景）');
   }
@@ -263,14 +263,14 @@ async function renameSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
   const sceneId = current.id;
   sceneConfigReferences(sceneId); // Validate known config shapes without blocking valid references.
   if ([...state.scenes.values()].filter((scene) => scene.id === sceneId).length !== 1) {
-    setStatus(`场景 ID“${sceneId}”对应多个文件，请先删除重复场景再重命名`, false, 6000);
+    setStatus(`场景标识“${sceneId}”对应多个文件，请先删除重复场景再重命名`, false, 6000);
     return;
   }
   const input = window.prompt(`重命名场景 '${sceneId}'（文件名，不含 .gal）`, sceneId);
   if (!input) return;
   const newId = input.trim();
   if (!validSceneId(newId)) {
-    setStatus('场景 ID 不能包含空格、点号或文件名保留字符', false, 5000);
+    setStatus('场景标识 不能包含空格、点号或文件名保留字符', false, 5000);
     return;
   }
   if (newId === sceneId) return;
@@ -388,7 +388,7 @@ export async function moveSceneAtKey(sceneKey: string): Promise<void> {
     const current = state.scenes.get(sceneKey);
     if (!current) return;
     if ([...state.scenes.values()].filter(scene => scene.id === current.id).length !== 1) {
-      throw new Error(`场景 ID“${current.id}”对应多个文件，请先处理重复场景`);
+      throw new Error(`场景标识“${current.id}”对应多个文件，请先处理重复场景`);
     }
     const previousPath = sceneProjectPath(current.file);
     const directory = previousPath.slice('content/scenario/'.length).split('/').slice(0, -1).join('/');
@@ -1228,7 +1228,7 @@ export function renderFlow(container: HTMLElement): void {
   const technicalText = h(
     'p',
     'surdet-technical-text',
-    `本页把编译结果整理成写作者可读的场景地图；稳定 ID、源码顺序与重复连接仍被保留，但默认不干扰阅读。${layout.unprojectableEdges.length > 0 ? `另有 ${layout.unprojectableEdges.length} 条连接因端点缺失未显示，请先修复校验问题。` : ''}`,
+    `本页把编译结果整理成写作者可读的场景地图；稳定标识、源码顺序与重复连接仍被保留，但默认不干扰阅读。${layout.unprojectableEdges.length > 0 ? `另有 ${layout.unprojectableEdges.length} 条连接因端点缺失未显示，请先修复校验问题。` : ''}`,
   );
   const toggleTechnical = h(
     'button',

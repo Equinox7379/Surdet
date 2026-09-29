@@ -289,7 +289,7 @@ function renderSelectedInspector(
     h('dd', undefined, formatBytes(selected.bytes)),
     h('dt', undefined, '文件格式'),
     h('dd', undefined, selected.file.type || '未声明'),
-    h('dt', undefined, '素材 ID'),
+    h('dt', undefined, '素材标识'),
     h('dd', undefined, selected.itemId),
   );
   technical.appendChild(technicalList);

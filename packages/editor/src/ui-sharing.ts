@@ -81,7 +81,7 @@ export async function exportUiShare(config: Json, assets: ShareAsset[], fragment
 /** Validate the complete package before proposing a draft or staging any asset. */
 export function readUiShare(text: string, destination: Json): UiShare {
   const raw = object(JSON.parse(text)); keys(raw, ['format', 'version', 'kind', 'config', 'variables', 'assets']);
-  if (raw.format !== 'surdet-ui' || raw.version !== 1 || !['theme', 'fragment'].includes(String(raw.kind))) throw new Error('不支持的 UI 共享格式或版本');
+  if (raw.format !== 'surdet-ui' || raw.version !== 1 || !['theme', 'fragment'].includes(String(raw.kind))) throw new Error('不支持的 界面共享格式或版本');
   const config = object(raw.config); keys(config, ['ui', 'theme', 'player', 'fonts']);
   const variables = object(raw.variables);
   const declared = object(destination.variables ?? {});

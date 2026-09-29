@@ -345,7 +345,7 @@ function decisionContentIdentity(draft: ReviewDecisionDraft): string {
 function sealDecisionState(workspace: ReviewWorkspaceState, options: ReviewPanelOptions): DecisionSealState {
   const existing = decisionSealStates.get(workspace);
   if (workspace.decisionDraft.decisionId.length === 0) {
-    if (typeof globalThis.crypto?.randomUUID !== 'function') throw new Error('当前浏览器不能生成决定 ID');
+    if (typeof globalThis.crypto?.randomUUID !== 'function') throw new Error('当前浏览器不能生成决定标识');
     workspace.decisionDraft.decisionId = globalThis.crypto.randomUUID();
   }
   if (existing !== undefined && existing.decisionId === workspace.decisionDraft.decisionId) return existing;
@@ -567,7 +567,7 @@ function renderComparisonReview(
           ].join('\n')));
           sourceItem.appendChild(sourceIdentity);
         } else {
-          sourceItem.appendChild(h('div', 'review-warning', '该来源缺少可核对的 capsule 技术身份'));
+          sourceItem.appendChild(h('div', 'review-warning', '该来源缺少可核对的交付胶囊身份'));
         }
         sourceList.appendChild(sourceItem);
       }
@@ -1186,11 +1186,11 @@ function appendResultReceipt(
   technical.setAttribute('data-result-receipt-technical', '');
   technical.appendChild(h('summary', undefined, '查看回执技术身份'));
   if (approval !== null) {
-    technical.appendChild(h('div', undefined, `回执 ID：${approval.approvalId}`));
-    technical.appendChild(h('div', undefined, `回执 fingerprint：${approval.approvalFingerprint}`));
+    technical.appendChild(h('div', undefined, `回执标识：${approval.approvalId}`));
+    technical.appendChild(h('div', undefined, `回执指纹：${approval.approvalFingerprint}`));
   } else if (returned !== null) {
-    technical.appendChild(h('div', undefined, `回执 ID：${returned.returnId}`));
-    technical.appendChild(h('div', undefined, `回执 fingerprint：${returned.returnFingerprint}`));
+    technical.appendChild(h('div', undefined, `回执标识：${returned.returnId}`));
+    technical.appendChild(h('div', undefined, `回执指纹：${returned.returnFingerprint}`));
   }
   technical.appendChild(h('div', undefined, `原决定：${result.plan.review.decisionId}`));
   technical.appendChild(h('div', undefined, `原选择：${listText(result.plan.selectedUnitIds)}`));
@@ -1211,7 +1211,7 @@ function renderResultReview(
 ): void {
   const projection = workspace.projection;
   const result = projection.finalResult;
-  if (result === undefined) throw new Error('integration-result 审阅缺少 finalResult');
+  if (result === undefined) throw new Error('最终结果审阅缺少正式结果');
   const actual = projection.reviewVersion === '2.0.0' ? result.actualExplanation : undefined;
   const pendingTerminalAction = pendingTerminalActionOf(workspace);
   const resultWriteLocked = resultWrites.has(workspace);
@@ -1519,7 +1519,7 @@ function renderResultReview(
   technical.appendChild(h('summary', undefined, '查看执行与技术详情'));
   appendFact(technical, '计划指纹', result.planFingerprint);
   appendFact(technical, '差异指纹', result.diffFingerprint);
-  appendFact(technical, '计划 ID', result.planId);
+  appendFact(technical, '计划标识', result.planId);
   appendFact(technical, '工作版本', String(result.workingRevision));
   appendFact(technical, '项目树身份', result.resultTreeSha256);
   appendResultPlan(technical, projection, result.plan);

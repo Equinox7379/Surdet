@@ -406,7 +406,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#titleItemCount = 0;
   }
 
-  showEnding(text = 'THE END'): void {
+  showEnding(text = '全篇完'): void {
     if (this.#disposed) return;
     this.#requestFrame();
     this.#clearLayer(this.#endingLayer, 'ending');
@@ -730,7 +730,7 @@ export class MenuLayer implements MenuProjectionPort {
     layer.addChild(bg);
     layer.addChild(this.#surface(20, 20, this.#w - 40, this.#h - 40, 'panel', 'panel', 'md', true));
     layer.addChild(bindThemeTextProjection(new PText({
-      text: view.mode === 'save' ? 'SAVE DATA' : 'LOAD DATA',
+      text: view.mode === 'save' ? '记录进度' : '继续故事',
       style: { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.accentSoft, letterSpacing: this.#theme.typography.uiLetterSpacing, fontWeight: 'bold' } satisfies TextStyleOptions,
     }), { fill: 'accentSoft', fontSize: 'captionSize', letterSpacing: 'uiLetterSpacing' })).position.set(108, 70);
     layer.addChild(bindThemeTextProjection(new PText({
@@ -775,6 +775,7 @@ export class MenuLayer implements MenuProjectionPort {
     const startX = 90;
     const startY = 160;
     view.slots.slice(this.#saveLoadPage * 6, (this.#saveLoadPage + 1) * 6).forEach((slot, i) => {
+      const slotName = slot.id === 'quick' ? '快速存档' : slot.id === 'auto' ? '自动存档' : `槽位 ${slot.id}`;
       const x = startX + (i % cols) * (cardW + gapX);
       const y = startY + Math.floor(i / cols) * (cardH + gapY);
       const selectable = view.mode === 'save' || (!slot.empty && !slot.readError);
@@ -833,7 +834,7 @@ export class MenuLayer implements MenuProjectionPort {
         }), { fill: 'accentSoft', fontSize: 'captionSize' });
         restore.position.set(cardW - 210, 80);
         card.addChild(this.#buttonSkin(restore.x - 4, restore.y - 4, 204, 34));
-        bindPlayerControl(restore, { label: `恢复槽位 ${slot.id} 的备份并读取`, width: 204, height: 34, x: -4, y: -4 });
+        bindPlayerControl(restore, { label: `恢复${slotName}的备份并读取`, width: 204, height: 34, x: -4, y: -4 });
         restore.eventMode = 'static';
         restore.cursor = 'pointer';
         restore.on('pointerover', () => { restore.style = { fontSize: this.#theme.typography.captionSize, fill: this.#theme.colors.text } satisfies TextStyleOptions; });
@@ -842,7 +843,7 @@ export class MenuLayer implements MenuProjectionPort {
           event.stopPropagation?.();
           if (this.#saveLoadTransactionPending) { this.#onPointerConsumed?.(); return; }
           if (!restoreConfirmed) {
-            this.#confirmAction(layer, `恢复槽位 ${slot.id} 的备份并读取？当前进度将被替换。`, '恢复并读取', () => {
+            this.#confirmAction(layer, `恢复${slotName}的备份并读取？当前进度将被替换。`, '恢复并读取', () => {
               restoreConfirmed = true;
               try { restore.emit('pointerdown', event); } finally { restoreConfirmed = false; }
             });
@@ -892,7 +893,7 @@ export class MenuLayer implements MenuProjectionPort {
       }
       if (selectable) {
         let overwriteConfirmed = false;
-        bindPlayerControl(card, { label: `${view.mode === 'save' ? '保存到' : '读取'}槽位 ${slot.id}：${slot.readError ?? (slot.empty ? '空槽位' : (slot.label ?? '场景未提供'))}`, width: cardW, height: cardH });
+        bindPlayerControl(card, { label: `${view.mode === 'save' ? '保存到' : '读取'}${slotName}：${slot.readError ?? (slot.empty ? '空槽位' : (slot.label ?? '场景未提供'))}`, width: cardW, height: cardH });
         card.eventMode = 'static';
         card.cursor = 'pointer';
         card.on('pointerover', () => {
@@ -907,7 +908,7 @@ export class MenuLayer implements MenuProjectionPort {
           if (this.#saveLoadTransactionPending) { this.#onPointerConsumed?.(); event.stopPropagation?.(); return; }
           if (view.mode === 'save' && !slot.empty && !overwriteConfirmed) {
             event.stopPropagation?.();
-            this.#confirmAction(layer, `覆盖槽位 ${slot.id} 的现有存档？`, '覆盖存档', () => {
+            this.#confirmAction(layer, `覆盖${slotName}的现有存档？`, '覆盖存档', () => {
               overwriteConfirmed = true;
               try { card.emit('pointerdown', event); } finally { overwriteConfirmed = false; }
             });
@@ -957,7 +958,7 @@ export class MenuLayer implements MenuProjectionPort {
           }
         });
       } else {
-        bindPlayerControl(card, { label: `槽位 ${slot.id}：空槽位`, width: cardW, height: cardH, enabled: false });
+        bindPlayerControl(card, { label: `${slotName}：空槽位`, width: cardW, height: cardH, enabled: false });
         // Empty load slots are real hit targets so their click cannot fall
         // through to the full-screen close surface. They intentionally do
         // not have an onSelect handler: the event is consumed and is a no-op.

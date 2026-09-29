@@ -151,10 +151,10 @@ export function describeAuthoringObject(object: AuthoringObject): AuthoringObjec
     variable: '变量',
     timeline: '时间轴',
     track: '轨道',
-    cue: 'Cue',
+    cue: '演出动作',
     asset: '素材',
     character: '角色',
-    'gallery-cg': 'CG',
+    'gallery-cg': '鉴赏图片',
     'entry-scene': '入口场景',
     'ui-config': '作品界面',
     'ui-page': '界面页面',
@@ -174,7 +174,7 @@ export function describeAuthoringObject(object: AuthoringObject): AuthoringObjec
 }
 
 export function describeAuthoringReference(ref: string): string {
-  if (ref.startsWith('gallery:cgs:')) return `CG ${ref.slice('gallery:cgs:'.length)}`;
+  if (ref.startsWith('gallery:cgs:')) return `鉴赏图片 ${ref.slice('gallery:cgs:'.length)}`;
   if (ref.startsWith('variable:')) return `变量 ${ref.slice('variable:'.length)}`;
   if (ref.startsWith('label:')) {
     const value = ref.slice('label:'.length);
@@ -195,7 +195,7 @@ export function describeAuthoringReference(ref: string): string {
   if (ref.startsWith('timeline:') && ref.includes('/track:')) {
     const timeline = ref.slice('timeline:'.length).split('/track:')[0];
     const cueMatch = /\/track:(\d+)\/cue:(\d+)$/.exec(ref);
-    if (cueMatch) return `Cue（${timeline} · 轨道 ${cueMatch[1]} · #${cueMatch[2]}）`;
+    if (cueMatch) return `演出动作（${timeline} · 轨道 ${cueMatch[1]} · 编号 ${cueMatch[2]}）`;
     const trackMatch = /\/track:(\d+)$/.exec(ref);
     if (trackMatch) return `轨道（${timeline} · #${trackMatch[1]}）`;
     return ref;

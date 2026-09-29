@@ -103,6 +103,8 @@ const TRACE_KIND_LABELS: Record<RuntimeTraceEvent['kind'], string> = {
 };
 
 const INSTRUCTION_OP_LABELS: Readonly<Record<string, string>> = {
+  instr: '执行剧情指令',
+  label: '定位段落标记',
   text: '显示台词',
   bg: '切换背景',
   portrait: '调整立绘',
@@ -113,7 +115,7 @@ const INSTRUCTION_OP_LABELS: Readonly<Record<string, string>> = {
   wait: '等待剧情时间',
 };
 
-/** 用户先读中文动作；内部 kind/op 只保留为次级技术信息。 */
+/** 界面使用中文动作；原始事件仍保留英文 kind/op 供工具读取。 */
 export function projectPreviewTraceRow(message: PreviewTraceEventMessage): PreviewTraceRowProjection {
   const { kind, source } = message.event;
   const title = kind === 'instruction'
@@ -122,7 +124,7 @@ export function projectPreviewTraceRow(message: PreviewTraceEventMessage): Previ
   return {
     title,
     sourceLabel: `${source.sceneId} 场景 · 第 ${source.line} 行`,
-    technicalLabel: `事件 ${message.sequence + 1} · ${kind} / ${source.op}`,
+    technicalLabel: `事件 ${message.sequence + 1} · ${TRACE_KIND_LABELS[kind] ?? '剧情事件'}`,
   };
 }
 
@@ -292,7 +294,7 @@ export function parsePreviewTimelines(entries: readonly { id: string; text: stri
     try {
       const value = JSON.parse(entry.text.replace(/^\uFEFF/, '')) as Record<string, unknown>;
       if (typeof value.id !== 'string' || value.id.trim().length === 0) {
-        issues.push(`${entry.id}: 缺少时间轴 id`);
+        issues.push(`${entry.id}: 缺少时间轴标识`);
         continue;
       }
       definitions.push(value);
@@ -897,8 +899,8 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     publishedSource = requestSource;
     sourceState.dataset.previewSourceState = 'fresh';
     sourceState.textContent = observationError !== null ? `预览可继续，观察记录未能同步：${observationError}`
-      : isolated !== undefined ? `${isolated.title}；未写回来源，Agent 可读取本次实际播放记录。${isolated.target.kind === 'candidate' || isolated.target.kind === 'integration-result' ? '返修请切回原工作变更，完成后重新封装或组合。' : ''}`
-      : formal !== null ? '已载入保存的内容；Agent 可读取本次实际播放记录。'
+      : isolated !== undefined ? `${isolated.title}；未写回来源，智能体可读取本次实际播放记录。${isolated.target.kind === 'candidate' || isolated.target.kind === 'integration-result' ? '返修请切回原工作变更，完成后重新封装或组合。' : ''}`
+      : formal !== null ? '已载入保存的内容；智能体可读取本次实际播放记录。'
       : reviewResultLabel !== null ? `${reviewResultLabel}；本页展示当前审阅结果及其实际轨迹。`
       : '载入的是本次内存内容；运行结果以画面和实际轨迹为准。';
     options.onSourceStateChange?.();

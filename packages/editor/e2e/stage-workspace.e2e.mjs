@@ -91,7 +91,7 @@ try {
   assert.equal(JSON.parse(fs.readFileSync(path.join(fixture.root, 'game.config.json'), 'utf8')).stage.compositions.dock.layers[0].x, undefined);
   await page.locator('.stage-configuration > summary').click();
   await page.getByRole('button', { name: '撤销配置编辑', exact: true }).click();
-  assert.equal(JSON.parse(await page.getByLabel('舞台配置 JSON', { exact: true }).inputValue()).compositions.dock.layers[0].x, undefined);
+  assert.equal(JSON.parse(await page.getByLabel('舞台配置文本', { exact: true }).inputValue()).compositions.dock.layers[0].x, undefined);
   pass('composition-adjustment-is-an-undoable-draft-not-a-disk-write');
   // No assertion based only on a screenshot: verify the calibration reads the
   // actual image dimensions and digest before adding a configuration draft.
@@ -103,8 +103,8 @@ try {
   assert((await page.locator('.stage-configuration').innerText()).includes(sha));
   await page.getByLabel('舞台基准身高', { exact: true }).fill('530');
   await page.getByRole('button', { name: '确认图片校准并加入草稿', exact: true }).click();
-  await page.waitForFunction(() => JSON.parse(document.querySelector('[aria-label="舞台配置 JSON"]').value).portraits['rin:coat'].height === 530);
-  const value = JSON.parse(await page.getByLabel('舞台配置 JSON', { exact: true }).inputValue());
+  await page.waitForFunction(() => JSON.parse(document.querySelector('[aria-label="舞台配置文本"]').value).portraits['rin:coat'].height === 530);
+  const value = JSON.parse(await page.getByLabel('舞台配置文本', { exact: true }).inputValue());
   assert.equal(value.portraits['rin:coat'].height, 530); assert.equal(value.portraits['rin:coat'].sources.normal.sha256, sha);
   assert.equal(JSON.parse(fs.readFileSync(path.join(fixture.root, 'game.config.json'), 'utf8')).stage.portraits['rin:coat'].height, 510);
   pass('calibration-is-human-confirmed-byte-pinned-draft');
@@ -121,7 +121,7 @@ try {
   assert(frame, 'reentered preview must own a fresh live iframe');
   await page.locator('.stage-adjustment-workspace > summary').click();
   await page.locator('.stage-configuration > summary').click();
-  assert.equal(JSON.parse(await page.getByLabel('舞台配置 JSON', { exact: true }).inputValue()).portraits['rin:coat'].height, 530);
+  assert.equal(JSON.parse(await page.getByLabel('舞台配置文本', { exact: true }).inputValue()).portraits['rin:coat'].height, 530);
   pass('stage-draft-survives-leaving-and-reentering-preview');
   await page.screenshot({ path: path.join(output, 'stage-calibration-960x720.png'), fullPage: true });
   await page.getByRole('button', { name: /保存全部/ }).click();

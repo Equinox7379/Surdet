@@ -304,7 +304,7 @@ describe('GalleryLayer direct contract', () => {
       expect(runtime.requestFrame).toHaveBeenCalled();
 
       runtime.requestFrame.mockClear();
-      findText(runtime.root, 'CG').emit('pointerdown', pointerEvent);
+      findText(runtime.root, '图片').emit('pointerdown', pointerEvent);
       expect(runtime.layer.gallery()).toMatchObject({ type: 'gallery', tab: 'cg', mode: 'grid' });
       expect(findText(runtime.root, '初遇').text).toBe('初遇');
       expect(runtime.requestFrame).toHaveBeenCalled();
@@ -619,7 +619,7 @@ describe('GalleryLayer direct contract', () => {
     const failure = new Error('gallery close callback');
     try {
       runtime.layer.showGallery({ cgs: [], music: [], texts: [] });
-      expect(findText(runtime.root, '暂无 CG 条目').text).toContain('暂无 CG 条目');
+      expect(findText(runtime.root, '暂无鉴赏图片').text).toContain('暂无鉴赏图片');
       expect(runtime.layer.gallery()).toEqual({ type: 'gallery', tab: 'cg', mode: 'grid', viewerKey: null });
 
       runtime.layer.showGallery({ cgs: [], music: [{ id: 'music-1', name: '主题曲', unlocked: true }] });

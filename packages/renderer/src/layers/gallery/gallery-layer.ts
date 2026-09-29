@@ -258,7 +258,7 @@ export class GalleryLayer implements GalleryProjectionPort {
         return t;
       };
       this.#galleryTabs = {
-        cg: mkBtn('CG', this.#margin, 80, () => this.#selectGalleryTab('cg')),
+        cg: mkBtn('图片', this.#margin, 80, () => this.#selectGalleryTab('cg')),
         music: mkBtn('音乐', this.#margin + 96, 80, () => this.#selectGalleryTab('music')),
         text: mkBtn('文本', this.#margin + 192, 80, () => this.#selectGalleryTab('text')),
       };
@@ -284,7 +284,7 @@ export class GalleryLayer implements GalleryProjectionPort {
     content.addChild(list, mask);
     const items = this.#galleryTab === 'cg' ? views.cgs : this.#galleryTab === 'music' ? views.music : views.texts;
     if (!items.length) {
-      const empty = this.#galleryTab === 'cg' ? '暂无 CG 条目' : this.#galleryTab === 'music' ? '暂无音乐条目' : '暂无文本回想条目';
+      const empty = this.#galleryTab === 'cg' ? '暂无鉴赏图片' : this.#galleryTab === 'music' ? '暂无音乐条目' : '暂无文本回想条目';
       list.addChild(this.#text(empty, this.#w - this.#margin * 2, 'textMuted')).position.set(this.#margin, 8);
       this.#scrollHeight = 64;
     } else if (this.#galleryTab === 'cg') {
@@ -308,7 +308,7 @@ export class GalleryLayer implements GalleryProjectionPort {
         cell.addChild(label);
         const border = this.#controlBorder(cell, cw, ch);
         bindPlayerControl(cell, {
-          label: item.unlocked ? `查看 ${item.name}` : '未解锁的 CG', width: cw, height: ch + 48, enabled: item.unlocked,
+          label: item.unlocked ? `查看 ${item.name}` : '未解锁的图片', width: cw, height: ch + 48, enabled: item.unlocked,
           reveal: () => this.#reveal(cell),
         });
         if (item.unlocked) {

@@ -85,7 +85,7 @@ function asFile(value: FileSystemFileHandle): FileLike {
 function relativeFilePath(path: string): void {
   if (path.length === 0 || path.startsWith('/') || path.includes('\\')
     || path.split('/').some((part) => part.length === 0 || part === '.' || part === '..')) {
-    throw new Error(`review fixture 相对路径不安全：${path}`);
+    throw new Error(`审阅快照相对路径不安全：${path}`);
   }
 }
 
@@ -228,7 +228,7 @@ async function writeReviewFixtureFile(
 ): Promise<void> {
   const parts = relativePath.split('/');
   const fileName = parts.pop();
-  if (!fileName) throw new Error(`review fixture 文件名为空：${relativePath}`);
+  if (!fileName) throw new Error(`审阅快照文件名为空：${relativePath}`);
   let directory = root;
   for (const part of parts) directory = await directory.getDirectoryHandle(part, { create: true });
   const handle = await directory.getFileHandle(fileName, { create: true });
@@ -270,12 +270,12 @@ export async function restoreOfficialResult(
     return;
   }
   const snapshot = officialFixtureSnapshots.get(workspace);
-  if (snapshot === undefined) throw new Error('尚未建立正式 result fixture 快照，请先预览正式结果');
+  if (snapshot === undefined) throw new Error('尚未建立正式结果快照，请先预览正式结果');
   await removeReviewFixtureExtras(workspace.projectHandle, '', new Set(snapshot.keys()));
   for (const [relativePath, bytes] of snapshot) await writeReviewFixtureFile(workspace.projectHandle, relativePath, bytes);
   const restored = await hashReviewFixtureTree(workspace.projectHandle, hasher);
   if (workspace.officialResultTreeSha256 !== null && restored !== workspace.officialResultTreeSha256) {
-    throw new Error('正式 result fixture 恢复后 tree identity 不一致');
+    throw new Error('正式结果快照恢复后，内容身份不一致');
   }
   reloadOfficialResult(workspace);
 }
@@ -300,14 +300,14 @@ export async function openReviewPreview(
   hasher: ReviewBytesHasher = defaultBytesHasher,
 ): Promise<ReviewPreviewResult> {
   if (workspace.identity.kind !== 'integration-result' || workspace.projectHandle === null) {
-    throw new Error('当前审阅没有可预览的 result/project fixture');
+    throw new Error('当前审阅没有可预览的结果或项目快照');
   }
   await openProjectFromHandle(workspace.projectHandle, { source: 'review-fixture' });
   const sceneIds = [...state.scenes.values()].map((scene) => scene.id);
   const sceneId = selectReviewPreviewScene(sceneIds, workspace.projection, request.sceneId, state.entryScene);
-  if (sceneId === null) throw new Error('result fixture 没有可运行场景');
+  if (sceneId === null) throw new Error('结果快照没有可运行场景');
   const sceneKey = [...state.scenes.entries()].find(([, scene]) => scene.id === sceneId)?.[0];
-  if (sceneKey === undefined) throw new Error(`result fixture 缺少场景：${sceneId}`);
+  if (sceneKey === undefined) throw new Error(`结果快照缺少场景：${sceneId}`);
   state.current = sceneKey;
   state.previewTimelineId = request.timelineId ?? null;
   state.previewChoices = request.choices === undefined ? null : { ...request.choices };
