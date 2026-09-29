@@ -1,4 +1,4 @@
-import { Container, Text as PText, type FederatedPointerEvent } from 'pixi.js';
+import { Container, Graphics, Text as PText, type FederatedPointerEvent } from 'pixi.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRendererTheme, DEFAULT_RENDERER_THEME } from '../../src/theme.js';
 import type { ChoiceOptionView, CommandRailItem } from '../../src/types.js';
@@ -158,6 +158,61 @@ function boundsOverlap(
 }
 
 describe('DialogueLayer visual layout contracts', () => {
+  it('reports unreadable overflow separately from scrollable long text, and suppresses native issues under work UI', () => {
+    const runtime = makeRuntime();
+    try {
+      runtime.layer.mountTextDisplays(); runtime.layer.beginText('凛');
+      runtime.layer.showText('凛', '海'.repeat(200) + '《うみ》');
+      expect(runtime.layer.readingDiagnostics()).toContainEqual(expect.objectContaining({ code: 'TEXT_OVERFLOW', target: 'dialogue' }));
+      runtime.layer.showText('凛', '海'.repeat(1500));
+      expect(runtime.layer.readingDiagnostics()).toContainEqual(expect.objectContaining({ code: 'TEXT_SCROLL', target: 'dialogue', severity: 'info' }));
+      expect(runtime.layer.readingDiagnostics().some(issue => issue.code === 'TEXT_OVERFLOW')).toBe(false);
+      runtime.layer.setDeclarativeUiSuppression({ dialogue: true });
+      expect(runtime.layer.readingDiagnostics()).toEqual([]);
+    } finally { disposeRuntime(runtime); }
+  });
+  it('keeps the first ruby reading inside the dialogue mask', () => {
+    const runtime = makeRuntime();
+    try {
+      runtime.layer.mountTextDisplays();
+      runtime.layer.showText('凛', '海《うみ》の向こう。');
+      const texts = (node: Container): PText[] => [...(node instanceof PText ? [node] : []), ...node.children.flatMap(texts)];
+      const ruby = texts(runtime.root).find(text => text.text === 'うみ')!;
+      const mask = ruby.parent!.mask as Graphics;
+      expect(ruby.getBounds().minY).toBeGreaterThanOrEqual(mask.context.bounds.minY);
+      expect(ruby.getBounds().maxY).toBeLessThanOrEqual(mask.context.bounds.maxY);
+    } finally { disposeRuntime(runtime); }
+  });
+
+  it('wraps long speaker names within the plate without shrinking the configured font', () => {
+    const runtime = makeRuntime();
+    try {
+      runtime.layer.mountTextDisplays();
+      const name = 'Long Name '.repeat(24);
+      runtime.layer.showText(name, '台词');
+      const speaker = dialogueRoot(runtime.root).children.find(child => child instanceof PText && child.text === name) as PText;
+      expect(speaker.width).toBeLessThanOrEqual(1082);
+      expect(speaker.style.fontSize).toBe(DEFAULT_RENDERER_THEME.typography.uiSize);
+      expect(speaker.getBounds().minX).toBeGreaterThanOrEqual(0);
+      expect(speaker.getBounds().maxX).toBeLessThanOrEqual(1280);
+      runtime.layer.showChoices([{ index: 2, label: '第一项'.repeat(50) }, { index: 4, label: '第二项' }]);
+      const choices = dialogueRoot(runtime.root).children[5] as Container;
+      expect((choices.mask as Graphics).context.bounds.maxY).toBeLessThan(speaker.getBounds().minY);
+    } finally { disposeRuntime(runtime); }
+  });
+
+  it('measures NVL with the actual font and retains translated names through size changes', () => {
+    const runtime = makeRuntime();
+    try {
+      runtime.layer.setSpeakerProfiles([{ id: 'rin', sourceName: '凛', name: 'Rin' }]);
+      runtime.layer.setNvlMode(true);
+      runtime.layer.appendNvlText('凛', 'i'.repeat(60));
+      expect(runtime.layer.nvlLines[0]!.text).toBe(`Rin：${'i'.repeat(60)}`);
+      runtime.layer.setTheme(createRendererTheme({ typography: { bodySize: 40 } }));
+      expect(runtime.layer.nvlLines[0]!.text).toContain('Rin：');
+      expect(runtime.layer.nvlLines[0]!.text).not.toContain('凛：');
+    } finally { disposeRuntime(runtime); }
+  });
   it('translates speaker display names without changing identity, including unchanged ADV text and NVL', () => {
     const runtime = makeRuntime();
     try {

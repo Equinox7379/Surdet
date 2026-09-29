@@ -27,6 +27,20 @@ export function normalizePreviewDiagnostic(value: unknown): PreviewDiagnostic | 
   };
 }
 
+/** The same projection is retained in the public preview trace, with its Core source. */
+export function readingPreviewDiagnostic(generation: number, source: { sceneId: string; file?: string; line?: number },
+  issues: readonly { severity: 'info' | 'warning'; code: string; target: string; message: string }[]): PreviewDiagnostic | null {
+  const actionable = issues.filter(issue => issue.severity === 'warning' || issue.code === 'TEXT_SCROLL');
+  if (!actionable.length) return null;
+  const targetName = (target: string): string => target === 'speaker' ? '名字栏' : target === 'dialogue' ? '对话正文'
+    : target === 'choices' ? '选项' : target.startsWith('choice:') ? `选项 ${Number(target.slice(7)) + 1}`
+    : target.startsWith('nvl:') ? `全文模式第 ${Number(target.slice(4)) + 1} 段` : target === 'nvl' ? '全文模式' : target;
+  return { generation, phase: 'runtime', sceneId: source.sceneId,
+    level: actionable.some(issue => issue.severity === 'warning') ? 'warning' : 'info',
+    message: `当前位置 ${source.file ?? source.sceneId}${source.line === undefined ? '' : `:${source.line}`}：`
+      + actionable.map(issue => `[${targetName(issue.target)}] ${issue.message}`).join('；') };
+}
+
 export class PreviewGeneration {
   #value = 0;
   next(): number { this.#value += 1; return this.#value; }

@@ -11,6 +11,7 @@ import {
 import type { BacklogEntry } from '../../backlog.js';
 import { parseRuby, stripRuby } from '../../ruby.js';
 import { layoutRuby, type RubyGlyphLayout } from '../../ruby-layout.js';
+import type { ReadingDiagnostic } from '../../reading-diagnostics.js';
 import { wrapCjk, wrapCjkMeasure } from '../../text-wrap.js';
 import type { PresentationPreferences } from '../../presentation.js';
 import { DEFAULT_PRESENTATION_PREFERENCES } from '../../presentation.js';
@@ -95,6 +96,7 @@ export interface DialogueLayerDebugSnapshot {
   readonly backlogLayout: DialogueBacklogLayoutSnapshot;
   readonly nvlActive: boolean;
   readonly nvlLines: readonly string[];
+  readonly readingDiagnostics: readonly ReadingDiagnostic[];
 }
 
 interface ChoiceView {
@@ -201,7 +203,6 @@ export class DialogueLayer implements DialogueProjectionPort {
   #nvlLineCounts: number[] = [];
   #nvlEntries: NvlPresentationEntry[] = [];
   #nvlActive = false;
-  #nvlCharsPerLine = 50;
 
   #bannerLayer: Container;
   #bannerText: PText;
@@ -319,6 +320,8 @@ export class DialogueLayer implements DialogueProjectionPort {
         fill: this.#theme.colors.accent,
         fontWeight: '600',
         letterSpacing: 1,
+        wordWrap: true,
+        breakWords: true,
         fontFamily: this.#assets.fontFamily('body'),
         stroke: { width: 0, color: this.#theme.colors.textOnAccent },
       } satisfies TextStyleOptions,
@@ -347,7 +350,6 @@ export class DialogueLayer implements DialogueProjectionPort {
       });
     }
     this.#dialogCharsPerLine = Math.max(10, Math.floor((this.#w - 184) / this.#theme.typography.bodySize));
-    this.#nvlCharsPerLine = Math.max(10, Math.floor(this.#w * 0.68 / this.#theme.typography.bodySize));
 
     this.#mountInitialDisplays();
   }
@@ -421,12 +423,49 @@ export class DialogueLayer implements DialogueProjectionPort {
       backlogLayout: this.#backlogLayoutSnapshot(),
       nvlActive: this.#nvlActive,
       nvlLines: this.#nvlLines.map((line) => String(line.text)),
+      readingDiagnostics: this.readingDiagnostics(),
     };
   }
 
   themeProjectionSnapshot(): LayerThemeProjectionSnapshot {
     return readThemeProjection(this.#dialogueRoot, this.#dialogueOverlayRoot,
       ...(this.#bannerLayer.parent === this.#root ? [this.#bannerLayer] : []));
+  }
+
+  readingDiagnostics(): ReadingDiagnostic[] {
+    if (this.#disposed) return [];
+    if (typeof document === 'undefined') return [{ code: 'TEXT_MEASUREMENT_UNAVAILABLE', severity: 'info',
+      target: 'dialogue', text: '', message: '当前环境没有文字测量画布，未执行阅读排版检查。' }];
+    const issues: ReadingDiagnostic[] = [];
+    const inspect = (text: string, target: string, width: number, available: number): void => {
+      issues.push(...this.#assets.fontDiagnostics('body', text, target));
+      if (width > available + 1) issues.push({ code: 'TEXT_OVERFLOW', severity: 'warning', target, text,
+        message: '文字超过可用宽度，请缩短不可分的注音段、调整字号或作品布局。' });
+    };
+    const scroll = (target: string, text: string): void => {
+      issues.push({ code: 'TEXT_SCROLL', severity: 'info', target, text, message: '本段超过阅读区域，需滚轮翻阅；可缩短段落或调整字号。' });
+    };
+    if (!this.#interfaceHidden && this.#nvlActive && this.#nvlLayer.renderable) {
+      this.#nvlLines.forEach((line, index) => inspect(line.text, `nvl:${index}`, line.width, this.#w * 0.68));
+      if (this.#nvlTotalHeight() > this.#h - 120) scroll('nvl', this.#nvlLines.map(line => line.text).join('\n'));
+    } else if (!this.#interfaceHidden && this.#lineActive && this.#dialogPanel.renderable) {
+      inspect(this.#speakerText.text, 'speaker', this.#speakerText.width, this.#dialogWidth() - 42);
+      if (this.#speakerText.y - this.#speakerText.height / 2 < 0) issues.push({ code: 'TEXT_OVERFLOW', severity: 'warning',
+        target: 'speaker', text: this.#speakerText.text, message: '名字栏超过画面顶部，请缩短显示名或调整字号。' });
+      const textNodes = this.#dialogText.visible ? [this.#dialogText] : [...this.#rubyBasePool, ...this.#rubyTextPool].filter(text => text.visible);
+      const width = this.#dialogText.visible ? this.#dialogText.width
+        : Math.max(0, ...textNodes.map(text => text.x + text.width * (1 - text.anchor.x)));
+      inspect(textNodes.map(text => text.text).join(''), 'dialogue', width, this.#dialogWidth());
+      const height = this.#dialogText.visible ? this.#dialogText.height
+        : Math.max(0, ...textNodes.map(text => text.y + text.height * (1 - text.anchor.y)));
+      if (height > this.#dialogBottom() - this.#dialogTop - 118 + 1) scroll('dialogue', this.#lastShownDialog);
+    }
+    if (this.#choiceLayer.renderable && this.#choiceViews.length) {
+      this.#choiceViews.forEach((view, index) => inspect(view.label.text, `choice:${index}`, view.label.width, view.width - 80));
+      const total = this.#choiceViews.reduce((height, view) => height + view.height + 12, -12);
+      if (total > this.#choiceBottom - 24) scroll('choices', this.#choiceViews.map(view => view.label.text).join('\n'));
+    }
+    return issues;
   }
 
   #onSelect: ((index: number) => void) | null = null;
@@ -488,20 +527,16 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#dialogText.style.fontSize = theme.typography.bodySize;
     this.#dialogText.style.lineHeight = theme.typography.bodySize * 1.6;
     this.#dialogCharsPerLine = Math.max(10, Math.floor(this.#dialogWidth() / theme.typography.bodySize));
-    this.#nvlCharsPerLine = Math.max(10, Math.floor(this.#w * 0.68 / theme.typography.bodySize));
     this.#renderDialogText(this.#lastShownDialog);
     if (this.#nvlActive || this.#interfaceHidden) {
       this.#dialogText.visible = false;
       this.#dialogRubyLayer.visible = false;
     }
-    this.#nvlEntries.forEach((entry, index) => {
-      const wrapped = wrapCjk(entry.speaker ? `${entry.speaker}：${entry.text}` : entry.text, this.#nvlCharsPerLine);
-      this.#nvlLines[index]!.text = wrapped.join('\n');
-      this.#nvlLines[index]!.style.fontSize = theme.typography.bodySize;
-      this.#nvlLines[index]!.style.lineHeight = theme.typography.bodySize * 1.6;
-      this.#nvlLineCounts[index] = wrapped.length;
-    });
-    this.#layoutNvl();
+    this.#reflowNvl();
+    for (const view of this.#choiceViews) {
+      view.label.style.fontSize = theme.typography.bodySize;
+      view.label.style.letterSpacing = theme.typography.uiLetterSpacing;
+    }
     this.layout();
   }
 
@@ -513,7 +548,8 @@ export class DialogueLayer implements DialogueProjectionPort {
       target.alpha = pages.dialogue ? 0 : 1;
       target.renderable = !pages.dialogue;
       target.accessibleChildren = !pages.dialogue;
-      target.eventMode = pages.dialogue ? 'none' : 'auto';
+      target.eventMode = pages.dialogue ? 'none'
+        : target === this.#dialogText || target === this.#dialogRubyLayer || target === this.#nvlLayer ? 'static' : 'auto';
     }
     this.#choiceLayer.alpha = pages.choices ? 0 : 1;
     this.#choiceLayer.renderable = !pages.choices;
@@ -549,6 +585,14 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#speakerText.style.fontFamily = this.#assets.fontFamily('body');
     this.#bannerText.style.fontFamily = this.#assets.fontFamily('title');
     this.#lastShownSpeaker = undefined;
+    this.#renderDialogText(this.#lastShownDialog);
+    if (this.#nvlActive || this.#interfaceHidden) {
+      this.#dialogText.visible = false;
+      this.#dialogRubyLayer.visible = false;
+    }
+    this.#reflowNvl();
+    for (const view of this.#choiceViews) view.label.style.fontFamily = this.#assets.fontFamily('body');
+    this.layout();
   }
 
   layout(): void {
@@ -575,7 +619,8 @@ export class DialogueLayer implements DialogueProjectionPort {
     const heights = this.#choiceViews.map((view) => Math.max(56, view.label.height + 24));
     const totalHeight = heights.reduce((sum, height) => sum + height, 0)
       + Math.max(0, heights.length - 1) * gap;
-    const bottom = this.#lineActive ? Math.max(this.#h * 0.46, this.#dialogTop - 20) : this.#h;
+    const nameHeight = this.#speakerPlate.visible ? Math.max(40, this.#speakerText.height + 12) : 0;
+    const bottom = this.#lineActive ? Math.max(80, this.#dialogTop - nameHeight - 20) : this.#h;
     this.#choiceBottom = bottom;
     this.#choiceScroll = Math.max(0, Math.min(Math.max(0, totalHeight - (bottom - 24)), this.#choiceScroll));
     this.#choiceMask.clear().rect(0, 24, this.#w, Math.max(1, bottom - 24)).fill(0xffffff);
@@ -910,6 +955,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     }
     // A name-only locale change still needs a fresh projection of an unchanged line.
     this.#lastShownSpeaker = undefined;
+    this.#reflowNvl();
     this.#updateSpeakerAvatar();
     this.#requestFrame();
   }
@@ -1011,8 +1057,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     const profile = normalizedSpeaker ? this.#speakerProfiles.get(normalizedSpeaker.trim()) : undefined;
     this.setActiveSpeaker(profile?.id ?? null);
     this.#projectionVersion += 1;
-    const raw = normalizedSpeaker !== null ? `${profile?.name ?? normalizedSpeaker}：${text}` : text;
-    const wrapped = wrapCjk(raw, this.#nvlCharsPerLine);
+    const wrapped = this.#wrapNvlText(normalizedSpeaker, text);
     const textNode = bindThemeTextProjection(new PText({
       text: wrapped.join('\n'),
       style: { fontSize: this.#theme.typography.bodySize, lineHeight: this.#theme.typography.bodySize * 1.6, fill: this.#theme.colors.text, fontFamily: this.#assets.fontFamily('body') } satisfies TextStyleOptions,
@@ -1252,16 +1297,18 @@ export class DialogueLayer implements DialogueProjectionPort {
     const show = this.#speakerText.text.length > 0 && !this.#interfaceHidden && !this.#nvlActive;
     this.#speakerPlate.visible = show;
     if (!show) return;
+    this.#speakerText.style.wordWrapWidth = Math.max(1, this.#dialogWidth() - 42);
     const w = Math.min(this.#dialogWidth(), Math.max(176, this.#speakerText.width + 42));
+    const height = Math.max(40, this.#speakerText.height + 12);
     const x = this.#dialogLeft() - 18, y = this.#dialogTop;
-    this.#speakerPlate.poly([x + 10, y - 38, x + w, y - 38, x + w - 10, y + 2, x, y + 2])
+    this.#speakerPlate.poly([x + 10, y - height + 2, x + w, y - height + 2, x + w - 10, y + 2, x, y + 2])
       .fill({ color: this.#theme.colors.panel, alpha: this.#theme.opacity.panel });
     this.#speakerPlate.moveTo(x + 8, y + 1).lineTo(x + w * 0.42, y + 1)
       .bezierCurveTo(x + w * 0.66, y + 2, x + w * 0.73, y - 20, x + w - 4, y - 9)
       .stroke({ color: this.#theme.colors.line, width: 1.5, alpha: 0.9 });
     bindThemeGraphicsProjection(this.#speakerPlate, ['panel', 'line']);
     this.#speakerText.anchor.set(0.5);
-    this.#speakerText.position.set(x + w / 2, y - 18);
+    this.#speakerText.position.set(x + w / 2, y + 2 - height / 2);
   }
 
   #renderDialogText(value: string): void {
@@ -1318,6 +1365,16 @@ export class DialogueLayer implements DialogueProjectionPort {
         ruby.anchor.set(0.5, 1);
         ruby.position.set(layout.x + layout.width / 2, layout.y - 2);
       }
+    });
+    // Keep the reading above the first base inside the same scrollable viewport.
+    // Actual font metrics may exceed the nominal half-size (especially CJK fonts).
+    const rubyInset = Math.max(0, ...this.#rubyTextPool.filter(text => text.visible).map(text => text.height + 2));
+    const pitch = Math.max(this.#theme.typography.bodySize * 1.6,
+      rubyInset + Math.max(0, ...this.#rubyBasePool.filter(text => text.visible).map(text => text.height)) + 2);
+    rubyIndex = 0;
+    layouts.forEach((layout, index) => {
+      this.#rubyBasePool[index]!.y = layout.line * pitch + rubyInset;
+      if (layout.ruby !== undefined) this.#rubyTextPool[rubyIndex++]!.y = layout.line * pitch + rubyInset - 2;
     });
   }
 
@@ -1389,6 +1446,30 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   #applyBacklogScroll(): void {
     this.#backlogEntriesLayer?.position.set(0, this.#backlogScroll);
+  }
+
+  #wrapNvlText(speaker: string | null, text: string): string[] {
+    const name = speaker ? this.#speakerProfiles.get(speaker.trim())?.name ?? speaker : null;
+    const raw = name ? `${name}：${text}` : text;
+    const size = this.#theme.typography.bodySize;
+    const width = this.#w * 0.68 - size;
+    const ctx = getDialogMeasureCtx();
+    if (!ctx) return wrapCjk(raw, Math.max(1, Math.floor(width / size)));
+    ctx.font = `400 ${size}px ${this.#assets.fontFamily('body')}`;
+    return wrapCjkMeasure(raw, width, value => ctx.measureText(value).width);
+  }
+
+  #reflowNvl(): void {
+    this.#nvlEntries.forEach((entry, index) => {
+      const wrapped = this.#wrapNvlText(entry.speaker, entry.text);
+      const node = this.#nvlLines[index]!;
+      node.text = wrapped.join('\n');
+      node.style.fontFamily = this.#assets.fontFamily('body');
+      node.style.fontSize = this.#theme.typography.bodySize;
+      node.style.lineHeight = this.#theme.typography.bodySize * 1.6;
+      this.#nvlLineCounts[index] = Math.max(1, wrapped.length);
+    });
+    this.#layoutNvl();
   }
 
   #nvlTotalHeight(): number {

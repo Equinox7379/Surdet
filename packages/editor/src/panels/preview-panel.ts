@@ -501,6 +501,11 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   controls.appendChild(playBtn);
   const resumeBtn = h('button', 'preview-replay-action', '回到上次位置');
   resumeBtn.type = 'button';
+  const readingBtn = h('button', 'preview-replay-action', '检查当前排版');
+  readingBtn.type = 'button';
+  readingBtn.title = '检查当前已显示文字的字体缺字、越界与滚动；未播放章节不在检查范围内';
+  readingBtn.onclick = () => frame.contentWindow?.postMessage({ type: 'surdet-preview-reading-check' }, '*');
+  controls.appendChild(readingBtn);
   controls.appendChild(resumeBtn);
   toolbar.appendChild(controls);
   workspace.appendChild(toolbar);

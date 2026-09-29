@@ -9,8 +9,8 @@
 import { describe, expect, it } from 'vitest';
 import { PixiStage } from '../../src/pixi-stage.js';
 
-/** Pass 8 默认 1280x720：68% 阅读列 / 28px 正文 = 31 字。 */
-const CHARS_PER_LINE = 31;
+/** 无画布的估算回退：68% 阅读列减去一个字的标点悬挂余量，28px 正文 = 30 字。 */
+const CHARS_PER_LINE = 30;
 /** 正文行高 44.8 + 段间距 16；原 NVL 淘汰预算仍为 600。 */
 const SINGLE_ENTRY_H = 60.8;
 

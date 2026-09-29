@@ -5,6 +5,7 @@ import { RendererError } from '../api/renderer-errors.js';
 import { AsyncGeneration } from '../lifecycle/async-generation.js';
 import { RenderLifecycle } from '../lifecycle/render-lifecycle.js';
 import { parsePortraitVisual, portraitVisualPaths, samplePortraitVisual, type PortraitVisualDefinition } from '@surdet/core';
+import { readFontCoverage, fontTextDiagnostics, type FontCoverage, type ReadingDiagnostic } from '../reading-diagnostics.js';
 
 export type RenderAssetSource = string | Texture;
 
@@ -89,7 +90,8 @@ export class RenderAssetRegistry {
   #sourceLoads = new Map<string, Promise<void>>();
   #sourceReleases = new Map<string, { promise: Promise<void>; failed: boolean }>();
   #generatedRefs = new Map<Texture, number>();
-  #fontFaces = new Map<RendererFontRole, { face: FontFace; family: string }>();
+  #fontFaces = new Map<RendererFontRole, { face: FontFace; family: string; coverage: FontCoverage }>();
+  #fontRequests = new Map<RendererFontRole, object>();
   #fontFamilies: Record<RendererFontRole, string> = { ...DEFAULT_RENDERER_FONT_FAMILIES };
   #disposed = false;
   #verifiedBlobUrls = new Set<string>();
@@ -220,15 +222,34 @@ export class RenderAssetRegistry {
     timeoutMs = 3000,
   ): Promise<boolean> {
     if (typeof FontFace === 'undefined' || typeof document === 'undefined') return false;
+    this.#ensureActive('registerFontRole');
     const token = this.#generation.token();
+    const request = {};
+    this.#fontRequests.set(role, request);
+    const abort = new AbortController();
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const face = new FontFace(family, `url(${url})`, { weight: '400' });
-      const loaded = await Promise.race([
-        face.load(),
-        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('字体加载超时')), timeoutMs); }),
+      const { loaded, bytes } = await Promise.race([
+        (async () => {
+          const response = await fetch(url, { signal: abort.signal });
+          if (!response.ok) throw new Error(`字体读取失败：${response.status}`);
+          const bytes = await response.arrayBuffer();
+          const loaded = await new FontFace(family, bytes, { weight: '400' }).load();
+          return { loaded, bytes };
+        })(),
+        new Promise<never>((_, reject) => { timeout = setTimeout(() => {
+          abort.abort(); reject(new Error('字体加载超时'));
+        }, timeoutMs); }),
       ]);
-      if (!token.current) return false;
+      if (timeout !== undefined) clearTimeout(timeout);
+      if (!token.current || this.#fontRequests.get(role) !== request) return false;
+
+      // Failure/timeout of the diagnostic decoder must not turn a usable font into a load failure.
+      const coverage = await Promise.race([
+        readFontCoverage(new Uint8Array(bytes)),
+        new Promise<FontCoverage>(resolve => { timeout = setTimeout(() => resolve({ characters: null, error: '字形覆盖检查超时' }), timeoutMs); }),
+      ]);
+      if (!token.current || this.#fontRequests.get(role) !== request) return false;
 
       const fontSet = document.fonts as unknown as {
         add: (font: FontFace) => void;
@@ -236,7 +257,7 @@ export class RenderAssetRegistry {
       };
       this.#lifecycle.release('runtime', 'blob', `font:${role}`);
       fontSet.add(loaded);
-      this.#fontFaces.set(role, { face: loaded, family });
+      this.#fontFaces.set(role, { face: loaded, family, coverage });
       this.#fontFamilies[role] = family;
       this.#lifecycle.register('runtime', 'blob', `font:${role}`, () => {
         fontSet.delete?.(loaded);
@@ -254,12 +275,17 @@ export class RenderAssetRegistry {
     return this.#fontFamilies[role];
   }
 
+  fontDiagnostics(role: RendererFontRole, text: string, target: string): ReadingDiagnostic[] {
+    return fontTextDiagnostics(this.#fontFaces.get(role)?.coverage, role, this.fontFamily(role), text, target);
+  }
+
   resetFonts(): void {
     if (this.#disposed) return;
     this.#resetFontsInternal();
   }
 
   #resetFontsInternal(): void {
+    this.#fontRequests.clear();
     for (const role of ['title', 'body', 'ui'] as const) {
       this.#lifecycle.release('runtime', 'blob', `font:${role}`);
     }

@@ -93,6 +93,8 @@ export interface DialogueProjectionSnapshot {
   readonly commandRailSuppressed: boolean;
   readonly nvlActive: boolean;
   readonly nvlLines: readonly string[];
+  /** Current displayed text only; not certification of unplayed scenes or OS fallback fonts. */
+  readonly readingDiagnostics?: readonly import('../reading-diagnostics.js').ReadingDiagnostic[];
 }
 
 export interface MenuProjectionSnapshot {
@@ -144,6 +146,8 @@ export interface RendererThemeProjectionSnapshot {
 }
 
 export interface RendererDiagnosticQueries {
+  /** Inspect configured-font coverage without treating OS fallback as a portable guarantee. */
+  fontText?(role: RendererFontRole, text: string, target: string): readonly import('../reading-diagnostics.js').ReadingDiagnostic[];
   resourceSnapshot(): RendererResourceSnapshot;
   /** Recursively frozen, isolated lifecycle identity ledger; never exposes disposers or display objects. */
   resourceLedger?(): RenderLifecycleDiagnosticSnapshot;

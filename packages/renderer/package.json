@@ -21,10 +21,12 @@
   },
   "dependencies": {
     "@surdet/core": "0.1.0",
+    "fontkit": "2.0.4",
     "howler": "^2.2.4",
     "pixi.js": "^8.19.0"
   },
   "devDependencies": {
+    "@types/fontkit": "2.0.9",
     "@types/howler": "^2.2.13"
   }
 }
