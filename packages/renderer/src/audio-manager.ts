@@ -4,6 +4,7 @@ import type {
   AudioBgmDiagnosticSnapshot,
   AudioHandle,
   BgmPlaybackOptions,
+  VoicePlaybackOptions,
 } from './types.js';
 import type { AudioPlaybackSnapshot } from './rollback-buffer.js';
 import { RendererError } from './api/renderer-errors.js';
@@ -41,6 +42,10 @@ export class AudioManager implements AudioHandle {
   #bgmEpoch = 0;
   #ambienceEpoch = 0;
   #voice: Howl | null = null;
+  #voiceId: number | undefined;
+  #voicePending = false;
+  #voicePaused = false;
+  #voiceReplay = false;
   #cache = new Map<string, AudioCacheEntry>();
   #clock = 0;
   #bgmVolume = 0.55;
@@ -169,16 +174,36 @@ export class AudioManager implements AudioHandle {
     this.#evict('ambience');
   }
 
-  playVoice(src: string): void {
+  playVoice(src: string, options?: VoicePlaybackOptions): void {
+    this.stopVoice();
     const h = this.#get(src, { channel: 'voice' });
     this.#voice = h;
-    h.play();
+    this.#voicePending = true;
+    this.#voiceReplay = options?.replay === true;
+    if (!this.#voicePaused || this.#voiceReplay) this.#voiceId = h.play();
     this.#evict('voice');
   }
 
-  /** 语音是否播放中（Howl.playing() 查全局实例；结束/停止后自动为 false） */
+  stopVoice(): void {
+    const previous = this.#voice, id = this.#voiceId;
+    this.#voice = null; this.#voiceId = undefined; this.#voicePending = false; this.#voiceReplay = false;
+    previous?.stop(id);
+  }
+
+  setVoicePaused(paused: boolean): void {
+    if (paused === this.#voicePaused) return;
+    this.#voicePaused = paused;
+    if (!this.#voice) return;
+    // A history replay is intentionally audible over a paused story; leaving it
+    // stops that replay rather than restoring a second, hidden voice instance.
+    if (this.#voiceReplay) { if (!paused) this.stopVoice(); return; }
+    if (paused) { if (this.#voiceId !== undefined) this.#voice.pause(this.#voiceId); }
+    else { this.#voicePending = true; this.#voiceId = this.#voice.play(this.#voiceId); }
+  }
+
+  /** 加载或播放中的当前语音；自动阅读不能越过尚未起播的录音。 */
   isVoicePlaying(): boolean {
-    return this.#voice !== null && this.#voice.playing();
+    return this.#voice !== null && (this.#voicePending || this.#voice.playing(this.#voiceId));
   }
 
   /** BGM 的真实 Howler 播放状态；不以逻辑 key 快照冒充已发声。 */
@@ -209,7 +234,7 @@ export class AudioManager implements AudioHandle {
     this.#bgmErrors = [];
     this.#ambienceKey = null;
     this.#ambience = null;
-    this.#voice = null;
+    this.#voice = null; this.#voiceId = undefined; this.#voicePending = false; this.#voicePaused = false; this.#voiceReplay = false;
   }
 
   snapshotPlayback(): AudioPlaybackSnapshot {
@@ -310,8 +335,8 @@ export class AudioManager implements AudioHandle {
         onloaderror: (_id, error) => {
           this.#reportError(entry, 'loaderror', error);
         },
-        onplayerror: (_id, error) => {
-          this.#reportError(entry, 'playerror', error);
+        onplayerror: (id, error) => {
+          this.#reportError(entry, 'playerror', error, id);
         },
       });
       entry = { key, src, channel: opts.channel, howl: h, lastUsed: ++this.#clock, session: this.#session };
@@ -319,6 +344,10 @@ export class AudioManager implements AudioHandle {
       const onLifecycle = (): void => this.#evict(opts.channel);
       h.on('end', onLifecycle);
       h.on('stop', onLifecycle);
+      if (opts.channel === 'voice') {
+        h.on('play', id => { if (this.#voice === h && this.#voiceId === id) this.#voicePending = false; });
+        h.on('end', id => { if (this.#voice === h && this.#voiceId === id) { this.#voice = null; this.#voiceId = undefined; this.#voicePending = false; } });
+      }
     } else {
       // 复用缓存时刷新播放配置：同一 src 可能先以 SE 播放、后被 BGM 引用（或反之），
       // 首次创建时固定的 loop/volume 不再适用，必须按本次用途更新。
@@ -330,9 +359,14 @@ export class AudioManager implements AudioHandle {
     return entry.howl;
   }
 
-  #reportError(entry: AudioCacheEntry | undefined, type: AudioBgmDiagnosticError['type'], reason: unknown): void {
+  #reportError(entry: AudioCacheEntry | undefined, type: AudioBgmDiagnosticError['type'], reason: unknown, soundId?: number): void {
     if (!entry || this.#cache.get(entry.key) !== entry || entry.session !== this.#session) return;
     if ((entry.channel === 'bgm' && entry.src !== this.#bgmKey) || (entry.channel === 'ambience' && entry.src !== this.#ambienceKey)) return;
+    if (entry.channel === 'voice') {
+      if (entry.howl !== this.#voice) return;
+      if (soundId !== undefined && soundId !== this.#voiceId) return;
+      this.stopVoice();
+    }
     const message = String(reason);
     if (entry.channel === 'bgm') {
       this.#bgmErrors.push({ type, message });

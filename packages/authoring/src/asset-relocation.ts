@@ -728,8 +728,14 @@ function configRewrite(
   const knownPaths = new Set<string>();
   const characters = isRecord(root.characters) ? root.characters : {};
   try {
-    readTextCatalog(root);
-    // Validated catalog fields are prose, source identities and versions, never media references.
+    const catalog = readTextCatalog(root);
+    for (const [index, entry] of (catalog?.entries ?? []).entries()) for (const [locale, voice] of Object.entries(entry.voices ?? {})) {
+      if (source.kind === 'voice' && voice.asset === source.key && target.key !== source.key) replacements.push({
+        path: ['textCatalog', 'entries', index, 'voices', locale, 'asset'], before: source.key, after: target.key,
+        reference: reference('config', file.path, `对白 ${entry.key} · ${locale} 配音`, 'textCatalog.voices', `text-key:${entry.key}:voice:${locale}`),
+      });
+    }
+    // All other validated catalog strings are prose, source identities or versions.
     for (const location of jsonStringLocations(file.text)) if (location.path[0] === 'textCatalog') knownPaths.add(`${location.kind}:${pathKey(location.path)}`);
   } catch (error) {
     addBlocker(blockers, 'ASSET_RELOCATION_OPAQUE_REFERENCE', `文本目录无法安全解析：${error instanceof Error ? error.message : String(error)}`, file.path);

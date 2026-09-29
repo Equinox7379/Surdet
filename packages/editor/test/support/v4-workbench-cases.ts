@@ -291,12 +291,12 @@ export const v4WorkbenchCases: BrowserCase[] = [
     finish(new TextEncoder().encode('过时文件').buffer); await nextTask();
     assert(control<HTMLTextAreaElement>('[aria-label="原始文字"]').value === '新窗口的文字。', 'late old read overwrote new input');
   } },
-  { name: '流程图按混合大小写 GAL 扩展名显示真实校验错误和警告', run: () => {
+  { name: '流程图按混合大小写 GAL 扩展名显示真实校验错误和警告', run: async () => {
     const scene = fixture('@scene start\n@jump broken\n');
     state.entryScene = 'start';
     state.scenes.set('chapter/broken', { ...scene, id: 'broken', file: 'chapter/broken.GAL', text: '@scene broken\n@jump missing_scene\n' });
     state.scenes.set('warning', { ...scene, id: 'warning', file: 'warning.GaL', text: '@scene warning\n@choice\n  （还要看看。） -> @jump start\n' });
-    const result = validateProject([...state.scenes].map(([key, value]) => ({ key, id: value.id, file: value.file, source: value.text })), 'start');
+    const result = await validateProject([...state.scenes].map(([key, value]) => ({ key, id: value.id, file: value.file, source: value.text })), 'start');
     assert(result.issues.some(issue => issue.file === 'chapter/broken.GAL' && issue.severity === 'error'), 'missing actual mixed-case error');
     assert(result.issues.some(issue => issue.file === 'warning.GaL' && issue.severity === 'warning'), 'missing actual mixed-case warning');
     state.lastValidation = result;

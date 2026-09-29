@@ -206,6 +206,7 @@ export interface AudioBgmDiagnosticSnapshot {
 export interface BgmPlaybackOptions {
   readonly restart?: boolean;
 }
+export interface VoicePlaybackOptions { readonly replay?: boolean }
 
 export interface AudioHandle {
   /** Loading/playback failures from active sources; unsubscribe when the consumer is destroyed. */
@@ -214,7 +215,9 @@ export interface AudioHandle {
   /** 环境音循环声道（最多一个活动实例；可选以兼容轻量 fake） */
   playAmbience?(src: string | null, fadeMs?: number): void;
   playSe(src: string): void;
-  playVoice(src: string): void;
+  playVoice(src: string, options?: VoicePlaybackOptions): void;
+  stopVoice?(): void;
+  setVoicePaused?(paused: boolean): void;
   /** 停止全部音频（BGM/SE/语音） */
   stopAll(): void;
   /** 主音量 0..1（乘到各分轨之上） */
@@ -248,6 +251,8 @@ export const NULL_AUDIO: AudioHandle = {
   playBgm(_src, _options) {},
   playSe() {},
   playVoice() {},
+  stopVoice() {},
+  setVoicePaused() {},
   stopAll() {},
   setMasterVolume() {},
   getMasterVolume() { return 1; },

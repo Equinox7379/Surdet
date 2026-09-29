@@ -25,6 +25,26 @@ async function fixture(text = script) {
 }
 
 describe('project text source and playback contract', () => {
+  it('selects confirmed per-language voices without falling back to the wrong language or stale words', async () => {
+    const f = await fixture(), entry = f.catalog.entries[0]!;
+    entry.voices = {
+      'zh-CN': { asset: 'hello_cn', sourceVersion: entry.source.version, text: entry.source.text },
+      en: { asset: 'hello_en', sourceVersion: entry.source.version, text: entry.translations.en!.value },
+    };
+    const resolver = createProjectTextResolver(readTextCatalog({ textCatalog: f.catalog }), f.sources);
+    expect(resolver.voice('intro', 4, entry.source.text, 'en', f.scene.sha256)).toBe('hello_en');
+    expect(resolver.voice('intro', 4, entry.source.text, 'zh-CN', f.scene.sha256)).toBe('hello_cn');
+    expect(resolver.voice('intro', 4, entry.source.text, 'ja', f.scene.sha256)).toBeNull();
+    expect(resolver.voice('intro', 4, entry.source.text, 'en', '0'.repeat(64))).toBeNull();
+    entry.translations.en!.value = 'Welcome, {name}.';
+    const changed = createProjectTextResolver(f.catalog, f.sources);
+    expect(changed.voice('intro', 4, entry.source.text, 'en', f.scene.sha256)).toBeNull();
+    expect(changed.diagnostics('en')).toContainEqual(expect.stringContaining('配音对应台词已变化'));
+    expect(entry.voices.en!.asset).toBe('hello_en');
+    expect(changed.voice('intro', 9, '结尾。', 'en', f.scene.sha256)).toBeUndefined();
+    const invalid = structuredClone(f.catalog); invalid.entries[1]!.voices = entry.voices;
+    expect(() => readTextCatalog({ textCatalog: invalid })).toThrow('只有对白');
+  });
   it('shares stable scene coordinates and explicit display-field references', async () => {
     const { sources, resolver } = await fixture();
     expect(sources.filter(isStoryTextSource).map(source => source.sourceId)).toEqual(['["intro","start",0]', '["intro","start",1]', '["intro","start",2]', '["intro","end",0]']);
@@ -57,6 +77,7 @@ describe('project text source and playback contract', () => {
     const interpreter = new Interpreter(store, bus, registry);
     let activeLocale = locale;
     interpreter.setTextResolver(source => source.kind === 'speaker' ? source.text : resolver.story(source.sceneId, source.line, source.kind, source.text, activeLocale, source.sceneVersion ?? ''));
+    interpreter.setVoiceResolver(() => activeLocale === 'en' ? 'greeting_en' : null);
     const spoken: string[] = [], refreshed: CoreEventMap['textRefresh'][] = [], choices: CoreEventMap['choice'][] = [];
     bus.on('text', event => spoken.push(event.value)); bus.on('textRefresh', event => refreshed.push(event)); bus.on('choice', event => choices.push(event));
     interpreter.start('intro');
@@ -64,6 +85,7 @@ describe('project text source and playback contract', () => {
     const before = interpreter.saveSnapshot()!;
     activeLocale = 'ja'; interpreter.refreshDisplayedText();
     expect(refreshed[0]!.text!.value).toBe('こんにちは、凛。'); expect(spoken).toHaveLength(1);
+    expect(refreshed[0]!.text!.voice).toBeNull();
     for (const key of ['position', 'variables', 'readSet', 'callStack'] as const) expect(interpreter.saveSnapshot()![key]).toEqual(before[key]);
     interpreter.advance(); expect(choices[0]!.options).toEqual([{ index: 1, label: '凛へ' }]);
     activeLocale = 'en'; interpreter.refreshDisplayedText();

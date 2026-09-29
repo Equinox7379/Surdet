@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { beginChange, InMemoryChangeRepository } from '../src/change-session.js';
 import { loadProjectSnapshot } from '../src/project-snapshot.js';
-import { applyTextCatalogPatch, collectTextSources, exportTextCatalogCsv, inspectTextCatalog, previewTextCatalogImport, readTextCatalog, renameTextCatalogReferences, assertTextCatalogTargetRemovable, TEXT_CSV_COLUMNS, type TextCatalogPatch } from '../src/text-catalog.js';
+import { applyTextCatalogPatch, collectTextSources, exportTextCatalogCsv, exportVoiceCatalogCsv, inspectTextCatalog, previewTextCatalogImport, readTextCatalog, renameTextCatalogReferences, assertTextCatalogTargetRemovable, TEXT_CSV_COLUMNS, type TextCatalogPatch } from '../src/text-catalog.js';
 import { csvRecords } from '../src/script-import.js';
 import { buildObjectIndex } from '../src/object-index.js';
 import { validateSnapshot } from '../src/validation.js';
@@ -15,13 +15,13 @@ async function snapshot(files: Record<string, string>) {
   return loadProjectSnapshot({ rootIdentity: 'texts', listFiles: async () => Object.keys(files), exists: async path => path in files,
     readText: async path => ({ path, text: files[path]!, bytes: Buffer.byteLength(files[path]!), sha256: await hasher.sha256(files[path]!) }) }, hasher);
 }
-async function fixture() {
+async function fixture(assets: { path: string }[] = []) {
   const files = { 'game.config.json': JSON.stringify({ entryScene: 'intro', future: 9, variables: { name: { type: 'string', initial: '凛' } } }), 'content/scenario/intro.gal': scene };
   const base = await snapshot(files), change = await beginChange(base, new InMemoryChangeRepository());
   change.record.composition!.mode = 'direct';
   let next = 0;
-  const inspect = async () => inspectTextCatalog(await snapshot(change.record.workingFiles), hasher);
-  const apply = async (patch: TextCatalogPatch) => { const view = await inspect(); return applyTextCatalogPatch(change, { operationId: `text-${next++}`, expectedRevision: view.revision, expectedFingerprint: view.fingerprint, patch }, hasher); };
+  const inspect = async () => inspectTextCatalog(await snapshot(change.record.workingFiles), hasher, 'en', assets);
+  const apply = async (patch: TextCatalogPatch) => { const view = await inspect(); return applyTextCatalogPatch(change, { operationId: `text-${next++}`, expectedRevision: view.revision, expectedFingerprint: view.fingerprint, patch }, hasher, assets); };
   const bind = async () => { const view = await inspect(); await apply({ type: 'bind', sourceLocale: 'zh-CN', bindings: view.sources.map((source, index) => ({ key: `line.${index}`, sourceId: source.sourceId })) }); };
   const csv = async (mutate: (cells: string[][]) => void = () => {}) => {
     const rows = csvRecords(exportTextCatalogCsv(await inspect()).replace(/^\uFEFF/, '')).records.map(row => row.cells);
@@ -32,6 +32,58 @@ async function fixture() {
 }
 
 describe('text catalog authoring', () => {
+  it('round-trips source/translated voice manifests, preserves stale recordings, and explicitly removes bindings', async () => {
+    const assets = [{ path: 'content/assets/voice/hello.wav' }], f = await fixture(assets); await f.bind();
+    const inspect = async (locale: string) => inspectTextCatalog(await snapshot(f.change.record.workingFiles), hasher, locale, assets);
+    const voiceCsv = async (locale: string, action: string, voice: string) => {
+      const rows = csvRecords(exportVoiceCatalogCsv(await inspect(locale)).replace(/^\uFEFF/, '')).records.map(row => row.cells);
+      expect(rows).toHaveLength(4); // Three dialogue rows, not choice captions.
+      rows[1]![7] = voice; rows[1]![8] = action;
+      return rows.map(row => row.map(value => `"${value.replaceAll('"', '""')}"`).join(',')).join('\r\n');
+    };
+    const apply = async (locale: string, csv: string) => {
+      const preview = await previewTextCatalogImport(await snapshot(f.change.record.workingFiles), hasher, locale, csv, assets);
+      expect(preview.issues).toEqual([]);
+      await f.apply({ type: 'import', locale, csv, previewFingerprint: preview.previewFingerprint });
+    };
+    await apply('zh-CN', await voiceCsv('zh-CN', 'bind', 'hello'));
+    expect((await inspect('zh-CN')).entries[0]).toMatchObject({ voiceStatus: 'ready', voices: { 'zh-CN': { asset: 'hello', text: '你好，{name}。' } } });
+    expect((await previewTextCatalogImport(await snapshot(f.change.record.workingFiles), hasher, 'en', await voiceCsv('en', 'bind', 'hello'), assets)).ready).toBe(false);
+    const translations = await f.csv(rows => { for (const row of rows.slice(1)) row[6] = `EN ${row[5]}`; });
+    await apply('en', translations);
+    await apply('en', await voiceCsv('en', 'bind', 'hello'));
+    expect((await inspect('en')).entries[0]!.voiceStatus).toBe('ready');
+    const voiceIndex = buildObjectIndex(await snapshot(f.change.record.workingFiles));
+    expect(voiceIndex.byRef.get('text-key:line.0')!.references).toContain('asset:voice:hello');
+    expect(voiceIndex.byRef.get('asset:voice:hello')!.referencedBy).toContain('text-key:line.0');
+    const revision = f.change.record.workingRevision;
+    const badKeep = await voiceCsv('en', 'keep', '');
+    expect((await previewTextCatalogImport(await snapshot(f.change.record.workingFiles), hasher, 'en', badKeep, assets)).ready).toBe(false);
+    expect(f.change.record.workingRevision).toBe(revision);
+    const revised = await f.csv(rows => { rows[1]![6] = 'Welcome, {name}.'; });
+    await apply('en', revised);
+    expect((await inspect('en')).entries[0]).toMatchObject({ voiceStatus: 'needs-recording', voices: { en: { asset: 'hello', text: 'EN 你好，{name}。' } } });
+    await apply('en', await voiceCsv('en', 'remove', ''));
+    expect((await inspect('en')).entries[0]!.voices).toHaveProperty('zh-CN');
+    expect((await inspect('en')).entries[0]!.voices).not.toHaveProperty('en');
+  });
+  it.each(['missing', 'duplicate', 'unsupported', 'stale-source', 'changed-inventory'])('rejects unsafe voice confirmation atomically: %s', async mode => {
+    const assets = [{ path: 'content/assets/voice/hello.wav' }], f = await fixture(assets); await f.bind();
+    const inspection = await inspectTextCatalog(await snapshot(f.change.record.workingFiles), hasher, 'zh-CN', assets);
+    const records = csvRecords(exportVoiceCatalogCsv(inspection).replace(/^\uFEFF/, '')).records.map(row => row.cells);
+    records[1]![7] = 'hello'; records[1]![8] = 'bind';
+    const csv = records.map(row => row.map(value => `"${value.replaceAll('"', '""')}"`).join(',')).join('\r\n');
+    const valid = await previewTextCatalogImport(await snapshot(f.change.record.workingFiles), hasher, 'zh-CN', csv, assets);
+    expect(valid.ready).toBe(true);
+    if (mode === 'missing') assets.splice(0);
+    if (mode === 'duplicate') assets.push({ path: 'content/assets/voice/hello.ogg' });
+    if (mode === 'unsupported') assets[0]!.path = 'content/assets/voice/hello.xyz';
+    if (mode === 'changed-inventory') assets.push({ path: 'content/assets/voice/new.wav' });
+    if (mode === 'stale-source') f.change.record.workingFiles['content/scenario/intro.gal'] += '\n新增。';
+    const before = structuredClone(f.change.record);
+    await expect(f.apply({ type: 'import', locale: 'zh-CN', csv, previewFingerprint: valid.previewFingerprint })).rejects.toThrow();
+    expect(f.change.record).toEqual(before);
+  });
   it('binds character, literal UI/tab and terminology fields through the same guarded CSV and object index', async () => {
     const f = await fixture();
     const config = JSON.parse(f.change.record.workingFiles['game.config.json']!);

@@ -1,11 +1,11 @@
 /**
  * 校验结果面板 + 校验编排（E0 拆分：原 main.ts 纯搬移，自我迭代①b）。
- * Worker 优先（不阻塞主线程），异常永久回退同步校验；结果按 seq 对齐丢弃过期回包。
+ * Worker 优先（不阻塞主线程），异常永久回退主线程校验；结果按 seq 对齐丢弃过期回包。
  */
 import { state, h, setStatus } from '../state.js';
 import { configSourceError, configSourcePath, type ConfigSourceName } from '../config-source.js';
 import { validateProject } from '../validate.js';
-import type { Issue } from '../validate.js';
+import type { Issue, ProjectConfig } from '../validate.js';
 import type { CompiledScene } from '@surdet/core';
 import { parseProjectConfigDocument } from '@surdet/authoring';
 import { renderSidebar } from './sidebar.js';
@@ -39,7 +39,7 @@ export function scheduleValidate(): void {
 }
 
 /** 组装校验输入（Worker 与同步回退共用；Phase 2C 接入 state.timelines，保留未保存编辑缓冲） */
-function buildValidateInput(): { sources: { key: string; id: string; file: string; source: string }[]; entryScene: string | undefined; config: { raw: Record<string, unknown> | null; path: string }; timelines: { path: string; text: string }[] } {
+function buildValidateInput(): { sources: { key: string; id: string; file: string; source: string }[]; entryScene: string | undefined; config: ProjectConfig; timelines: { path: string; text: string }[] } {
   const sources = [...state.scenes.entries()].map(([key, sc]) => ({ key, id: sc.id, file: sc.file, source: sc.text }));
   let configRaw: Record<string, unknown> | null = null;
   if (state.gameConfigText) {
@@ -54,7 +54,8 @@ function buildValidateInput(): { sources: { key: string; id: string; file: strin
     path: timeline.file.startsWith('content/timelines/') ? timeline.file : `content/timelines/${timeline.file}`,
     text: timeline.text,
   }));
-  return { sources, entryScene: state.entryScene || undefined, config: { raw: configRaw, path: 'game.config.json' }, timelines };
+  return { sources, entryScene: state.entryScene || undefined, config: { raw: configRaw, path: 'game.config.json',
+    ...(state.configFiles.terminology === null ? {} : { terminologyText: JSON.stringify(state.configFiles.terminology) }) }, timelines };
 }
 
 /** 应用校验结果并刷新 UI（Worker 回包与同步路径共用）。
@@ -79,9 +80,10 @@ export function applyValidation(issues: Issue[], edges: { from: string; to: stri
   setStatus(errors === 0 ? `校验通过（${warnings} 条警告）` : `${errors} 个错误 / ${warnings} 条警告`, errors === 0);
 }
 
-function runValidateSync(): void {
+async function runValidateOnMainThread(seq: number): Promise<void> {
   const input = buildValidateInput();
-  const result = validateProject(input.sources, input.entryScene, input.config, input.timelines);
+  const result = await validateProject(input.sources, input.entryScene, input.config, input.timelines);
+  if (seq !== validateSeq) return;
   const edges: { from: string; to: string; kind: 'jump' | 'call' }[] = [];
   for (const [sceneId, scene] of result.scenes) {
     for (const instr of scene.instructions) {
@@ -94,14 +96,16 @@ function runValidateSync(): void {
 }
 
 export function runValidate(): void {
-  // 优先 Worker（不阻塞主线程；自我迭代①b）；不可用/异常时同步回退
+  // 两条路径都按输入序号丢弃过期结果；摘要计算也可能跨越项目切换。
+  const seq = ++validateSeq;
   if (validateWorker) {
-    validateSeq += 1;
     const input = buildValidateInput();
-    validateWorker.postMessage({ seq: validateSeq, ...input });
+    validateWorker.postMessage({ seq, ...input });
     return;
   }
-  runValidateSync();
+  void runValidateOnMainThread(seq).catch(error => {
+    if (seq === validateSeq) setStatus(`校验失败：${error instanceof Error ? error.message : String(error)}`, false);
+  });
 }
 
 export function renderIssues(): void {
@@ -164,10 +168,10 @@ try {
     if (data.ok && data.issues) {
       applyValidation(data.issues, data.edges ?? [], data.scenes ?? new Map());
     } else {
-      // Worker 内部异常：终止并永久回退同步校验（功能不缺失）
+      // Worker 内部异常：终止并永久回退主线程校验（功能不缺失）
       validateWorker?.terminate();
       validateWorker = null;
-      runValidateSync();
+      runValidate();
     }
   };
   validateWorker.onerror = () => {

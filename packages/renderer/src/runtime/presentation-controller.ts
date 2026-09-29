@@ -413,12 +413,16 @@ export class PresentationController {
       bus.on('text', (p) => { this.#onText(p); this.#requestFrame(); }),
       bus.on('choice', (p) => { this.#onChoice(p); this.#requestFrame(); }),
       bus.on('textRefresh', (p) => { this.#refreshDisplayedText(p); this.#requestFrame(); }),
-      bus.on('runtimeTrace', event => { if (event.kind === 'instruction') this.#instructionOrigin = { kind: 'scene', file: event.source.file, line: event.source.line, sceneId: event.source.sceneId, instructionIndex: event.source.index }; }),
+      bus.on('runtimeTrace', event => { if (event.kind === 'instruction') {
+        if (this.#instructionOrigin?.kind === 'scene' && this.#instructionOrigin.sceneId !== event.source.sceneId) { this.#audio.stopVoice?.(); this.#pendingVoice = null; }
+        this.#instructionOrigin = { kind: 'scene', file: event.source.file, line: event.source.line, sceneId: event.source.sceneId, instructionIndex: event.source.index };
+      } }),
       bus.on('instr', (p) => { this.#onInstr(p); this.#requestFrame(); }),
       bus.on('wait', (p) => { this.#onWait(p); this.#requestFrame(); }),
       bus.on('video', (p) => { this.#onVideo(p); this.#requestFrame(); }),
       bus.on('timeline', (p) => { this.#onTimeline(p); this.#requestFrame(); }),
       bus.on('stateReset', () => { this.#onStateReset(); this.#requestFrame(); }),
+      bus.on('sceneEnd', () => { this.#audio.stopVoice?.(); this.#pendingVoice = null; }),
     ];
     const cleanup = (): void => {
       if (!active) return;
@@ -453,6 +457,7 @@ export class PresentationController {
 
   destroy(): void {
     if (this.#disposed) return;
+    this.#audio.stopVoice?.();
     this.#unbindAudioErrors?.();
     this.#unbindAudioErrors = undefined;
     this.#waitSession += 1;
@@ -477,6 +482,7 @@ export class PresentationController {
 
   /** 开始一轮新的剧情会话：清理渲染状态，但保留宿主注入的设置（如打字速度）。 */
   resetSession(options: { preserveWorld?: boolean; clearAssets?: boolean } = {}): void {
+    this.#audio.stopVoice?.(); this.#audio.setVoicePaused?.(false);
     this.#status = 'idle';
     this.#current = null;
     this.#fade = null;
@@ -535,7 +541,7 @@ export class PresentationController {
     }
   }
 
-  setPresentationPaused(paused: boolean): void { this.#explicitPaused = paused; this.#requestFrame(); }
+  setPresentationPaused(paused: boolean): void { this.#explicitPaused = paused; this.#audio.setVoicePaused?.(this.presentationPaused); this.#requestFrame(); }
   get presentationPaused(): boolean {
     const menu = this.#queries.overlay?.menu?.().type ?? 'none';
     return this.#explicitPaused || this.#backlogOpen || ['system-menu', 'save-load', 'settings'].includes(menu);
@@ -544,6 +550,7 @@ export class PresentationController {
   /** 帧推进（Pixi ticker 驱动）：打字中每帧把逐字进度推给舞台 */
   update(deltaMs: number): void {
     if (this.#disposed) return;
+    this.#audio.setVoicePaused?.(this.presentationPaused);
     if (this.presentationPaused) {
       this.#pausedSince ??= nowMs();
       // 只推进菜单层自身的界面反馈，不触碰 World/Dialogue（整组旧回调会继续推进被暂停的演出）。
@@ -581,6 +588,7 @@ export class PresentationController {
           this.#tw.skip(); // onComplete → status 'awaiting'
         }
         if (this.#status === 'awaiting') {
+          this.#audio.stopVoice?.();
           this.#status = 'idle';
           this.#onAdvance?.(); // 解释器同步发出下一事件（text/choice/end）
           if (nowMs() > deadline) break;
@@ -646,6 +654,8 @@ export class PresentationController {
   toggleBacklog(): boolean {
     if (!this.#backlog) return false;
     this.#backlogOpen = !this.#backlogOpen;
+    if (!this.#backlogOpen) this.#audio.stopVoice?.();
+    this.#audio.setVoicePaused?.(this.presentationPaused);
     if (this.#backlogOpen) {
       this.#renderBacklog();
     } else {
@@ -723,7 +733,7 @@ export class PresentationController {
   #renderBacklog(): void {
     if (!this.#backlog) return;
     const entries = this.#backlogSearch.results(this.#backlog.entries()).map((result) => result.entry);
-    this.#commands.dialogue.showBacklog(entries, (voice) => this.#audio.playVoice(voice), this.#backlogSearch.query);
+    this.#commands.dialogue.showBacklog(entries, (voice) => this.#audio.playVoice(voice, { replay: true }), this.#backlogSearch.query);
   }
 
   /** ▼ 呼吸动画累加（Stage port 内部时间轴驱动上下浮动） */
@@ -741,6 +751,7 @@ export class PresentationController {
   /** 切换快进（瞬时文本 + 连续推进；默认仅跳已读行） */
   toggleSkip(): boolean {
     this.#skipMode = !this.#skipMode;
+    if (this.#skipMode) this.#audio.stopVoice?.();
     this.#skipAll = false;
     this.#requestFrame();
     return this.#skipMode;
@@ -750,6 +761,7 @@ export class PresentationController {
   toggleSkipAll(): boolean {
     this.#skipAll = !this.#skipAll;
     this.#skipMode = this.#skipAll;
+    if (this.#skipMode) this.#audio.stopVoice?.();
     this.#requestFrame();
     return this.#skipAll;
   }
@@ -787,6 +799,7 @@ export class PresentationController {
       return true;
     }
     if (this.#status === 'awaiting') {
+      this.#audio.stopVoice?.();
       this.#status = 'idle';
       this.#onAdvance?.();
       return true;
@@ -811,6 +824,10 @@ export class PresentationController {
       this.#commands.dialogue.setChoiceHighlight(this.#choiceCursor);
     }
     if (!p.text || (this.#status !== 'typing' && this.#status !== 'awaiting')) return;
+    if (p.text.voice !== undefined) {
+      this.#audio.stopVoice?.(); this.#audio.setVoicePaused?.(this.presentationPaused);
+      if (p.text.voice && !this.#skipMode) this.#audio.playVoice(p.text.voice);
+    }
     if (this.#nvl) {
       const entries = this.#queries.dialogue.nvlPresentationEntries();
       const prior = withoutReplayedCurrentNvlLine(entries, this.#current, true);
@@ -834,7 +851,11 @@ export class PresentationController {
     if (this.#skipMode && !this.#skipAll && p.wasRead === false) this.#skipMode = false;
     this.#commands.world.setPortraitSkipping?.(this.#skipMode);
     // Backlog 语音关联：@voice 紧跟的文本行带上语音 key（回看可重播）
-    this.#backlog?.add(p.displaySpeaker ?? p.speaker, stripRuby(p.value), this.#pendingVoice ?? undefined);
+    const voice = p.voice !== undefined ? p.voice : this.#pendingVoice;
+    if (p.voice !== undefined || this.#pendingVoice === null) this.#audio.stopVoice?.();
+    this.#audio.setVoicePaused?.(this.presentationPaused);
+    if (p.voice && !this.#skipMode) this.#audio.playVoice(p.voice);
+    this.#backlog?.add(p.displaySpeaker ?? p.speaker, stripRuby(p.value), voice ?? undefined);
     if (this.#backlogOpen) this.#renderBacklog();
     this.#pendingVoice = null;
     this.#current = { speaker: p.speaker, value: p.value };
@@ -861,6 +882,7 @@ export class PresentationController {
   }
 
   #onChoice(p: ChoiceEventPayload): void {
+    this.#audio.stopVoice?.(); this.#pendingVoice = null;
     // 遇选择肢自动退出快进/自动播放：玩家必须做出选择，不应被连续推进越过
     this.#skipMode = false;
     this.#skipAll = false;
@@ -913,6 +935,7 @@ export class PresentationController {
   /** 读档状态重置（审计修复 C1）：作废等待计时并递增会话号，
    *  残留的 video 结束/计时到点回调不再调 onWaitEnd → finishWait 状态失配抛错 */
   #onStateReset(): void {
+    this.#audio.stopVoice?.(); this.#audio.setVoicePaused?.(false);
     this.#explicitPaused = false; this.#pausedSince = null;
     this.#backlogOpen = false;
     this.#commands.dialogue.hideBacklog();
@@ -1188,7 +1211,8 @@ export class PresentationController {
       }
       case 'voice': {
         if (args[0]) {
-          this.#audio.playVoice(args[0]);
+          this.#audio.setVoicePaused?.(this.presentationPaused);
+          if (!this.#skipMode) this.#audio.playVoice(args[0]);
           this.#pendingVoice = args[0]; // 下一行文本进 Backlog 时带上（语音回放）
         }
         break;

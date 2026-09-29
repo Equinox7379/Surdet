@@ -14,7 +14,9 @@ const { mockHowl, mockPlay, mockStop, mockLoop, mockVolume, mockFade, mockOn, mo
   mockHowlerVolume: vi.fn(() => 1),
   mockInstances: [] as Array<{
     src: string;
-    emit: (event: string) => void;
+    emit: (event: string, id?: number) => void;
+    pause: ReturnType<typeof vi.fn>;
+    stop: ReturnType<typeof vi.fn>;
     setPlaying: (value: boolean) => void;
     playing: ReturnType<typeof vi.fn>;
     unload: ReturnType<typeof vi.fn>;
@@ -23,31 +25,33 @@ const { mockHowl, mockPlay, mockStop, mockLoop, mockVolume, mockFade, mockOn, mo
 
 vi.mock('howler', () => ({
   Howl: mockHowl.mockImplementation((options: { src: string[] }) => {
-    const handlers = new Map<string, Array<() => void>>();
+    const handlers = new Map<string, Array<(id?: number) => void>>();
     let isPlaying = false;
+    let playId = 0;
     const playing = vi.fn(() => isPlaying);
     const unload = vi.fn(() => mockUnload());
     const instance = {
       src: options.src[0] ?? '',
-      play: mockPlay,
-      stop: mockStop,
+      play: (id?: number) => { mockPlay(); playId = id ?? playId + 1; return playId; },
+      stop: vi.fn(() => { mockStop(); }),
+      pause: vi.fn(() => { isPlaying = false; }),
       unload,
       loop: mockLoop,
       volume: mockVolume,
       fade: mockFade,
-      on: (event: string, handler: () => void) => {
+      on: (event: string, handler: (id?: number) => void) => {
         mockOn(event, handler);
         const list = handlers.get(event) ?? [];
         list.push(handler);
         handlers.set(event, list);
       },
-      once: (event: string, handler: () => void) => {
+      once: (event: string, handler: (id?: number) => void) => {
         mockOn(event, handler);
         handlers.set(event, [handler]);
       },
       playing,
-      emit: (event: string) => {
-        for (const handler of handlers.get(event) ?? []) handler();
+      emit: (event: string, id = playId) => {
+        for (const handler of handlers.get(event) ?? []) handler(id);
       },
       setPlaying: (value: boolean) => { isPlaying = value; },
     };
@@ -101,7 +105,8 @@ describe('AudioManager', () => {
     expect(report).toHaveBeenCalledWith(expect.objectContaining({ code: 'MEDIA_PLAYBACK_FAILED', domain: 'audio',
       message: expect.stringContaining(`content/assets/${channel}/损坏 声音.WAV`),
       cause: expect.objectContaining({ channel, type: 'loaderror', source: 'blob:broken', reason: 'decode failed' }) }));
-    handlers.onplayerror(1, 'playback blocked'); expect(report).toHaveBeenCalledTimes(2);
+    if (channel === 'voice') { expect(am.isVoicePlaying()).toBe(false); play(); }
+    handlers.onplayerror(channel === 'voice' ? 2 : 1, 'playback blocked'); expect(report).toHaveBeenCalledTimes(2);
     am.stopAll(); handlers.onloaderror(null, 'late after stop'); expect(report).toHaveBeenCalledTimes(2);
     play(); const old = handlers; am.dispose(); play();
     old.onloaderror(null, 'late from disposed Howl'); expect(report).toHaveBeenCalledTimes(2);
@@ -232,6 +237,42 @@ describe('AudioManager', () => {
     expect(am.isVoicePlaying()).toBe(true);
     am.stopAll();
     expect(am.isVoicePlaying()).toBe(false);
+  });
+
+  it('owns one voice instance, includes pending load, pauses/resumes and releases on failure without stopping BGM', () => {
+    const am = new AudioManager(), error = vi.fn(); am.onError(error);
+    am.playBgm('music.wav'); const music = mockInstances[0]!; music.setPlaying(true);
+    am.playVoice('one.wav'); const one = mockInstances[1]!;
+    one.stop.mockImplementation(() => { mockStop(); one.setPlaying(false); });
+    one.setPlaying(false); expect(am.isVoicePlaying()).toBe(true); // Waiting for play/load, not silent completion.
+    one.emit('play'); one.setPlaying(true);
+    am.setVoicePaused(true); expect(one.pause).toHaveBeenCalledWith(1); expect(music.pause).not.toHaveBeenCalled();
+    am.setVoicePaused(false); expect(am.isVoicePlaying()).toBe(true);
+    am.playVoice('two.wav'); const two = mockInstances[2]!;
+    expect(one.stop).toHaveBeenCalled(); expect(one.playing()).toBe(false); expect(music.playing()).toBe(true);
+    one.emit('end'); expect(am.isVoicePlaying()).toBe(true);
+    mockHowl.mock.calls.at(-1)![0].onloaderror(null, 'bad codec');
+    expect(error).toHaveBeenCalledOnce(); expect(am.isVoicePlaying()).toBe(false); expect(two.stop).toHaveBeenCalled();
+    expect(music.playing()).toBe(true);
+    am.stopAll();
+  });
+
+  it('queues a new-language voice while paused, allows explicit history replay and stops it on return', () => {
+    const am = new AudioManager(); am.setVoicePaused(true); am.playVoice('new-language.wav');
+    expect(mockPlay).not.toHaveBeenCalled(); expect(am.isVoicePlaying()).toBe(true);
+    am.setVoicePaused(false); expect(mockPlay).toHaveBeenCalledOnce();
+    am.setVoicePaused(true); am.playVoice('history.wav', { replay: true });
+    expect(mockPlay).toHaveBeenCalledTimes(2); am.setVoicePaused(true); expect(mockInstances[1]!.pause).not.toHaveBeenCalled();
+    am.setVoicePaused(false); expect(mockInstances[1]!.stop).toHaveBeenCalled(); expect(am.isVoicePlaying()).toBe(false);
+    am.dispose();
+  });
+  it('ignores late play/end callbacks from a stopped instance when the same voice file is replayed', () => {
+    const am = new AudioManager(), report = vi.fn(); am.onError(report);
+    am.playVoice('same.wav'); am.playVoice('same.wav');
+    mockInstances[0]!.emit('end', 1); mockHowl.mock.calls[0]![0].onplayerror(1, 'old play');
+    expect(am.isVoicePlaying()).toBe(true); expect(report).not.toHaveBeenCalled();
+    mockHowl.mock.calls[0]![0].onplayerror(2, 'current play');
+    expect(am.isVoicePlaying()).toBe(false); expect(report).toHaveBeenCalledOnce(); am.dispose();
   });
 
   it('dispose 停止播放并释放缓存的 Howl 实例，之后仍可按需复用', () => {

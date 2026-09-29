@@ -604,6 +604,13 @@ export function buildObjectIndex(snapshot: ProjectSnapshot): ObjectIndex {
         addReferenceCandidate(candidates, ref, `scene:${entry.source.sceneId}`);
         if (entry.source.label !== null) addReferenceCandidate(candidates, ref, `label:${entry.source.sceneId}.${entry.source.label}`);
       } else addReferenceCandidate(candidates, ref, entry.source.objectRef);
+      for (const voice of Object.values(entry.voices ?? {})) {
+        const assetRef = `asset:voice:${voice.asset}`;
+        if (!objects.some(object => object.objectRef === assetRef)) addObject(objects, {
+          kind: 'asset', semanticId: assetRef, objectRef: assetRef, references: [], referencedBy: [],
+        }, candidates);
+        addReferenceCandidate(candidates, ref, assetRef);
+      }
     }
   } catch { /* Shared validation reports malformed catalog data; keep other objects inspectable. */ }
   let cgs: GalleryCgEntry[] = [];

@@ -3,6 +3,7 @@ import type {
   AudioHandle,
   AudioPlaybackSnapshot,
   BgmPlaybackOptions,
+  VoicePlaybackOptions,
 } from '@surdet/renderer';
 import { AudioManager } from '@surdet/renderer';
 
@@ -21,7 +22,9 @@ export class ResolvedAudio implements AudioHandle {
     this.#inner.playBgm(src === null ? null : this.#r('bgm', src), options);
   }
   playSe(src: string): void { this.#inner.playSe(this.#r('se', src)); }
-  playVoice(src: string): void { this.#inner.playVoice(this.#r('voice', src)); }
+  playVoice(src: string, options?: VoicePlaybackOptions): void { this.#inner.playVoice(this.#r('voice', src), options); }
+  stopVoice(): void { this.#inner.stopVoice(); }
+  setVoicePaused(paused: boolean): void { this.#inner.setVoicePaused(paused); }
   playAmbience(src: string | null, fadeMs?: number): void { this.#inner.playAmbience?.(src === null ? null : this.#r('ambience', src), fadeMs); }
   stopAll(): void { this.#inner.stopAll(); }
   setMasterVolume(v: number): void { this.#inner.setMasterVolume(v); }

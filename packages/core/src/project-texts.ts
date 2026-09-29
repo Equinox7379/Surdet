@@ -13,7 +13,11 @@ export interface FieldTextSource extends TextSourceBase {
   kind: 'character' | 'ui' | 'term'; objectRef: string; field?: 'tab';
 }
 export type TextSource = StoryTextSource | FieldTextSource;
-export interface TextCatalogEntry { key: string; source: TextSource; translations: Record<string, { value: string; sourceVersion: string }> }
+export interface TextVoiceBinding { asset: string; sourceVersion: string; text: string }
+export interface TextCatalogEntry {
+  key: string; source: TextSource; translations: Record<string, { value: string; sourceVersion: string }>;
+  voices?: Record<string, TextVoiceBinding>;
+}
 export interface TextCatalog { version: 1; sourceLocale: string; entries: TextCatalogEntry[] }
 export type CatalogSource = TextSource & { sourceId: string; path: string; line: number };
 export type CatalogSourceRow = (Omit<StoryTextSource, 'version'> | Omit<FieldTextSource, 'version'>) & { sourceId: string; path: string; line: number };
@@ -80,7 +84,7 @@ export function readTextCatalog(config: Record<string, unknown>): TextCatalog | 
   if (doc.version !== 1 || !Array.isArray(doc.entries)) invalid('textCatalog 需要 version:1 和 entries 数组');
   const sourceLocale = validateTextLocale(doc.sourceLocale), keys = new Set<string>(), targets = new Set<string>();
   const entries = doc.entries.map(value => {
-    const row = object(value, 'entry'); fields(row, ['key', 'source', 'translations'], 'entry');
+    const row = object(value, 'entry'); fields(row, ['key', 'source', 'translations', 'voices'], 'entry');
     const key = validateTextKey(row.key);
     if (keys.has(key)) invalid(`重复文本键：${key}`); keys.add(key);
     const src = object(row.source, `${key}.source`);
@@ -107,9 +111,24 @@ export function readTextCatalog(config: Record<string, unknown>): TextCatalog | 
       if (problem) invalid(`${key}.${locale}：${problem}`);
       return [locale, result];
     }));
-    return { key, source, translations };
+    const voices = row.voices === undefined ? undefined : Object.fromEntries(Object.entries(object(row.voices, `${key}.voices`)).map(([locale, raw]) => {
+      validateTextLocale(locale);
+      if (source.kind !== 'dialogue') invalid(`${key} 只有对白来源可以关联配音`);
+      const binding = object(raw, `${key}.voices.${locale}`); fields(binding, ['asset', 'sourceVersion', 'text'], `${key}.voices.${locale}`);
+      const asset = string(binding.asset, '配音素材键');
+      if (asset !== asset.trim() || /[\\/:?#]/.test(asset) || asset === '.' || asset === '..') invalid(`${key} 配音需要项目素材键，不能是路径或网址`);
+      return [locale, { asset, sourceVersion: version(binding.sourceVersion), text: string(binding.text, '确认台词', true) }];
+    }));
+    return { key, source, translations, ...(voices ? { voices } : {}) };
   });
   return { version: 1, sourceLocale, entries };
+}
+
+/** Raw words confirmed for this language; undefined means no current translation. */
+export function textCatalogEntryText(entry: TextCatalogEntry, locale: string, sourceLocale: string): string | undefined {
+  if (locale === sourceLocale) return entry.source.text;
+  const translation = entry.translations[locale];
+  return translation?.value && translation.sourceVersion === entry.source.version ? translation.value : undefined;
 }
 
 /** Authoring and playback share exact source coordinates; no fuzzy matching or translated identifiers. */
@@ -169,13 +188,16 @@ export function createProjectTextResolver(catalog: TextCatalog | null, sources: 
   const byId = new Map(sources.map(source => [source.sourceId, source]));
   const entries = new Map(catalog?.entries.map(entry => [textSourceId(entry.source), entry]));
   const sourceLocale = catalog?.sourceLocale ?? 'zh-CN';
-  const locales = [...new Set([sourceLocale, ...(catalog?.entries.flatMap(entry => Object.keys(entry.translations)) ?? [])])];
+  const locales = [...new Set([sourceLocale, ...(catalog?.entries.flatMap(entry => [...Object.keys(entry.translations), ...Object.keys(entry.voices ?? {})]) ?? [])])];
   const diagnostics = (locale: string): string[] => (catalog?.entries ?? []).flatMap(entry => {
     const source = byId.get(textSourceId(entry.source));
     if (!textSourceMatches(source, entry.source) || source?.version !== entry.source.version) return [`${entry.key}：来源变化，使用原文`];
-    if (locale === sourceLocale) return [];
+    const voice = entry.voices?.[locale];
+    const voiceIssues = voice && (voice.sourceVersion !== entry.source.version || voice.text !== textCatalogEntryText(entry, locale, sourceLocale))
+      ? [`${entry.key}：配音对应台词已变化，暂不播放`] : [];
+    if (locale === sourceLocale) return voiceIssues;
     const translation = entry.translations[locale];
-    return !translation?.value || translation.sourceVersion !== entry.source.version ? [`${entry.key}：译文缺失或过期，使用原文`] : [];
+    return [...voiceIssues, ...(!translation?.value || translation.sourceVersion !== entry.source.version ? [`${entry.key}：译文缺失或过期，使用原文`] : [])];
   });
   const resolve = (sourceId: string, original: string, locale: string): string => {
     if (locale === sourceLocale) return original;
@@ -189,6 +211,15 @@ export function createProjectTextResolver(catalog: TextCatalog | null, sources: 
     story(sceneId: string, line: number, kind: 'dialogue' | 'choice', original: string, locale: string, sceneVersion: string): string {
       const source = story.get(JSON.stringify([sceneId, line, kind]));
       return source?.sceneVersion === sceneVersion ? resolve(source.sourceId, original, locale) : original;
+    },
+    voice(sceneId: string, line: number, original: string, locale: string, sceneVersion: string): string | null | undefined {
+      const source = story.get(JSON.stringify([sceneId, line, 'dialogue']));
+      const entry = source && entries.get(source.sourceId);
+      if (!entry?.voices || !Object.keys(entry.voices).length) return undefined;
+      const voice = entry.voices[locale];
+      return source?.sceneVersion === sceneVersion && source.text === original && textSourceMatches(source, entry.source)
+        && source.version === entry.source.version && voice?.sourceVersion === entry.source.version
+        && voice.text === textCatalogEntryText(entry, locale, sourceLocale) ? voice.asset : null;
     },
   };
 }

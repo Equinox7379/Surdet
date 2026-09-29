@@ -1,6 +1,6 @@
 import { staleTextCatalogKeys } from './text-catalog.js';
 import { validateProjectStageContent } from './stage-validation.js';
-import { resolveProjectTheme, resolveProjectTitleLogo, readProjectUi } from '@surdet/core';
+import { resolveProjectTheme, resolveProjectTitleLogo, readProjectUi, readTextCatalog, textCatalogEntryText } from '@surdet/core';
 import { validateThemeAssetBindings } from './theme-operations.js';
 import { validateUiAssets } from './ui-operations.js';
 import {
@@ -456,6 +456,15 @@ export function validateSnapshot(
     for (const key of staleTextCatalogKeys(snapshot)) {
       rawIssues.push({ severity: 'warning', code: 'TEXT_SOURCE_STALE',
         text: `译稿 ${key} 的来源版本或对应关系变化，请明确重新绑定；旧译稿保留，未自动配给其他台词。`, file: configPath, line: 1, col: 1 });
+    }
+    const catalog = readTextCatalog(snapshot.config);
+    for (const entry of catalog?.entries ?? []) for (const [locale, voice] of Object.entries(entry.voices ?? {})) {
+      if (options.assetCatalog && options.assetCatalog.intelligence.items.filter(item => item.kind === 'voice' && item.key === voice.asset && item.physical && item.issues.every(issue => issue === 'ASSET_UNUSED')).length !== 1) {
+        rawIssues.push({ severity: 'error', code: 'TEXT_VOICE_ASSET_INVALID', text: `对白 ${entry.key} 的 ${locale} 配音素材不可用或不唯一：${voice.asset}`, file: configPath, line: 1, col: 1 });
+      }
+      if (voice.sourceVersion !== entry.source.version || voice.text !== textCatalogEntryText(entry, locale, catalog!.sourceLocale)) {
+        rawIssues.push({ severity: 'warning', code: 'TEXT_VOICE_STALE', text: `对白 ${entry.key} 的 ${locale} 配音对应台词已变化，旧绑定保留但不播放，请核对后重新确认。`, file: configPath, line: 1, col: 1 });
+      }
     }
   } catch (error) {
     rawIssues.push({ severity: 'error', code: 'TEXT_CATALOG_INVALID', text: error instanceof Error ? error.message : String(error), file: configPath, line: 1, col: 1 });
