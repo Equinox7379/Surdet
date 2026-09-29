@@ -185,6 +185,8 @@ export interface CommandRailItem {
 export interface SpeakerProfile {
   id: string;
   name: string;
+  /** Original script name retained when the displayed name is translated. */
+  sourceName?: string;
   avatarKey?: string;
 }
 

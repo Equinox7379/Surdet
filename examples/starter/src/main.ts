@@ -24,6 +24,7 @@ void startPlayer({
   id: gamePackage.name,
   config: gameConfig,
   sceneFiles,
+  terminology: Object.values(import.meta.glob('../content/config/terminology.json', { eager: true, import: 'default' }))[0],
   timelineFiles: import.meta.glob('../content/timelines/**/*.json', { eager: true, import: 'default' }),
   assetFiles,
   fontFiles: import.meta.glob<string>('../content/assets/fonts/*.{woff2,woff,ttf,otf}', { query: '?url', import: 'default', eager: true }),

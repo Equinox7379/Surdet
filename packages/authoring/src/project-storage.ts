@@ -19,6 +19,7 @@ export function isSnapshotPath(path: string): boolean {
     || path === 'content/config/gallery.json'
     || path === 'content/config/events.json'
     || path === 'content/config/calendar.json'
+    || path === 'content/config/terminology.json'
     || (path.startsWith('content/scenario/') && path.toLowerCase().endsWith('.gal'))
     || (path.startsWith('content/timelines/') && path.toLowerCase().endsWith('.json'));
 }

@@ -229,6 +229,8 @@ export interface DslDiagnostic extends SourcePos {
 /** 单个场景的编译产物 */
 export interface CompiledScene {
   sceneId: string;
+  /** Exact source SHA-256 for confirmed text mappings; unrelated to save instruction identity. */
+  textSourceVersion?: string;
   instructions: DslInstr[];
   /** 标签 → 指令索引 */
   labels: Map<string, number>;

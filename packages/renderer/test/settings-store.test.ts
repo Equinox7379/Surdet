@@ -12,6 +12,14 @@ import {
 } from '../src/settings-store.js';
 import type { SettingsStorage, GameSettings } from '../src/settings-store.js';
 
+it('persists project language in device settings and rejects malformed stored locale values', async () => {
+  const storage = new MemorySettingsStorage(), settings = new SettingsStore(storage);
+  await settings.update({ locale: 'ja' });
+  expect((await new SettingsStore(storage).load()).locale).toBe('ja');
+  const malformed = new SettingsStore({ load: () => ({ locale: '../invalid' }), save: () => {} });
+  expect((await malformed.load()).locale).toBe('');
+});
+
 /** 记录调用的 fake 音频 */
 class RecAudio implements AudioHandle {
   master: number[] = [];

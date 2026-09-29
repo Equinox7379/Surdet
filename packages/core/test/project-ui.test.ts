@@ -5,6 +5,14 @@ const text = { id: 'value', type: 'text', frame: { x: 640, y: 360, width: 240, h
 const config = { variables: { trust: { type: 'number', initial: 3 }, readonlyFlag: { type: 'flag', initial: false, readonly: true } } };
 
 describe('declarative project UI', () => {
+  it('exposes locale read/cycling and glossary content without arbitrary preference writes', () => {
+    const frame = { x: 0, y: 0, width: 640, height: 200 };
+    const ui = { version: 1, pages: { settings: { id: 'locale', type: 'button', frame,
+      text: { kind: 'setting', name: 'locale' }, action: { kind: 'setting-step', name: 'locale', direction: 1 } },
+      gallery: { id: 'terms', type: 'content', frame, source: 'terms' } } };
+    expect(readProjectUi({ ui })).toEqual(ui);
+    expect(() => readProjectUi({ ui: { version: 1, pages: { settings: { id: 'edit-locale', type: 'input', frame, binding: { kind: 'setting', name: 'locale' } } } } })).toThrow('公开调整入口');
+  });
   it('uses one parent-relative anchor formula for authoring and player layouts', () => {
     expect(projectUiRect({ x: 0, y: 0, width: 1280, height: 720 }, text.frame)).toEqual({ x: 520, y: 340, width: 240, height: 40 });
     expect(projectUiRect({ x: 100, y: 50, width: 300, height: 200 }, { x: 0, y: 0, width: 80, height: 20, anchorX: 1, anchorY: 1 }))

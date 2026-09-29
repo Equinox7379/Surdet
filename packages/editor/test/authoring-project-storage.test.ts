@@ -65,6 +65,25 @@ describe('editor authoring project storage', () => {
     await expect(commitTextCatalogPatch({ operationId: 'remove', expectedRevision: fresh.revision, expectedFingerprint: fresh.fingerprint, patch: { type: 'remove', keys: ['hello'] } })).rejects.toThrow();
     expect(writes).toBe(2); expect(state.gameConfigText).toBe(saved); expect(JSON.parse(disk).future).toBe('external');
   });
+  it('includes terminology in revision and refuses a text binding if its actual disk source changed', async () => {
+    let disk = '{"entryScene":"intro","variables":{}}', writes = 0;
+    let terms = '{"terms":[{"canonical":"雾港","variants":[]}]}';
+    const gameConfig = { getFile: async () => new File([disk], 'game.config.json'), createWritable: async () => ({ write: async (text: unknown) => { disk = String(text); writes++; }, close: async () => {} }) } as unknown as FileSystemFileHandle;
+    const terminology = { getFile: async () => new File([terms], 'terminology.json') } as FileSystemFileHandle;
+    Object.assign(state, { dirName: 'terms', dirHandle: { name: 'terms' }, handles: { ...state.handles, gameConfig, terminology }, gameConfigText: disk,
+      scenes: new Map([['intro', { id: 'intro', file: 'intro.gal', text: '@scene intro\n@end\n', eol: '\n', dirty: false, handle: null }]]), timelines: [],
+      configFiles: { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: JSON.parse(terms) }, configReadErrors: {}, dirAssets: [], reviewWorkspace: null, reviewPreviewReadOnly: false, projectLoading: false });
+    const hasher = createEditorProjectStorage(), snapshot = await loadEditorProjectSnapshot();
+    expect(snapshot.files.some(file => file.path === 'content/config/terminology.json')).toBe(true);
+    const view = await inspectTextCatalog(snapshot, hasher);
+    const request = { operationId: 'term-bind', expectedRevision: view.revision, expectedFingerprint: view.fingerprint,
+      patch: { type: 'bind' as const, sourceLocale: 'zh-CN', bindings: [{ key: 'term.port', sourceId: view.sources[0]!.sourceId }] } };
+    terms = '{"terms":[{"canonical":"外部改稿","variants":[]}]}';
+    await expect(commitTextCatalogPatch(request)).rejects.toThrow(); expect(writes).toBe(0);
+    terms = '{"terms":[{"canonical":"雾港","variants":[]}]}';
+    await commitTextCatalogPatch(request); expect(writes).toBe(1);
+    expect(JSON.parse(disk).textCatalog.entries[0].source.objectRef).toBe('term:雾港');
+  });
   it.each(['remove-all', 'replace-both', 'still-missing'] as const)('validates only the final multi-page UI repair: %s', async mode => {
     const frame = { x: 0, y: 0, width: 1280, height: 720 };
     const ui: ProjectUiDocument = { version: 1, pages: {

@@ -21,7 +21,7 @@ export type ProjectUiAction =
   | { kind: 'save' | 'load' | 'choice' | 'gallery-item'; id?: string }
   | { kind: 'setting-step'; name: string; direction: -1 | 1 };
 
-export type ProjectUiContentSource = 'save-slots' | 'backlog' | 'gallery-cgs' | 'gallery-music' | 'gallery-texts' | 'choices' | 'settings';
+export type ProjectUiContentSource = 'save-slots' | 'backlog' | 'gallery-cgs' | 'gallery-music' | 'gallery-texts' | 'choices' | 'settings' | 'terms';
 
 export interface ProjectUiFrame {
   x: number; y: number; width: number; height: number;
@@ -74,11 +74,11 @@ export function projectUiRect(parent: ProjectUiRect, frame: ProjectUiFrame): Pro
 const PAGE_SET = new Set<string>(PROJECT_UI_PAGES);
 const TYPE_SET = new Set<string>(PROJECT_UI_NODE_TYPES);
 const CHILD_TYPES = new Set<ProjectUiNodeType>(['container', 'scroll', 'tabs', 'content']);
-const CONTENT_SOURCES = new Set<ProjectUiContentSource>(['save-slots', 'backlog', 'gallery-cgs', 'gallery-music', 'gallery-texts', 'choices', 'settings']);
+const CONTENT_SOURCES = new Set<ProjectUiContentSource>(['save-slots', 'backlog', 'gallery-cgs', 'gallery-music', 'gallery-texts', 'choices', 'settings', 'terms']);
 const SETTING_TYPES: Record<string, 'number' | 'string'> = {
   textSpeedCps: 'number', autoBaseDelayMs: 'number', autoPerCharMs: 'number',
   masterVolume: 'number', bgmVolume: 'number', ambienceVolume: 'number', seVolume: 'number', voiceVolume: 'number',
-  skipStrategy: 'number', keyPreset: 'string',
+  skipStrategy: 'number', keyPreset: 'string', locale: 'string',
 };
 const WRITABLE_SETTINGS = new Set(['textSpeedCps', 'autoBaseDelayMs', 'masterVolume', 'bgmVolume', 'ambienceVolume', 'seVolume', 'voiceVolume', 'skipStrategy']);
 const ACTION_KINDS = new Set(['start', 'continue', 'close', 'back', 'advance', 'rollback', 'auto', 'skip', 'hide', 'open', 'save', 'load', 'choice', 'gallery-item', 'setting-step']);
@@ -159,7 +159,7 @@ function validateAction(value: unknown, location: string): ProjectUiAction {
     if (item.page === 'save-load' ? !['save', 'load'].includes(String(item.mode)) : item.mode !== undefined) throw new Error(`${location}.mode 不适用`);
   } else if (kind === 'setting-step') {
     onlyKeys(item, ['kind', 'name', 'direction'], location);
-    if (!WRITABLE_SETTINGS.has(String(item.name))) throw new Error(`${location}.name 不受支持`);
+    if (item.name !== 'locale' && !WRITABLE_SETTINGS.has(String(item.name))) throw new Error(`${location}.name 不受支持`);
     if (item.direction !== -1 && item.direction !== 1) throw new Error(`${location}.direction 必须为 -1 或 1`);
   } else if (['save', 'load', 'choice', 'gallery-item'].includes(kind)) {
     onlyKeys(item, ['kind', 'id'], location);
@@ -198,7 +198,7 @@ function validateNode(value: unknown, config: Record<string, unknown>, ids: Set<
   if (type === 'content') {
     const sourcePages: Record<ProjectUiContentSource, ProjectUiPageId> = {
       'save-slots': 'save-load', backlog: 'backlog', 'gallery-cgs': 'gallery', 'gallery-music': 'gallery',
-      'gallery-texts': 'gallery', choices: 'choices', settings: 'settings',
+      'gallery-texts': 'gallery', choices: 'choices', settings: 'settings', terms: 'gallery',
     };
     if (sourcePages[item.source as ProjectUiContentSource] !== page || contentSource !== undefined) throw new Error(`${location}.source 在 ${page} 页面不可用`);
   }

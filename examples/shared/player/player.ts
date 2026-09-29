@@ -4,6 +4,8 @@
  */
 import {
   compileScene,
+  collectProjectTextRows, projectTextSources, createProjectTextResolver, readTextCatalog, parseTerminology,
+  type TextSceneSource,
   resolveProjectPortraits,
   portraitSourcePaths,
   assertUniquePortraitBindings,
@@ -110,6 +112,7 @@ export interface PlayerProject {
     player?: { subtitle?: string; titleBackground?: string; titleLogo?: string; endScenes?: readonly string[]; firstRunHint?: string };
     theme?: Record<string, unknown>;
     ui?: unknown;
+    textCatalog?: unknown;
   };
   sceneFiles: Record<string, () => Promise<unknown>>;
   timelineFiles?: Record<string, unknown>;
@@ -126,6 +129,7 @@ export interface PlayerProject {
   endScenes?: readonly string[];
   firstRunHint?: string;
   gallery?: GalleryConfig;
+  terminology?: unknown;
   systems?: {
     calendar?: CalendarConfig;
     combat?: CombatConfig;
@@ -188,12 +192,22 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
 
   // 场景注册
   const registry = new SceneRegistry();
+  const textCatalog = readTextCatalog(gameConfig);
+  const textScenes: TextSceneSource[] = [];
+  const sha256 = async (text: string): Promise<string> => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))))
+    .map(byte => byte.toString(16).padStart(2, '0')).join('');
   for (const [path, load] of Object.entries(sceneFiles)) {
     const src = (await load()) as string;
     if (signal?.aborted) return;
     const id = path.split('/').pop()!.replace(/\.gal$/i, '');
-    registry.register(compileScene(src, path, id));
+    const scene = compileScene(src, path, id);
+    if (textCatalog) scene.textSourceVersion = await sha256(src);
+    registry.register(scene);
+    if (scene.textSourceVersion) textScenes.push({ id, path, text: src, sha256: scene.textSourceVersion });
   }
+  const projectTexts = createProjectTextResolver(textCatalog, textCatalog
+    ? await projectTextSources(collectProjectTextRows(gameConfig, textScenes, project.terminology), sha256) : []);
+  const terminology = parseTerminology(project.terminology);
   const timelines = new TimelineRegistry();
   for (const definition of Object.values(timelineFiles)) timelines.register(definition);
 
@@ -241,6 +255,14 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   const settings = new SettingsStore(createSettingsStorage(project.id, browserPrefix));
   await settings.load();
   if (signal?.aborted) { audioManager.dispose(); return; }
+  let textLocale = projectTexts.locales.includes(settings.settings.locale) ? settings.settings.locale : projectTexts.sourceLocale;
+  interp.setTextResolver(source => {
+    if (source.kind !== 'speaker') return projectTexts.story(source.sceneId, source.line, source.kind, source.text, textLocale, source.sceneVersion ?? '');
+    const id = speakerProfiles.find(profile => profile.id === source.text.trim());
+    const names = speakerProfiles.filter(profile => profile.name === source.text.trim());
+    const profile = id ?? (names.length === 1 ? names[0] : undefined);
+    return profile ? projectTexts.field('character', `character:${profile.id}`, gameConfig.characters?.[profile.id]?.name ?? profile.name, textLocale) : source.text;
+  });
 
   // Backlog + Renderer v2 Runtime（设置投影：文本速度/自动停留/音量）
   const backlog = new Backlog();
@@ -328,7 +350,13 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   // 显式 Player 参数 > game.config.json 主题 > 引擎默认。
   const playerTheme = resolvePlayerTheme(gameConfig, project.theme);
   commands.preferences.setTheme(playerTheme);
-  dialogue.setSpeakerProfiles(speakerProfiles);
+  function projectSpeakerNames(): void {
+    dialogue.setSpeakerProfiles(speakerProfiles.map(profile => ({ ...profile, sourceName: profile.name,
+      name: projectTexts.field('character', `character:${profile.id}`, gameConfig.characters?.[profile.id]?.name ?? profile.name, textLocale),
+    })));
+  }
+  projectSpeakerNames();
+  for (const issue of projectTexts.diagnostics(textLocale)) console.warn(`[文本目录] ${issue}`);
   settings.apply(typewriter, audio);
   // Observe the start before the presentation handler can synchronously finish a skipped video.
   bus.on('video', () => { uiSession.setVideoActive(true); });
@@ -887,7 +915,8 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   function settingsView() {
     const s = settings.settings;
     return {
-      rows: SETTING_STEPS.map((d) => ({ id: d.key, label: d.label, display: d.format(s[d.key]) })),
+      rows: [...SETTING_STEPS.map((d) => ({ id: d.key, label: d.label, display: d.format(s[d.key]) })),
+        ...(textCatalog ? [{ id: 'locale', label: '作品语言', display: ({ 'zh-CN': '中文', ja: '日本語', en: 'English' } as Record<string, string>)[textLocale] ?? textLocale }] : [])],
       onChange: onSettingsChange,
       onClose: closeSettings,
     };
@@ -932,6 +961,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   function uiContext(page: ProjectUiPageId, mode?: 'save' | 'load'): ProjectUiContext {
     return {
       ...(mode ? { mode } : {}),
+      literal: (objectRef, original, field) => projectTexts.field('ui', objectRef, original, textLocale, field),
       data(field) {
         if (field === 'title') return titleView().view.title;
         if (field === 'subtitle') return titleView().view.subtitle ?? '';
@@ -942,7 +972,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         }
         return '';
       },
-      read(name, kind) { return kind === 'variable' ? store.get(name) : settings.settings[name as keyof GameSettings]; },
+      read(name, kind) { return kind === 'variable' ? store.get(name) : name === 'locale' ? textLocale : settings.settings[name as keyof GameSettings]; },
       async write(binding: ProjectUiBinding, value) {
         playerShell!.commands.consumePointer();
         if (binding.kind === 'variable') { store.set(binding.name, value); return; }
@@ -964,6 +994,8 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         return { min: declaration.min ?? 0, max: declaration.max ?? 100, step: 1 };
       },
       content(source: ProjectUiContentSource): ProjectUiItem[] {
+        if (source === 'terms') return terminology.map(term => ({ id: term.canonical,
+          label: projectTexts.field('term', `term:${term.canonical}`, term.canonical, textLocale), disabled: true }));
         if (source === 'save-slots') return (activeSaveLoad?.slots ?? []).map(slot => ({
           id: slot.id, label: slot.label ?? (slot.id === 'quick' ? `快速存档${slot.empty ? '（空）' : ''}`
             : slot.id === 'auto' ? `自动存档${slot.empty ? '（空）' : ''}` : slot.empty ? `空槽位 ${slot.id}` : `槽位 ${slot.id}`),
@@ -983,6 +1015,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         return items.map(item => ({ id: item.id, label: item.unlocked ? item.name : '???', disabled: !item.unlocked }));
       },
       async select(source, item, restore) {
+        if (source === 'terms') return false;
         if (source === 'save-slots') {
           const selected = await selectWorkUiSave(activeSaveLoad?.mode ?? mode ?? 'load', item.id, restore);
           if (selected) uiDom?.hide('save-load');
@@ -1459,6 +1492,18 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
 
   function onSettingsChange(id: string, dir: -1 | 1): void {
     playerShell!.commands.consumePointer();
+    if (id === 'locale') {
+      const locales = projectTexts.locales;
+      const nextLocale = locales[(locales.indexOf(textLocale) + dir + locales.length) % locales.length]!;
+      void settings.update({ locale: nextLocale }).then(() => {
+        textLocale = settings.settings.locale;
+        projectSpeakerNames(); interp.refreshDisplayedText();
+        refreshSettingsPanel(); uiDom?.refresh();
+        const issues = projectTexts.diagnostics(textLocale);
+        if (issues.length) { console.warn('[文本目录]', ...issues); dialogue.showBanner('部分译文未确认，暂时显示原文', 'tip'); }
+      }).catch(error => dialogue.showBanner(`语言偏好保存失败：${error instanceof Error ? error.message : String(error)}`, 'tip'));
+      return;
+    }
     const next = stepSetting(settings.settings, id as NumericSettingKey, dir);
     void settings.update({ [id]: next[id as keyof GameSettings] } as Partial<GameSettings>).then(() => {
       settings.apply(typewriter, audio);
@@ -1842,6 +1887,10 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     ownerTeardown.trackListener(() => uiDom?.dispose());
     bus.on('text', () => { currentChoiceOptions = []; hideWorkPage('choices'); syncStoryWorkUi(); });
     bus.on('choice', event => { currentChoiceOptions = event.options.map(option => ({ ...option })); syncStoryWorkUi(); uiDom?.refresh(); });
+    bus.on('textRefresh', event => {
+      if (event.choices) currentChoiceOptions = event.choices.options.map(option => ({ ...option }));
+      uiDom?.refresh();
+    });
     bus.on('stateReset', () => { currentChoiceOptions = []; hideWorkPage('choices'); });
   }
   dialogue.showCommandRail([], onCommandRailSelect);

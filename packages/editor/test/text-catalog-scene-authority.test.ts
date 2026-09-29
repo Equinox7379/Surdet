@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {afterEach,beforeEach,describe,it,expect,vi} from 'vitest';
 import {loadProjectSnapshot,beginChange,InMemoryChangeRepository,inspectTextCatalog,applyTextCatalogPatch,assertTextCatalogTargetRemovable} from '@surdet/authoring';
+import {isStoryTextSource} from '@surdet/core';
 import {NodeProjectStorage} from '../../cli/src/authoring/node-project-storage.js';
 import {openAssetImportAuthorityPaths} from '../../cli/src/asset-import-authority/filesystem.js';
 import {ProjectSceneLifecycleAuthority} from '../../cli/src/asset-import-authority/scene-lifecycle-authority.js';
@@ -23,7 +24,7 @@ async function fixture(){
  await fs.writeFile(path.join(project,'content/scenario/bound.gal'),body);await fs.writeFile(path.join(project,'content/scenario/home.gal'),'@scene home\n主入口。\n@end\n');
  await fs.writeFile(path.join(project,'game.config.json'),'{"entryScene":"home","variables":{},"future":"preserve"}');
  const storage=await NodeProjectStorage.open(project);const snapshot=await loadProjectSnapshot(storage,hasher);const change=await beginChange(snapshot,new InMemoryChangeRepository());change.record.composition!.mode='direct';const view=await inspectTextCatalog(snapshot,hasher);
- await applyTextCatalogPatch(change,{operationId:'enroll',expectedFingerprint:view.fingerprint,expectedRevision:view.revision,patch:{type:'bind',sourceLocale:'zh-CN',bindings:[{key:'bound.greeting',sourceId:view.sources.find(s=>s.sceneId==='bound')!.sourceId}]}},hasher);
+ await applyTextCatalogPatch(change,{operationId:'enroll',expectedFingerprint:view.fingerprint,expectedRevision:view.revision,patch:{type:'bind',sourceLocale:'zh-CN',bindings:[{key:'bound.greeting',sourceId:view.sources.find(s=>isStoryTextSource(s)&&s.sceneId==='bound')!.sourceId}]}},hasher);
  const config=change.record.workingFiles['game.config.json']!;await fs.writeFile(path.join(project,'game.config.json'),config);
  const paths=await openAssetImportAuthorityPaths({projectRoot:project,dataRoot});const authority=new ProjectSceneLifecycleAuthority(paths,{assertLeaseHeld:()=>undefined});
  const file=(p:string)=>({name:path.basename(p),getFile:async()=>new File([await fs.readFile(path.join(project,p))],path.basename(p))}) as FileSystemFileHandle;

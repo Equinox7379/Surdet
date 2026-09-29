@@ -161,6 +161,7 @@ class EditorWriteStorage implements ProjectWriteStorage {
     private readonly base: EditorProjectStorage,
     private readonly gameConfigHandle: FileSystemFileHandle,
     private readonly sceneHandles: Map<string, FileSystemFileHandle>,
+    private readonly terminologyHandle = state.handles.terminology,
   ) {
     this.rootIdentity = base.rootIdentity;
   }
@@ -175,6 +176,12 @@ class EditorWriteStorage implements ProjectWriteStorage {
   }
 
   async readText(filePath: string): Promise<ProjectFile> {
+    if (filePath === 'content/config/terminology.json' && this.terminologyHandle) {
+      // The read projection uses parsed config JSON. Compare that same representation
+      // against the actual source, so external term changes cannot pass as memory data.
+      const text = configText(parseProjectConfigDocument(await readProjectSourceText(this.terminologyHandle), filePath));
+      return { path: filePath, text, bytes: bytesOf(text), sha256: await this.base.sha256(text) };
+    }
     const handle = this.handleFor(filePath);
     if (handle === undefined) return this.base.readText(filePath);
     const text = await readProjectSourceText(handle);
@@ -624,7 +631,9 @@ export async function commitTextCatalogPatch(input: TextCatalogPatchInput): Prom
   const sceneHandles = new Map<string, FileSystemFileHandle>();
   for (const scene of state.scenes.values()) if (scene.handle) sceneHandles.set(scenarioPath(scene), scene.handle);
   if (state.dirHandle !== root || state.handles.gameConfig !== handle || state.gameConfigText !== source) throw new Error('保存前项目已经变化');
-  await commitChange(session, new EditorWriteStorage(storage, handle, sceneHandles));
+  const writer = new EditorWriteStorage(storage, handle, sceneHandles);
+  if ((await loadProjectSnapshot(writer, storage)).revision !== snapshot.revision) throw new Error('译稿来源已在外部变化，请重新读取项目后再确认');
+  await commitChange(session, writer);
   const text = session.record.workingFiles[CONFIG_PATH]!;
   if (state.dirHandle !== root || state.handles.gameConfig !== handle) throw new Error('原项目译稿已写入，但当前项目已切换；未覆盖当前内存');
   state.gameConfigText = text;

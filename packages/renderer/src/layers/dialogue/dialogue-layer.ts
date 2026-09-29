@@ -887,15 +887,18 @@ export class DialogueLayer implements DialogueProjectionPort {
       if (name.length === 0 || id.length === 0) continue;
       const stored = { ...profile };
       this.#speakerProfiles.set(id, stored);
-      const named = profilesByName.get(name) ?? [];
+      const alias = profile.sourceName?.trim() || name;
+      const named = profilesByName.get(alias) ?? [];
       named.push(stored);
-      profilesByName.set(name, named);
+      profilesByName.set(alias, named);
     }
     for (const [name, named] of profilesByName) {
       if (named.length === 1 && !this.#speakerProfiles.has(name)) {
         this.#speakerProfiles.set(name, named[0]!);
       }
     }
+    // A name-only locale change still needs a fresh projection of an unchanged line.
+    this.#lastShownSpeaker = undefined;
     this.#updateSpeakerAvatar();
     this.#requestFrame();
   }
@@ -997,7 +1000,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     const profile = normalizedSpeaker ? this.#speakerProfiles.get(normalizedSpeaker.trim()) : undefined;
     this.setActiveSpeaker(profile?.id ?? null);
     this.#projectionVersion += 1;
-    const raw = normalizedSpeaker !== null ? `${normalizedSpeaker}：${text}` : text;
+    const raw = normalizedSpeaker !== null ? `${profile?.name ?? normalizedSpeaker}：${text}` : text;
     const wrapped = wrapCjk(raw, this.#nvlCharsPerLine);
     const textNode = bindThemeTextProjection(new PText({
       text: wrapped.join('\n'),

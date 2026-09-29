@@ -16,6 +16,7 @@ export interface ProjectUiItem {
 
 export interface ProjectUiContext {
   mode?: 'save' | 'load';
+  literal?(objectRef: string, original: string, field?: 'tab'): string;
   data(field: Extract<ProjectUiText, { kind: 'data' }>['field']): unknown;
   read(name: string, kind: 'variable' | 'setting'): unknown;
   write(binding: ProjectUiBinding, value: string | number | boolean): void | Promise<void>;
@@ -103,9 +104,9 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     event.preventDefault(); event.stopPropagation();
     wrap(active[1].context.action({ kind: 'back' }));
   });
-  const visibleText = (binding: ProjectUiText | undefined, context: ProjectUiContext, item?: ProjectUiItem): string => {
+  const visibleText = (binding: ProjectUiText | undefined, context: ProjectUiContext, item?: ProjectUiItem, objectRef?: string): string => {
     if (!binding) return '';
-    if (binding.kind === 'literal') return binding.value;
+    if (binding.kind === 'literal') return objectRef ? context.literal?.(objectRef, binding.value) ?? binding.value : binding.value;
     if (binding.kind === 'data') {
       const value = item?.[binding.field as keyof ProjectUiItem] ?? context.data(binding.field) ?? '';
       if (binding.field === 'mode') return value === 'save' ? '存档' : value === 'load' ? '读档' : String(value);
@@ -151,8 +152,8 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       button.style.backgroundColor = color(node.style?.background, theme.colors.surface);
       button.style.cursor = 'pointer';
       button.style.fontWeight = '600';
-      button.textContent = visibleText(node.text, display.context, item);
-      if (node.text && node.text.kind !== 'literal') bindings.push(() => { button.textContent = visibleText(node.text, display.context, item); });
+      button.textContent = visibleText(node.text, display.context, item, `ui:${node.id}`);
+      if (node.text) bindings.push(() => { button.textContent = visibleText(node.text, display.context, item, `ui:${node.id}`); });
       if (theme.skins.buttonSkin) {
         const url = options.imageUrl(theme.skins.buttonSkin);
         if (url) { button.style.backgroundImage = `url(${JSON.stringify(url)})`; button.style.backgroundSize = '100% 100%'; }
@@ -165,16 +166,17 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
         void Promise.resolve(display.context.action(node.action, item)).catch(report).finally(() => { display.pending = false; });
       });
     } else if (node.type === 'text') {
-      element.textContent = visibleText(node.text, display.context, item);
+      element.textContent = visibleText(node.text, display.context, item, `ui:${node.id}`);
       element.style.lineHeight = '1.45';
       element.style.pointerEvents = 'none';
-      if (node.text && node.text.kind !== 'literal') bindings.push(() => { element.textContent = visibleText(node.text, display.context, item); });
+      if (node.text) bindings.push(() => { element.textContent = visibleText(node.text, display.context, item, `ui:${node.id}`); });
     } else if (node.type === 'image') {
       const url = options.imageUrl(node.asset!);
       if (!url) throw new Error(`界面图片未加载：${node.asset}`);
       const image = document.createElement('img');
       image.src = url;
-      image.alt = node.text?.kind === 'literal' ? node.text.value : '';
+      image.alt = visibleText(node.text, display.context, item, `ui:${node.id}`);
+      if (node.text) bindings.push(() => { image.alt = visibleText(node.text, display.context, item, `ui:${node.id}`); });
       image.style.cssText = 'width:100%;height:100%;object-fit:contain;pointer-events:none';
       element.appendChild(image);
       element.style.pointerEvents = 'none';
@@ -182,7 +184,9 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       const binding = node.binding!;
       const input = document.createElement('input');
       input.type = node.type === 'toggle' ? 'checkbox' : node.type === 'slider' ? 'range' : 'text';
-      input.setAttribute('aria-label', node.text?.kind === 'literal' ? node.text.value : binding.name);
+      const label = (): string => node.text ? visibleText(node.text, display.context, item, `ui:${node.id}`) : binding.name;
+      input.setAttribute('aria-label', label());
+      bindings.push(() => input.setAttribute('aria-label', label()));
       input.style.cssText = 'width:100%;height:100%;box-sizing:border-box;font:inherit;color:inherit;accent-color:' + hex(theme.colors.accent);
       if (node.type === 'slider') {
         const bounds = display.context.bounds(binding);
@@ -225,6 +229,11 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
         for (const tab of tabs) {
           const button = document.createElement('button');
           button.type = 'button'; button.textContent = tab; button.dataset.uiTab = tab;
+          const source = node.children?.find(child => child.tab === tab);
+          if (source) {
+            const refresh = (): void => { button.textContent = display.context.literal?.(`ui:${source.id}`, tab, 'tab') ?? tab; };
+            refresh(); bindings.push(refresh);
+          }
           button.setAttribute('role', 'tab');
           button.style.cssText = `border:1px solid ${hex(theme.colors.line)};border-radius:${theme.radius.sm}px;background:${hex(theme.colors.surface)};color:${hex(theme.colors.text)};padding:4px 14px;cursor:pointer`;
           button.onclick = () => select(tab);

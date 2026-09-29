@@ -8,11 +8,12 @@ window.addEventListener('message', event => {
   started = true;
   const data = event.data as {
     id: string; config: PlayerProject['config']; sceneTexts: Record<string, string>;
+    terminology?: unknown;
     timelineFiles: Record<string, unknown>; assetFiles: Record<string, string>; fontFiles: Record<string, string>; gallery: PlayerProject['gallery'];
   };
   void startPlayer({ id: data.id, config: data.config, assetFiles: data.assetFiles, fontFiles: data.fontFiles,
     sceneFiles: Object.fromEntries(Object.entries(data.sceneTexts).map(([path, text]) => [path, async () => text])),
-    timelineFiles: data.timelineFiles, gallery: data.gallery,
+    timelineFiles: data.timelineFiles, gallery: data.gallery, terminology: data.terminology,
     resolveSceneUrl: path => new URL(path, location.href).href,
   }, owner.signal).catch(error => { if (!owner.signal.aborted) showPlayerRecovery(error); });
 });

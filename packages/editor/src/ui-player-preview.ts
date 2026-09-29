@@ -16,6 +16,7 @@ export async function openUiPlayerPreview(configText: string): Promise<void> {
   const sceneTexts = Object.fromEntries([...state.scenes.values()].map(scene => [scene.file, scene.text]));
   const timelines = Object.fromEntries(state.timelines.map(timeline => [timeline.file, JSON.parse(timeline.text)]));
   const gallery = state.configFiles.gallery ?? { cgs: [], music: [] };
+  const terminology = state.configFiles.terminology;
   const dialog = document.createElement('dialog');
   dialog.className = 'ui-player-preview'; dialog.setAttribute('aria-label', '试玩界面草稿');
   const heading = document.createElement('div'); heading.className = 'ui-player-preview-heading';
@@ -74,7 +75,7 @@ export async function openUiPlayerPreview(configText: string): Promise<void> {
       if (disposed || state.dirHandle !== projectRoot) { cleanup(); return; }
       const url = URL.createObjectURL(file); urls.push(url); fontFiles[path] = `${url}#${filename}`;
     }
-    payload = { type: 'surdet-ui-player-load', id: `editor-ui-preview-${crypto.randomUUID()}`, config, sceneTexts, timelineFiles: timelines, assetFiles, fontFiles, gallery };
+    payload = { type: 'surdet-ui-player-load', id: `editor-ui-preview-${crypto.randomUUID()}`, config, sceneTexts, timelineFiles: timelines, assetFiles, fontFiles, gallery, terminology };
     publish();
   } catch (error) { cleanup(); throw error; }
 }

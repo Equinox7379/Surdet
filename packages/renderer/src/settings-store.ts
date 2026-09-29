@@ -32,6 +32,8 @@ export interface GameSettings {
   skipStrategy: number;
   /** 安全的内置键位预设 ID；不持久化任意键字符串。 */
   keyPreset: KeyPreset;
+  /** Empty means the project's source language. Stored with device preferences, not saves. */
+  locale: string;
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
@@ -45,6 +47,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   voiceVolume: 1,
   skipStrategy: SKIP_STRATEGY_READ,
   keyPreset: 'standard',
+  locale: '',
 };
 
 /** 设置持久化后端（宿主注入；可同步或异步） */
@@ -77,7 +80,7 @@ export interface SettingsRowView {
   display: string;
 }
 
-export type NumericSettingKey = Exclude<keyof GameSettings, 'keyPreset'>;
+export type NumericSettingKey = Exclude<keyof GameSettings, 'keyPreset' | 'locale'>;
 
 /** 设置面板步进定义：各设置项的标签/步长/范围/格式化（◀ ▶ 步进用） */
 export const SETTING_STEPS: {
@@ -146,6 +149,7 @@ export class SettingsStore {
       // 快进策略枚举 clamp 到 0/1（非法值回退默认"仅跳已读"）
       skipStrategy: Math.round(clampNum(raw.skipStrategy, d.skipStrategy, SKIP_STRATEGY_READ, SKIP_STRATEGY_ALL)),
       keyPreset: raw.keyPreset === 'left-handed' ? 'left-handed' : d.keyPreset,
+      locale: typeof raw.locale === 'string' && /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(raw.locale) ? raw.locale : d.locale,
     };
     return this.settings;
   }

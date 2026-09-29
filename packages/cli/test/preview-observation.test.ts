@@ -33,6 +33,8 @@ async function fixture() {
   process.env['SURDET_AGENT_DATA_DIR'] = dataRoot;
   await fs.mkdir(path.join(project, 'content/scenario/chapter'), { recursive: true });
   await fs.mkdir(path.join(project, 'content/assets/bg'), { recursive: true });
+  await fs.mkdir(path.join(project, 'content/config'), { recursive: true });
+  await fs.writeFile(path.join(project, 'content/config/terminology.json'), '{"terms":[{"canonical":"来源词条","variants":[]}]}');
   await fs.writeFile(path.join(project, 'game.config.json'), JSON.stringify({ entryScene: 'start', variables: {} }, null, 2));
   await fs.writeFile(path.join(project, 'content/scenario/chapter/start.gal'), '@scene start\n凛：开始。\n@end\n');
   await fs.writeFile(path.join(project, 'content/assets/bg/night.svg'), '<svg/>');
@@ -365,6 +367,7 @@ it('plays an isolated working revision through the bound HTTP client and MCP obs
   const content = await f.editor.workspace.previewContent({ ...dirty, target: { kind: 'working-change', changeId } });
   expect(content.target).toEqual({ kind: 'working-change', changeId, workingRevision: 1 });
   expect(content.files['content/scenario/isolated.gal']).toContain('尚未写回的章节。');
+  expect(content.files['content/config/terminology.json']).toContain('来源词条');
   expect(content.contentRevision).not.toBe(content.projectRevision);
   const begin: PreviewBeginInput = { ...f.begin, sceneId: 'isolated',
     content: { target: content.target, contentRevision: content.contentRevision },

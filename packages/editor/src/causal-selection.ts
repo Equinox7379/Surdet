@@ -140,6 +140,7 @@ export function describeAuthoringObject(object: AuthoringObject): AuthoringObjec
   const kindNames: Record<AuthoringObject['kind'], string> = {
     'text-catalog': '文本目录',
     'text-key': '文本键',
+    term: '词条',
     scene: '场景',
     label: '标签',
     text: '台词',

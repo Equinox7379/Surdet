@@ -32,6 +32,34 @@ async function fixture() {
 }
 
 describe('text catalog authoring', () => {
+  it('binds character, literal UI/tab and terminology fields through the same guarded CSV and object index', async () => {
+    const f = await fixture();
+    const config = JSON.parse(f.change.record.workingFiles['game.config.json']!);
+    config.characters = { rin: { name: '凛' } };
+    const frame = { x: 0, y: 0, width: 200, height: 100 };
+    config.ui = { version: 1, pages: { gallery: { id: 'tabs', type: 'tabs', frame, children: [
+      { id: 'names', type: 'text', frame, tab: '名词', text: { kind: 'literal', value: '雾港词条' } },
+    ] } } };
+    f.change.record.workingFiles['game.config.json'] = JSON.stringify(config);
+    f.change.record.workingFiles['content/config/terminology.json'] = '{"terms":[{"canonical":"雾港","variants":[]}]}';
+    const view = await f.inspect();
+    const fields = view.sources.filter(source => ['character', 'ui', 'term'].includes(source.kind));
+    expect(fields).toHaveLength(4);
+    await f.apply({ type: 'bind', sourceLocale: 'zh-CN', bindings: fields.map((source, i) => ({ key: `field.${i}`, sourceId: source.sourceId })) });
+    const csv = await f.csv(rows => { for (const row of rows.slice(1)) row[6] = `EN ${row[5]}`; });
+    const preview = await previewTextCatalogImport(await snapshot(f.change.record.workingFiles), hasher, 'en', csv);
+    expect(preview.ready).toBe(true);
+    await f.apply({ type: 'import', locale: 'en', csv, previewFingerprint: preview.previewFingerprint });
+    expect((await f.inspect()).entries.every(entry => entry.status === 'translated')).toBe(true);
+    const index = buildObjectIndex(await snapshot(f.change.record.workingFiles));
+    expect(index.byRef.get('text-key:field.0')!.references).toContain('character:rin');
+    expect(index.byRef.get('term:雾港')!.referencedBy).toContain('text-key:field.3');
+    const changed = JSON.parse(f.change.record.workingFiles['game.config.json']!); changed.characters.rin.name = '铃';
+    f.change.record.workingFiles['game.config.json'] = JSON.stringify(changed);
+    expect((await f.inspect()).entries[0]!.status).toBe('needs-rebind');
+    expect((await f.inspect()).entries[0]!.translations.en!.value).toBe('EN 凛');
+    expect((await previewTextCatalogImport(await snapshot(f.change.record.workingFiles), hasher, 'en', csv)).ready).toBe(false);
+  });
   it('diagnoses hand-edited source metadata and malformed current translations instead of reporting them translated', async () => {
     const f = await fixture(); await f.bind();
     const config = JSON.parse(f.change.record.workingFiles['game.config.json']!);
