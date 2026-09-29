@@ -505,6 +505,8 @@ const emptyAssetIntelligenceExample = {
 };
 
 const fontRoleFields: SchemaProperties = { body: { type: ['string', 'null'] }, title: { type: ['string', 'null'] }, ui: { type: ['string', 'null'] } };
+const galleryPolicyFields = { cgs: { enum: ['save', 'profile', null] }, music: { enum: ['save', 'profile', null] } };
+const galleryPolicyInspection = strictObject({ value: { oneOf: [strictObject(galleryPolicyFields), nullSchema] }, effective: strictObject({ cgs: { enum: ['save', 'profile'] }, music: { enum: ['save', 'profile'] } }, ['cgs', 'music']), fingerprint: stringSchema }, ['value', 'effective', 'fingerprint']);
 const playerConfigFields: SchemaProperties = {
   title: { type: ['string', 'null'] }, subtitle: { type: ['string', 'null'] },
   titleBackground: { type: ['string', 'null'] }, titleLogo: { type: ['string', 'null'] },
@@ -1003,9 +1005,15 @@ const definitions = {
     inputSchema: readViewInputSchema,
     outputSchema: strictObject({
       view: { enum: ['project', 'working'] },
+      unlockPolicy: galleryPolicyInspection,
       cgs: arrayOf(strictObject({ id: stringSchema, name: stringSchema, src: stringSchema, objectRef: stringSchema, fingerprint: stringSchema }, ['id', 'name', 'objectRef', 'fingerprint'])),
-    }, ['view', 'cgs']),
-    example: { input: {}, expectedResultShape: { view: 'working', cgs: [{ id: 'night_cg', name: '夜色', src: 'night', objectRef: 'gallery:cgs:night_cg', fingerprint: '...' }] } },
+    }, ['view', 'cgs', 'unlockPolicy']),
+    example: { input: {}, expectedResultShape: { view: 'working', unlockPolicy: { value: null, effective: { cgs: 'save', music: 'save' }, fingerprint: '...' }, cgs: [{ id: 'night_cg', name: '夜色', src: 'night', objectRef: 'gallery:cgs:night_cg', fingerprint: '...' }] } },
+  },
+  galleryPolicyPatch: {
+    inputSchema: strictObject({ operationId: stringSchema, expectedFingerprint: stringSchema, patch: { ...strictObject(galleryPolicyFields), minProperties: 1 } }, ['operationId', 'expectedFingerprint', 'patch']),
+    outputSchema: strictObject({ unlockPolicy: galleryPolicyInspection, diffEntry: diffEntrySchema }, ['unlockPolicy', 'diffEntry']),
+    example: { input: { operationId: 'op_collection', expectedFingerprint: '...', patch: { cgs: 'profile' } }, expectedResultShape: { unlockPolicy: { value: { cgs: 'profile' }, effective: { cgs: 'profile', music: 'save' }, fingerprint: '...' }, diffEntry: {} } },
   },
   galleryCgCreate: {
     inputSchema: strictObject({ operationId: stringSchema, id: stringSchema, name: stringSchema, src: stringSchema }, ['operationId', 'id', 'name']),
@@ -1417,6 +1425,7 @@ export const AUTHORING_CAPABILITY_IDS = [
   'timeline.patch',
   'gallery.cg.create',
   'gallery.cg.patch',
+  'gallery.policy.patch',
   'project.entry-scene.set',
   'project.player-config.patch',
   'project.stage-config.patch',
@@ -1479,6 +1488,7 @@ const mutateRepair = [
 const imageImportErrors = ["IMPORT_OPERATION_NOT_FOUND","IMPORT_OPERATION_CONFLICT","IMPORT_PLAN_BLOCKED","IMPORT_PLAN_STALE","IMPORT_PROJECT_STALE","IMPORT_TARGET_UNSAFE","IMPORT_TARGET_EXISTS","IMPORT_RECOVERY_REQUIRED","IMPORT_LIMIT_EXCEEDED","IMPORT_UPLOAD_BUSY","IMPORT_UPLOAD_TIMEOUT","IMPORT_UPLOAD_MISMATCH","IMPORT_AUTHORITY_NOT_READY","IMPORT_FILESYSTEM_UNSUPPORTED","IMPORT_PUBLICATION_FAILED","IMPORT_IO_FAILED","ASSET_SOURCE_FORBIDDEN","ASSET_SOURCE_CHANGED","ASSET_IMAGE_INVALID","ASSET_MEDIA_INVALID","PROJECT_BUSY","HUMAN_WORKSPACE_DIRTY","HUMAN_WORKSPACE_BUSY","HUMAN_WORKSPACE_STATE_CORRUPT","SESSION_STATE_INVALID","POLICY_BLOCKED"] as const;
 
 const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
+  'gallery.policy.patch': { title: 'Patch gallery unlock policy', purpose: 'Opt CG or music into project-scoped permanent collections. Missing fields keep per-save semantics. Null removes one policy. Direct only; existing CG mutations retain candidate support.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['active change is OPEN and direct', 'copy working project.gallery.unlockPolicy.fingerprint'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Read project.gallery with view=working, inspect current policy and copy its fingerprint.', ...mutateRepair] },
   'project.texts': { title: 'Read text and voice catalog or export CSV', purpose: 'Read enrolled dialogue/choice, character/UI captions and terminology with current source coordinates, translations, voiceStatus, spokenText and usable voiceAssets. JSON sources and entries are paged independently; carry expectedRevision on later pages. format=csv exports all enrolled translations; voice-csv exports all enrolled dialogue voice rows without pagination. Explicit source rebind is required after source changes. Shared Player consumes confirmed language text and voice bindings; missing or stale voice is silent.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false, preconditions: ['working view requires an active change'], possibleErrors: [...commonErrors, 'TEXT_CATALOG_INVALID', 'OBJECT_REF_STALE'], repairRecipes: ['Copy actual sourceId, revision and fingerprint into a direct operation. Restart paging after revision changes.', 'Preserve exported columns/source facts and spreadsheet apostrophe escaping. For voice CSV edit only voice/action: keep, bind or remove; use existing voiceAssets keys, never paths.'] },
   'project.texts.import.preview': { title: 'Preview translation or voice CSV import', purpose: 'Read-only complete-sheet difference and diagnostics. Reject missing/duplicate/unknown rows and changed source facts. Translation sheets check placeholders and Ruby. Voice sheets require explicit keep/bind/remove, confirmed language words and a unique supported physical voice asset; the preview binds current usable asset inventory. Does not write project files or generate audio.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false, preconditions: ['valid UTF-8 CSV text', 'translation locale differs from source locale; voice sheets may use source locale'], possibleErrors: [...commonErrors, 'TEXT_CATALOG_INVALID'], repairRecipes: ['Correct every issue and preview again. Use the ready previewFingerprint with the identical CSV/locale in project.texts.patch; re-preview after source, words or available assets change.'] },
   'project.texts.patch': { title: 'Bind texts or import reviewed translations/voices', purpose: 'Direct-only text catalog changes. bind explicitly enrolls/rebinds a stable key while retaining previous translations/voices; remove deletes selected keys; import requires a matching ready translation or voice preview. Voice bind confirms current words/sourceVersion, keep retains prior binding, remove explicitly unbinds one language. Writes only game.config.json in the isolated change, never script, audio bytes or player preference.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['OPEN direct, not integration', 'current revision and catalog fingerprint', 'import requires current ready preview'], possibleErrors: [...commonErrors, 'TEXT_CATALOG_INVALID', 'UNSUPPORTED_OPERATION', 'OBJECT_REF_STALE', 'OPERATION_ID_CONFLICT'], repairRecipes: ['Re-read working catalog and explicitly confirm changed sources or recording words. Keep text keys, not old line numbers; never silently reconfirm stale recordings.', 'Validate and play the change before separately authorized source commit.'] },
@@ -1553,6 +1563,7 @@ function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition
     : id === 'project.texts.patch' ? 'textsPatch'
     : id === 'gallery.cg.create' ? 'galleryCgCreate'
     : id === 'gallery.cg.patch' ? 'galleryCgPatch'
+    : id === 'gallery.policy.patch' ? 'galleryPolicyPatch'
     : id === 'asset.relocation.replace' ? 'assetRelocationReplace'
     : id === 'asset.relocation.plan' ? 'assetRelocationPlan'
     : id === 'asset.relocation.inspect' ? 'assetRelocationInspect'

@@ -3,6 +3,7 @@ import type { OperationCompositionDraft } from './composition-contracts.js';
 import type { TextHasher } from './project-storage.js';
 import { stableStringify } from './change-session.js';
 import { parseProjectConfigDocument } from './config-document.js';
+import { readGalleryDocument, GALLERY_PATH } from './gallery-operations.js';
 import { resolveUniqueScenarioPath, sceneIdFromScenarioPath } from './scenario-identity.js';
 import {
   analyzeCharacterCompositionReferences,
@@ -56,6 +57,7 @@ export async function buildSceneOperationCompositionDraft(input: {
   uiConfig?: unknown;
   textCatalog?: unknown;
   terminologyText?: string;
+  galleryText?: string;
   variables?: Record<string, unknown>;
   titleLogo?: string | null;
   hasher: TextHasher;
@@ -75,6 +77,7 @@ export async function buildSceneOperationCompositionDraft(input: {
     ...(input.beforeText === undefined ? {} : { objectFingerprintBefore: await input.hasher.sha256(input.beforeText) }),
     objectFingerprintAfter,
     replayStatePreconditions: [
+      { objectRef: 'config:galleryPolicy', expectedFingerprint: await input.hasher.sha256(stableStringify(readGalleryDocument(input.galleryText).document.unlockPolicy ?? null)) },
       { objectRef: 'config:stage', expectedFingerprint: await input.hasher.sha256(stableStringify(input.stageConfig ?? null)) },
       { objectRef: 'config:fonts', expectedFingerprint: await input.hasher.sha256(stableStringify(input.fontPaths)) },
       { objectRef: 'config:theme', expectedFingerprint: await input.hasher.sha256(stableStringify({ theme: input.themeConfig ?? null, titleLogo: input.titleLogo ?? null })) },
@@ -132,6 +135,7 @@ export async function buildTimelineOperationCompositionDraft(input: {
       { objectRef: 'config:ui', expectedFingerprint: await input.hasher.sha256(stableStringify(input.config.ui ?? null)) },
       { objectRef: 'config:textCatalog', expectedFingerprint: await input.hasher.sha256(stableStringify(input.config.textCatalog ?? null)) },
       { objectRef: 'config:terminology', expectedFingerprint: await input.hasher.sha256(stableStringify(input.workingFiles?.['content/config/terminology.json'] ?? null)) },
+      { objectRef: 'config:galleryPolicy', expectedFingerprint: await input.hasher.sha256(stableStringify(readGalleryDocument(input.workingFiles?.[GALLERY_PATH]).document.unlockPolicy ?? null)) },
       { objectRef: 'config:portraits', expectedFingerprint: await input.hasher.sha256(stableStringify(projectPortraitOverrides(input.config))) },
     ],
   };

@@ -78,10 +78,10 @@ function registerSaveIpc(): void {
 
 /** 注册全局 Profile IPC：与普通 slot 存档分目录、分接口，损坏数据由 store 宽容读取为 null。 */
 function registerProfileIpc(): void {
-  ipcMain.handle('profile:read', (e, key: unknown) => {
+  ipcMain.handle('profile:read', (e, key: unknown, options?: { strict?: boolean }) => {
     assertTrustedSender(e);
     assertProfileKey(key as string);
-    return getProfileStore().read(key as string);
+    return getProfileStore().read(key as string, { strict: options?.strict === true });
   });
   ipcMain.handle('profile:write', (e, key: unknown, value: unknown) => {
     assertTrustedSender(e);

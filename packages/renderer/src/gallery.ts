@@ -33,6 +33,7 @@ export interface GalleryTextDef {
 
 /** 鉴赏配置（content/config/gallery.json） */
 export interface GalleryConfig {
+  unlockPolicy?: Partial<import('@surdet/core').GalleryUnlockPolicy>;
   cgs: GalleryCgDef[];
   music: GalleryMusicDef[];
   texts?: GalleryTextDef[];

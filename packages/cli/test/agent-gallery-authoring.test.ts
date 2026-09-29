@@ -113,6 +113,30 @@ async function call(
 }
 
 describe('Agent Port gallery authoring', () => {
+  it('exposes a strict direct-only policy patch and separate project/working reads over MCP', async () => {
+    const fixture = makeProject('policy');
+    const first = await connected(fixture, 'stage');
+    try {
+      const initial = (await call(first.client, 'project.gallery')).body.result.unlockPolicy;
+      expect(initial).toMatchObject({ value: null, effective: { cgs: 'save', music: 'save' } });
+      expect((await call(first.client, 'change.begin', { compositionMode: 'direct' })).body.ok).toBe(true);
+      const result = await call(first.client, 'gallery.policy.patch', { operationId: 'policy', expectedFingerprint: initial.fingerprint, patch: { cgs: 'profile', music: 'profile' } });
+      expect(result.body.ok, JSON.stringify(result.body)).toBe(true);
+      expect((await call(first.client, 'project.gallery', { view: 'working' })).body.result.unlockPolicy.effective).toEqual({ cgs: 'profile', music: 'profile' });
+      expect((await call(first.client, 'project.gallery', { view: 'project' })).body.result.unlockPolicy.value).toBeNull();
+      const stale = await call(first.client, 'gallery.policy.patch', { operationId: 'stale', expectedFingerprint: initial.fingerprint, patch: { cgs: null } });
+      expect(stale.body.error.code).toBe('OBJECT_REF_STALE');
+      expect(fs.readFileSync(path.join(fixture.root, 'content/config/gallery.json'), 'utf8')).toBe(fixture.galleryText);
+      expect((await call(first.client, 'change.diff')).body.ok).toBe(true);
+    } finally { await closeConnected(first); }
+    const candidate = await connected(fixture, 'stage');
+    try {
+      await call(candidate.client, 'change.begin');
+      const policy = (await call(candidate.client, 'project.gallery')).body.result.unlockPolicy;
+      const result = await call(candidate.client, 'gallery.policy.patch', { operationId: 'blocked', expectedFingerprint: policy.fingerprint, patch: { cgs: 'profile' } });
+      expect(result.body.error.code).toBe('UNSUPPORTED_OPERATION');
+    } finally { await closeConnected(candidate); }
+  });
   afterEach(() => {
     delete process.env['SURDET_AGENT_DATA_DIR'];
     for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
@@ -215,6 +239,10 @@ describe('Agent Port gallery authoring', () => {
         patch: { name: '定稿 CG' },
       });
       expect(patched.body.result.entry).toEqual({ id: 'gallery_new', name: '定稿 CG' });
+      const policy = (await call(connectedSession.client, 'project.gallery')).body.result.unlockPolicy;
+      expect((await call(connectedSession.client, 'gallery.policy.patch', {
+        operationId: 'op-policy', expectedFingerprint: policy.fingerprint, patch: { music: 'profile' },
+      })).body.ok).toBe(true);
 
       const validated = await call(connectedSession.client, 'project.validate');
       expect(validated.body.ok).toBe(true);
@@ -258,12 +286,14 @@ describe('Agent Port gallery authoring', () => {
     expect(committedGallery.music).toEqual([{ id: 'rain', name: '雨声' }]);
     expect(committedGallery.texts).toEqual([{ id: 'memory', name: '回想', scene: 'start', label: 'memory' }]);
     expect(committedGallery.cgs).toEqual([{ id: 'gallery_new', name: '定稿 CG' }]);
+    expect(committedGallery.unlockPolicy).toEqual({ music: 'profile' });
     expect(fs.readFileSync(path.join(fixture.root, 'content', 'scenario', 'start.gal'), 'utf8')).toBe(fixture.sceneText);
 
     const reopened = await connected(fixture, 'observe');
     try {
       const projectFacts = await call(reopened.client, 'project.gallery');
       expect(projectFacts.body.result.view).toBe('project');
+      expect(projectFacts.body.result.unlockPolicy.effective).toEqual({ cgs: 'save', music: 'profile' });
       expect(projectFacts.body.result.cgs).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: 'gallery_new', name: '定稿 CG', objectRef: 'gallery:cgs:gallery_new' }),
       ]));

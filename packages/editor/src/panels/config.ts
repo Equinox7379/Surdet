@@ -1604,6 +1604,24 @@ function renderEventsSection(): HTMLElement {
 function renderGallerySection(): HTMLElement {
   const { sec, ops } = sectionShell('gallery');
   const ga = ensureGaRows();
+  for (const [section, label] of [['cgs', '图片收藏'], ['music', '音乐收藏']] as const) {
+    const row = h('label', 'config-field', `${label}：`);
+    const select = h('select');
+    select.setAttribute('aria-label', `${label}保留方式`);
+    for (const [value, name] of [['', '随剧情存档（默认）'], ['save', '随剧情存档'], ['profile', '跨周目永久保留']]) {
+      const option = h('option', undefined, name); option.value = value!; select.append(option);
+    }
+    select.value = ga.unlockPolicy?.[section] ?? '';
+    select.onchange = () => {
+      pushConfigHistory(false);
+      ga.unlockPolicy = { ...ga.unlockPolicy };
+      if (select.value === '') delete ga.unlockPolicy[section];
+      else ga.unlockPolicy[section] = select.value as 'save' | 'profile';
+      if (!Object.keys(ga.unlockPolicy).length) delete ga.unlockPolicy;
+    };
+    row.append(select); sec.append(row);
+  }
+  sec.append(h('p', 'dim', '永久收藏只记录正常游玩中的解锁；读取旧档和重新开始不会撤销。编辑器试玩不写入玩家收藏。'));
   const cgCols: ColDef[] = [
     { key: 'id', label: '条目标识' }, { key: 'name', label: '名称' }, { key: 'src', label: '素材来源' },
   ];
@@ -1628,8 +1646,18 @@ function renderGallerySection(): HTMLElement {
     void saveConfigFile('gallery', json, errors, '鉴赏配置', submittedRows);
   };
   ops.appendChild(saveBtn);
+  const previewBtn = h('button', undefined, '试玩收藏草稿');
+  previewBtn.onclick = () => { void previewGalleryDraft().catch(error => setStatus(String(error), false, 6000)); };
+  ops.appendChild(previewBtn);
   sec.appendChild(ops);
   return sec;
+}
+
+async function previewGalleryDraft(): Promise<void> {
+  assertConfigSourcesReadable(['gallery']);
+  const { json, errors } = rowsToGallery(state.configFiles.gallery, ensureGaRows());
+  if (errors.length) throw new Error(errors[0]);
+  await openUiPlayerPreview(previewUiConfigText(previewThemeConfigText(previewStageConfigText(state.gameConfigText))), json);
 }
 
 /* ============================ 名词表编辑器（术语审计闭环） ============================ */
@@ -1760,7 +1788,7 @@ function renderUiSection(): HTMLElement {
     replace: replaceUiConfigDraft,
     reload: reloadUiConfigDraft,
     save: () => runProjectWriteOperation(saveUiConfigDraftUnlocked),
-    preview: () => openUiPlayerPreview(previewUiConfigText(previewThemeConfigText(previewStageConfigText(state.gameConfigText)))),
+    preview: previewGalleryDraft,
     exportShare: async fragment => {
       const root = state.dirHandle;
       const config = parseProjectConfigDocument(previewUiConfigText(previewThemeConfigText(state.gameConfigText)));

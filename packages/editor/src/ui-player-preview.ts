@@ -7,7 +7,7 @@ let closePreview: (() => void) | null = null;
 export function disposeUiPlayerPreview(): void { closePreview?.(); closePreview = null; }
 
 /** A real shared Player in its own window context, never the designer's action callbacks. */
-export async function openUiPlayerPreview(configText: string): Promise<void> {
+export async function openUiPlayerPreview(configText: string, gallery: unknown = state.configFiles.gallery ?? { cgs: [], music: [] }): Promise<void> {
   disposeUiPlayerPreview();
   const projectRoot = state.dirHandle;
   const config = parseProjectConfigDocument(configText);
@@ -15,7 +15,6 @@ export async function openUiPlayerPreview(configText: string): Promise<void> {
   validateUiAssets(readProjectUi(config), buildAssetCatalog(sources.flatMap(asset => asset.sourcePath ? [asset.sourcePath] : [])));
   const sceneTexts = Object.fromEntries([...state.scenes.values()].map(scene => [scene.file, scene.text]));
   const timelines = Object.fromEntries(state.timelines.map(timeline => [timeline.file, JSON.parse(timeline.text)]));
-  const gallery = state.configFiles.gallery ?? { cgs: [], music: [] };
   const terminology = state.configFiles.terminology;
   const dialog = document.createElement('dialog');
   dialog.className = 'ui-player-preview'; dialog.setAttribute('aria-label', '试玩界面草稿');

@@ -143,6 +143,8 @@ export async function dispatchAuthoringCapability(
       return { value: await service.galleryCgCreate(requireChange(context), payload as unknown as Parameters<AuthoringService['galleryCgCreate']>[1]), operationId: operationIdFrom(payload) };
     case 'gallery.cg.patch':
       return { value: await service.galleryCgPatch(requireChange(context), payload as unknown as Parameters<AuthoringService['galleryCgPatch']>[1]), operationId: operationIdFrom(payload) };
+    case 'gallery.policy.patch':
+      return { value: await service.galleryPolicyPatch(requireChange(context), payload as unknown as Parameters<AuthoringService['galleryPolicyPatch']>[1]), operationId: operationIdFrom(payload) };
     case 'character.remove':
       return { value: await service.characterRemove(requireChange(context), payload as unknown as Parameters<AuthoringService['characterRemove']>[1]), operationId: operationIdFrom(payload) };
     case 'timeline.create':

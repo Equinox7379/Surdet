@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld('surdetSave', {
 
 /** Profile 持久化桥（userData/profile/<key>.json）：跨周目通关记录等全局数据，独立于 slot 存档。 */
 contextBridge.exposeInMainWorld('surdetProfile', {
-  read: (key: string): Promise<unknown | null> => ipcRenderer.invoke('profile:read', key) as Promise<unknown | null>,
+  read: (key: string, options?: { strict?: boolean }): Promise<unknown | null> => ipcRenderer.invoke('profile:read', key, options) as Promise<unknown | null>,
   write: (key: string, value: unknown): Promise<void> => ipcRenderer.invoke('profile:write', key, value) as Promise<void>,
   delete: (key: string): Promise<void> => ipcRenderer.invoke('profile:delete', key) as Promise<void>,
 });

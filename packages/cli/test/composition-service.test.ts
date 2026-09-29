@@ -201,7 +201,7 @@ describe('CompositionService compare/plan/dry-run', () => {
     expect(fs.readFileSync(path.join(fixture.projectRoot, 'game.config.json'), 'utf8')).toBe(edited);
   });
 
-  it.each(['catalog', 'terminology'])('seals %s state and rejects replay after its baseline changes', async target => {
+  it.each(['catalog', 'terminology', 'galleryPolicy'])('seals %s state and rejects replay after its baseline changes', async target => {
     const fixture = await setup('text-catalog-baseline');
     const configPath = path.join(fixture.projectRoot, 'game.config.json');
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -222,9 +222,11 @@ describe('CompositionService compare/plan/dry-run', () => {
     const operation = Object.values(compared.comparison.candidateManifests!)[0]!.operations[0]!;
     expect(operation.replayStateRequirements).toContainEqual({ objectRef: 'config:textCatalog', source: 'base', expectedFingerprint: await realHasher.sha256(stableStringify(config.textCatalog)) });
     expect(operation.replayStateRequirements).toContainEqual({ objectRef: 'config:terminology', source: 'base', expectedFingerprint: await realHasher.sha256(stableStringify(terms)) });
+    expect(operation.replayStateRequirements).toContainEqual({ objectRef: 'config:galleryPolicy', source: 'base', expectedFingerprint: await realHasher.sha256('null') });
     expect((await planFromComparison(fixture, refs)).plan.dryRun.status).toBe('passed');
     if (target === 'catalog') { config.textCatalog.sourceLocale = 'ja'; fs.writeFileSync(configPath, JSON.stringify(config)); }
-    else fs.writeFileSync(termPath, '{"terms":[]}');
+    else if (target === 'terminology') fs.writeFileSync(termPath, '{"terms":[]}');
+    else fs.writeFileSync(path.join(fixture.projectRoot, 'content/config/gallery.json'), '{"cgs":[],"music":[],"unlockPolicy":{"cgs":"profile"}}');
     expect((await fixture.service.compare(refs)).comparison.status).toBe('review-only');
   });
 

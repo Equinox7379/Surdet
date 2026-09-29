@@ -443,6 +443,15 @@ const galleryRaw = {
 };
 
 describe('gallery ⇄ JSON', () => {
+  it('roundtrips optional collection policy and preserves sibling data', () => {
+    const raw = { ...galleryRaw, unknown: { keep: true }, unlockPolicy: { cgs: 'profile' as const } };
+    const rows = parseGalleryRows(raw);
+    expect(rowsToGallery(raw, rows)).toEqual({ json: expect.objectContaining(raw), errors: [] });
+    rows.unlockPolicy = { music: 'profile' };
+    expect(rowsToGallery(raw, rows)).toEqual({ json: expect.objectContaining({ unknown: raw.unknown, unlockPolicy: { music: 'profile' } }), errors: [] });
+    delete rows.unlockPolicy;
+    expect(rowsToGallery(raw, rows).json).not.toHaveProperty('unlockPolicy');
+  });
   it('往返一致（cgs/music/texts 三表）', () => {
     const rows = parseGalleryRows(galleryRaw);
     expect(rows.cgs).toHaveLength(1);

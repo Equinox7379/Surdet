@@ -31,8 +31,8 @@ describe('agent authoring CLI JSON contract', () => {
     expect(result.stdout.trim().endsWith('}')).toBe(true);
     expect(result.stderr).toBe('');
     const body = JSON.parse(result.stdout);
-    expect(body.contractVersion).toBe('2.22.0');
-    expect(body.result.capabilities).toHaveLength(59);
+    expect(body.contractVersion).toBe('2.23.0');
+    expect(body.result.capabilities).toHaveLength(60);
     expect(body.result.capabilities[0]).toEqual(expect.objectContaining({
       id: 'capabilities.describe',
       mcpTool: 'surdet_capabilities_describe',

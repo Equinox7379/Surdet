@@ -1,5 +1,6 @@
 import { parseProjectConfigDocument } from '@surdet/authoring';
 import { state } from './state.js';
+import { readGalleryUnlockPolicy } from '@surdet/core';
 
 export type ConfigSourceName = keyof typeof state.handles;
 
@@ -10,7 +11,11 @@ export function configSourcePath(name: ConfigSourceName): string {
 /** Achievements have always used an array; the other editable config roots are objects. */
 export function parseConfigSource(name: ConfigSourceName, text: string): unknown {
   const path = configSourcePath(name);
-  if (name !== 'achievements') return parseProjectConfigDocument(text, path);
+  if (name !== 'achievements') {
+    const config = parseProjectConfigDocument(text, path);
+    if (name === 'gallery') readGalleryUnlockPolicy(config);
+    return config;
+  }
   let value: unknown;
   try { value = JSON.parse(text.replace(/^\uFEFF/, '')); }
   catch (error) { throw new Error(`${path} 解析失败：${error instanceof Error ? error.message : String(error)}`); }

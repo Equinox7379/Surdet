@@ -18,6 +18,7 @@ export type ComposableObjectRef =
   | 'config:ui'
   | 'config:textCatalog'
   | 'config:terminology'
+  | 'config:galleryPolicy'
   | 'config:stage'
   | 'config:portraits'
   | 'config:entryScene';
@@ -119,6 +120,7 @@ function readWorkingObject(workingFiles: Readonly<Record<string, string>>, objec
   if (objectRef === 'config:ui') return present(fullConfig.ui ?? null);
   if (objectRef === 'config:textCatalog') return present(fullConfig.textCatalog ?? null);
   if (objectRef === 'config:terminology') return present(workingFiles['content/config/terminology.json'] ?? null);
+  if (objectRef === 'config:galleryPolicy') return present(readGalleryDocument(workingFiles[GALLERY_PATH]).document.unlockPolicy ?? null);
   if (objectRef === 'config:fonts') return present(resolveProjectFontPaths(fullConfig));
   if (objectRef === 'config:portraits') return present(projectPortraitOverrides(fullConfig));
   if (objectRef.startsWith('variable:')) {
