@@ -15,8 +15,8 @@ const root = { id: 'hud-root', type: 'container' as const, frame: { x: 0, y: 0, 
   { id: 'trust-value', type: 'text' as const, frame: { x: 20, y: 20, width: 200, height: 40 }, text: { kind: 'variable' as const, name: 'trust' } },
 ] };
 
-async function fixture() {
-  const files = { 'game.config.json': configText, 'content/scenario/start.gal': sceneText };
+async function fixture(extraConfig: Record<string, unknown> = {}) {
+  const files = { 'game.config.json': JSON.stringify({ ...JSON.parse(configText), ...extraConfig }), 'content/scenario/start.gal': sceneText };
   const snapshot = await loadProjectSnapshot({ rootIdentity: 'ui-fixture', listFiles: async () => Object.keys(files), exists: async path => path in files,
     readText: async path => { const text = files[path as keyof typeof files]; return { path, text, bytes: text.length, sha256: hash(text) }; } }, hasher);
   const change = await beginChange(snapshot, new InMemoryChangeRepository());
@@ -25,6 +25,29 @@ async function fixture() {
 }
 
 describe('project.ui direct working patch', () => {
+  it('patches conditional status panels atomically and indexes every actual variable dependency', async () => {
+    const { snapshot, change } = await fixture({ variables: { trust: { type: 'number', initial: 3 }, panelOpen: { type: 'flag', initial: false }, energy: { type: 'number', min: 0, max: 10, initial: 5, readonly: true }, bag: { type: 'string[]', initial: [] } } });
+    const assets = buildAssetCatalog([], snapshot), frame = root.children[0]!.frame;
+    const hud = { ...root, children: [
+      { id: 'energy', type: 'progress' as const, frame, binding: { kind: 'variable' as const, name: 'energy' } },
+      { id: 'items', type: 'text' as const, frame, visibleWhen: 'panelOpen && trust >= 2', text: { kind: 'variable' as const, name: 'bag', format: 'list' as const } },
+      { id: 'open', type: 'button' as const, frame, enabledWhen: 'trust > 0', action: { kind: 'variable-set' as const, name: 'panelOpen', value: true } },
+    ] };
+    const initial = await inspectUi(snapshot.config, hasher);
+    const created = await applyUiPatch(change, { operationId: 'status', expectedFingerprint: initial.fingerprint, patch: { type: 'page.set', page: 'hud', root: hud } }, hasher, assets);
+    const working = JSON.parse(change.record.workingFiles['game.config.json']!);
+    const index = buildObjectIndex({ ...snapshot, config: working });
+    expect(index.byRef.get('ui:items')?.references).toEqual(expect.arrayContaining(['variable:panelOpen', 'variable:trust', 'variable:bag']));
+    expect(index.byRef.get('ui:open')?.references).toEqual(expect.arrayContaining(['variable:panelOpen', 'variable:trust']));
+    const before = JSON.stringify(change.record);
+    await expect(applyUiPatch(change, { operationId: 'invalid', expectedFingerprint: created.ui.fingerprint,
+      patch: { type: 'node.update', page: 'hud', id: 'items', patch: { visibleWhen: 'ghost' } } }, hasher, assets)).rejects.toMatchObject({ code: 'UI_INVALID' });
+    expect(JSON.stringify(change.record)).toBe(before);
+    await applyUiPatch(change, { operationId: 'unconditional', expectedFingerprint: created.ui.fingerprint,
+      patch: { type: 'node.update', page: 'hud', id: 'items', patch: { visibleWhen: null } } }, hasher, assets);
+    expect(JSON.parse(change.record.workingFiles['game.config.json']!).ui.pages.hud.children[1].visibleWhen).toBeUndefined();
+  });
+
   it('uses the same permissions, fingerprint and final asset checks for a complete draft', async () => {
     const { snapshot, change } = await fixture();
     const assets = buildAssetCatalog([], snapshot);

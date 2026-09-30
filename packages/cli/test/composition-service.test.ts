@@ -173,10 +173,14 @@ describe('CompositionService compare/plan/dry-run', () => {
       fs.writeFileSync(path.join(fixture.projectRoot, assetPath), 'catalog metadata fixture');
     }
     const frame = { x: 0, y: 0, width: 100, height: 50 };
-    const config = { entryScene: 'start', variables: { trust: { type: 'number', initial: 0 } }, fonts: { ui: fontPath },
+    const config = { entryScene: 'start', variables: { trust: { type: 'number', initial: 0 }, ready: { type: 'flag', initial: true },
+      panelOpen: { type: 'flag', initial: false }, energy: { type: 'number', initial: 6, min: 0, max: 10, readonly: true }, bag: { type: 'string[]', initial: [] } }, fonts: { ui: fontPath },
       ui: { version: 1, pages: { hud: { id: 'root', type: 'container', frame, children: [
         { id: 'art', type: 'image', frame, asset: 'paper' },
         { id: 'value', type: 'text', frame, text: { kind: 'variable', name: 'trust' } },
+        { id: 'energy', type: 'progress', frame, binding: { kind: 'variable', name: 'energy' } },
+        { id: 'items', type: 'text', frame, text: { kind: 'variable', name: 'bag', format: 'list' } },
+        { id: 'open', type: 'button', frame, enabledWhen: 'ready', action: { kind: 'variable-set', name: 'panelOpen', value: true } },
       ] } } } };
     fs.writeFileSync(path.join(fixture.projectRoot, 'game.config.json'), JSON.stringify(config));
     const refs = [];
@@ -190,6 +194,7 @@ describe('CompositionService compare/plan/dry-run', () => {
     const operation = Object.values(compared.comparison.candidateManifests!)[0]!.operations[0]!;
     expect(operation.requiredObjects).toEqual(expect.arrayContaining([
       { objectRef: 'asset:bg:paper', source: 'base' }, { objectRef: 'variable:trust', source: 'base' },
+      ...['ready', 'panelOpen', 'energy', 'bag'].map(name => ({ objectRef: `variable:${name}`, source: 'base' })),
       { objectRef: `asset:font:${fontPath}`, source: 'base' },
     ]));
     expect(operation.replayStateRequirements).toContainEqual({ objectRef: 'config:ui', source: 'base', expectedFingerprint: await realHasher.sha256(stableStringify(config.ui)) });

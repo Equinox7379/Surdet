@@ -10,7 +10,7 @@ export type UiPatch =
   | { type: 'page.set'; page: ProjectUiPageId; root: ProjectUiNode }
   | { type: 'page.remove'; page: ProjectUiPageId }
   | { type: 'node.insert'; page: ProjectUiPageId; parentId: string; index: number; node: ProjectUiNode }
-  | { type: 'node.update'; page: ProjectUiPageId; id: string; patch: Partial<Omit<ProjectUiNode, 'id' | 'type' | 'children'>> }
+  | { type: 'node.update'; page: ProjectUiPageId; id: string; patch: Partial<Omit<ProjectUiNode, 'id' | 'type' | 'children' | 'visibleWhen' | 'enabledWhen'>> & { visibleWhen?: string | null; enabledWhen?: string | null } }
   | { type: 'node.remove'; page: ProjectUiPageId; id: string }
   | { type: 'node.copy'; page: ProjectUiPageId; id: string; newId: string; index?: number }
   | { type: 'node.reorder'; page: ProjectUiPageId; id: string; index: number };
@@ -98,7 +98,7 @@ export function patchUiDocument(current: ProjectUiDocument | null, config: Recor
       } else if (patch.type === 'node.update') {
         const found = findNode(root, patch.id);
         if (!found) throw new AuthoringOperationError('INVALID_REQUEST', `UI 节点不存在：${patch.id}`);
-        const allowed = new Set(['frame', 'text', 'binding', 'action', 'asset', 'source', 'tab', 'style']);
+        const allowed = new Set(['frame', 'text', 'binding', 'visibleWhen', 'enabledWhen', 'action', 'asset', 'source', 'tab', 'style']);
         for (const [key, value] of Object.entries(patch.patch ?? {})) {
           if (!allowed.has(key)) throw new AuthoringOperationError('INVALID_REQUEST', `UI 节点字段不可修改：${key}`);
           if (value === null) delete (found.node as unknown as Record<string, unknown>)[key];

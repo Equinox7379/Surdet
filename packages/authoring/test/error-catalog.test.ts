@@ -6,6 +6,13 @@ import {
 } from '../src/index.js';
 
 describe('authoring error catalog and envelopes', () => {
+  it('preserves the advertised UI validation error in public envelopes', () => {
+    const envelope = createFailureEnvelope({ sessionId: 's1', capability: 'project.ui.patch', projectIdentity: 'p1' }, new AuthoringOperationError('UI_INVALID', '条件引用未声明变量'));
+    if (envelope.ok) throw new Error('expected failure');
+    expect(envelope.error).toMatchObject({ code: 'UI_INVALID', category: 'validation', retryDisposition: 'after-repair' });
+    expect(envelope.error.repairActions).toEqual(expect.arrayContaining([expect.objectContaining({ capability: 'project.ui' })]));
+  });
+
   it('turns stale object failures into an inspect-first repair contract', () => {
     const envelope = createFailureEnvelope({
       sessionId: 's1', capability: 'scene.patch', projectIdentity: 'p1',

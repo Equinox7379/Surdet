@@ -2,7 +2,7 @@
 
 本指南面向编写剧情、配置与演出的内容作者。默认使用正式 Agent Port 工具，在隔离草稿中修改、验证和试玩；不需要先读引擎源码、长期台账或重新接线播放器。已有项目保持原位，新项目使用现有模板。
 
-本批公开创作合同为 **2.26.0**（68 项公开能力），新增分段解锁的人物档案、用语辞典及可选永久收藏；保留结局册、文本目录多语言播放、人物／界面／词条来源、按语言关联已有配音、主题配置、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+本批公开创作合同为 **2.27.0**（68 项公开能力），作品界面新增变量条件、只读数值条、数组列表/数量和有限赋值按钮；保留人物档案、用语辞典、结局册与可选永久收藏，以及多语言、已有配音、主题、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
 
 ## 0. 准备项目与会话
 
@@ -209,13 +209,19 @@ Player 的显式主题字段只覆盖相应项目字段，不会因只显式设�
 
 不定制时沿用默认 UI。需要定制时，先用 `project.ui({view:"working"})`（MCP：`surdet_project_ui`）读取 value/defaultPages/nodes/fingerprint，再用 `project.ui.patch`（MCP：`surdet_project_ui_patch`）修改。文档位于 `game.config.json.ui`，结构 `{version:1,pages:{...}}`；省略页面即使用默认界面。
 
-页面：title、system-menu、save-load、settings、gallery、backlog、dialogue、choices、toolbar、hud。固定组件：container、image、text、button、toggle、slider、input、scroll、tabs、content。每个节点有全作品唯一的 id、type 和 `frame:{x,y,width,height,anchorX?,anchorY?}`。设计坐标为 1280×720，节点原点＝父级原点＋x/y－anchor×本节点宽高；锚点范围0..1，默认0，尺寸须为正。兄弟顺序即叠放顺序；tabs 子项用 tab 命名分组。
+页面：title、system-menu、save-load、settings、gallery、backlog、dialogue、choices、toolbar、hud。固定组件：container、image、text、button、toggle、slider、progress、input、scroll、tabs、content。每个节点有全作品唯一的 id、type 和 `frame:{x,y,width,height,anchorX?,anchorY?}`。设计坐标为 1280×720，节点原点＝父级原点＋x/y－anchor×本节点宽高；锚点范围0..1，默认0，尺寸须为正。兄弟顺序即叠放顺序；tabs 子项用 tab 命名分组。
 
-`text` 支持 `{kind:"literal",value:"文字"}`、`{kind:"variable",name:"已声明变量"}`、`{kind:"setting",name:"textSpeedCps"}`，以及 `{kind:"data",field:...}`：title 的 title/subtitle，dialogue 的 speaker/dialogue，save-load 的 mode，公共内容条目的 id/label/description/value/date。没有 JS、表达式求值或 HTML。image.asset 为唯一的项目背景素材键；style 可设 color/background/opacity/fontSize/align/fontRole（body/title/ui）。
+`text` 支持 `{kind:"literal",value:"文字"}`、`{kind:"variable",name:"已声明变量"}`、`{kind:"setting",name:"textSpeedCps"}`，以及 `{kind:"data",field:...}`：title 的 title/subtitle，dialogue 的 speaker/dialogue，save-load 的 mode，公共内容条目的 id/label/description/value/date。文字不执行表达式、JS 或 HTML。数组变量可加 `format:"list"`（以“、”连接）或 `format:"count"`（数量），只读变量也可显示；不复制物品状态。image.asset 为唯一的项目背景素材键；style 可设 color/background/opacity/fontSize/align/fontRole（body/title/ui）。
+
+任意节点可加 `visibleWhen:"panelOpen && trust >= 10"`，交互控件另可加 `enabledWhen:"trust >= 10"`。条件使用 Core 原有纯表达式，所有变量必须已声明、操作数类型正确、结果为布尔；不能调用 JS 或修改状态。空条件应省略，`node.update` 传 null 可清除该条件。运行时除零等错误会隐藏出错页面并显示原因，正常剧情仍可继续，条件恢复后页面重新显示。
+
+`progress` 使用 `binding:{kind:"variable",name:"energy"}` 读取数值变量，包括 readonly；范围沿变量 min/max（省略时为 0/100，max 必须大于 min）。条形比例只截到范围内，不修改实际值；它不是滑条。
 
 toggle/slider/input 的 `binding:{kind:"variable"|"setting",name}` 必须匹配类型并遵守只读约束。输入框只绑定可写字符串变量，开关绑定 flag/boolean 或 skipStrategy，滑条绑定数值。可调整设置：textSpeedCps、autoBaseDelayMs、masterVolume、bgmVolume、ambienceVolume、seVolume、voiceVolume、skipStrategy；范围仍由原 Player 设置控制。
 
 按钮 action 为有限操作：start/continue/back/close/advance/rollback/auto/skip/hide；`{kind:"open",page:"settings"}`；存读档页须明确 `{kind:"open",page:"save-load",mode:"save"|"load"}`。save/load 可带槽位 id，不带时打开列表；choice/gallery-item 使用当前条目或明确 id；setting-step 使用 name 和 direction: ±1。content.source 为 save-slots/backlog/gallery-cgs/gallery-music/gallery-texts/choices/settings，须放在对应页面，子节点可读取当前条目。原保存确认、暂停、返回及失败恢复继续有效。
+
+阅读页（hud/dialogue/choices/toolbar）按钮可用 `{kind:"variable-set",name:"panelOpen",value:true}`，只向已声明的可写数值/字符串/开关赋同类型字面值，数值沿原 VariableStore 范围处理；不支持数组赋值、脚本或任意运算。正常游戏中的变量控件与此按钮只在正文/选项阅读暂停点写入，菜单、视频、定时等待等期间拒绝；旧标题页姓名输入仍按原入口工作。隐藏、禁用的控件不执行操作，点击不代替剧情推进。变量仍随普通存档恢复、新游戏重置。
 
 修改支持 page.set/page.remove、node.insert/node.update/node.remove/node.copy/node.reorder。更新节点只传所需字段，frame/style 等子对象整项替换；复制需提供 newId，后代也产生新 ID。例如：
 

@@ -44,7 +44,7 @@ function makeFocusHarness() {
   });
   const div = {
     querySelectorAll: () => buttons,
-    contains: () => true,
+    contains: (element: unknown) => buttons.includes(element as typeof buttons[number]),
   };
   const runner = { add: vi.fn(), remove: vi.fn() };
   const renderer = {
@@ -102,6 +102,30 @@ describe('player control projection', () => {
     harness.scope.prerender(); harness.scope.postrender();
     await Promise.resolve();
     expect(harness.buttons[0]!.tabIndex).toBe(0);
+    harness.scope.destroy();
+  });
+
+  it('does not reclaim focus from a connected work UI input after rendering', async () => {
+    const harness = makeFocusHarness();
+    harness.modalControls[0]!.parent!.visible = false;
+    harness.scope.prerender();
+    harness.activeDocument.activeElement = harness.buttons.at(-1)!;
+    harness.scope.postrender(); await Promise.resolve();
+    const input = { isConnected: true };
+    harness.activeDocument.activeElement = input;
+    harness.scope.postrender(); await Promise.resolve();
+    expect(harness.activeDocument.activeElement).toBe(input);
+    harness.scope.destroy();
+  });
+
+  it('allows native Tab to move from the nonmodal command rail into work UI controls', () => {
+    const harness = makeFocusHarness();
+    harness.modalControls[0]!.parent!.visible = false;
+    harness.activeDocument.activeElement = harness.buttons.at(-1)!;
+    const event = { key: 'Tab', shiftKey: false, preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() } as unknown as KeyboardEvent;
+    harness.keydown()(event);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(event.stopImmediatePropagation).not.toHaveBeenCalled();
     harness.scope.destroy();
   });
 

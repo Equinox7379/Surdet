@@ -1,4 +1,7 @@
 /** Declarative work UI. Coordinates are in the 1280 × 720 design canvas. */
+import { collectVars, parseExpr } from './dsl/expr-parser.js';
+import { checkExprOperands } from './scene-lint.js';
+
 export const PROJECT_UI_PAGES = [
   'title', 'system-menu', 'save-load', 'settings', 'gallery', 'backlog',
   'dialogue', 'choices', 'toolbar', 'hud',
@@ -6,20 +9,22 @@ export const PROJECT_UI_PAGES = [
 export type ProjectUiPageId = typeof PROJECT_UI_PAGES[number];
 
 export const PROJECT_UI_NODE_TYPES = [
-  'container', 'image', 'text', 'button', 'toggle', 'slider', 'input', 'scroll', 'tabs', 'content',
+  'container', 'image', 'text', 'button', 'toggle', 'slider', 'progress', 'input', 'scroll', 'tabs', 'content',
 ] as const;
 export type ProjectUiNodeType = typeof PROJECT_UI_NODE_TYPES[number];
 
 export type ProjectUiText =
   | { kind: 'literal'; value: string }
-  | { kind: 'variable' | 'setting'; name: string }
+  | { kind: 'variable'; name: string; format?: 'list' | 'count' }
+  | { kind: 'setting'; name: string }
   | { kind: 'data'; field: 'id' | 'label' | 'description' | 'value' | 'date' | 'speaker' | 'dialogue' | 'title' | 'subtitle' | 'mode' | 'ending-progress' | 'profile-progress' | 'term-progress' };
 export type ProjectUiBinding = { kind: 'variable' | 'setting'; name: string };
 export type ProjectUiAction =
   | { kind: 'start' | 'continue' | 'close' | 'back' | 'advance' | 'rollback' | 'auto' | 'skip' | 'hide' }
   | { kind: 'open'; page: 'system-menu' | 'save-load' | 'settings' | 'gallery' | 'backlog'; mode?: 'save' | 'load' }
   | { kind: 'save' | 'load' | 'choice' | 'gallery-item'; id?: string }
-  | { kind: 'setting-step'; name: string; direction: -1 | 1 };
+  | { kind: 'setting-step'; name: string; direction: -1 | 1 }
+  | { kind: 'variable-set'; name: string; value: string | number | boolean };
 
 export type ProjectUiContentSource = 'save-slots' | 'backlog' | 'gallery-cgs' | 'gallery-music' | 'gallery-texts' | 'gallery-endings' | 'gallery-profiles' | 'gallery-terms' | 'choices' | 'settings' | 'terms';
 
@@ -35,6 +40,8 @@ export interface ProjectUiNode {
   frame: ProjectUiFrame;
   text?: ProjectUiText;
   binding?: ProjectUiBinding;
+  visibleWhen?: string;
+  enabledWhen?: string;
   action?: ProjectUiAction;
   asset?: string;
   source?: ProjectUiContentSource;
@@ -81,7 +88,7 @@ const SETTING_TYPES: Record<string, 'number' | 'string'> = {
   skipStrategy: 'number', keyPreset: 'string', locale: 'string',
 };
 const WRITABLE_SETTINGS = new Set(['textSpeedCps', 'autoBaseDelayMs', 'masterVolume', 'bgmVolume', 'ambienceVolume', 'seVolume', 'voiceVolume', 'skipStrategy']);
-const ACTION_KINDS = new Set(['start', 'continue', 'close', 'back', 'advance', 'rollback', 'auto', 'skip', 'hide', 'open', 'save', 'load', 'choice', 'gallery-item', 'setting-step']);
+const ACTION_KINDS = new Set(['start', 'continue', 'close', 'back', 'advance', 'rollback', 'auto', 'skip', 'hide', 'open', 'save', 'load', 'choice', 'gallery-item', 'setting-step', 'variable-set']);
 
 function record(value: unknown, location: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${location} 必须是对象`);
@@ -106,7 +113,7 @@ function nonempty(value: unknown, location: string): string {
 function variableType(config: Record<string, unknown>, name: string): string {
   const variables = record(config.variables ?? {}, 'variables');
   const declaration = variables[name];
-  if (declaration === undefined) throw new Error(`UI 引用了未声明变量 ${name}`);
+  if (!Object.hasOwn(variables, name)) throw new Error(`UI 引用了未声明变量 ${name}`);
   return String(record(declaration, `variables.${name}`).type ?? '');
 }
 
@@ -116,9 +123,12 @@ function validateText(value: unknown, config: Record<string, unknown>, location:
     onlyKeys(item, ['kind', 'value'], location);
     if (typeof item.value !== 'string') throw new Error(`${location}.value 必须是字符串`);
   } else if (item.kind === 'variable' || item.kind === 'setting') {
-    onlyKeys(item, ['kind', 'name'], location);
+    onlyKeys(item, item.kind === 'variable' ? ['kind', 'name', 'format'] : ['kind', 'name'], location);
     const name = nonempty(item.name, `${location}.name`);
-    if (item.kind === 'variable') variableType(config, name);
+    if (item.kind === 'variable') {
+      const type = variableType(config, name);
+      if (item.format !== undefined && (!['list', 'count'].includes(String(item.format)) || !['string[]', 'number[]'].includes(type))) throw new Error(`${location}.format 只支持数组的 list/count 显示`);
+    }
     else if (!Object.hasOwn(SETTING_TYPES, name)) throw new Error(`${location} 设置项不存在：${name}`);
   } else if (item.kind === 'data') {
     onlyKeys(item, ['kind', 'field'], location);
@@ -140,6 +150,12 @@ function validateBinding(value: unknown, config: Record<string, unknown>, type: 
   const name = nonempty(item.name, `${location}.name`);
   const bindingType = item.kind === 'variable' ? variableType(config, name) : SETTING_TYPES[name];
   if (bindingType === undefined) throw new Error(`${location} 设置项不存在：${name}`);
+  if (type === 'progress') {
+    if (item.kind !== 'variable' || bindingType !== 'number') throw new Error(`${location} 进度条需要剧情数值变量`);
+    const declaration = record(record(config.variables, 'variables')[name], `variables.${name}`);
+    if (Number(declaration.max ?? 100) <= Number(declaration.min ?? 0)) throw new Error(`${location} 进度条需要递增的数值范围`);
+    return item as unknown as ProjectUiBinding;
+  }
   if (item.kind === 'setting' && !WRITABLE_SETTINGS.has(name)) throw new Error(`${location} 设置项没有公开调整入口：${name}`);
   if (item.kind === 'variable' && record(record(config.variables ?? {}, 'variables')[name], `variables.${name}`).readonly === true) {
     throw new Error(`${location} 不允许修改只读变量 ${name}`);
@@ -150,7 +166,7 @@ function validateBinding(value: unknown, config: Record<string, unknown>, type: 
   return item as unknown as ProjectUiBinding;
 }
 
-function validateAction(value: unknown, location: string): ProjectUiAction {
+function validateAction(value: unknown, location: string, config: Record<string, unknown>, page: ProjectUiPageId): ProjectUiAction {
   const item = record(value, location);
   const kind = nonempty(item.kind, `${location}.kind`);
   if (!ACTION_KINDS.has(kind)) throw new Error(`${location}.kind 不受支持：${kind}`);
@@ -158,6 +174,17 @@ function validateAction(value: unknown, location: string): ProjectUiAction {
     onlyKeys(item, ['kind', 'page', 'mode'], location);
     if (!['system-menu', 'save-load', 'settings', 'gallery', 'backlog'].includes(String(item.page))) throw new Error(`${location}.page 不受支持`);
     if (item.page === 'save-load' ? !['save', 'load'].includes(String(item.mode)) : item.mode !== undefined) throw new Error(`${location}.mode 不适用`);
+  } else if (kind === 'variable-set') {
+    onlyKeys(item, ['kind', 'name', 'value'], location);
+    if (!['hud', 'dialogue', 'choices', 'toolbar'].includes(page)) throw new Error(`${location} 剧情赋值按钮只适用于阅读页面`);
+    const name = nonempty(item.name, `${location}.name`), type = variableType(config, name);
+    const declaration = record(record(config.variables, 'variables')[name], `variables.${name}`);
+    if (declaration.readonly === true) throw new Error(`${location} 不允许修改只读变量 ${name}`);
+    if ((type === 'number' && typeof item.value === 'number' && Number.isFinite(item.value))
+      || (type === 'string' && typeof item.value === 'string') || (['flag', 'boolean'].includes(type) && typeof item.value === 'boolean')) {
+      return item as unknown as ProjectUiAction;
+    }
+    throw new Error(`${location} 赋值类型必须与可写标量变量一致`);
   } else if (kind === 'setting-step') {
     onlyKeys(item, ['kind', 'name', 'direction'], location);
     if (item.name !== 'locale' && !WRITABLE_SETTINGS.has(String(item.name))) throw new Error(`${location}.name 不受支持`);
@@ -169,15 +196,27 @@ function validateAction(value: unknown, location: string): ProjectUiAction {
   return item as unknown as ProjectUiAction;
 }
 
+function validateCondition(value: unknown, config: Record<string, unknown>, location: string): void {
+  const ast = parseExpr(nonempty(value, location));
+  for (const name of collectVars(ast)) variableType(config, name);
+  const types = new Map(Object.entries(record(config.variables ?? {}, 'variables')).map(([name, declaration]) => [name, String(record(declaration, `variables.${name}`).type)]));
+  checkExprOperands({ kind: 'unary', op: '!', operand: ast }, types, (_code, message) => { throw new Error(`${location}：${message}`); });
+}
+
 function validateNode(value: unknown, config: Record<string, unknown>, ids: Set<string>, location: string, page: ProjectUiPageId, contentSource?: ProjectUiContentSource): ProjectUiNode {
   const item = record(value, location);
-  onlyKeys(item, ['id', 'type', 'frame', 'text', 'binding', 'action', 'asset', 'source', 'tab', 'style', 'children'], location);
+  onlyKeys(item, ['id', 'type', 'frame', 'text', 'binding', 'visibleWhen', 'enabledWhen', 'action', 'asset', 'source', 'tab', 'style', 'children'], location);
   const id = nonempty(item.id, `${location}.id`);
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(id)) throw new Error(`${location}.id 非法`);
   if (ids.has(id)) throw new Error(`UI 节点 ID 重复：${id}`);
   ids.add(id);
   if (!TYPE_SET.has(String(item.type))) throw new Error(`${location}.type 不受支持`);
   const type = item.type as ProjectUiNodeType;
+  if (item.visibleWhen !== undefined) validateCondition(item.visibleWhen, config, `${location}.visibleWhen`);
+  if (item.enabledWhen !== undefined) {
+    if (!['button', 'toggle', 'slider', 'input'].includes(type)) throw new Error(`${location}.enabledWhen 只适用于交互控件`);
+    validateCondition(item.enabledWhen, config, `${location}.enabledWhen`);
+  }
   const frame = record(item.frame, `${location}.frame`);
   onlyKeys(frame, ['x', 'y', 'width', 'height', 'anchorX', 'anchorY'], `${location}.frame`);
   for (const key of ['x', 'y', 'width', 'height'] as const) finite(frame[key], `${location}.frame.${key}`);
@@ -186,13 +225,13 @@ function validateNode(value: unknown, config: Record<string, unknown>, ids: Set<
   for (const key of ['anchorX', 'anchorY'] as const) if (frame[key] !== undefined && (finite(frame[key], `${location}.frame.${key}`) < 0 || (frame[key] as number) > 1)) throw new Error(`${location}.frame.${key} 必须在 0..1`);
   if (item.text !== undefined) validateText(item.text, config, `${location}.text`, page, contentSource);
   if (item.binding !== undefined) {
-    if (!['toggle', 'slider', 'input'].includes(type)) throw new Error(`${location}.binding 不适用于 ${type}`);
+    if (!['toggle', 'slider', 'progress', 'input'].includes(type)) throw new Error(`${location}.binding 不适用于 ${type}`);
     validateBinding(item.binding, config, type, `${location}.binding`);
   }
-  if (['toggle', 'slider', 'input'].includes(type) && item.binding === undefined) throw new Error(`${location}.${type} 缺少 binding`);
+  if (['toggle', 'slider', 'progress', 'input'].includes(type) && item.binding === undefined) throw new Error(`${location}.${type} 缺少 binding`);
   if (item.action !== undefined) {
     if (type !== 'button') throw new Error(`${location}.action 只适用于按钮`);
-    validateAction(item.action, `${location}.action`);
+    validateAction(item.action, `${location}.action`, config, page);
   }
   if (type === 'image' ? typeof item.asset !== 'string' || item.asset.length === 0 : item.asset !== undefined) throw new Error(`${location}.asset 只适用于图片且图片不能为空`);
   if (type === 'content' ? !CONTENT_SOURCES.has(item.source as ProjectUiContentSource) : item.source !== undefined) throw new Error(`${location}.source 只适用于公共内容容器`);
@@ -251,6 +290,8 @@ export function projectUiVariableNames(ui: ProjectUiDocument | null): string[] {
   const visit = (node: ProjectUiNode): void => {
     if (node.text?.kind === 'variable') names.add(node.text.name);
     if (node.binding?.kind === 'variable') names.add(node.binding.name);
+    if (node.action?.kind === 'variable-set') names.add(node.action.name);
+    for (const condition of [node.visibleWhen, node.enabledWhen]) if (condition !== undefined) collectVars(parseExpr(condition)).forEach(name => names.add(name));
     node.children?.forEach(visit);
   };
   if (ui) Object.values(ui.pages).forEach(root => { if (root) visit(root); });

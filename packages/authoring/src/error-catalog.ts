@@ -12,6 +12,7 @@ import { AuthoringOperationError } from './change-session.js';
 
 export const AUTHORING_ERROR_CODES = [
   'TEXT_CATALOG_INVALID',
+  'UI_INVALID',
   'PREVIEW_OBSERVATION_UNAVAILABLE', 'PREVIEW_OBSERVATION_STALE', 'PREVIEW_OBSERVATION_CORRUPT', 'PREVIEW_OBSERVATION_LIMIT',
   'IMPORT_OPERATION_NOT_FOUND',
   'IMPORT_OPERATION_CONFLICT',
@@ -128,6 +129,7 @@ const defaultDefinitions: Record<AuthoringErrorCode, Omit<AuthoringErrorDefiniti
   ASSET_MEDIA_INVALID: { category: 'request', retryDisposition: 'after-repair', repairActions: [action('asset.sources', '检查错误所指文件的原始格式或损坏原因，准备有效文件后重新读取来源；不要只改扩展名。')] },
   CAPABILITY_UNAVAILABLE: { category: 'request', retryDisposition: 'never', repairActions: [] },
   INVALID_REQUEST: { category: 'request', retryDisposition: 'after-repair', repairActions: [{ capability: 'capabilities.describe', reason: '依据错误定位和当前能力合同修改输入，不要原样重试。', inputTemplate: { detail: 'summary' } }] },
+  UI_INVALID: { category: 'validation', retryDisposition: 'after-repair', repairActions: [{ capability: 'project.ui', reason: '读取当前界面和指纹，按具体错误修正条件、变量或节点配置。', inputTemplate: { view: 'working' } }] },
   UNSUPPORTED_OBJECT_KIND: { category: 'request', retryDisposition: 'never', repairActions: [] },
   UNSUPPORTED_OPERATION: { category: 'request', retryDisposition: 'never', repairActions: [] },
   PROJECT_NOT_FOUND: { category: 'not-found', retryDisposition: 'after-inspect', repairActions: [action('project.inspect', '重新读取项目事实并确认项目根与对象路径。')] },
