@@ -55,26 +55,27 @@ const importRecoverSchema: JsonSchema = {
   oneOf: [{ required: ['planFingerprint'] }, { required: ['manifestFingerprint'] }],
 };
 
-// The domain deliberately permits JSON values in variable initial values and
-// operation evidence. Objects still reject undeclared top-level properties;
-// their value shape is constrained to JSON values rather than being an open
-// schema escape hatch.
-const jsonValueSchema: JsonSchema = {
+// Capability results keep closed top-level fields. Dynamic variable/evidence
+// values use a typed JSON-safe grammar, including Core's existing nested objects;
+// declared variable types are still checked by the domain, not replaced by this schema.
+const jsonValueSchema: JsonSchema = { $ref: '#/$defs/surdetJsonValue' };
+const jsonValueDefinition: JsonSchema = {
   oneOf: [
     stringSchema,
     numberSchema,
     booleanSchema,
     nullSchema,
-    arrayOf({ oneOf: [stringSchema, numberSchema, booleanSchema, nullSchema] }),
-    {
-      type: 'object',
-      patternProperties: {
-        '^.*$': { oneOf: [stringSchema, numberSchema, booleanSchema, nullSchema, arrayOf(stringSchema)] },
-      },
-      additionalProperties: false,
-    },
+    arrayOf(jsonValueSchema),
+    { type: 'object', additionalProperties: jsonValueSchema },
   ],
 };
+
+/** Root refs also cover existing nested object variables; unrelated contracts remain unchanged. */
+function withJsonValueDefinition(schema: JsonSchema): JsonSchema {
+  const usesValue = (value: unknown): boolean => value === jsonValueSchema
+    || (value !== null && typeof value === 'object' && Object.values(value).some(usesValue));
+  return usesValue(schema) ? { ...schema, $defs: { ...(schema.$defs as Record<string, JsonSchema> | undefined), surdetJsonValue: jsonValueDefinition } } : schema;
+}
 
 const jsonObjectSchema: JsonSchema = { type: 'object' };
 const inspectionDetailsSchema: JsonSchema = {
@@ -1727,8 +1728,8 @@ function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition
     title: item.title,
     purpose: item.purpose,
     minimumPolicy: item.minimumPolicy,
-    inputSchema: schema.inputSchema,
-    outputSchema: schema.outputSchema,
+    inputSchema: withJsonValueDefinition(schema.inputSchema),
+    outputSchema: withJsonValueDefinition(schema.outputSchema),
     sideEffects: item.sideEffects,
     idempotency: item.idempotency,
     composable: item.composable,
