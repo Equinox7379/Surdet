@@ -89,7 +89,7 @@ describe('Timeline panel project-asset and freshness contract', () => {
       "setNumber('垂直偏移', 'y'",
       "setNumber('震动强度', 'strength'",
       "setNumber('颜色值', 'color'",
-      "setString('粒子预设', 'kind'",
+      "preset.dataset.timelineFocus = 'inspector-kind'",
     ]) {
       expect(panelSource).toContain(control);
     }

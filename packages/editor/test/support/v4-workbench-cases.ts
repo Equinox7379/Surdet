@@ -955,10 +955,19 @@ export const v4WorkbenchCases: BrowserCase[] = [
     assert(changed.tracks[0].target === 'other', 'valid target not applied');
     assert(changed.tracks[1].cues[0].atMs === 25 && changed.tracks[0].cues[0].durationMs === 125, 'unrelated timing changed');
     state.currentTimelineCue = { trackIndex: 1, cueIndex: 0 }; renderTimelinePanel(panel);
+    const preset = control<HTMLSelectElement>('[data-timeline-focus="inspector-kind"]');
+    assert(preset.tagName === 'SELECT', 'particle preset is not a selection control');
+    assert([...preset.options].some(option => option.value === 'fireflies' && option.textContent === '萤火虫'), 'Chinese option lost its runtime token');
+    input('[data-timeline-focus="inspector-kind"]', 'fireflies', 'change');
+    const selected = JSON.parse(entry.text);
+    assert(selected.tracks[1].cues[0].kind === 'fireflies', 'Chinese option did not write the runtime kind');
+    assert(selected.durationMs === 1000 && selected.tracks[1].cues[0].atMs === 25 && selected.tracks[1].cues[0].durationMs === 405
+      && selected.tracks[1].cues[0].easing === 'linear' && selected.tracks[0].target === 'other', 'preset edit changed timing or adjacent payload');
     const before = entry.text;
+    const depth = timelineHistoryDepth('t').undo;
     input('[data-timeline-focus="inspector-kind"]', '', 'change');
     assert(entry.text === before, 'invalid particle kind changed the draft');
-    assert(timelineHistoryDepth('t').undo === 1, 'rejected fields created history');
+    assert(timelineHistoryDepth('t').undo === depth, 'rejected fields created history');
   } },
   { name: 'only one real preview panel may own an iframe', run: () => {
     fixture(); const first = document.createElement('section'), second = document.createElement('section');
