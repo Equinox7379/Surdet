@@ -55,7 +55,8 @@ function buildValidateInput(): { sources: { key: string; id: string; file: strin
     text: timeline.text,
   }));
   return { sources, entryScene: state.entryScene || undefined, config: { raw: configRaw, path: 'game.config.json',
-    ...(state.configFiles.terminology === null ? {} : { terminologyText: JSON.stringify(state.configFiles.terminology) }) }, timelines };
+    ...(state.configFiles.terminology === null ? {} : { terminologyText: JSON.stringify(state.configFiles.terminology) }),
+    ...(state.configFiles.gallery === null ? {} : { galleryText: JSON.stringify(state.configFiles.gallery) }) }, timelines };
 }
 
 /** 应用校验结果并刷新 UI（Worker 回包与同步路径共用）。

@@ -44,11 +44,9 @@ function readConfig(root: string): Record<string, unknown> {
 /** Generic, deterministic Gallery declaration and unlock-graph validation for `surdet lint`. */
 export function lintGalleryConfig(context: GalleryLintContext): void {
   const galleryPath = path.join(context.root, 'content/config/gallery.json');
-  if (!fs.existsSync(galleryPath)) return;
-
-  let text: string;
+  let text = '{"cgs":[],"music":[]}';
   try {
-    text = fs.readFileSync(galleryPath, 'utf8');
+    if (fs.existsSync(galleryPath)) text = fs.readFileSync(galleryPath, 'utf8');
   } catch (error) {
     context.issues.push({ severity: 'error', code: 'G001',
       text: `gallery.json 解析失败：${error instanceof Error ? error.message : String(error)}`,

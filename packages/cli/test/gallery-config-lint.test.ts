@@ -38,6 +38,24 @@ function expectAllIssuesHinted(dir: string): void {
 }
 
 describe('generic Gallery content lint', () => {
+  it.each([
+    { name: 'absent without unlocks', source: '@scene a\n凛：继续。\n@end', lines: [] },
+    { name: 'absent with dossiers', source: '@scene a\n@unlock_profile "first"\n@unlock_term port\n@end', lines: [2, 3] },
+    { name: 'empty with dossiers', source: '@scene a\n@unlock_profile "first"\n@unlock_term port\n@end', data: { cgs: [], music: [] }, lines: [2, 3] },
+    { name: 'defined dossiers', source: '@scene a\n@unlock_profile "first"\n@unlock_term port\n@end', data: { cgs: [], music: [], profiles: [{ id: 'first', character: 'rin' }], terms: [{ id: 'port', canonical: '雾港' }] }, lines: [] },
+    { name: 'absent with all gallery unlocks', source: '@scene a\n@unlock_cg absent\n@unlock_music absent\n@unlock_text absent\n@unlock_profile absent\n@unlock_term absent\n@end', lines: [2, 3, 4, 5, 6] },
+  ])('validates gallery references: $name', ({ source, data, lines }) => {
+    const dir = makeProject({ 'game.config.json': config({ characters: { rin: { name: '凛' } } }),
+      'content/scenario/a.gal': source, 'content/config/terminology.json': '{"terms":[{"canonical":"雾港","variants":[]}]}',
+      ...(data ? { 'content/config/gallery.json': gallery(data) } : {}),
+    });
+    const result = lintProject(dir);
+    expect(result.ok).toBe(lines.length === 0);
+    expect(result.issues.filter(issue => issue.code === 'G006').map(issue => ({ file: issue.file, line: issue.line })))
+      .toEqual(lines.map(line => ({ file: path.join(dir, 'content/scenario/a.gal'), line })));
+    expect(fs.existsSync(path.join(dir, 'content/config/gallery.json'))).toBe(data !== undefined);
+  });
+
   it('reports G001 for invalid Gallery JSON structure and entry fields', () => {
     const dir = makeProject({
       'game.config.json': config(),
@@ -54,6 +72,12 @@ describe('generic Gallery content lint', () => {
     );
     expect(issuesFor(dir, 'G001').length).toBeGreaterThanOrEqual(3);
     expectAllIssuesHinted(dir);
+  });
+
+  it('reports an unreadable gallery path without throwing or duplicating diagnostics', () => {
+    const dir = makeProject({ 'game.config.json': config(), 'content/scenario/a.gal': '旁白：继续。\n' });
+    fs.mkdirSync(path.join(dir, 'content/config/gallery.json'), { recursive: true });
+    expect(issuesFor(dir, 'G001')).toHaveLength(1);
   });
 
   it('reports G003 when CG or music source keys have no matching asset', () => {

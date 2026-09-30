@@ -44,6 +44,30 @@ function fixtureStorage(): ProjectStorage {
 }
 
 describe('validateSnapshot', () => {
+  it.each([
+    { name: 'absent without unlocks', source: '@scene main\n凛：继续。\n@end', lines: [] },
+    { name: 'absent with dossiers', source: '@scene main\n@unlock_profile "first"\n@unlock_term port\n@end', lines: [2, 3] },
+    { name: 'empty with dossiers', source: '@scene main\n@unlock_profile "first"\n@unlock_term port\n@end', gallery: { cgs: [], music: [] }, lines: [2, 3] },
+    { name: 'defined dossiers', source: '@scene main\n@unlock_profile "first"\n@unlock_term port\n@end', gallery: { cgs: [], music: [], profiles: [{ id: 'first', character: 'rin' }], terms: [{ id: 'port', canonical: '雾港' }] }, lines: [] },
+    { name: 'absent with all gallery unlocks', source: '@scene main\n@unlock_cg absent\n@unlock_music absent\n@unlock_text absent\n@unlock_profile absent\n@unlock_term absent\n@end', lines: [2, 3, 4, 5, 6] },
+  ])('validates gallery references: $name', async ({ source, gallery, lines }) => {
+    const contents: Record<string, string> = {
+      'game.config.json': JSON.stringify({ entryScene: 'main', variables: {}, characters: { rin: { name: '凛' } } }),
+      'content/scenario/main.gal': source,
+      'content/config/terminology.json': '{"terms":[{"canonical":"雾港","variants":[]}]}',
+      ...(gallery ? { 'content/config/gallery.json': JSON.stringify(gallery) } : {}),
+    };
+    const snapshot = await loadProjectSnapshot({ rootIdentity: 'gallery-validation-fixture',
+      listFiles: async () => Object.keys(contents), exists: async file => file in contents,
+      readText: async file => ({ path: file, text: contents[file]!, bytes: contents[file]!.length, sha256: digest(contents[file]!) }),
+    }, hasher);
+    const result = validateSnapshot(snapshot, buildObjectIndex(snapshot));
+    expect(result.ok).toBe(lines.length === 0);
+    expect(result.issues.filter(issue => issue.code === 'G006').map(issue => ({ file: issue.file, line: issue.line })))
+      .toEqual(lines.map(line => ({ file: 'content/scenario/main.gal', line })));
+    expect(snapshot.files.some(file => file.path === 'content/config/gallery.json')).toBe(gallery !== undefined);
+  });
+
   it('reports a dotted scene ID as SCENE_ID before cross-scene indexing', () => {
     const text = '@scene my.scene\n凛：正文。\n@end\n';
     const snapshot: ProjectSnapshot = {

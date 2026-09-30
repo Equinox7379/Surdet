@@ -11,6 +11,22 @@ const sc = (id: string, source: string, key?: string) => ({
 });
 
 describe('validateProject', () => {
+  it.each([
+    { name: 'absent without unlocks', source: '@scene a\n凛：继续。\n@end', lines: [] },
+    { name: 'absent with dossiers', source: '@scene a\n@unlock_profile "first"\n@unlock_term port\n@end', lines: [2, 3] },
+    { name: 'empty with dossiers', source: '@scene a\n@unlock_profile "first"\n@unlock_term port\n@end', gallery: { cgs: [], music: [] }, lines: [2, 3] },
+    { name: 'defined dossiers', source: '@scene a\n@unlock_profile "first"\n@unlock_term port\n@end', gallery: { cgs: [], music: [], profiles: [{ id: 'first', character: 'rin' }], terms: [{ id: 'port', canonical: '雾港' }] }, lines: [] },
+  ])('validates gallery references: $name', async ({ source, gallery, lines }) => {
+    const config = { path: 'game.config.json', raw: { entryScene: 'a', characters: { rin: { name: '凛' } } },
+      terminologyText: '{"terms":[{"canonical":"雾港","variants":[]}]}',
+      ...(gallery ? { galleryText: JSON.stringify(gallery) } : {}),
+    };
+    const result = await validateProject([sc('a', source)], 'a', config);
+    expect(result.issues.filter(issue => issue.severity === 'error')).toHaveLength(lines.length);
+    expect(result.issues.filter(issue => issue.code === 'G006').map(issue => ({ file: issue.file, line: issue.line })))
+      .toEqual(lines.map(line => ({ file: 'a.gal', line })));
+  });
+
   it.each(['', '\uFEFF'])('uses exact source hashes and current terminology without false stale warnings (%j BOM)', async bom => {
     const text = `${bom}@scene start\r\n旁白：雾港。\r\n@end\r\n`, terminology = { terms: [{ canonical: '雾港', variants: [] }] };
     const hash = (value: string) => createHash('sha256').update(value).digest('hex');
