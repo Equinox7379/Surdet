@@ -48,6 +48,27 @@ function input(control: HTMLInputElement | HTMLSelectElement, value: string): vo
 
 /** Same production-module cases run in Vitest's small DOM fixture and Chromium. */
 export const instructionWritebackCases: ReadonlyArray<{ name: string; run: () => void }> = [
+  { name: 'Chinese particle choices preserve script tokens, suffixes and undo', run() {
+    mount('@particle "snow" @ custom keep\r\n凛：继续');
+    const control = present(fields()[0]);
+    equal(control.value, 'snow');
+    equal([...control.querySelectorAll('option')].some(option => option.textContent === '飘雪'), true);
+    input(control, 'sakura');
+    equal(text(), '@particle sakura @ custom keep\r\n凛：继续');
+    undo(); equal(text(), '@particle "snow" @ custom keep\r\n凛：继续');
+  } },
+  { name: 'Chinese reading and achievement modes do not rewrite unrelated parameters', run() {
+    mount('@nvl on\n@achievement unlock first');
+    input(present(fields()[0]), 'off');
+    input(present(fields(1)[1]), 'second');
+    equal(text(), '@nvl off\n@achievement unlock second');
+  } },
+  { name: 'unknown preset values remain visible and unchanged until an explicit selection', run() {
+    mount('@particle future-preset');
+    equal(present(fields()[0]).value, 'future-preset');
+    equal(text(), '@particle future-preset');
+    equal([...present(fields()[0]).querySelectorAll('option')].some(option => option.textContent === '自定义：future-preset'), true);
+  } },
   { name: 'B01 keeps the modifier when editing the expression field', run() {
     mount('@show lynn:uniform normal @ right');
     input(present(fields()[1]), 'despair');

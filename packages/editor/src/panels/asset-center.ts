@@ -1,6 +1,7 @@
 import { enhanceAssetCenter } from '../v4/surfaces.js';
 import type { ProjectAssetItem, ProjectAssetKind, ProjectAssetReference } from '@surdet/authoring';
 import { state, h } from '../state.js';
+import { portraitDisplayName } from '../assets.js';
 import {
   renderAssetImportWorkbench,
   type AssetImportWorkbenchHooks,
@@ -110,7 +111,7 @@ export function assetStatusTokens(item: ProjectAssetItem): AssetStatus[] {
 }
 
 function normalizedSearchText(item: ProjectAssetItem): string {
-  return [KIND_LABELS[item.kind], item.key, item.variant, item.sourcePath, item.format]
+  return [KIND_LABELS[item.kind], friendlyAssetName(item), item.key, item.variant, item.sourcePath, item.format]
     .filter((value): value is string => typeof value === 'string')
     .join('\n')
     .toLocaleLowerCase('zh-CN');
@@ -207,6 +208,10 @@ function humanizeToken(value: string): string {
 }
 
 export function friendlyAssetName(item: ProjectAssetItem): string {
+  if (item.kind === 'portrait' || item.kind === 'avatar') {
+    const name = portraitDisplayName(item.key, state.gameConfigText);
+    if (name !== item.key) return item.variant ? `${name} · ${item.variant}` : name;
+  }
   const base = humanizeToken(item.key || item.sourcePath?.split('/').at(-1) || '');
   if (!base) return '未命名素材';
   if (item.kind === 'portrait' && item.variant) return `${base} · ${humanizeToken(item.variant)}`;

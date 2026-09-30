@@ -15,6 +15,7 @@ import { editorWorkspaceStatus } from '../editor-workspace.js';
 import { AuthoringOperationError, parseProjectConfigDocument, patchUiDocument, renameConfigReferences, renameGalleryLabel, applyConfigReferenceRename, type UiPatch } from '@surdet/authoring';
 import { commitCharacterTable, commitStageConfiguration, commitThemeConfiguration, commitUiConfiguration, parseCharacterVisualsDraft, parseThemeEditorDraft, projectThemeEditorDraft, type CharacterTableEditRow } from '../authoring-project-storage.js';
 import { disposeUiDesigner, renderUiDesigner } from '../ui-designer.js';
+import { renderThemeConfigForm } from '../theme-config-form.js';
 import { renderTextCatalogSection, type TextBindingDraft } from './text-catalog.js';
 import { openUiPlayerPreview } from '../ui-player-preview.js';
 import { copySharedFragment, exportUiShare, missingUiShareAssets, readUiShare, type ShareAsset } from '../ui-sharing.js';
@@ -1886,7 +1887,7 @@ function importTerminology(file: File): void {
 
 function renderThemeSection(): HTMLElement {
   const { sec, ops } = sectionShell('theme');
-  sec.appendChild(h('p', 'config-section-help', '可配置颜色、透明度、字号、皮肤与布局，以及标题字标、标题背景和字体。下方配置文本中的字段名须保留原样；图片填背景素材键，字体填项目内完整路径。主题字段填 null 或删除已支持的主题字段可恢复默认；未涉及的来源字段会保留，省略字体或标题背景字段会保持原值。'));
+  sec.appendChild(h('p', 'config-section-help', '直接填写下面的中文表单即可。颜色使用六位色值，图片填写项目素材键，字体填写项目内路径。留空恢复默认；只改动填写的项目，其他配置会保留。修改先进入草稿，可撤销，保存后生效。'));
   const form = h('textarea');
   form.rows = 18;
   form.spellcheck = false;
@@ -1894,8 +1895,17 @@ function renderThemeSection(): HTMLElement {
   form.setAttribute('aria-label', '主题配置文本');
   form.value = readThemeConfigDraft();
   const status = h('p', 'dim');
+  const fields = h('div');
+  const refreshFields = () => fields.replaceChildren(renderThemeConfigForm({
+    read: readThemeConfigDraft,
+    edit: text => { editThemeConfigDraft(text, true); form.value = text; },
+    onError: message => { status.textContent = message; },
+  }));
+  refreshFields();
+  const technical = h('details', 'config-technical');
+  technical.append(h('summary', undefined, '高级：原始配置'), h('p', 'dim', '供熟悉配置格式的作者使用。字段名保留英文，与工具接口一致；与上方表单共用同一份草稿。'), form);
   form.oninput = () => {
-    try { editThemeConfigDraft(form.value, true); status.textContent = ''; }
+    try { editThemeConfigDraft(form.value, true); status.textContent = ''; refreshFields(); }
     catch (error) { status.textContent = `主题草稿未更新：${error instanceof Error ? error.message : String(error)}`; }
   };
   const saveBtn = h('button', 'primary', '保存主题配置');
@@ -1910,11 +1920,11 @@ function renderThemeSection(): HTMLElement {
   };
   const reloadBtn = h('button', undefined, '放弃编辑并重读');
   reloadBtn.onclick = () => {
-    try { form.value = reloadThemeConfigDraft(); status.textContent = '已从来源配置重读。'; }
+    try { form.value = reloadThemeConfigDraft(); refreshFields(); status.textContent = '已从来源配置重读。'; }
     catch (error) { status.textContent = `主题配置重读失败：${error instanceof Error ? error.message : String(error)}`; }
   };
   ops.append(saveBtn, reloadBtn);
-  sec.append(form, status, ops);
+  sec.append(fields, technical, status, ops);
   return sec;
 }
 
@@ -2151,7 +2161,8 @@ export async function saveDirtyConfigSections(): Promise<ConfigSaveOutcome> {
         }
       }
     } catch (error) {
-      setStatus(`配置“${section}”未保存：${error instanceof Error ? error.message : String(error)}`, false, 6000);
+      const label = section === 'stage' ? '舞台' : configDescriptor(section).label;
+      setStatus(`配置“${label}”未保存：${error instanceof Error ? error.message : String(error)}`, false, 6000);
     }
     if (ok) saved++;
     else failures++;

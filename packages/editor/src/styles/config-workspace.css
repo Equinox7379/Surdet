@@ -386,6 +386,26 @@
   min-width: 0;
 }
 
+#config-view .theme-config-form .config-subsection {
+  border: 0;
+  padding-block: 12px;
+}
+
+#config-view .theme-config-form summary {
+  cursor: pointer;
+  font-weight: 650;
+  margin-bottom: 16px;
+}
+
+#config-view .theme-config-form input {
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: var(--surdet-surface-subtle);
+  color: var(--surdet-text-primary);
+  font: inherit;
+}
+
 #config-view .config-field {
   display: grid;
   min-width: 0;

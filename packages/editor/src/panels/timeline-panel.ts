@@ -5,6 +5,7 @@ import { state, h, setStatus } from '../state.js';
 import type { TimelineCueSelection } from '../state.js';
 import { exportTimeline } from '../project-io.js';
 import { pushTimelineSnapshot } from '../timeline-history.js';
+import { PARTICLE_NAMES } from '../script-presentation.js';
 import {
   cloneTimeline, createNeutralCue, createResourceCue, createTimeline, createTrack, parseTimelineText,
   stringifyTimeline, easingPath, TIMELINE_ACTIONS, TIMELINE_EASINGS, TIMELINE_TRACKS,
@@ -440,12 +441,6 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
   parent.appendChild(common);
 
   const payload = h('div', 'timeline-payload-fields');
-  const setString = (label: string, key: string, placeholder = '') => {
-    const input = textInput(typeof cue[key] === 'string' ? cue[key] as string : '', placeholder);
-    input.dataset.timelineFocus = `inspector-${key}`;
-    input.onchange = () => updateCue(selection, (next) => { next[key] = input.value; });
-    payload.appendChild(field(label, input));
-  };
   const setNumber = (label: string, key: string, min: number, max?: number, step = '1') => {
     const input = numberInput(typeof cue[key] === 'number' ? cue[key] as number : min, min, max);
     input.dataset.timelineFocus = `inspector-${key}`;
@@ -530,7 +525,14 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
     if (cue.action === 'fade' || cue.action === 'tint') setNumber('透明度', 'alpha', 0, 1, '0.01');
     if (cue.action === 'tint') setNumber('颜色值', 'color', 0, 0xffffff, '1');
   }
-  if (track.kind === 'particle' && cue.action === 'start') setString('粒子预设', 'kind', 'sparkle');
+  if (track.kind === 'particle' && cue.action === 'start') {
+    const current = String(cue.kind ?? 'sparkle');
+    const preset = selectInput([...new Set([...Object.keys(PARTICLE_NAMES), current])], current, value => PARTICLE_NAMES[value] ?? value);
+    preset.setAttribute('aria-label', '粒子预设');
+    preset.dataset.timelineFocus = 'inspector-kind';
+    preset.onchange = () => updateCue(selection, next => { next.kind = preset.value; });
+    payload.append(field('粒子预设', preset));
+  }
   if (payload.childElementCount > 0) {
     parent.append(h('h4', undefined, '动作参数'));
     parent.appendChild(payload);
@@ -789,7 +791,7 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
         block.style.left = geometry.anchorAtEnd ? 'auto' : `${geometry.leftPercent}%`;
         block.style.right = geometry.anchorAtEnd ? '0' : 'auto';
         block.style.width = `${geometry.widthPercent}%`;
-        block.title = `${timelineActionLabel(track.kind, cue.action)} · ${Math.round(atMs)}ms + ${Math.round(durationMs)}ms · ${timelineEasingLabel(cue.easing)}`;
+        block.title = `${timelineActionLabel(track.kind, cue.action)} · 开始 ${Math.round(atMs)} 毫秒，持续 ${Math.round(durationMs)} 毫秒 · ${timelineEasingLabel(cue.easing)}`;
       };
       updateGeometry(cue.atMs, cue.durationMs);
       const label = document.createElement('span');
@@ -839,7 +841,7 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
         event.preventDefault();
       };
       block.appendChild(resize);
-      block.title = `${timelineActionLabel(track.kind, cue.action)} · ${cue.atMs}ms + ${cue.durationMs}ms · ${timelineEasingLabel(cue.easing)}`;
+      block.title = `${timelineActionLabel(track.kind, cue.action)} · 开始 ${cue.atMs} 毫秒，持续 ${cue.durationMs} 毫秒 · ${timelineEasingLabel(cue.easing)}`;
       block.onpointerdown = (event) => {
         if (event.button !== 0) return;
         const dragEntry = entryFor();

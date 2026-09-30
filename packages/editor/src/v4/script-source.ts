@@ -2,6 +2,7 @@ import { Lexer, parseInlineInstructions } from '@surdet/core';
 import { decodeInstructionArgument } from '@surdet/authoring';
 import { parseScript, serializeScript, splitInstr, type LineModel } from '../model.js';
 import { InstructionFieldSource } from '../instruction-field-source.js';
+import { instructionLabel } from '../script-presentation.js';
 
 export type ScriptView = 'arrange' | 'manuscript' | 'source';
 export type Position = 'left' | 'center' | 'right';
@@ -263,7 +264,7 @@ export function projectEditLayout(lines: readonly LineModel[], selected: number)
       actors.set(values[0], { target: values[0], expression: values[1] || 'normal', position, line: index });
     } else if (name === 'hide') {
       for (const key of actors.keys()) if (key === values[0] || key.split(':')[0] === values[0]) actors.delete(key);
-    } else if (!nonVisual.has(name)) { result.reason = `包含 @${name}；此处不推测运行画面`; break; }
+    } else if (!nonVisual.has(name)) { result.reason = `包含${instructionLabel(name)}；请运行预览查看实际画面`; break; }
   }
   if (result.reason) { result.background = null; result.actors = []; result.dialogue = null; }
   else result.actors = [...actors.values()];

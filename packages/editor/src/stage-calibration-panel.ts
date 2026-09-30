@@ -79,7 +79,7 @@ export function createStageCalibrationPanel(onSaved: () => void, isEditable: () 
   const imageInfo = node('p'); const canvas = node('canvas'); canvas.className = 'stage-calibration-image'; canvas.width = 560; canvas.height = 420;
   const fields = node('div'); fields.className = 'config-scalars';
   const inputs: Record<string, HTMLInputElement> = {};
-  for (const [key, label, value, step] of [['x', '范围 X', 0, '1'], ['y', '范围 Y', 0, '1'], ['width', '可见宽度', 1, '1'], ['height', '可见高度', 1, '1'], ['baseHeight', '舞台基准身高', 648, '1'], ['anchorX', '水平锚点', .5, '.01'], ['anchorY', '垂直锚点', 1, '.01']] as const) {
+  for (const [key, label, value, step] of [['x', '范围横坐标', 0, '1'], ['y', '范围纵坐标', 0, '1'], ['width', '可见宽度', 1, '1'], ['height', '可见高度', 1, '1'], ['baseHeight', '舞台基准身高', 648, '1'], ['anchorX', '水平锚点', .5, '.01'], ['anchorY', '垂直锚点', 1, '.01']] as const) {
     const labelElement = node('label', label); const input = node('input'); input.type = 'number'; input.value = String(value); input.step = step; input.setAttribute('aria-label', label);
     inputs[key] = input; labelElement.append(input); fields.append(labelElement); input.oninput = () => draw();
   }

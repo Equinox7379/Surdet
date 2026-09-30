@@ -2,12 +2,13 @@ import { state, h, setStatus, type SceneEntry } from '../state.js';
 import { setCurrentText } from '../history.js';
 import { parseScript, splitInstr, type LineModel } from '../model.js';
 import { decodeInstructionArgument, parseProjectConfigDocument } from '@surdet/authoring';
-import { projectPortraitAssets } from '../assets.js';
+import { portraitDisplayName, projectPortraitAssets } from '../assets.js';
 import { disposePreviewPanel, renderPreviewPanel, refreshPreviewSourceState } from '../panels/preview-panel.js';
 import { allowedToEdit, button, disclosure, field, ImageScope, navigateMode } from './ui.js';
 import { renderTimelineSummary } from './timeline-summary.js';
 import { toggleAuthoringOutline } from '../shell/authoring-workbench.js';
 import { editSceneLabel } from '../label-editing.js';
+import { instructionLabel, instructionArgumentSummary } from '../script-presentation.js';
 import {
   applySourceTextareaEdit, deleteStep, duplicateStep, insertStep, instructionPosition,
   moveStep, moveStepBefore, projectEditLayout, quoteAssetArgument, setInstructionArgument,
@@ -18,13 +19,6 @@ import {
 interface ViewState { view: ScriptView; line: number; scroll: number; dock: 'layout' | 'runtime' }
 const viewStates = new WeakMap<SceneEntry, ViewState>();
 let active: ScriptWorkbench | null = null;
-const ACTION_NAMES: Record<string, string> = {
-  scene: '场景', bg: '背景', show: '人物出场', hide: '人物退场', wait: '等待',
-  bgm: '背景音乐', ambience: '环境音', se: '音效', voice: '语音', video: '视频',
-  set: '变量', mod: '变量增量', choice: '分支选择', goto: '前往段落', jump: '前往场景',
-  call: '调用场景', timeline: '演出', if: '条件', elif: '其他条件', else: '否则',
-  endif: '条件结束', end: '结束', fadein: '淡入', fadeout: '淡出', mov: '人物移动',
-};
 
 /** Called before the legacy renderer replaces its rows. Return borrowed DOM nodes first. */
 export function prepareScriptV4Render(): void { active?.returnFields(); }
@@ -411,7 +405,7 @@ export class ScriptWorkbench {
         thumb = source ? h('span', 'v4-step-thumb') : null;
         if (thumb) { thumb.dataset.sourcePath = imageKey; queueMicrotask(() => { if (thumb) void this.rowImages.image(thumb, source, '', name === 'bg' ? 'cover' : 'contain'); }); }
       }
-      summary.replaceChildren(...(thumb ? [thumb] : []), h('small', 'v4-step-type', ACTION_NAMES[name] ?? `@${name}`), h('strong', undefined, args.map(decodeInstructionArgument).join('  ') || (name === 'choice' ? '选择剧情走向' : '无位置参数')));
+      summary.replaceChildren(...(thumb ? [thumb] : []), h('small', 'v4-step-type', instructionLabel(name)), h('strong', undefined, instructionArgumentSummary(name, args.map(decodeInstructionArgument))));
     } else if (line.kind === 'choice-option') {
       const option = simpleChoice(line.raw);
       summary.replaceChildren(h('small', 'v4-step-type', '选项'), h('strong', undefined, option?.text || line.raw.trim()), h('small', 'v4-source-hint', option ? `→ ${option.target}` : '完整行内动作'));
@@ -508,7 +502,7 @@ export class ScriptWorkbench {
     const index = this.view.line, line = this.lines()[index], block = this.block(index);
     this.inspector.replaceChildren();
     if (!line || !block) return;
-    this.inspector.append(h('div', 'v4-inspector-title', line.kind === 'text' ? '当前对白' : line.kind === 'instr' ? ACTION_NAMES[line.name] ?? `@${line.name}` : line.kind === 'choice-option' ? '分支选项' : '当前步骤'));
+    this.inspector.append(h('div', 'v4-inspector-title', line.kind === 'text' ? '当前对白' : line.kind === 'instr' ? instructionLabel(line.name) : line.kind === 'choice-option' ? '分支选项' : '当前步骤'));
     const location = h('p', 'v4-source-hint', `${this.scene.file} · 第 ${index + 1} 行`);
     this.inspector.append(location);
     const readInstruction = (): Extract<LineModel, { kind: 'instr' }> | null => {
@@ -594,7 +588,7 @@ export class ScriptWorkbench {
         const targets = [...new Set(portraits.map((asset) => asset.key))];
         const select = h('select');
         if (!targets.includes(target)) select.append(new Option(target || '尚未指定', target));
-        targets.forEach((key) => select.append(new Option(key, key)));
+        targets.forEach((key) => select.append(new Option(portraitDisplayName(key, state.gameConfigText), key)));
         select.value = target;
         select.onchange = () => editParameter(0, select.value);
         this.inspector.append(field('人物与服装', select));
@@ -642,7 +636,7 @@ export class ScriptWorkbench {
         this.inspector.append(renderTimelineSummary(id));
       } else if (line.name === 'wait') {
         const quick = h('div', 'v4-segmented');
-        for (const milliseconds of [200, 500, 1000, 2000]) quick.append(button(`${milliseconds} ms`, () => editParameter(0, String(milliseconds))));
+        for (const milliseconds of [200, 500, 1000, 2000]) quick.append(button(`${milliseconds} 毫秒`, () => editParameter(0, String(milliseconds))));
         this.inspector.append(quick);
       } else if (line.name === 'choice') {
         const range = stepAt(this.lines(), index);
@@ -863,7 +857,7 @@ export class ScriptWorkbench {
       const select = h('select');
       const entries = (kind === 'portrait' ? this.portraits : state.dirAssets).filter((asset) => asset.kind === kind && asset.handle !== null);
       select.append(new Option('请选择项目素材', ''));
-      [...new Set(entries.map((asset) => asset.key))].forEach((key) => select.append(new Option(key, key)));
+      [...new Set(entries.map((asset) => asset.key))].forEach((key) => select.append(new Option(kind === 'portrait' ? portraitDisplayName(key, state.gameConfigText) : key, key)));
       body.append(field('素材', select));
       if (!entries.length) message.textContent = '该类素材尚未导入，可以先去素材中心处理。';
       if (kind === 'portrait') {

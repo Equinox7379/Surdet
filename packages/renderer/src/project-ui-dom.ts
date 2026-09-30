@@ -1,5 +1,6 @@
 import { PROJECT_UI_TAB_BAR_HEIGHT, evalExprBoolean, projectUiChildrenRect, projectUiRect, type VarValue, type ProjectUiAction, type ProjectUiBinding, type ProjectUiContentSource, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId, type ProjectUiRect, type ProjectUiText } from '@surdet/core';
 import type { RendererTheme } from './theme.js';
+import { SETTING_STEPS } from './settings-store.js';
 import { fontTextDiagnostics, isUiTextClipped, type ReadingDiagnostic } from './reading-diagnostics.js';
 
 export interface ProjectUiItem {
@@ -118,11 +119,18 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       return String(value);
     }
     const value = context.read(binding.name, binding.kind);
+    if (binding.kind === 'setting') {
+      if (binding.name === 'keyPreset') return value === 'standard' ? '标准键位' : value === 'left-handed' ? '左手键位' : String(value ?? '');
+      if (binding.name === 'locale') return ({ '': '作品原文', 'zh-CN': '中文', en: '英语', ja: '日语' } as Record<string, string>)[String(value ?? '')] ?? String(value);
+      const setting = SETTING_STEPS.find(setting => setting.key === binding.name);
+      if (setting && typeof value === 'number') return setting.format(value);
+      if (binding.name === 'autoPerCharMs' && typeof value === 'number') return `${value} 毫秒 / 字`;
+    }
     if (binding.kind === 'variable' && binding.format) {
       if (!Array.isArray(value)) throw new Error(`界面数组变量类型不符：${binding.name}`);
       return binding.format === 'count' ? String(value.length) : value.join('、');
     }
-    return String(value ?? '');
+    return typeof value === 'boolean' ? (value ? '是' : '否') : String(value ?? '');
   };
 
   function applyStyle(element: HTMLElement, node: ProjectUiNode): void {

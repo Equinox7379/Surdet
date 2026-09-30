@@ -183,7 +183,7 @@ export function renderTextCatalogSection(options: {
   }
   const csvField = h('label', 'config-field'); csvField.append(h('span', undefined, '译稿表格'), csv);
   section.append(header, fields, h('p', 'config-section-help', '重新绑定已有键前，请明确核对当前来源；旧译稿会保留并提示是否需要重译。'), controls, status, bindingList, table,
-    h('p', 'config-section-help', '译稿与配音清单均先预览差异，再确认导入。配音仅支持已确认对白和现有 voice 素材；源语言配音可将译文语言填写为源语言。保存全部不会自动批准；切换工作面保留未确认文字。'), upload, csvField, differences);
+    h('p', 'config-section-help', '译稿与配音清单均先预览差异，再确认导入。配音仅支持已确认对白和现有语音素材；源语言配音可将译文语言填写为源语言。保存全部不会自动批准；切换工作面保留未确认文字。'), upload, csvField, differences);
   renderBindings();
   return section;
 }
