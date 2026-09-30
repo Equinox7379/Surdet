@@ -1,10 +1,36 @@
 import { describe, expect, it } from 'vitest';
-import { projectUiChildrenRect, projectUiRect, readProjectUi } from '../src/project-ui.js';
+import { projectUiChildrenRect, projectUiRect, projectUiVariableNames, readProjectUi } from '../src/project-ui.js';
 
 const text = { id: 'value', type: 'text', frame: { x: 640, y: 360, width: 240, height: 40, anchorX: 0.5, anchorY: 0.5 }, text: { kind: 'variable', name: 'trust' } };
 const config = { variables: { trust: { type: 'number', initial: 3 }, readonlyFlag: { type: 'flag', initial: false, readonly: true } } };
 
 describe('declarative project UI', () => {
+  it('reads conditional HUD, readonly progress and array displays from declared variables', () => {
+    const frame = { x: 0, y: 0, width: 200, height: 40 };
+    const variables = { ...config.variables, energy: { type: 'number', initial: 5, min: 0, max: 10, readonly: true }, panelOpen: { type: 'flag', initial: false }, bag: { type: 'string[]', initial: ['车票'] } };
+    const children = [
+      { id: 'energy', type: 'progress', frame, binding: { kind: 'variable', name: 'energy' } },
+      { id: 'items', type: 'text', frame, visibleWhen: 'panelOpen && trust >= 2', text: { kind: 'variable', name: 'bag', format: 'list' } },
+      { id: 'count', type: 'text', frame, text: { kind: 'variable', name: 'bag', format: 'count' } },
+      { id: 'open', type: 'button', frame, enabledWhen: 'trust > 0', action: { kind: 'variable-set', name: 'panelOpen', value: true } },
+    ];
+    const ui = { version: 1, pages: { hud: { id: 'hud', type: 'container', frame, children } } };
+    expect(readProjectUi({ variables, ui })).toEqual(ui);
+    expect(projectUiVariableNames(ui as Parameters<typeof projectUiVariableNames>[0])).toEqual(expect.arrayContaining(['energy', 'panelOpen', 'trust', 'bag']));
+    const check = (node: Record<string, unknown>) => readProjectUi({ variables, ui: { version: 1, pages: { hud: { ...ui.pages.hud, children: [node] } } } });
+    expect(() => check({ ...children[1], visibleWhen: 'ghost' })).toThrow('未声明');
+    expect(() => check({ ...children[1], visibleWhen: '__proto__' })).toThrow('未声明');
+    expect(() => check({ ...children[1], visibleWhen: 'trust' })).toThrow('boolean');
+    expect(() => check({ ...children[1], visibleWhen: 'panelOpen > 0' })).toThrow('number');
+    expect(() => check({ ...children[2], text: { kind: 'variable', name: 'trust', format: 'count' } })).toThrow('数组');
+    expect(() => check({ ...children[0], binding: { kind: 'variable', name: 'panelOpen' } })).toThrow('数值');
+    expect(() => check({ ...children[3], action: { kind: 'variable-set', name: 'energy', value: 3 } })).toThrow('只读');
+    expect(() => check({ ...children[3], action: { kind: 'variable-set', name: 'panelOpen', value: 'true' } })).toThrow('类型');
+    expect(() => check({ ...children[3], action: { kind: 'variable-set', name: 'trust', value: Infinity } })).toThrow('类型');
+    expect(() => readProjectUi({ variables, ui: { version: 1, pages: { title: children[3] } } })).toThrow('阅读页面');
+    expect(() => readProjectUi({ variables: { ...variables, energy: { ...variables.energy, max: 0 } }, ui })).toThrow('递增');
+  });
+
   it('projects ending-book content and progress only on the gallery page', () => {
     const frame = { x: 0, y: 0, width: 640, height: 200 };
     const page = { id: 'endings', type: 'container', frame, children: [

@@ -1090,6 +1090,22 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     else hideWorkPage('choices');
   }
 
+  function workPageVisible(page: ProjectUiPageId): boolean {
+    const state = uiSnapshot();
+    if (page === 'title') return state.base === 'title' && state.overlay === 'none';
+    if (['system-menu', 'save-load', 'settings', 'gallery', 'backlog'].includes(page)) return state.overlay === page;
+    return state.base === 'game' && state.overlay === 'none' && !state.interfaceHidden && !state.videoActive && queries.overlay.system().type === 'none';
+  }
+
+  function writeWorkVariable(page: ProjectUiPageId, name: string, value: string | number | boolean): void {
+    const state = uiSnapshot();
+    if (!workPageVisible(page) || (state.base === 'game' && (state.overlay !== 'none' || !['awaiting-advance', 'awaiting-choice'].includes(interp.status)))) {
+      throw new Error('当前不是可修改剧情变量的阅读暂停点，请返回正文或选项后再操作。');
+    }
+    store.set(name, value);
+    uiDom?.refresh();
+  }
+
   function uiContext(page: ProjectUiPageId, mode?: 'save' | 'load'): ProjectUiContext {
     return {
       ...(mode ? { mode } : {}),
@@ -1112,7 +1128,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       read(name, kind) { return kind === 'variable' ? store.get(name) : name === 'locale' ? textLocale : settings.settings[name as keyof GameSettings]; },
       async write(binding: ProjectUiBinding, value) {
         playerShell!.commands.consumePointer();
-        if (binding.kind === 'variable') { store.set(binding.name, value); return; }
+        if (binding.kind === 'variable') { writeWorkVariable(page, binding.name, value); return; }
         const key = binding.name as keyof GameSettings;
         const nextValue = key === 'skipStrategy' && typeof value === 'boolean' ? (value ? 1 : 0) : value;
         await updateSettings({ [key]: nextValue } as Partial<GameSettings>);
@@ -1193,6 +1209,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   async function performWorkUiAction(page: ProjectUiPageId, action: ProjectUiAction, item?: ProjectUiItem): Promise<void> {
     playerShell!.commands.consumePointer();
     switch (action.kind) {
+      case 'variable-set': writeWorkVariable(page, action.name, action.value); return;
       case 'start': await titleSelect('new'); syncStoryWorkUi(); return;
       case 'continue': await titleSelect('continue'); syncStoryWorkUi(); return;
       case 'close':
@@ -2031,12 +2048,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       fontDiagnostics: queries.diagnostics.fontText,
       imageUrl: key => backgroundUrls.get(key),
       titleBackgroundUrl: backgroundUrls.get(playerConfig.titleBackground),
-      isPageVisible: page => {
-        const state = uiSnapshot();
-        if (page === 'title') return state.base === 'title' && state.overlay === 'none';
-        if (['system-menu', 'save-load', 'settings', 'gallery', 'backlog'].includes(page)) return state.overlay === page;
-        return state.base === 'game' && state.overlay === 'none' && !state.interfaceHidden && !state.videoActive && queries.overlay.system().type === 'none';
-      },
+      isPageVisible: workPageVisible,
       onError: error => { console.error('[starter] 作品 UI 操作失败:', error); dialogue.showBanner(error instanceof Error ? error.message : String(error), 'tip'); },
     });
     commands.projectUi.setDefaultSuppression(Object.fromEntries(Object.keys(workUi.pages).map(page => [page, true])));

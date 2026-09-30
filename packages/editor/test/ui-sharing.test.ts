@@ -13,6 +13,16 @@ const asset = (path: string, bytes: string): ShareAsset => ({ path, read: async 
 const assets = [asset('content/assets/bg/nested/paper.png', 'image-bytes'), asset('content/assets/fonts/read.ttf', 'font'), asset('content/assets/bg/unrelated.png', 'private')];
 
 describe('local UI sharing', () => {
+  it('keeps variables used only by conditions and button assignments in the dependency manifest', async () => {
+    const source = { variables: { trust: { type: 'number', initial: 3 }, panelOpen: { type: 'flag', initial: false }, unused: { type: 'string', initial: 'SECRET' } },
+      ui: { version: 1, pages: { hud: { id: 'open', type: 'button' as const, frame, visibleWhen: 'trust > 0', action: { kind: 'variable-set' as const, name: 'panelOpen', value: true } } } } };
+    const share = await exportUiShare(source, []);
+    expect(share.variables).toEqual({ trust: { type: 'number' }, panelOpen: { type: 'flag' } });
+    expect(JSON.stringify(share)).not.toContain('SECRET');
+    expect(() => readUiShare(JSON.stringify(share), { variables: { trust: { type: 'number', initial: 0 } } })).toThrow('同类型');
+    expect(readUiShare(JSON.stringify(share), source)).toEqual(share);
+  });
+
   it('exports only presentation fields and actual dependencies, reuses identical resources and stages only missing files', async () => {
     const share = await exportUiShare(config, assets);
     const text = JSON.stringify(share);

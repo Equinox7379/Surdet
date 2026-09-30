@@ -7,7 +7,7 @@ import { GALLERY_PATH, readGalleryDocument, type GalleryCgEntry } from './galler
 import { AuthoringOperationError } from './change-session.js';
 import { readGalleryReplayEntries, readGalleryEndings, readGalleryDossiers } from '@surdet/core';
 import { timelineIdFromPath } from './timeline-identity.js';
-import { PROJECT_UI_PAGES, readProjectUi, resolveProjectFontPaths, isStoryTextSource, parseTerminology, type ProjectUiNode } from '@surdet/core';
+import { PROJECT_UI_PAGES, readProjectUi, collectVars, parseExpr, resolveProjectFontPaths, isStoryTextSource, parseTerminology, type ProjectUiNode } from '@surdet/core';
 import { parseProjectConfigDocument } from './config-document.js';
 import {
   analyzeCharacterCompositionReferences,
@@ -429,6 +429,12 @@ function addUiObjects(snapshot: ProjectSnapshot, objects: AuthoringObject[], can
     for (const binding of [node.text, node.binding]) if (binding?.kind === 'variable') {
       addReferenceCandidate(candidates, ref, `variable:${binding.name}`);
       addReferenceCandidate(candidates, rootRef, `variable:${binding.name}`);
+    }
+    const conditionVariables = [node.visibleWhen, node.enabledWhen].flatMap(condition => condition === undefined ? [] : collectVars(parseExpr(condition)));
+    if (node.action?.kind === 'variable-set') conditionVariables.push(node.action.name);
+    for (const name of conditionVariables) {
+      addReferenceCandidate(candidates, ref, `variable:${name}`);
+      addReferenceCandidate(candidates, rootRef, `variable:${name}`);
     }
     {
       const path = fontPaths[node.style?.fontRole ?? 'ui'];

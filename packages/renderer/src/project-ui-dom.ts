@@ -1,4 +1,4 @@
-import { PROJECT_UI_TAB_BAR_HEIGHT, projectUiChildrenRect, projectUiRect, type ProjectUiAction, type ProjectUiBinding, type ProjectUiContentSource, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId, type ProjectUiRect, type ProjectUiText } from '@surdet/core';
+import { PROJECT_UI_TAB_BAR_HEIGHT, evalExprBoolean, projectUiChildrenRect, projectUiRect, type VarValue, type ProjectUiAction, type ProjectUiBinding, type ProjectUiContentSource, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId, type ProjectUiRect, type ProjectUiText } from '@surdet/core';
 import type { RendererTheme } from './theme.js';
 import { fontTextDiagnostics, isUiTextClipped, type ReadingDiagnostic } from './reading-diagnostics.js';
 
@@ -82,8 +82,10 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
   let disposed = false;
   let frame = 0;
   let confirmation: { element: HTMLElement; finish(accepted: boolean): void } | null = null;
+  let refreshFailure: string | null = null;
 
-  const report = (error: unknown): void => { errorStatus.textContent = error instanceof Error ? error.message : String(error); options.onError(error); };
+  const report = (error: unknown): void => { const message = error instanceof Error ? error.message : String(error);
+    if (errorStatus.textContent !== message) { errorStatus.textContent = message; options.onError(error); } };
   const color = (value: number | undefined, fallback: number): string => hex(value ?? fallback);
   const wrap = (promise: void | Promise<void>): void => { void Promise.resolve(promise).catch(report); };
   root.addEventListener('keydown', event => {
@@ -115,7 +117,12 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       if (binding.field === 'mode') return value === 'save' ? '存档' : value === 'load' ? '读档' : String(value);
       return String(value);
     }
-    return String(context.read(binding.name, binding.kind) ?? '');
+    const value = context.read(binding.name, binding.kind);
+    if (binding.kind === 'variable' && binding.format) {
+      if (!Array.isArray(value)) throw new Error(`界面数组变量类型不符：${binding.name}`);
+      return binding.format === 'count' ? String(value.length) : value.join('、');
+    }
+    return String(value ?? '');
   };
 
   function applyStyle(element: HTMLElement, node: ProjectUiNode): void {
@@ -146,6 +153,14 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     applyStyle(element, node);
     element.style.whiteSpace = 'pre-wrap';
     element.style.overflowWrap = 'anywhere';
+    const condition = (expression: string | undefined): boolean => expression === undefined || evalExprBoolean(expression, {
+      getVariable: name => display.context.read(name, 'variable') as VarValue,
+    });
+    if (node.visibleWhen !== undefined) bindings.push(() => { element.hidden = !condition(node.visibleWhen); });
+    const acceptsInput = (): boolean => {
+      refresh();
+      return element.isConnected && !element.closest('[hidden]') && !item?.disabled && condition(node.enabledWhen);
+    };
     if (node.type === 'container') element.style.pointerEvents = 'none';
     else element.style.pointerEvents = 'auto';
     if (node.type === 'button') {
@@ -158,13 +173,15 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       button.style.fontWeight = '600';
       button.textContent = visibleText(node.text, display.context, item, `ui:${node.id}`);
       if (node.text) bindings.push(() => { button.textContent = visibleText(node.text, display.context, item, `ui:${node.id}`); });
+      bindings.push(() => { button.disabled = Boolean(item?.disabled) || !condition(node.enabledWhen);
+        button.style.opacity = String((node.style?.opacity ?? 1) * (button.disabled ? 0.45 : 1)); button.style.cursor = button.disabled ? 'not-allowed' : 'pointer'; });
       if (theme.skins.buttonSkin) {
         const url = options.imageUrl(theme.skins.buttonSkin);
         if (url) { button.style.backgroundImage = `url(${JSON.stringify(url)})`; button.style.backgroundSize = '100% 100%'; }
       }
       button.addEventListener('click', event => {
         event.stopPropagation();
-        if (!node.action || display.pending || item?.disabled) return;
+        if (!node.action || display.pending || !acceptsInput()) return;
         errorStatus.textContent = '';
         display.pending = true;
         void Promise.resolve(display.context.action(node.action, item)).catch(report).finally(() => { display.pending = false; });
@@ -184,6 +201,21 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       image.style.cssText = 'width:100%;height:100%;object-fit:contain;pointer-events:none';
       element.appendChild(image);
       element.style.pointerEvents = 'none';
+    } else if (node.type === 'progress') {
+      element.style.pointerEvents = 'none'; element.style.overflow = 'hidden';
+      element.style.borderRadius = `${theme.radius.sm}px`;
+      element.style.backgroundColor = color(node.style?.background, theme.colors.surface);
+      element.setAttribute('role', 'progressbar');
+      const fill = document.createElement('div'); fill.style.cssText = `height:100%;background:${hex(theme.colors.accent)};pointer-events:none`;
+      element.appendChild(fill);
+      const update = (): void => {
+        const { min, max } = display.context.bounds(node.binding!);
+        const value = Number(display.context.read(node.binding!.name, node.binding!.kind));
+        fill.style.width = `${Math.max(0, Math.min(1, (value - min) / (max - min))) * 100}%`;
+        element.setAttribute('aria-label', node.text ? visibleText(node.text, display.context, item, `ui:${node.id}`) : node.binding!.name);
+        element.setAttribute('aria-valuemin', String(min)); element.setAttribute('aria-valuemax', String(max)); element.setAttribute('aria-valuenow', String(value));
+      };
+      update(); bindings.push(update);
     } else if (node.type === 'toggle' || node.type === 'slider' || node.type === 'input') {
       const binding = node.binding!;
       const input = document.createElement('input');
@@ -204,8 +236,10 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       };
       sync();
       bindings.push(sync);
+      bindings.push(() => { input.disabled = Boolean(item?.disabled) || !condition(node.enabledWhen); });
       input.addEventListener(node.type === 'input' ? 'change' : 'input', () => {
         const value = node.type === 'toggle' ? input.checked : node.type === 'slider' ? Number(input.value) : input.value;
+        if (!acceptsInput()) { sync(); return; }
         wrap(display.context.write(binding, value));
       });
       element.appendChild(input);
@@ -339,12 +373,19 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
 
   function refresh(): void {
     if (disposed) return;
+    const previousFailure = refreshFailure; refreshFailure = null;
     for (const [page, display] of pages) {
       display.element.hidden = options.isPageVisible?.(page) === false;
       if (display.element.hidden) continue;
-      display.bindings.forEach(update => update());
-      display.contents.forEach(content => { renderContent(display, content); content.bindings.forEach(update => update()); });
+      try {
+        display.bindings.forEach(update => update());
+        display.contents.forEach(content => { renderContent(display, content); content.bindings.forEach(update => update()); });
+      } catch (error) {
+        display.element.hidden = true;
+        refreshFailure = error instanceof Error ? error.message : String(error); report(error);
+      }
     }
+    if (previousFailure !== null && refreshFailure === null && errorStatus.textContent === previousFailure) errorStatus.textContent = '';
   }
 
   function resize(): void {

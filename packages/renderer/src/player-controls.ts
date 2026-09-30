@@ -158,6 +158,8 @@ export class PlayerFocusScope {
       this.#restoreLabel = undefined;
       return;
     }
+    // A work UI input owns its live focus; restoring the command rail would steal its keys.
+    if (!this.#modal && active?.isConnected && active !== this.#canvas.ownerDocument.body && active !== this.#canvas && !div.contains(active)) return;
     const buttons = this.#buttons();
     const restored = buttons.find((button) => controls.get(button.container!)?.label === (this.#restoreLabel ?? this.#lastFocus));
     if (restored) {
@@ -208,6 +210,7 @@ export class PlayerFocusScope {
     const active = this.#canvas.ownerDocument.activeElement as AccessibleButton | null;
     const index = active ? buttons.indexOf(active) : -1;
     if (!this.#modal && index < 0) return;
+    if (!this.#modal && event.key === 'Tab') return;
     if (!this.#modal && !['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', ' '].includes(event.key)) return;
     if (this.#modal && modals.get(this.#modal)?.allowKey?.(event)) return;
     // DOM focus navigation must never also reach the host's story shortcuts.

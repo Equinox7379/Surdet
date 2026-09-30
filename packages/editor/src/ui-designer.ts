@@ -30,7 +30,7 @@ const PAGE_NAMES: Record<ProjectUiPageId, string> = {
   dialogue: '对白', choices: '选项', toolbar: '阅读工具栏', hud: '剧情信息栏',
 };
 const TYPE_NAMES: Record<ProjectUiNodeType, string> = {
-  container: '容器', image: '图片', text: '文本', button: '按钮', toggle: '开关', slider: '滑条',
+  container: '容器', image: '图片', text: '文本', button: '按钮', toggle: '开关', slider: '滑条', progress: '只读数值条',
   input: '输入框', scroll: '滚动列表', tabs: '页签', content: '公共内容',
 };
 const DATA_FIELDS: Record<string, string> = {
@@ -50,7 +50,7 @@ const ACTION_NAMES: Record<NonNullable<ProjectUiNode['action']>['kind'], string>
   start: '开始游戏', continue: '继续游戏', open: '打开页面', back: '返回', close: '关闭',
   save: '保存进度', load: '读取进度', choice: '选择选项', 'gallery-item': '打开鉴赏条目',
   'setting-step': '调整阅读设置', advance: '继续阅读', rollback: '回退一句',
-  auto: '自动播放', skip: '快进', hide: '隐藏界面',
+  auto: '自动播放', skip: '快进', hide: '隐藏界面', 'variable-set': '修改剧情变量',
 };
 const DESIGN_FRAME: ProjectUiRect = { x: 0, y: 0, width: 1280, height: 720 };
 let selectedPage: ProjectUiPageId = 'title';
@@ -84,13 +84,14 @@ function availableAssets(): string[] {
   return catalog.backgrounds.filter(asset => asset.resolved && catalog.backgrounds.filter(other => other.key === asset.key).length === 1).map(asset => asset.key).sort();
 }
 
-function availableVariables(type?: string): string[] {
+function availableVariables(type?: string, includeReadonly = false): string[] {
   const config = parseProjectConfigDocument(state.gameConfigText || '{}');
   const variables = typeof config.variables === 'object' && config.variables !== null && !Array.isArray(config.variables)
     ? config.variables as Record<string, unknown> : {};
   return Object.entries(variables).flatMap(([name, raw]) => {
     const declaration = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
-    return declaration.readonly === true || (type && declaration.type !== type && !(type === 'flag' && declaration.type === 'boolean')) ? [] : [name];
+    return (!includeReadonly && declaration.readonly === true) || (type === 'scalar' ? !['number', 'string', 'flag', 'boolean'].includes(String(declaration.type))
+      : type && declaration.type !== type && !(type === 'flag' && declaration.type === 'boolean')) ? [] : [name];
   });
 }
 
@@ -106,6 +107,11 @@ function newNode(type: ProjectUiNodeType, page: ProjectUiPageId): ProjectUiNode 
   if (type === 'button') node.action = { kind: page === 'title' ? 'start' : page === 'choices' ? 'choice' : 'back' };
   if (type === 'toggle') node.binding = availableVariables('flag').length > 0 ? { kind: 'variable', name: availableVariables('flag')[0]! } : { kind: 'setting', name: 'skipStrategy' };
   if (type === 'slider') node.binding = { kind: 'setting', name: 'textSpeedCps' };
+  if (type === 'progress') {
+    const name = availableVariables('number', true)[0];
+    if (!name) throw new Error('只读数值条需要先声明一个数值变量。');
+    node.binding = { kind: 'variable', name }; node.text = { kind: 'literal', value: '状态' }; node.frame.height = 24;
+  }
   if (type === 'input') {
     const name = availableVariables('string')[0];
     if (!name) throw new Error('输入框需要先声明一个可写字符串变量。');
@@ -286,6 +292,13 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
         patch: { frame: { ...node.frame, [key]: value } } }));
     }
     parent.appendChild(frame);
+    for (const [key, title] of [['visibleWhen', '显示条件'], ['enabledWhen', '可操作条件']] as const) {
+      if (key === 'enabledWhen' && !['button', 'toggle', 'slider', 'input'].includes(node.type)) continue;
+      const label = element('label', 'ui-property-line', title), input = element('input');
+      input.value = node[key] ?? ''; input.placeholder = '留空为始终；例如 好感 >= 10'; input.setAttribute('aria-label', title);
+      input.onchange = () => apply({ type: 'node.update', page: selectedPage, id: node.id, patch: { [key]: input.value.trim() || null } });
+      label.appendChild(input); parent.appendChild(label);
+    }
     const align = element('div', 'ui-property-actions');
     for (const [label, axis] of [['水平居中', 'x'], ['垂直居中', 'y']] as const) {
       const button = element('button', '', label);
@@ -323,7 +336,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
         apply({ type: 'node.update', page: selectedPage, id: node.id, patch: { text } });
       };
       kind.onchange = () => {
-        const value = kind.value === 'data' ? (selectedPage === 'dialogue' ? 'dialogue' : selectedPage === 'title' ? 'title' : 'label') : kind.value === 'variable' ? availableVariables()[0] ?? '' : kind.value === 'setting' ? 'textSpeedCps' : '';
+        const value = kind.value === 'data' ? (selectedPage === 'dialogue' ? 'dialogue' : selectedPage === 'title' ? 'title' : 'label') : kind.value === 'variable' ? availableVariables(undefined, true)[0] ?? '' : kind.value === 'setting' ? 'textSpeedCps' : '';
         const text = kind.value === 'literal' ? { kind: 'literal' as const, value }
           : kind.value === 'data' ? { kind: 'data' as const, field: value as 'label' }
           : { kind: kind.value as 'variable' | 'setting', name: value };
@@ -331,6 +344,14 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       };
       textInput.onchange = changeText;
       const text = element('label', 'ui-property-line', '文字 / 数据来源'); text.append(kind, textInput); parent.appendChild(text);
+      if (node.text.kind === 'variable') {
+        const format = element('select'); format.setAttribute('aria-label', '数组显示方式');
+        format.append(option('', '原值'), option('list', '列表'), option('count', '数量')); format.value = node.text.format ?? '';
+        const binding = node.text;
+        format.onchange = () => apply({ type: 'node.update', page: selectedPage, id: node.id,
+          patch: { text: { kind: 'variable', name: binding.name, ...(format.value ? { format: format.value as 'list' | 'count' } : {}) } } });
+        const label = element('label', 'ui-property-line', '数组显示方式'); label.appendChild(format); parent.appendChild(label);
+      }
     }
     if (node.asset !== undefined) {
       const select = element('select');
@@ -341,13 +362,13 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     }
     if (node.binding) {
       const bindingKind = element('select'); bindingKind.append(option('variable', '剧情变量'));
-      if (node.type !== 'input') bindingKind.append(option('setting', '设置'));
+      if (node.type !== 'input' && node.type !== 'progress') bindingKind.append(option('setting', '设置'));
       bindingKind.value = node.binding.kind;
       const name = element('select');
       const renderNames = (): void => {
         name.replaceChildren();
         const names = bindingKind.value === 'setting' ? (node.type === 'toggle' ? ['skipStrategy'] : SETTING_STEPS.map(setting => setting.key))
-          : availableVariables(node.type === 'input' ? 'string' : node.type === 'slider' ? 'number' : 'flag');
+          : availableVariables(node.type === 'input' ? 'string' : node.type === 'slider' || node.type === 'progress' ? 'number' : 'flag', node.type === 'progress');
         names.forEach(value => name.appendChild(option(value, bindingKind.value === 'setting' ? SETTING_NAMES[value] ?? value : value)));
         name.value = names.includes(node.binding!.name) ? node.binding!.name : names[0] ?? '';
       };
@@ -367,17 +388,26 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     if (node.type === 'button') {
       const select = element('select'); Object.entries(ACTION_NAMES).forEach(([kind, name]) => select.appendChild(option(kind, name)));
       select.value = node.action?.kind ?? '';
-      const arg = node.action?.kind === 'open' || node.action?.kind === 'setting-step' ? element('select') : element('input');
+      const arg = node.action?.kind === 'open' || node.action?.kind === 'setting-step' || node.action?.kind === 'variable-set' ? element('select') : element('input');
       if (arg instanceof HTMLSelectElement) {
-        const names = node.action?.kind === 'open'
+        const names = node.action?.kind === 'variable-set' ? Object.fromEntries(availableVariables('scalar').map(name => [name, name])) : node.action?.kind === 'open'
           ? Object.fromEntries(['system-menu', 'save-load', 'settings', 'gallery', 'backlog'].map(page => [page, PAGE_NAMES[page as ProjectUiPageId]]))
           : { ...Object.fromEntries(SETTING_STEPS.map(setting => [setting.key, setting.label])), locale: '作品语言' };
         Object.entries(names).forEach(([value, label]) => arg.appendChild(option(value, label)));
-        const current = node.action?.kind === 'open' ? node.action.page : node.action?.kind === 'setting-step' ? node.action.name : '';
+        const current = node.action?.kind === 'open' ? node.action.page : node.action?.kind === 'setting-step' || node.action?.kind === 'variable-set' ? node.action.name : '';
         if (!(current in names)) arg.appendChild(option(current, current));
       } else arg.placeholder = '槽位或条目标识（留空使用当前项）';
       arg.setAttribute('aria-label', '操作目标');
-      arg.value = node.action?.kind === 'open' ? node.action.page : 'id' in (node.action ?? {}) ? String((node.action as { id?: string }).id ?? '') : node.action?.kind === 'setting-step' ? node.action.name : '';
+      arg.value = node.action?.kind === 'open' ? node.action.page : 'id' in (node.action ?? {}) ? String((node.action as { id?: string }).id ?? '') : node.action?.kind === 'setting-step' || node.action?.kind === 'variable-set' ? node.action.name : '';
+      let assignment: HTMLInputElement | HTMLSelectElement | null = null;
+      if (node.action?.kind === 'variable-set') {
+        const value = node.action.value;
+        assignment = typeof value === 'boolean' ? element('select') : element('input');
+        assignment.setAttribute('aria-label', '赋值内容');
+        if (assignment instanceof HTMLSelectElement) assignment.append(option('true', '开启'), option('false', '关闭'));
+        else assignment.type = typeof value === 'number' ? 'number' : 'text';
+        assignment.value = String(value);
+      }
       const mode = element('select'); mode.setAttribute('aria-label', '存读档模式');
       mode.append(option('save', '存档'), option('load', '读档'));
       mode.value = node.action?.kind === 'open' ? node.action.mode ?? 'load' : 'load';
@@ -386,18 +416,25 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       direction.append(option('1', '增加'), option('-1', '减少'));
       direction.value = String(node.action?.kind === 'setting-step' ? node.action.direction : 1);
       direction.hidden = node.action?.kind !== 'setting-step';
-      const update = (value = arg.value): void => {
+      const update = (value = arg.value, editAssignment = false): void => {
         const kind = select.value;
-        const action = kind === 'open' ? { kind: 'open' as const, page: (value || 'settings') as 'settings', ...(value === 'save-load' ? { mode: mode.value as 'save' | 'load' } : {}) }
+        const variables = parseProjectConfigDocument(state.gameConfigText || '{}').variables as Record<string, { type: string; initial: string | number | boolean }> | undefined;
+        const assigned = variables?.[value];
+        if (kind === 'variable-set' && !assigned) { options.onStatus('先声明一个可写数值、文字或开关变量，再选择赋值按钮。', false); draw(); return; }
+        const action = kind === 'variable-set' ? { kind: 'variable-set' as const, name: value,
+          value: editAssignment && assignment ? (['flag', 'boolean'].includes(assigned!.type) ? assignment.value === 'true' : assigned!.type === 'number' ? Number(assignment.value) : assignment.value)
+            : node.action?.kind === 'variable-set' && node.action.name === value ? node.action.value : assigned!.initial }
+          : kind === 'open' ? { kind: 'open' as const, page: (value || 'settings') as 'settings', ...(value === 'save-load' ? { mode: mode.value as 'save' | 'load' } : {}) }
           : kind === 'setting-step' ? { kind: 'setting-step' as const, name: value || 'textSpeedCps', direction: Number(direction.value) as -1 | 1 }
           : ['save', 'load', 'choice', 'gallery-item'].includes(kind) ? { kind: kind as 'save', ...(value ? { id: value } : {}) }
           : { kind: kind as 'start' };
         apply({ type: 'node.update', page: selectedPage, id: node.id, patch: { action } });
       };
-      select.onchange = () => update(select.value === 'open' ? 'settings' : select.value === 'setting-step' ? 'textSpeedCps' : '');
+      select.onchange = () => update(select.value === 'variable-set' ? availableVariables('scalar')[0] ?? '' : select.value === 'open' ? 'settings' : select.value === 'setting-step' ? 'textSpeedCps' : '');
       arg.onchange = () => update();
       mode.onchange = () => update(); direction.onchange = () => update();
       const label = element('label', 'ui-property-line', '点击操作'); label.append(select, arg, mode, direction); parent.appendChild(label);
+      if (assignment) { assignment.onchange = () => update(arg.value, true); const label = element('label', 'ui-property-line', '赋值内容'); label.appendChild(assignment); parent.appendChild(label); }
     }
     if (node.tab !== undefined || (parentId && findNode(rootNode, parentId)?.node.type === 'tabs')) {
       const input = element('input'); input.value = node.tab ?? ''; input.onchange = () => apply({ type: 'node.update', page: selectedPage, id: node.id, patch: { tab: input.value } });
