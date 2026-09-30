@@ -54,8 +54,21 @@ export interface PresentationSnapshotHooks {
   restore: (payload: unknown) => PresentationRestoreResult | void;
 }
 
-/** 运行时状态。paused = 宿主暂停（如交互式战斗进行中），resumeHost() 恢复 */
+/** paused 表示宿主接管，或显式调试的指令前暂停；各自通过原宿主或调试控制恢复。 */
 export type RuntimeStatus = 'idle' | 'running' | 'awaiting-advance' | 'awaiting-choice' | 'awaiting-timer' | 'paused' | 'ended' | 'error';
+
+export interface RuntimeBreakpoint { sceneId: string; sceneHash: string; index: number }
+export interface RuntimeDebugLocation extends RuntimeBreakpoint { op: string; file: string; line: number; col: number }
+export interface RuntimeDebugSnapshot {
+  enabled: boolean;
+  paused: boolean;
+  reason: 'entry' | 'step' | 'breakpoint' | 'manual' | null;
+  status: RuntimeStatus;
+  current: RuntimeDebugLocation | null;
+  next: RuntimeDebugLocation | null;
+  variables: Record<string, VarValue>;
+  callStack: RuntimeDebugLocation[];
+}
 
 /** 指令参数去引号（引号契约：解释器侧消费的 ID 类参数在此去引号，与渲染层 dequote 语义一致）；
  *  例：@clear "ed1" → 结局标识 ed1（避免引号被写进结局/成就 ID） */
@@ -206,6 +219,15 @@ export class Interpreter {
   #timelineCatalog: TimelineCatalog | null;
   #presentationHooks: PresentationSnapshotHooks | null;
   #randomSource: RandomSource = { next: () => Math.random() };
+  #debugEnabled = false;
+  #debugPaused = false;
+  #debugPauseOnStart = false;
+  #debugBreakpoints: RuntimeBreakpoint[] = [];
+  #debugStopNext: 'entry' | 'step' | null = null;
+  #debugReason: RuntimeDebugSnapshot['reason'] = null;
+  #debugSingleStep = false;
+  #debugBypassOnce = false;
+  #debugLastInstruction: { scene: CompiledScene; instruction: DslInstr } | null = null;
 
   constructor(
     store: VariableStore,
@@ -297,6 +319,87 @@ export class Interpreter {
     return this.#scene ? { sceneId: this.#scene.sceneId, pc: this.#pc } : null;
   }
 
+  /** Opt-in host debugging; never changes project variables or the save schema. */
+  configureDebugger(options: { enabled: boolean; pauseOnStart?: boolean; breakpoints?: readonly RuntimeBreakpoint[] }): void {
+    if (this.#stepping) throw new RuntimeError('调试控制不能在执行回调内重入');
+    const breakpoints = options.breakpoints ?? [];
+    for (const point of breakpoints) {
+      const scene = this.#registry.get(point.sceneId);
+      if (scene.sceneHash !== point.sceneHash) throw new RuntimeError(`断点场景版本已失配：${point.sceneId}`);
+      if (!Number.isSafeInteger(point.index) || point.index < 0 || !scene.instructions[point.index]) throw new RuntimeError('断点步骤不存在');
+    }
+    this.#debugBreakpoints = breakpoints.map(point => ({ ...point }));
+    this.#debugPauseOnStart = options.pauseOnStart === true;
+    const wasPaused = this.#debugPaused;
+    this.#debugEnabled = options.enabled;
+    if (!options.enabled) {
+      this.#debugPaused = false; this.#debugReason = null; this.#debugStopNext = null; this.#debugSingleStep = false; this.#debugBypassOnce = false;
+      if (wasPaused && this.#status === 'paused' && !this.#hostPaused) { this.#status = 'running'; this.#step(); }
+    }
+  }
+
+  get debugEnabled(): boolean { return this.#debugEnabled; }
+
+  #debugLocation(sceneId: string, index: number, scene = this.#registry.get(sceneId)): RuntimeDebugLocation | null {
+    const instruction = scene.instructions[index];
+    return instruction ? { sceneId, sceneHash: scene.sceneHash ?? '', index, op: instruction.op,
+      file: instruction.file, line: instruction.line, col: instruction.col } : null;
+  }
+
+  debugSnapshot(): RuntimeDebugSnapshot {
+    const position = this.#currentSavePosition().position;
+    const last = ['awaiting-advance', 'awaiting-timer', 'error'].includes(this.#status) ? this.#debugLastInstruction : null;
+    const current = last ? this.#debugLocation(last.scene.sceneId, last.instruction.index, last.scene)
+      : this.#scene && this.#status === 'awaiting-timer' ? this.#debugLocation(this.#scene.sceneId, Math.max(0, this.#pc - 1), this.#scene)
+      : position ? this.#debugLocation(position.sceneId, position.pc, this.#scene!) : null;
+    return { enabled: this.#debugEnabled, paused: this.#debugPaused, reason: this.#debugReason, status: this.#status,
+      current,
+      next: this.#scene ? this.#debugLocation(this.#scene.sceneId, this.#pc, this.#scene) : null,
+      variables: this.#store.snapshot(), callStack: this.#callStack.flatMap(frame => {
+        const location = this.#debugLocation(frame.sceneId, frame.pc); return location ? [location] : [];
+      }) };
+  }
+
+  debugPause(): void {
+    this.#requireDebugger();
+    if (this.#debugPaused) return;
+    if (this.#hostPaused || !['awaiting-advance', 'awaiting-choice'].includes(this.#status)) throw new RuntimeError('请在正文或选择暂停点暂停调试；等待与演出继续使用原完成回调');
+    this.#debugPaused = true; this.#debugReason = 'manual';
+  }
+
+  debugContinue(): void {
+    this.#requireDebugger();
+    if (this.#hostPaused) throw new RuntimeError('宿主正在接管剧情，不能由调试器解除');
+    this.#debugStopNext = null; this.#debugSingleStep = false; this.#debugReason = null;
+    if (!this.#debugPaused) return;
+    this.#debugPaused = false;
+    if (this.#status === 'paused' && !this.#hostPaused) {
+      this.#debugBypassOnce = true; this.#status = 'running'; this.#step();
+    }
+  }
+
+  debugStep(): void {
+    this.#requireDebugger();
+    if (this.#hostPaused) throw new RuntimeError('宿主正在接管剧情，不能由调试器解除');
+    if (this.#status === 'awaiting-choice') throw new RuntimeError('请先实际选择一个选项，不能由单步代选');
+    if (this.#status === 'awaiting-timer') throw new RuntimeError('请等待当前计时、视频或演出完成，不能由单步跳过');
+    if (!(this.#debugPaused && this.#status === 'paused') && this.#status !== 'awaiting-advance') throw new RuntimeError('当前没有可单步的暂停位置');
+    this.#debugPaused = false; this.#debugReason = null; this.#debugStopNext = null;
+    this.#debugSingleStep = true; this.#debugBypassOnce = true;
+    if (this.#status === 'paused') { this.#status = 'running'; this.#step(); }
+    else this.advance();
+  }
+
+  #requireDebugger(): void {
+    if (!this.#debugEnabled || this.#stepping) throw new RuntimeError('调试未启用或执行回调尚未结束');
+  }
+
+  #resetDebugRun(preserveLocation = false): void {
+    if (!preserveLocation) this.#debugLastInstruction = null;
+    this.#debugPaused = false; this.#debugReason = null; this.#debugSingleStep = false; this.#debugBypassOnce = false;
+    this.#debugStopNext = this.#debugEnabled && this.#debugPauseOnStart ? 'entry' : null;
+  }
+
   /** 启动场景（label 可选，默认场景开头）。
    *  支持在事件回调内调用（如 sceneEnd 回调里"结局→返回标题"）：延迟到当前迭代结束后重启。 */
   start(sceneId: string, label?: string): void {
@@ -306,6 +409,7 @@ export class Interpreter {
     // 清理残留状态（防御：若之前卡在 awaiting-choice，重新 start 不应悬挂旧 choice）
     this.#pendingChoice = null;
     this.#hostPaused = false;
+    this.#resetDebugRun();
     this.#jumpOverride = false;
     this.#callStack = [];
     this.#scene = scene;
@@ -475,6 +579,7 @@ export class Interpreter {
     // 读档状态重置（审计修复 C1/M1）：置于 position 早退分支之前，保证退化路径同样闭合（审计复核补全）
     this.#hostPaused = false;
     this.#jumpOverride = false;
+    this.#resetDebugRun();
     this.#bus.emit('stateReset', { reason: 'load' });
     const presentationRestore = this.#presentationHooks?.restore(snap.presentation?.payload ?? null);
     if (!snap.position) {
@@ -510,7 +615,7 @@ export class Interpreter {
    *  wait 挂起时调用等价于跳过剩余等待（galgame 惯例：点击可跳过等待）。 */
   advance(): void {
     // 宿主暂停中（如战斗进行中）：点击无效但不报错——画布点击是全局的，不应打扰宿主 UI
-    if (this.#status === 'paused') return;
+    if (this.#status === 'paused' || this.#debugPaused) return;
     if (this.#status === 'awaiting-timer') {
       this.finishWait();
       return;
@@ -560,6 +665,7 @@ export class Interpreter {
 
   /** 选择肢：index 为 choice 事件载荷中的原始选项索引。事件回调内调用走迭代续跑。 */
   choose(index: number): void {
+    if (this.#debugPaused) return;
     this.#requireStatus('awaiting-choice', 'choose()');
     const choice = this.#pendingChoice!;
     const opt = choice.options[index];
@@ -598,6 +704,7 @@ export class Interpreter {
       this.#status = 'error';
       this.#resumeRequested = false;
       this.#hostPaused = false;
+      this.#resetDebugRun(true);
       throw error;
     } finally {
       this.#stepping = false;
@@ -660,6 +767,18 @@ export class Interpreter {
         // 指令流意外耗尽（理论上 end 指令保证不会发生）
         this.#status = 'ended';
         return;
+      }
+
+      if (this.#debugEnabled) {
+        const bypass = this.#debugBypassOnce; this.#debugBypassOnce = false;
+        const breakpoint = !bypass && this.#debugBreakpoints.some(point => point.sceneId === this.#scene!.sceneId
+          && point.sceneHash === this.#scene!.sceneHash && point.index === this.#pc);
+        if (this.#debugStopNext || breakpoint) {
+          this.#debugPaused = true; this.#debugReason = this.#debugStopNext ?? 'breakpoint';
+          this.#status = 'paused'; return;
+        }
+        if (this.#debugSingleStep) { this.#debugSingleStep = false; this.#debugStopNext = 'step'; }
+        this.#debugLastInstruction = { scene: this.#scene, instruction: instr };
       }
 
       steps++;
@@ -964,6 +1083,7 @@ export class Interpreter {
     this.#pendingChoice = null;
     this.#callStack = [];
     this.#hostPaused = false;
+    this.#resetDebugRun();
     this.#scene = scene;
     this.#pc = pc;
     this.#status = 'running';

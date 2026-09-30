@@ -32,6 +32,7 @@ import { buildPreviewReplaySources, parsePreviewPlaybackCheckpoint,
   type PreviewPlaybackCheckpoint, type RuntimeTraceEvent } from '@surdet/authoring';
 import { PreviewReplayController } from './preview-replay-runtime.js';
 import { previewTextHash } from './preview-content.js';
+import { parsePreviewDebugCommand, type PreviewDebugState } from './preview-debug.js';
 import {
   AudioManager, Backlog, Typewriter, RenderPerformanceMonitor, buildMapView, createRendererRuntime,
   SettingsStore, SETTING_STEPS, stepSetting, createSettingsUpdateHandler,
@@ -100,6 +101,7 @@ interface LoadPayload {
   seed?: number;
   replay?: PreviewPlaybackCheckpoint;
   strictSource?: boolean;
+  debug?: { enabled: boolean; pauseOnStart: boolean; breakpoints: import('@surdet/core').RuntimeBreakpoint[] };
 }
 
 /** 快进速度：每秒 1000 字（近似瞬时）；常规 30 字/秒 */
@@ -320,6 +322,17 @@ function guardRun(fn: () => void): void {
   } catch (err) {
     showError(`预览运行时错误：${err instanceof Error ? err.message : String(err)}`);
   }
+  publishDebugState();
+}
+
+function publishDebugState(error?: string): void {
+  if (!interp?.debugEnabled || !runtime || !activePreviewTrace || previewDisposed) return;
+  const snapshot = interp.debugSnapshot();
+  if (!snapshot.enabled) return;
+  runtime.controller.setPresentationPaused?.(snapshot.paused);
+  const message: PreviewDebugState = { type: 'surdet-preview-debug-state', traceId: activePreviewTrace.traceId,
+    generation: activePreviewTrace.generation, snapshot, ...(error ? { error } : {}) };
+  window.parent.postMessage(message, location.origin);
 }
 
 /** 形状容错构造（配置来自用户可编辑 JSON：非法形状按无配置处理，不炸预览） */
@@ -435,10 +448,14 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
   settings.apply(typewriter, previewAudio);
   controller.connect(bus);
   bus.on('choice', ({ options }) => replayController?.choice(options));
-  bus.on('runtimeTrace', (event) => captureRuntimeTrace(event, () => createPreviewTraceEvidenceSnapshot(
-    queries.presentation.snapshot(),
-    queries.diagnostics.projectionSnapshot(),
-  )));
+  let debugPublishQueued = false;
+  bus.on('runtimeTrace', (event) => {
+    captureRuntimeTrace(event, () => createPreviewTraceEvidenceSnapshot(queries.presentation.snapshot(), queries.diagnostics.projectionSnapshot()));
+    if (interp?.debugEnabled && !debugPublishQueued) {
+      debugPublishQueued = true;
+      queueMicrotask(() => { debugPublishQueued = false; publishDebugState(); });
+    }
+  });
   const saves = new SaveManager(makePreviewSaveStorage(() => previewProjectKey));
 
   function enrichSnapshot(snap: SaveSnapshot): SaveSnapshot {
@@ -1017,6 +1034,7 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined, requiredBac
 }
 
 function invalidatePreviewSession(): void {
+  runtime?.controller.setPresentationPaused?.(false);
   replayController?.dispose();
   replayController = null;
   interp = null;
@@ -1168,6 +1186,8 @@ async function load(p: LoadPayload): Promise<void> {
       restore: (payload) => presentation.restore(payload),
     });
     interp.setRandomSource(createSeededRandomSource(p.seed!));
+    if (p.debug?.enabled && !controller.setPresentationPaused) throw new Error('当前运行器不支持调试暂停，请使用同批 Renderer 构建');
+    interp.configureDebugger(p.debug ?? { enabled: false });
     const sources = await buildPreviewReplaySources(p.scenes, { sha256: previewTextHash });
     if (previewDisposed) return;
     let replayReportedStatus = false;
@@ -1183,6 +1203,7 @@ async function load(p: LoadPayload): Promise<void> {
     turnResumeSnap = null;
     if (typeof p.fast === 'boolean') controller.setTextSpeed(p.fast ? FAST_CPS : NORMAL_CPS);
     interp.start(directTimelineId ? timelinePreviewSceneId : p.sceneId, directTimelineId ? undefined : p.startLabel);
+    publishDebugState();
     if (!replayReportedStatus) {
       postPreviewDiagnostic({ generation, level: 'info', phase: 'compile', message: '预览已启动', sceneId: p.sceneId, ...(p.startLabel ? { label: p.startLabel } : {}) });
     }
@@ -1202,6 +1223,20 @@ let loadQueue = Promise.resolve();
 window.addEventListener('message', (e: MessageEvent) => {
   const d = e.data as { type?: string; payload?: LoadPayload; fast?: boolean } | null;
   if (!d || typeof d.type !== 'string') return;
+  if (d.type === 'surdet-preview-debug-command' && e.source === window.parent && e.origin === location.origin && activePreviewTrace && interp && runtime) {
+    const command = parsePreviewDebugCommand(e.data, activePreviewTrace.traceId, activePreviewTrace.generation);
+    if (!command || !interp.debugSnapshot().enabled) return;
+    try {
+      if (systemMenuOpen || saveLoadOpen || settingsOpen || runtime.controller.backlogOpen || runtime.queries.overlay.system().type !== 'none') throw new Error('请先返回正文，再使用调试控制');
+      runtime.controller.setPresentationPaused?.(false);
+      if (command.action === 'pause') interp.debugPause();
+      else if (command.action === 'step') interp.debugStep();
+      else if (command.action === 'continue') interp.debugContinue();
+      else interp.configureDebugger({ enabled: true, breakpoints: command.breakpoints });
+      publishDebugState();
+    } catch (error) { publishDebugState(error instanceof Error ? error.message : String(error)); }
+    return;
+  }
   if (d.type === 'surdet-preview-load' && d.payload) {
     // 点击“重载”期间串行化读盘、资源注册和解释器启动，避免旧请求晚到时污染新会话。
     loadQueue = loadQueue.then(() => load(d.payload!));

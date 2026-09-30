@@ -355,6 +355,18 @@
   }
 }
 
+.preview-debugger {
+  padding-block: var(--surdet-space-8);
+  display: grid;
+  gap: var(--surdet-space-8);
+}
+
+.preview-debugger[hidden] { display: none; }
+.preview-debug-values { margin: 0; max-height: 160px; overflow: auto; white-space: pre-wrap; }
+.preview-debug-breakpoints { margin: 0; padding-left: 20px; }
+.preview-debug-breakpoints li { margin-block: 6px; }
+.preview-debugger select { max-width: min(100%, 460px); }
+
 @media (max-width: 480px) and (max-height: 700px) {
   .preview-toolbar {
     position: relative;
