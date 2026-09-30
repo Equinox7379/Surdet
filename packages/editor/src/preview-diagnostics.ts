@@ -7,6 +7,8 @@ export interface PreviewDiagnostic {
   phase: PreviewDiagnosticPhase;
   message: string;
   sceneId?: string;
+  line?: number;
+  col?: number;
   label?: string;
 }
 
@@ -23,6 +25,8 @@ export function normalizePreviewDiagnostic(value: unknown): PreviewDiagnostic | 
     phase: raw.phase as PreviewDiagnosticPhase,
     message: raw.message,
     ...(typeof raw.sceneId === 'string' ? { sceneId: raw.sceneId } : {}),
+    ...(Number.isSafeInteger(raw.line) && (raw.line as number) > 0 ? { line: raw.line as number } : {}),
+    ...(Number.isSafeInteger(raw.col) && (raw.col as number) > 0 ? { col: raw.col as number } : {}),
     ...(typeof raw.label === 'string' ? { label: raw.label } : {}),
   };
 }

@@ -564,9 +564,18 @@ describe('Surdet Agent Port MCP tool projection', () => {
       const call = (name: string, args: Record<string, unknown> = {}) => client.callTool({ name, arguments: args });
       const incomplete = await call('surdet_project_simulate', { sceneId: 'start', maxStepsPerPath: 1 });
       expect(incomplete.structuredContent, textContent(incomplete)).toMatchObject({ ok: false, error: { code: 'SIMULATION_INCOMPLETE', retryDisposition: 'after-repair' } });
+      expect((incomplete.structuredContent as any).error.details.report).toMatchObject({ status: 'incomplete', coverage: {
+        scenes: [expect.objectContaining({ sceneId: 'start', visited: true })], stops: [expect.objectContaining({ kind: 'step-budget' })],
+      } });
       const repair = (incomplete.structuredContent as any).error.repairActions.find((item: any) => item.capability === 'project.simulate');
       expect(repair.inputTemplate.maxStepsPerPath).toBeGreaterThan(1);
       expect((await call('surdet_project_simulate', { ...repair.inputTemplate, maxStepsPerPath: 10 })).isError).not.toBe(true);
+      fs.writeFileSync(path.join(session.projectRoot, 'content/scenario/start.gal'), '@scene start\n@check false\n@end\n');
+      const failedSimulation = await call('surdet_project_simulate');
+      expect(failedSimulation.structuredContent, textContent(failedSimulation)).toMatchObject({ error: { code: 'RUNTIME_FAILED', details: { report: {
+        status: 'failed', coverage: { stops: [expect.objectContaining({ kind: 'runtime-error', location: expect.objectContaining({ sceneId: 'start', line: 2 }) })] },
+      } } } });
+      fs.writeFileSync(path.join(session.projectRoot, 'content/scenario/start.gal'), '@scene start\n第一句。\n第二句。\n@end\n');
       await call('surdet_change_begin');
       const failed = await call('surdet_runtime_run_from', { sceneId: 'start', choices: [], maxSteps: 1 });
       expect(failed.structuredContent, textContent(failed)).toMatchObject({ ok: false, error: { code: 'RUNTIME_FAILED' } });
@@ -594,6 +603,7 @@ describe('Surdet Agent Port MCP tool projection', () => {
       expect((await call('surdet_runtime_run_from', { sceneId: 'start', choices: [] })).isError).not.toBe(true);
       const boundedWorking = await call('surdet_project_simulate', { sceneId: 'start', maxPaths: 1, maxStepsPerPath: 1 });
       expect(boundedWorking.structuredContent).toMatchObject({ error: { code: 'SIMULATION_INCOMPLETE' } });
+      expect((boundedWorking.structuredContent as any).error.details.report.coverage.stops[0]).toMatchObject({ kind: 'step-budget', location: { sceneId: 'start' } });
       for (const input of [{ maxPaths: 0 }, { maxStepsPerPath: 1.5 }, { maxPaths: 2001 }, { maxStepsPerPath: 100001 }]) {
         const invalid = await call('surdet_project_simulate', input);
         expect(invalid.isError).toBe(true);
@@ -610,6 +620,28 @@ describe('Surdet Agent Port MCP tool projection', () => {
       await server.close();
       await session.close();
     }
+  });
+
+  it('reads source coverage and original conditional indices through real project and working MCP results', async () => {
+    const { session, client, server } = await connected('stage');
+    try {
+      fs.writeFileSync(path.join(session.projectRoot, 'content/scenario/start.gal'), '@scene start\n@choice\n  隐藏 [if:false] -> @end\n  可选 [if:true] -> @end\n');
+      const call = (name: string, args: Record<string, unknown> = {}) => client.callTool({ name, arguments: args });
+      const project = await call('surdet_project_simulate');
+      expect(project.isError, textContent(project)).not.toBe(true);
+      const coverage = (project.structuredContent as any).result.report.coverage;
+      expect(coverage.branches).toMatchObject([{ optionIndex: 0, status: 'condition-not-met' }, { optionIndex: 1, status: 'visited' }]);
+      await call('surdet_change_begin');
+      const working = await call('surdet_project_simulate');
+      expect(working.isError, textContent(working)).not.toBe(true);
+      expect((working.structuredContent as any).result.coverage).toEqual(coverage);
+      const runtime = await call('surdet_runtime_run_from', { sceneId: 'start', choices: [1] });
+      expect(runtime.isError, textContent(runtime)).not.toBe(true);
+      const trace = await call('surdet_runtime_read_trace', { traceId: (runtime.structuredContent as any).result.traceId, query: {} });
+      expect(trace.isError, textContent(trace)).not.toBe(true);
+      expect((trace.structuredContent as any).result.events.filter((event: any) => event.condition).map((event: any) => event.condition))
+        .toEqual([{ expression: 'false', result: false, optionIndex: 0 }, { expression: 'true', result: true, optionIndex: 1 }]);
+    } finally { await client.close(); await server.close(); await session.close(); }
   });
 
   it('resumes a direct draft across real MCP processes and keeps cross-scene label edits atomic', async () => {

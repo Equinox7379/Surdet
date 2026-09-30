@@ -14,6 +14,7 @@ import { validateProject } from '../../src/validate.js';
 import { openScriptImport } from '../../src/panels/script-import.js';
 import { bindLabelEditingHooks, editSceneLabel } from '../../src/label-editing.js';
 import { sceneTextSha256 } from '../../src/project-io.js';
+import { renderStoryCheckPanel, resetStoryChecks, refreshStoryChecks, disposeStoryCheckPanel } from '../../src/panels/story-check-panel.js';
 
 export const SOURCE = '@scene start\r\n@label opening\r\n@bg hall\r\n@show lynn:uniform normal @ right\r\n凛:你好。\r\n@wait 500\r\n@choice\r\n  继续 -> @goto again\r\n  离开 -> @goto done\r\n@label again\r\n凛：继续。\r\n@label done\r\n@end';
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
@@ -132,6 +133,46 @@ function searchKey(key: string, options: KeyboardEventInit = {}): void {
   control('#search-input').dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options }));
 }
 export const v4WorkbenchCases: BrowserCase[] = [
+  { name: 'story check uses the real worker and rejects stale locations and cancelled results', run: async () => {
+    const scene = fixture('@scene start\n@choice\n  继续 -> @end\n'); resetConfigSession(); resetStoryChecks();
+    const panel = document.createElement('section'); control('#main').append(panel);
+    const jumps: Array<[string, number]> = [];
+    renderStoryCheckPanel(panel, (file, line) => jumps.push([file, line]));
+    const run = [...panel.querySelectorAll('button')].find(button => button.textContent === '运行剧情检查')!;
+    const paths = panel.querySelector<HTMLInputElement>('[aria-label="最多检查路径"]')!;
+    paths.value = '2001'; run.click(); assert(!run.disabled && panel.textContent?.includes('路径预算须为 1 到 2000'), 'invalid budget started the worker');
+    paths.value = '50';
+    run.click();
+    const deadline = performance.now() + 5000;
+    while (run.disabled && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert(!run.disabled && panel.textContent?.includes('本次模拟已结束 · 对应当前内容'), 'worker did not report the real completed check');
+    panel.querySelector<HTMLInputElement>('[aria-label="随机种子"]')!.value = '0';
+    assert(panel.textContent?.includes('随机种子 1592639710'), 'result replaced its actual seed with the next run input');
+    const branch = [...panel.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.startsWith('已选择 · start 第 3 行'))!;
+    assert(branch && !branch.disabled, 'current branch location unavailable'); branch.click();
+    assert(jumps.length === 1 && jumps[0]![0] === 'content/scenario/start.gal' && jumps[0]![1] === 2, 'branch did not use its real source line');
+    let exported: Blob | null = null;
+    const original = URL.createObjectURL;
+    URL.createObjectURL = value => { if (value instanceof Blob) exported = value; return original(value); };
+    try { [...panel.querySelectorAll('button')].find(button => button.textContent === '导出检查与试玩诊断')!.click(); }
+    finally { URL.createObjectURL = original; }
+    assert(exported !== null, 'download did not receive a diagnostic file');
+    const text = await (exported as Blob).text(), diagnostic = JSON.parse(text);
+    assert(diagnostic.simulation.current === true && diagnostic.simulation.branches.length === 1
+      && diagnostic.simulation.branches[0].location.line === 3, 'download lost actual check facts');
+    assert(!text.includes('继续') && !text.includes('finalVariables') && !text.includes('initialVariables'), 'download included raw authoring content');
+    state.gameConfigText = '{"entryScene":"start","variables":{"test":{"type":"number","initial":0}}}'; refreshStoryChecks();
+    const stale = [...panel.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.startsWith('已选择 · start 第 3 行'))!;
+    assert(stale.disabled && panel.textContent?.includes('内容已修改，请重新检查'), 'config change did not invalidate all old locations');
+    branch.onclick?.(new PointerEvent('click')); assert(jumps.length === 1, 'a stale captured callback navigated into new content');
+    run.click();
+    [...panel.querySelectorAll('button')].find(button => button.textContent === '取消检查')!.click();
+    await nextTask(); assert(!run.disabled && panel.textContent?.includes('已取消，本次没有生成新检查结果'), 'cancel did not stop the active worker');
+    run.click(); resetStoryChecks(); state.dirHandle = { name: 'other' } as FileSystemDirectoryHandle;
+    panel.replaceChildren(); renderStoryCheckPanel(panel, () => { throw new Error('old project navigation'); });
+    await nextTask(); assert(panel.textContent?.includes('尚未运行检查或记录真实试玩'), 'old project result survived reset');
+    assert(scene.text === '@scene start\n@choice\n  继续 -> @end\n', 'checks modified source'); disposeStoryCheckPanel();
+  } },
   { name: 'unsaved inserted labels reject rename before changing drafts, histories, config rows or pending facts', run: async () => {
     for (const variant of ['source', 'BOM', 'branch']) {
       const source = variant === 'BOM' ? '\uFEFF@scene start\r\n正文保持不变。\r\n@end' : '@scene start\n正文保持不变。\n@end';

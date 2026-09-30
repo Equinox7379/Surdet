@@ -90,6 +90,7 @@ import { disposeUiPlayerPreview } from './ui-player-preview.js';
 import './styles/v4-workbench.css';
 import { clearTimelineViewState, clearTimelineViewStates, renderTimelinePanel, selectTimelineCue, bindTimelineHooks } from './panels/timeline-panel.js';
 import { renderStatsPanel, bindStatsHooks } from './panels/stats-panel.js';
+import { renderStoryCheckPanel, disposeStoryCheckPanel, resetStoryChecks, refreshStoryChecks } from './panels/story-check-panel.js';
 import { renderContentHistoryPanel } from './panels/content-history-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput, resetSearchSession } from './panels/search-panel.js';
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
@@ -1158,6 +1159,7 @@ function refreshProjectBarProjection(): void {
 function markProjectEdited(): void {
   saveAttemptLeftDirty = false;
   refreshProjectBarProjection();
+  refreshStoryChecks();
 }
 
 function handleTimelineEdited(): void {
@@ -1553,6 +1555,7 @@ async function rebuildAuthoringIndex(): Promise<void> {
 }
 
 function resetAuthoringState(): void {
+  resetStoryChecks();
   state.selectedObjectRef = null;
   state.authoringIndex = null;
   state.assetIntelligence = null;
@@ -1715,7 +1718,7 @@ bindConfigHooks({
   },
   // 配置保存后重新调度校验（新变量/成就即刻参与 lint）
   requestValidate: () => { scheduleValidate(); scheduleAuthoringIndexRebuild(); },
-  onDraftStateChanged: () => { refreshProjectBarProjection(); refreshPreviewSourceState(); },
+  onDraftStateChanged: () => { refreshProjectBarProjection(); refreshPreviewSourceState(); refreshStoryChecks(); },
 });
 bindLabelEditingHooks({ prepareConfig: prepareConfigLabelRename, onEdited: () => {
   markProjectEdited(); renderSidebar(); refreshManuscriptFacts(); refreshCurrentSceneContext();
@@ -1933,6 +1936,7 @@ function renderAll(): void {
 /** 主区：标签页（块编辑 / 流程图 / 时间轴 / 配置 / 预览 / 统计 / 审计）+ 对应内容 */
 function renderMainArea(): void {
   disposeAuthoringWorkbench();
+  disposeStoryCheckPanel();
   const main = document.getElementById('main');
   if (!main) return;
   if (state.reviewPreviewReadOnly && ['editor', 'assets', 'flow', 'timeline', 'config', 'audit', 'history'].includes(state.mainTab)) {
@@ -2127,6 +2131,11 @@ function renderMainArea(): void {
     stEl.dataset['editorPanel'] = 'stats';
     col.appendChild(stEl);
     renderStatsPanel(stEl);
+    renderStoryCheckPanel(stEl, (file, line) => {
+      const scene = [...state.scenes.entries()].find(([, entry]) =>
+        (entry.file.startsWith('content/scenario/') ? entry.file : `content/scenario/${entry.file}`) === file);
+      if (scene) jumpToScene(scene[0], line);
+    });
     renderAssetInsights(stEl);
   } else if (state.mainTab === 'audit') {
     const auEl = h('section');

@@ -15,6 +15,7 @@ import {
 import type { ProjectSnapshot } from './project-snapshot.js';
 import { normalizeTrace, type RuntimeTraceEvent } from './runtime-trace.js';
 import { timelineIdentityConflict, timelineIdentityMismatchMessage } from './timeline-identity.js';
+import { createStoryCoverage, type StoryCoverage } from './story-coverage.js';
 
 export const DEFAULT_AUTHORING_EVIDENCE_SEED = 0x5eedc0de;
 
@@ -56,6 +57,7 @@ export interface SimulationReport {
   cyclesPruned: number;
   saveRoundtrips: number;
   seed: number;
+  coverage: StoryCoverage;
 }
 
 export interface ExplicitPathOptions {
@@ -173,6 +175,8 @@ export function simulateSnapshot(
   const maxPaths = options.maxPaths ?? 500;
   const maxSteps = options.maxStepsPerPath ?? 20_000;
   const { store, bus, interpreter } = runtimeFor(snapshot, options.initialVariables, seed);
+  const coverage = createStoryCoverage(snapshot);
+  bus.on('runtimeTrace', event => coverage.observe(event));
   const choiceTotal = snapshot.scenes.reduce(
     (total, scene) => total + scene.compiled.instructions.reduce(
       (count, instr) => count + (instr.op === 'choice' ? instr.options.length : 0),
@@ -212,6 +216,7 @@ export function simulateSnapshot(
       ...(error === undefined ? {} : { error }),
     });
     if (error !== undefined) {
+      coverage.stop('runtime-error', error);
       runtimeErrors.push({ scene: interpreter.position?.sceneId ?? null, message: error });
     }
   };
@@ -240,6 +245,7 @@ export function simulateSnapshot(
     for (;;) {
       if (++steps > maxSteps) {
         budgetExhausted = true;
+        coverage.stop('step-budget', '单路径步数预算已用尽。');
         recordPruned(choices, 'step-budget', 'budget-exhausted');
         return;
       }
@@ -275,9 +281,11 @@ export function simulateSnapshot(
         }
         seenSignatures.add(signature);
         const position = base.position;
-        for (const option of latestChoices) {
+        const visible = latestChoices;
+        for (const [ordinal, option] of visible.entries()) {
           if (!beginPath()) {
             budgetExhausted = true;
+            for (const skipped of visible.slice(ordinal)) coverage.pathBudget(position?.sceneId ?? '', position?.pc ?? -1, skipped.index);
             recordPruned(choices, 'path-budget', 'budget-exhausted');
             return;
           }
@@ -322,6 +330,7 @@ export function simulateSnapshot(
     cyclesPruned,
     saveRoundtrips,
     seed,
+    coverage: coverage.result(),
   };
 }
 

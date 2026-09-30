@@ -2,7 +2,7 @@
 
 本指南面向编写剧情、配置与演出的内容作者。默认使用正式 Agent Port 工具，在隔离草稿中修改、验证和试玩；不需要先读引擎源码、长期台账或重新接线播放器。已有项目保持原位，新项目使用现有模板。
 
-本批公开创作合同为 **2.28.0**（72 项公开能力），作品界面新增变量条件、只读数值条、数组列表/数量和有限赋值按钮；保留人物档案、用语辞典、结局册与可选永久收藏，以及多语言、已有配音、主题、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+本批公开创作合同为 **2.29.0**（72 项公开能力），`project.simulate` 新增源位置与版本关联的 `coverage`，失败和预算耗尽的部分报告保留在错误 `details.report`；保留作品界面变量条件、只读数值条、数组列表/数量、有限赋值按钮，以及人物档案、用语辞典、结局册、可选永久收藏、多语言、已有配音、主题、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
 
 ## 0. 准备项目与会话
 
@@ -73,6 +73,8 @@ Editor 的“项目内容 → 导入剧本”使用同一规则，可选择 UTF-
 
 - `project.simulate` 的 `maxPaths` 为正整数 `1..2000`（默认 `500`），`maxStepsPerPath` 为正整数 `1..100000`（默认 `20000`）。
   任一预算耗尽都表示 `incomplete`，不能当作通过。公开错误中的 `repairActions.inputTemplate` 可给出有界重试输入；到上限后应缩小场景或明确要跑的路径，不能无界增加预算。
+- 模拟结果的 `coverage` 含场景访问、原始选项编号、条件成立/不成立次数、预算停止与错误位置；位置带 `file/line/col/index/sourceVersion`。成功的来源项目结果在 `report.coverage`，工作变更结果在 `coverage`；运行失败或预算耗尽保留于错误 `details.report.coverage`。`condition-not-met` 仅表示本次初值下尚未满足，`unvisited` 不证明不可达；条件计数包括 Core 实际恢复分支快照时的求值，不是玩家游玩次数。初值、随机种子和有界预算不能证明所有变量状态下的全路径。
+- Editor「统计」可检查当前剧本/时间轴草稿；配置表单有未保存草稿时先保存或撤销，不能悄悄按旧配置检查。旧内容记录仍可查看或导出，但不能跳到已修改的新稿。真实试玩记录另列，隔离内容不会冒充当前编辑稿；下载诊断不含正文、变量值、原始错误详情或画面快照，不自动上传。该检查不增加 candidate、integration 或 apply 权限，不替代正常交付证据。
 - `runtime.run-from` 已产生事件但失败时，使用错误 `details.traceId`，并按 `runtime.read-trace` 的
   `repairActions.inputTemplate` 读取失败前轨迹。结果含 `status`（`passed`、`failed` 或 `unknown`）及 `traceWorkingRevision`；老记录可能缺少后者。
   freshness 描述相对当前版本；失败轨迹绝不能当作 `passed` 证据。若运行在产生轨迹前失败且没有轨迹，不要伪造 `traceId`。

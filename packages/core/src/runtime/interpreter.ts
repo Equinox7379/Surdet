@@ -129,7 +129,7 @@ export interface RuntimeTraceEventPayload {
   kind: 'instruction' | 'choice' | 'state' | 'condition' | 'control-flow' | 'scene-end';
   source: { sceneId: string; index: number; op: string; file: string; line: number; col: number };
   stateDelta?: { variable: string; before: VarValue | undefined; after: VarValue | undefined }[];
-  condition?: { expression: string; result: boolean };
+  condition?: { expression: string; result: boolean; optionIndex?: number };
   controlFlow?: { from: string; to: string };
   choice?: { optionIndex: number; label: string };
 }
@@ -969,7 +969,12 @@ export class Interpreter {
           case 'choice': {
             const available = instr.options
               .map((o, i) => ({ o, i }))
-              .filter(({ o }) => o.when === null || evalExprBoolean(o.when, this.#store))
+              .filter(({ o, i }) => {
+                if (o.when === null) return true;
+                const result = evalExprBoolean(o.when, this.#store);
+                this.#emitRuntimeTrace('condition', instr, { condition: { expression: o.when, result, optionIndex: i } });
+                return result;
+              })
               .map(({ i }) => i);
 
             if (available.length === 0) {
