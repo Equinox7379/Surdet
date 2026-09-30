@@ -16,6 +16,7 @@ import {
   applyGalleryTextMutation,
   inspectGallery,
   GALLERY_PATH,
+  type GalleryTextPatchInput,
 } from '../src/gallery-operations.js';
 
 function digest(text: string): string {
@@ -86,7 +87,8 @@ describe('gallery.cg authoring operations', () => {
     expect((await inspectGallery(change.record.workingFiles[GALLERY_PATH], hasher)).texts.find(entry => entry.id === 'another')).toMatchObject({ fingerprint: created.fingerprint, variables: { score: 2 } });
     expect(workingGallery(change).customRoot).toEqual({ keep: true });
     const saved = structuredClone(change.record);
-    for (const patch of [{ variables: { missing: 1 } }, { variables: { score: 'bad' } }, { label: 'absent' }]) {
+    const invalidPatches: GalleryTextPatchInput['patch'][] = [{ variables: { missing: 1 } }, { variables: { score: 'bad' } }, { label: 'absent' }];
+    for (const patch of invalidPatches) {
       await expect(applyGalleryTextMutation(change, { operationId: 'invalid', id: 'another', expectedFingerprint: created.fingerprint, patch }, hasher)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
       expect(change.record).toEqual(saved);
     }
