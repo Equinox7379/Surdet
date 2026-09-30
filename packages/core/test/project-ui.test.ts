@@ -5,6 +5,16 @@ const text = { id: 'value', type: 'text', frame: { x: 640, y: 360, width: 240, h
 const config = { variables: { trust: { type: 'number', initial: 3 }, readonlyFlag: { type: 'flag', initial: false, readonly: true } } };
 
 describe('declarative project UI', () => {
+  it('projects ending-book content and progress only on the gallery page', () => {
+    const frame = { x: 0, y: 0, width: 640, height: 200 };
+    const page = { id: 'endings', type: 'container', frame, children: [
+      { id: 'progress', type: 'text', frame, text: { kind: 'data', field: 'ending-progress' } },
+      { id: 'entries', type: 'content', frame, source: 'gallery-endings' },
+    ] };
+    const ui = { version: 1, pages: { gallery: page } };
+    expect(readProjectUi({ ui })).toEqual(ui);
+    expect(() => readProjectUi({ ui: { version: 1, pages: { title: page } } })).toThrow();
+  });
   it('exposes locale read/cycling and glossary content without arbitrary preference writes', () => {
     const frame = { x: 0, y: 0, width: 640, height: 200 };
     const ui = { version: 1, pages: { settings: { id: 'locale', type: 'button', frame,

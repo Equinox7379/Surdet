@@ -157,6 +157,7 @@ export function describeAuthoringObject(object: AuthoringObject): AuthoringObjec
     character: '角色',
     'gallery-cg': '鉴赏图片',
     'gallery-text': '剧情回想',
+    'gallery-ending': '结局',
     'entry-scene': '入口场景',
     'ui-config': '作品界面',
     'ui-page': '界面页面',

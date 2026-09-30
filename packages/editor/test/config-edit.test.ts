@@ -443,6 +443,15 @@ const galleryRaw = {
 };
 
 describe('gallery ⇄ JSON', () => {
+  it('round-trips ending metadata/policy without discarding unknown data and rejects duplicate IDs', () => {
+    const raw = { ...galleryRaw, unknown: true, endings: [{ id: 'home', name: '归途', description: '雨停了。', extra: 9 }], unlockPolicy: { endings: 'profile' as const } };
+    const rows = parseGalleryRows(raw);
+    expect(rowsToGallery(raw, rows)).toEqual({ json: raw, errors: [] });
+    rows.endings![0]!.name = '雨后归途';
+    expect(rowsToGallery(raw, rows).json.endings).toEqual([{ ...raw.endings[0], name: '雨后归途' }]);
+    rows.endings!.push({ id: 'home', name: '重复' });
+    expect(rowsToGallery(raw, rows).errors.length).toBeGreaterThan(0);
+  });
   it('roundtrips replay JSON conditions and rejects undeclared or incorrectly typed variables', () => {
     const variables = { score: { type: 'number', initial: 0 } };
     const raw = { cgs: [], music: [], unlockPolicy: { texts: 'profile' as const }, texts: [{ id: 'm', name: '回想', scene: 'main', variables: { score: 2 }, extra: true }] };

@@ -87,7 +87,7 @@ export async function replayCompositionOperation(
   };
   // Older sealed capsules did not claim font state. Check an explicitly sealed
   // dependency before new replay work; successful operation receipts stay idempotent.
-  for (const dependency of operation.replayStateRequirements?.filter(item => item.objectRef === 'config:galleryReplay' || item.objectRef === 'config:galleryPolicy' || item.objectRef === 'config:fonts' || item.objectRef === 'config:portraits' || item.objectRef === 'config:stage' || item.objectRef === 'config:theme' || item.objectRef === 'config:ui' || item.objectRef === 'config:textCatalog' || item.objectRef === 'config:terminology') ?? []) {
+  for (const dependency of operation.replayStateRequirements?.filter(item => item.objectRef === 'config:galleryEndings' || item.objectRef === 'config:galleryReplay' || item.objectRef === 'config:galleryPolicy' || item.objectRef === 'config:fonts' || item.objectRef === 'config:portraits' || item.objectRef === 'config:stage' || item.objectRef === 'config:theme' || item.objectRef === 'config:ui' || item.objectRef === 'config:textCatalog' || item.objectRef === 'config:terminology') ?? []) {
     if (change.record.operations[operation.integrationOperationId] === undefined
       && await fingerprintWorkingObjectValue(change.record.workingFiles, dependency.objectRef, hasher) !== dependency.expectedFingerprint) {
       throw new AuthoringOperationError('COMPOSITION_REPLAY_FAILED', `封存内容依赖的显示配置已变化：${dependency.objectRef}`);

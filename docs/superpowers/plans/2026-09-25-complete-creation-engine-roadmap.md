@@ -1,6 +1,6 @@
 # Surdet 完整创作引擎总规划
 
-> 创建：2026-09-25；更新：2026-09-30。状态：**P7b 固定 adb01ed 独立复审保留功能主体，确认两个测试工程遗漏，已本机返修，见 11.25。Owner 授权修完直接进入下一项，不等复审；下一单元为 P7c 结局册。** P7a 和此前 P6 关闭结论保留，不代签 P7b 返修或整个 P7 的独立 PASS。
+> 创建：2026-09-25；更新：2026-09-30。状态：**P7b 两项测试返修 3a96232 已获 Owner 转达 PASS，11.25 关闭；按此前授权连续完成 P7c 结局册，11.26 记录本机验收，等待本单元独立复核。** P7a 和此前 P6 关闭结论保留，不扩大为整个 P7 的独立 PASS。
 >
 > 源码核对基线：`015de6fa00a798b3f172d8c2ef3cb020f3624202`，`E:\surdet`，`main`。
 >
@@ -30,7 +30,7 @@
 
 ### 0.3 立即下一步
 
-0. 最新续接：P7b 两项测试工程返修单独提交推送，详见 11.25。按 Owner 新授权不等待复核，随后进入 P7c 结局册（11.26），与返修分开保存；P7a 与阅读/配音返修既有 PASS 不重开。
+0. 最新续接：P7b 返修 3a96232 已单独推送，Owner 转达 PASS（11.25）。P7c 结局册另笔交付（11.26），停止等待独立复核；不重开已通过的 P7a/P7b，不自动进入人物资料或 P8。
 1. 原规划 `2906758` 的首审意见已处理并以 `ef96e3a` 推送；核实与修订摘要见第 11.3 节，不把本机修改记成云端重新 PASS。
 2. 后续收到意见时，主代理逐项对照当前源码，修改**同一份规划**，不另造第二套规格和状态表。
 3. `5b0b0c1` 的 N1 已获 Owner 转达 PASS，记录保留在 11.12；P4a/P4b 交付与停止点见 11.13，P5a 交付见 11.14。普通推送后等待针对性复核，不用旧绿灯覆盖新反例，不重开已关闭问题或假定审计材料天然正确。
@@ -1198,18 +1198,25 @@ Huygens 的关闭调用已成功，状态 CLOSED；不再并行消耗或写入�
 - **材料/限制：** `D:/CodexTasks/surdet-p7b-20260930` 保留 fixture、story-return/title-natural-return/custom-return/retry-return/replay-time JSON 与截图。`editor-unsaved-replay-complete.png` 为完整台词画面；早期同前缀截图仍在打字，error-return.png 是错误提示简化为中文前的画面。最初 fixture 选择语法错误已更正；脚本错误和恢复失败为有意注入，不算未处理引擎错误。未改正式作品/存档，未跑完整 Electron GUI、CI、发行或部署。
 - **交付/停止点：** 按 safe-operator、web-regression 与 Git 技能亲自实现、验收和精确提交，普通推送 [skip ci] 后等待固定提交独立复核。不代签 P7 整体 PASS，不进入结局簿、角色/词条资料或 P8。临时测试标签已关闭，核对命令行后停止本轮服务 PID 16264，5187 已不监听；无后台测试或代理，用户原有未跟踪内容与受保护文件保留。
 
-### 11.25 P7B-REV-01/02 测试工程返修（2026-09-30，本机验证通过，独立复核待定）
+### 11.25 P7B-REV-01/02 测试工程返修（2026-09-30，Owner 转达 PASS，关闭）
 
 - **报告/授权：** Owner 转交固定 adb01ed 的完整独立报告并要求“修完直接开工下一项，不必等复审”。报告保留回想与收藏主体；独立 Player、Editor、Profile、公开工具和候选路径有界成立，整笔 NEEDS_FIX 仅针对两项测试工程遗漏。审计目录 D:/CodexTasks/surdet-audit-adb01ed-20260930 只读保留，审方病例不计为本机新增测试。
 - **根因/修改：** 新 gallery-operations 负例数组的联合推断带入 undefined，阻断标准 Authoring typecheck；显式声明 GalleryTextPatchInput['patch'][]，保留全部运行时负例与失败不写入断言，不用 any、不放宽 VarValue。三个现行 CLI 测试仍断言 2.23.0/60，改为明确的 2.24.0/62，并核对新增文本回想能力的 MCP 名称及 direct-only 投影；未改历史兼容夹具。
 - **验证：** 本机复现 Authoring TS2322 和两条版本断言首红；第三条工作区会话断言已核对源码。修后标准 Authoring typecheck 通过、gallery-operations 9 项通过，三个定位的 CLI 用例全部通过（25 项未选中，不计通过），其后的隐私/权限/readiness 断言正常执行。仅测试与原记录变化，无生产代码修改，复用已有效浏览器与构建结果，不重跑整套回想。此前生产 build 通过不能替代包含测试的标准 typecheck，11.24 的完成声明以本次纠正为准。
-- **交付：** 主代理按 safe-operator/Git 技能亲自核实、修改与验证；普通提交推送 [skip ci]。两项仅登记本机修复，不自签独立关闭；随后按 Owner 授权进入 11.26，不等待复审。
+- **交付/复核：** 主代理按 safe-operator/Git 技能亲自核实、修改与验证，3a96232 普通提交推送 [skip ci]。Owner 随后明确转达“之前的修复已经 pass”，据此关闭 P7B-REV-01/02；未另取得审计原件或冒称重跑云端检查。P7c 不纳入这次 PASS，按此前授权独立施工、提交和验收。
 
-### 11.26 P7c 结局册（2026-09-30，已授权，准备施工）
+### 11.26 P7c 结局册（2026-09-30，本机实现及定向验收完成，待独立复核）
 
 - 复用 gallery.json 登记结局名称/说明、既有 @clear 与 ClearTracker 表示本局解锁、既有项目 Profile 保存显式开启的累计结局；不复制通关/新周目系统，不改变旧作品默认语义或存档格式。
 - 提供默认鉴赏与自定义界面的同一结局列表、收集进度及未解锁内容遮蔽；作者可经公开读取/窄修改和 Editor 配置。新增元数据写入口 direct-only，候选的真实读取依赖需封存，原候选能力不回归。
 - 正常通关、读旧档、新局、重启、回想不增加正式结局、试玩不写正式 Profile、两项目隔离为核心验收。人物档案/用语辞典留后续单元，不进入 P8、发行或部署。实现、验证与 P7b 返修分开提交；完成本单元后等待独立复核。
+- **实现：** `gallery.json.endings` 仅存 id/name/description 元数据，达成事实沿用 `ClearTracker` 与原存档 `clears.endings`，不扩展存档格式或复制通关系统。共享 Player 在新游戏重置本局 ClearTracker；只有明确的 `unlockPolicy.endings:"profile"` 才记录正常游玩的已登记结局，不导入旧全局通关记录。Host 原永久收藏读取缺省 endings 为空、保留其他类型/未知字段，写入失败不更新已提交状态。
+- **创作/显示：** 合同 `2.25.0` / 64 能力，新增 `gallery.ending.create/patch`（direct-only），`project.gallery.endings` 提供元数据与指纹，`object.inspect` 可读相同对象。原策略修改支持 endings。候选场景/时间轴读依赖含 `config:galleryEndings`，比较/重放重核基线，不放开候选写入口。Editor 原鉴赏配置表增加结局名称、说明和保留方式；默认结局页与自定义 `gallery-endings`、`ending-progress` 显示同一有效列表与数量，隐藏未解锁名称/说明，结局条目不可触发回放。
+- **工程验证：** Core 结局语义 2 项、界面数据契约 5 项，Host 收藏 7 项，Authoring gallery-operations 10 项、operation-composition-facts 25 项、capability-registry 15 项及三个对象索引文件共 12 项，Renderer 视图模型 6 项/真实 Facade→GalleryLayer 18 项/legacy 画廊 4 项，Editor 配置转换 44 项通过。CLI 真实 MCP 读取→创建→指纹修改→旧指纹拒绝→验证/模拟/运行/封装→apply 写回 1 项通过；候选五类配置依赖变更拒绝 5 项、三种策略下的真实工具列表与注册投影 4 项通过；合同/人类工作区/readiness/胶囊四文件 42 项通过。未选中用例不计通过。Core/Authoring/Renderer/Host/CLI/Editor/Starter 标准类型检查、对应构建、verify:docs 与 Renderer 两项既有边界检查通过；后续仅中文帮助文案与记录修改复用既有有效结果。
+- **实际浏览器：** 本机 1280×720 共享 Player 从标题查看 0/3，正常分支通关后显示 1/3 和正确名称/说明，另两项不剧透。通关前自动档读回使本局 clears 为空但永久记录不变；重载后的默认/自定义鉴赏都显示同一 1/3。回想内 @clear replay-only 只影响临时状态，自然结束恢复原 clears，正式 Profile 字节未变。缺省策略的独立项目实际快速保存结局→回标题→新游戏清空→快速读取恢复 home，未创建永久收藏；另一个显式 profile 项目仍 0/3。
+- **Editor 接管：** 使用既有 Node 文件桥替代目录选择器，其余实际表单/共享 Player 路径：保存名称/说明→重新打开确认；修改 night 名称/说明但不保存→试玩真实分支→结局册显示未保存稿，磁盘仍保留“夜航”，正式项目 Profile 仍仅 home。主代理亲自检查截图，Player/Editor 控制台无 error/warn；不等于 Electron 原生目录选择器或 Owner 审美验收。
+- **失败与修正：** 首轮浏览器显示 0/0，定位为 RendererFacade 复制视图时漏传 endings；补齐 Facade 及仍在使用的 legacy 类型入口，补实际 Facade→Layer 测试，重验 0/3→1/3。新增配置依赖使手写封存夹具缺一项及排序不一致，按真实基线与排序补齐，未弱化拒绝检查。新增测试首次误写 diagnostics 层级、漏设宿主 hideCommandRail，修正夹具后通过。首次下游 typecheck 读取旧上游 dist；先构建依赖后标准检查通过，没有放宽类型。
+- **材料/停止点：** `D:/CodexTasks/surdet-p7c-20260930` 保留小型验收项目与 locked、ending-book、custom-ending-book、editor-unsaved-ending、ending-book-title 截图及状态摘录；最后一张为保存后标题入口的最终画面。仅本轮测试标签已关闭；核对命令行后停止本轮服务 PID 59668，5187 无监听。未改正式作品/存档，未派子代理、未触发 CI、发行或部署。普通提交推送 [skip ci] 后等待 P7c 固定提交独立复核，P7b 已获 Owner 转达 PASS，不把该 PASS 扩大到本单元。
 
 ## 12. 云端审查说明
 

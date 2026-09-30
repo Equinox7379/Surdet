@@ -27,6 +27,7 @@ export * from './systems/affection.js';
 export * from './systems/gallery.js';
 export * from './systems/gallery-state.js';
 export * from './systems/gallery-replay.js';
+export * from './systems/gallery-endings.js';
 export * from './systems/newgame-plus.js';
 export * from './systems/clear-tracker.js';
 export * from './systems/event-scheduler.js';

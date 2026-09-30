@@ -84,6 +84,7 @@ export interface RendererStagePort extends PresentationStage {
     cgs: GalleryItemView[];
     music: GalleryItemView[];
     texts?: GalleryItemView[];
+    endings?: GalleryItemView[];
     onPlayMusic?: (id: string, source?: string) => void;
     onReplayText?: (item: GalleryItemView) => void;
     onClose?: () => void;
@@ -604,6 +605,7 @@ export class RendererFacade {
           cgs: options.cgs.map((item) => ({ ...item })),
           music: options.music.map((item) => ({ ...item })),
           texts: options.texts?.map((item) => ({ ...item })),
+          endings: options.endings?.map((item) => ({ ...item })),
           onPlayMusic: options.onPlayMusic,
           onReplayText: options.onReplayText,
           onClose: options.onClose,

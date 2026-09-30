@@ -39,7 +39,7 @@ export type MenuOverlayState =
 
 export type GalleryOverlayState =
   | { type: 'none' }
-  | { type: 'gallery'; tab: 'cg' | 'music' | 'text'; mode: 'grid' | 'viewer'; viewerKey: string | null };
+  | { type: 'gallery'; tab: 'cg' | 'music' | 'text' | 'ending'; mode: 'grid' | 'viewer'; viewerKey: string | null };
 
 export type SystemPanelOverlayState =
   | { type: 'none' }

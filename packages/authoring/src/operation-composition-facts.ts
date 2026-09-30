@@ -79,6 +79,7 @@ export async function buildSceneOperationCompositionDraft(input: {
     replayStatePreconditions: [
       { objectRef: 'config:galleryPolicy', expectedFingerprint: await input.hasher.sha256(stableStringify(readGalleryDocument(input.galleryText).document.unlockPolicy ?? null)) },
       { objectRef: 'config:galleryReplay', expectedFingerprint: await input.hasher.sha256(stableStringify(readGalleryDocument(input.galleryText).document.texts ?? [])) },
+      { objectRef: 'config:galleryEndings', expectedFingerprint: await input.hasher.sha256(stableStringify(readGalleryDocument(input.galleryText).document.endings ?? [])) },
       { objectRef: 'config:stage', expectedFingerprint: await input.hasher.sha256(stableStringify(input.stageConfig ?? null)) },
       { objectRef: 'config:fonts', expectedFingerprint: await input.hasher.sha256(stableStringify(input.fontPaths)) },
       { objectRef: 'config:theme', expectedFingerprint: await input.hasher.sha256(stableStringify({ theme: input.themeConfig ?? null, titleLogo: input.titleLogo ?? null })) },
@@ -138,6 +139,7 @@ export async function buildTimelineOperationCompositionDraft(input: {
       { objectRef: 'config:terminology', expectedFingerprint: await input.hasher.sha256(stableStringify(input.workingFiles?.['content/config/terminology.json'] ?? null)) },
       { objectRef: 'config:galleryPolicy', expectedFingerprint: await input.hasher.sha256(stableStringify(readGalleryDocument(input.workingFiles?.[GALLERY_PATH]).document.unlockPolicy ?? null)) },
       { objectRef: 'config:galleryReplay', expectedFingerprint: await input.hasher.sha256(stableStringify(readGalleryDocument(input.workingFiles?.[GALLERY_PATH]).document.texts ?? [])) },
+      { objectRef: 'config:galleryEndings', expectedFingerprint: await input.hasher.sha256(stableStringify(readGalleryDocument(input.workingFiles?.[GALLERY_PATH]).document.endings ?? [])) },
       { objectRef: 'config:portraits', expectedFingerprint: await input.hasher.sha256(stableStringify(projectPortraitOverrides(input.config))) },
     ],
   };

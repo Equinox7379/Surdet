@@ -11,20 +11,20 @@ export interface GallerySnapshot {
 }
 
 export type GalleryUnlockScope = 'save' | 'profile';
-export interface GalleryUnlockPolicy { cgs: GalleryUnlockScope; music: GalleryUnlockScope; texts?: GalleryUnlockScope }
+export interface GalleryUnlockPolicy { cgs: GalleryUnlockScope; music: GalleryUnlockScope; texts?: GalleryUnlockScope; endings?: GalleryUnlockScope }
 
 /** Only an explicit profile policy makes a collection permanent. */
 export function readGalleryUnlockPolicy(gallery: unknown): GalleryUnlockPolicy {
   const raw = (gallery as { unlockPolicy?: unknown } | null)?.unlockPolicy;
-  if (raw === undefined) return { cgs: 'save', music: 'save', texts: 'save' };
+  if (raw === undefined) return { cgs: 'save', music: 'save', texts: 'save', endings: 'save' };
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('鉴赏收藏策略必须是对象');
   const policy = raw as Record<string, unknown>;
   for (const [key, value] of Object.entries(policy)) {
-    if (!['cgs', 'music', 'texts'].includes(key) || !['save', 'profile'].includes(value as string)) {
-      throw new Error(`无效的鉴赏收藏策略：${key}（图片、音乐和回想支持 save/profile）`);
+    if (!['cgs', 'music', 'texts', 'endings'].includes(key) || !['save', 'profile'].includes(value as string)) {
+      throw new Error(`无效的鉴赏收藏策略：${key}（图片、音乐、回想和结局支持 save/profile）`);
     }
   }
-  return { cgs: (policy.cgs ?? 'save') as GalleryUnlockScope, music: (policy.music ?? 'save') as GalleryUnlockScope, texts: (policy.texts ?? 'save') as GalleryUnlockScope };
+  return { cgs: (policy.cgs ?? 'save') as GalleryUnlockScope, music: (policy.music ?? 'save') as GalleryUnlockScope, texts: (policy.texts ?? 'save') as GalleryUnlockScope, endings: (policy.endings ?? 'save') as GalleryUnlockScope };
 }
 
 /** Presentation union only: never put the permanent profile back into a story snapshot. */

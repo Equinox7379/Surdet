@@ -2,7 +2,7 @@ import { AuthoringOperationError, runOperation, stableStringify, type ChangeSess
 import { parseProjectConfigDocument, serializeProjectConfigDocument } from './config-document.js';
 import type { GalleryCgCreateInput, GalleryCgPatchInput, LedgerDiffEntry, TextHasher } from './contracts.js';
 import type { OperationCompositionDraft } from './composition-contracts.js';
-import { readGalleryUnlockPolicy, readGalleryReplayEntries, compileScene, type GalleryReplayEntry, type GalleryUnlockPolicy, type VarDeclaration } from '@surdet/core';
+import { readGalleryUnlockPolicy, readGalleryReplayEntries, readGalleryEndings, compileScene, type GalleryEndingEntry, type GalleryReplayEntry, type GalleryUnlockPolicy, type VarDeclaration } from '@surdet/core';
 import { sceneIdFromScenarioPath } from './scenario-identity.js';
 
 export const GALLERY_PATH = 'content/config/gallery.json';
@@ -35,9 +35,12 @@ export async function inspectGallery(text: string | undefined, hasher: TextHashe
   unlockPolicy: { value: unknown; effective: GalleryUnlockPolicy; fingerprint: string };
   cgs: Array<{ id: string; name: string; src?: string; objectRef: string; fingerprint: string }>;
   texts: Array<GalleryReplayEntry & { objectRef: string; fingerprint: string }>;
+  endings: Array<GalleryEndingEntry & { objectRef: string; fingerprint: string }>;
 }> {
   const { cgs, document } = readGalleryDocument(text);
-  return { texts: await Promise.all(readGalleryReplayEntries(document).map(async entry => ({ ...entry,
+  return { endings: await Promise.all(readGalleryEndings(document).map(async entry => ({ ...entry,
+    objectRef: `gallery:endings:${entry.id}`, fingerprint: await hasher.sha256(stableStringify(entry)) }))),
+    texts: await Promise.all(readGalleryReplayEntries(document).map(async entry => ({ ...entry,
     objectRef: `gallery:texts:${entry.id}`, fingerprint: await hasher.sha256(stableStringify(entry)) }))),
     unlockPolicy: await inspectGalleryUnlockPolicy(document, hasher), cgs: await Promise.all(cgs.map(async (entry) => ({
     id: entry.id, name: entry.name, ...(entry.src === undefined ? {} : { src: entry.src }),
@@ -62,7 +65,7 @@ export interface GalleryPolicyPatchInput {
 export function patchGalleryUnlockPolicy(document: Record<string, unknown>, patch: GalleryPolicyPatchInput['patch']): Record<string, unknown> {
   readGalleryUnlockPolicy(document);
   if (!patch || typeof patch !== 'object' || Array.isArray(patch) || !Object.keys(patch).length
-    || Object.keys(patch).some(key => !['cgs', 'music', 'texts'].includes(key))) throw new AuthoringOperationError('INVALID_REQUEST', '收藏策略只接受 cgs/music/texts');
+    || Object.keys(patch).some(key => !['cgs', 'music', 'texts', 'endings'].includes(key))) throw new AuthoringOperationError('INVALID_REQUEST', '收藏策略只接受 cgs/music/texts/endings');
   const next = { ...(document.unlockPolicy as Record<string, unknown> | undefined) };
   for (const [key, value] of Object.entries(patch)) {
     if (value === null) delete next[key];
@@ -153,6 +156,48 @@ export async function applyGalleryTextMutation(change: ChangeSession, input: Gal
       objectBefore: before ? objectRef : undefined, objectAfter: objectRef, fingerprintBefore, fingerprintAfter: fingerprint,
       directChange: { path: GALLERY_PATH, before: before ?? null, after: entry }, potentialImpact: [], observedImpact: [],
     } satisfies LedgerDiffEntry }, workingFiles: { ...record.workingFiles, [GALLERY_PATH]: serializeProjectConfigDocument({ ...document, texts }, source ?? '') } };
+  });
+}
+
+export interface GalleryEndingCreateInput { operationId: string; id: string; name: string; description?: string }
+export interface GalleryEndingPatchInput { operationId: string; id: string; expectedFingerprint: string; patch: { name?: string; description?: string | null } }
+
+export async function applyGalleryEndingMutation(change: ChangeSession, input: GalleryEndingCreateInput | GalleryEndingPatchInput, hasher: TextHasher) {
+  if (change.record.composition?.mode !== 'direct' || change.record.integration !== undefined) {
+    throw new AuthoringOperationError('UNSUPPORTED_OPERATION', '结局条目修改只支持普通 direct 草稿');
+  }
+  return runOperation(change, input, async record => {
+    const source = record.workingFiles[GALLERY_PATH];
+    const { document } = readGalleryDocument(source);
+    const endings = [...readGalleryEndings(document)];
+    const index = endings.findIndex(entry => entry.id === input.id);
+    const before = endings[index];
+    const patching = 'patch' in input;
+    const fingerprintBefore = before ? await hasher.sha256(stableStringify(before)) : undefined;
+    let entry: GalleryEndingEntry;
+    if (patching) {
+      if (!before) throw new AuthoringOperationError('OBJECT_NOT_FOUND', `结局不存在：${input.id}`);
+      if (fingerprintBefore !== input.expectedFingerprint) throw new AuthoringOperationError('OBJECT_REF_STALE', '结局已修改，请重新读取 project.gallery');
+      if (!input.patch || typeof input.patch !== 'object' || Array.isArray(input.patch) || !Object.keys(input.patch).length
+        || Object.keys(input.patch).some(key => !['name', 'description'].includes(key))) throw new AuthoringOperationError('INVALID_REQUEST', '结局修改只接受 name/description');
+      entry = { ...before };
+      if (input.patch.name !== undefined) entry.name = input.patch.name;
+      if (input.patch.description === null) delete entry.description;
+      else if (input.patch.description !== undefined) entry.description = input.patch.description;
+    } else {
+      if (before) throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `结局已存在：${input.id}`);
+      entry = { id: input.id, name: input.name, ...(input.description === undefined ? {} : { description: input.description }) };
+    }
+    try { readGalleryEndings({ endings: [entry] }); }
+    catch (error) { throw new AuthoringOperationError('VALIDATION_FAILED', String(error)); }
+    if (patching) endings[index] = entry; else endings.push(entry);
+    const fingerprint = await hasher.sha256(stableStringify(entry));
+    const objectRef = `gallery:endings:${entry.id}`;
+    return { result: { entry, objectRef, fingerprint, diffEntry: {
+      kind: patching ? 'gallery.ending.patch' : 'gallery.ending.create', operationId: input.operationId,
+      objectBefore: before ? objectRef : undefined, objectAfter: objectRef, fingerprintBefore, fingerprintAfter: fingerprint,
+      directChange: { path: GALLERY_PATH, before: before ?? null, after: entry }, potentialImpact: [], observedImpact: [],
+    } satisfies LedgerDiffEntry }, workingFiles: { ...record.workingFiles, [GALLERY_PATH]: serializeProjectConfigDocument({ ...document, endings }, source ?? '') } };
   });
 }
 
