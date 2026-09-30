@@ -35,6 +35,7 @@ async function seal(change: ChangeSession) {
       { objectRef: 'config:textCatalog', expectedFingerprint: sha('null') },
       { objectRef: 'config:terminology', expectedFingerprint: sha('null') },
       { objectRef: 'config:galleryPolicy', expectedFingerprint: sha('null') },
+      { objectRef: 'config:galleryReplay', expectedFingerprint: sha('[]') },
         { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
         { objectRef: 'scene:A', expectedFingerprint: sha('@scene A\n旁白：开场。\n@end\n') },
       ],
@@ -43,10 +44,11 @@ async function seal(change: ChangeSession) {
   }, hasher);
 }
 
-async function candidate(baseAssetRefs: string[] = [], extraConfig: Record<string, unknown> = {}) {
+async function candidate(baseAssetRefs: string[] = [], extraConfig: Record<string, unknown> = {}, extraFiles: Record<string, string> = {}) {
   const files = {
     'game.config.json': JSON.stringify({ entryScene: 'A', variables: {}, characters: {}, ...extraConfig }),
     'content/scenario/A.gal': '@scene A\n旁白：开场。\n@end\n',
+    ...extraFiles,
   };
   const snapshot = await loadProjectSnapshot({
     rootIdentity: 'wave8-fixture', listFiles: async () => Object.keys(files),
@@ -71,6 +73,17 @@ async function insert(change: ChangeSession, operationId: string, sceneId: strin
 }
 
 describe('candidate operation-time facts', () => {
+  it('requires declared replay entries and seals their references without permitting candidate metadata writes', async () => {
+    const missing = await candidate();
+    const original = structuredClone(missing.record);
+    const input = { operationId: 'unlock-memory', sceneId: 'B', blocks: [{ kind: 'instruction' as const, name: 'unlock_text', args: ['memory'] }] };
+    await expect(applySceneCreate(missing, input, hasher)).rejects.toMatchObject({ code: 'CANDIDATE_DEPENDENCY_NOT_READY' });
+    expect(missing.record).toEqual(original);
+    const configured = await candidate([], {}, { 'content/config/gallery.json': JSON.stringify({ cgs: [], music: [], texts: [{ id: 'memory', name: '回想', scene: 'A' }] }) });
+    await applySceneCreate(configured, input, hasher);
+    expect(facts(configured, 'unlock-memory').requiredObjects).toContainEqual(expect.objectContaining({ objectRef: 'gallery:texts:memory', source: 'base' }));
+    expect(facts(configured, 'unlock-memory').replayStatePreconditions).toContainEqual(expect.objectContaining({ objectRef: 'config:galleryReplay' }));
+  });
   it('requires catalog voice assets even when a new scene has no explicit voice command', async () => {
     const version = sha('words');
     const extra = { textCatalog: { version: 1, sourceLocale: 'zh-CN', entries: [{ key: 'opening', source: { kind: 'dialogue', sceneId: 'A', label: null, ordinal: 0, sceneVersion: sha('scene'), version, speaker: '旁白', text: '开场。' }, translations: {}, voices: { 'zh-CN': { asset: 'opening', sourceVersion: version, text: '开场。' } } }] } };
@@ -359,11 +372,13 @@ describe('candidate operation-time facts', () => {
       { objectRef: 'config:textCatalog', expectedFingerprint: sha('null') },
       { objectRef: 'config:terminology', expectedFingerprint: sha('null') },
       { objectRef: 'config:galleryPolicy', expectedFingerprint: sha('null') },
+      { objectRef: 'config:galleryReplay', expectedFingerprint: sha('[]') },
       { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
     ]);
     expect(facts(change, 'timeline-duration').replayStateRequirements).toEqual([
       { objectRef: 'config:fonts', source: 'base', expectedFingerprint: sha('{}') },
       { objectRef: 'config:galleryPolicy', source: 'base', expectedFingerprint: sha('null') },
+      { objectRef: 'config:galleryReplay', source: 'base', expectedFingerprint: sha('[]') },
       { objectRef: 'config:portraits', source: 'base', expectedFingerprint: sha('[]') },
       { objectRef: 'config:stage', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'config:terminology', source: 'base', expectedFingerprint: sha('null') },
@@ -381,11 +396,13 @@ describe('candidate operation-time facts', () => {
       { objectRef: 'config:textCatalog', expectedFingerprint: sha('null') },
       { objectRef: 'config:terminology', expectedFingerprint: sha('null') },
       { objectRef: 'config:galleryPolicy', expectedFingerprint: sha('null') },
+      { objectRef: 'config:galleryReplay', expectedFingerprint: sha('[]') },
       { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
     ]);
     expect(facts(change, 'timeline-target').replayStateRequirements).toEqual([
       { objectRef: 'config:fonts', source: 'base', expectedFingerprint: sha('{}') },
       { objectRef: 'config:galleryPolicy', source: 'base', expectedFingerprint: sha('null') },
+      { objectRef: 'config:galleryReplay', source: 'base', expectedFingerprint: sha('[]') },
       { objectRef: 'config:portraits', source: 'base', expectedFingerprint: sha('[]') },
       { objectRef: 'config:stage', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'config:terminology', source: 'base', expectedFingerprint: sha('null') },

@@ -29,16 +29,15 @@ function indexAssetStems(folder: string): Set<string> {
   return stems;
 }
 
-function readCharacters(root: string): Record<string, unknown> | null {
+function readConfig(root: string): Record<string, unknown> {
   const configPath = path.join(root, 'game.config.json');
-  if (!fs.existsSync(configPath)) return null;
+  if (!fs.existsSync(configPath)) return {};
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(configPath, 'utf8').replace(/^\uFEFF/, ''));
-    if (!isRecord(parsed) || !isRecord(parsed.characters)) return null;
-    return parsed.characters;
+    return isRecord(parsed) ? parsed : {};
   } catch {
     // game.config.json 的解析问题由现有 lint 配置校验报告；这里不重复制造根因。
-    return null;
+    return {};
   }
 }
 
@@ -56,6 +55,7 @@ export function lintGalleryConfig(context: GalleryLintContext): void {
       file: galleryPath, line: 0, col: 0 });
     return;
   }
+  const config = readConfig(context.root);
   context.issues.push(...validateGalleryConfig({
     text,
     galleryPath,
@@ -64,7 +64,8 @@ export function lintGalleryConfig(context: GalleryLintContext): void {
     bgAssets: indexAssetStems(path.join(context.root, 'content/assets/bg')),
     bgmAssets: indexAssetStems(path.join(context.root, 'content/assets/bgm')),
     avatarAssets: indexAssetStems(path.join(context.root, 'content/assets/avatar')),
-    characters: readCharacters(context.root),
+    characters: isRecord(config.characters) ? config.characters : null,
+    variables: isRecord(config.variables) ? config.variables : {},
     configPath: path.join(context.root, 'game.config.json'),
   }));
 }

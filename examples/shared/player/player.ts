@@ -4,7 +4,7 @@
  */
 import {
   compileScene,
-  readGalleryUnlockPolicy, effectiveGalleryUnlocks,
+  readGalleryUnlockPolicy, effectiveGalleryUnlocks, readGalleryReplayEntries,
   collectProjectTextRows, projectTextSources, createProjectTextResolver, readTextCatalog, parseTerminology,
   type TextSceneSource,
   resolveProjectPortraits,
@@ -24,6 +24,7 @@ import {
   EventBus,
   VariableStore,
   SaveManager,
+  SAVE_SCHEMA_VERSION,
   QUICK_SLOT,
   AUTO_SLOT,
   CalendarRunner,
@@ -99,6 +100,7 @@ import { createConfiguredFontJobs, resolveBundledFontUrl } from '../font-jobs.js
 import { installSceneHotReload, type SceneHotModule } from '../scene-hmr.js';
 import { createStarterOwnerTeardown } from './owner-teardown.js';
 import { showPlayerRecovery } from './recovery-screen.js';
+import { prepareStoryReplay } from './story-replay.js';
 import type {} from './window.js';
 
 export interface PlayerProject {
@@ -195,6 +197,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     ...(d as Omit<VarDeclaration, 'name'>),
   }));
   const store = new VariableStore(decls);
+  readGalleryReplayEntries({ ...galleryConfig }, decls);
 
   // 场景注册
   const registry = new SceneRegistry();
@@ -273,6 +276,10 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
 
   // Backlog + Renderer v2 Runtime（设置投影：文本速度/自动停留/音量）
   const backlog = new Backlog();
+  let galleryReplay: {
+    snapshot: SaveSnapshot; base: 'title' | 'game'; history: ReturnType<Backlog['entries']>;
+    startedAt: number; auto: boolean; restoring: boolean;
+  } | null = null;
   const typewriter = new Typewriter({ charsPerSecond: settings.settings.textSpeedCps });
   let uiDom: ProjectUiDom | null = null;
   const uiSession = createPlayerUiSession({ base: 'title' }, () => uiDom?.refresh());
@@ -284,7 +291,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     typewriter,
     backlog,
     performanceMonitor,
-    onError: (error) => console.error('[starter] Renderer failed:', error),
+    onError: (error) => { console.error('[starter] Renderer failed:', error); if (galleryReplay) scheduleReplayReturn(error); },
     onAdvance: () => interp.advance(),
     onSelect: (i) => interp.choose(i),
     // @wait 计时结束 → 恢复解释器（玩家点击跳过由 renderer.advance 直达 finishWait）
@@ -397,7 +404,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       restorePresentation: (snapshot) => presentation.restore(snapshot),
     },
     audio,
-    isBlocked: () => isTitleScreen() || uiSnapshot().overlay !== 'none' || isUiBusy() || isVideoActive(),
+    isBlocked: () => !!galleryReplay || isTitleScreen() || uiSnapshot().overlay !== 'none' || isUiBusy() || isVideoActive(),
     label: 'starter',
     onRefresh: () => refreshCommandRail(),
   });
@@ -407,7 +414,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   const performRollback = (): boolean => rollbackRuntime.perform();
 
   bus.on('stateReset', () => { uiSession.setVideoActive(false); });
-  bus.on('text', () => rollbackRuntime.captureText());
+  bus.on('text', () => { if (!galleryReplay) rollbackRuntime.captureText(); });
 
   // E2E/调试探针：只读暴露最小运行状态（不参与任何生产逻辑；自我迭代②，Playwright 自动通关用）
   (window as unknown as Record<string, unknown>).__surdetDebug = {
@@ -476,11 +483,11 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       onTurnResumeSnapshot: (snapshot) => { turnResumeSnap = snapshot; },
       onLog: (message) => console.info(`[starter] ${message}`),
     }),
-    onError: (error) => console.error('[starter] 宿主 adapter 失败：', error),
+    onError: (error) => { console.error('[starter] 宿主 adapter 失败：', error); if (galleryReplay) scheduleReplayReturn(error); },
     onSystemBoundary: () => { clearRollbackForBoundary(); },
     onStateReset: () => { turnResumeSnap = null; },
   });
-  connectSystemRouter(bus, host, (error) => console.error('[starter] system 路由失败：', error));
+  connectSystemRouter(bus, host, (error) => { console.error('[starter] system 路由失败：', error); if (galleryReplay) scheduleReplayReturn(error); });
   const debugApi = (window as unknown as { __surdetDebug?: Record<string, unknown> }).__surdetDebug;
   if (debugApi) {
     debugApi.systemBoundaryProbe = async (): Promise<{ opened: boolean; hadRollback: boolean; rollbackBlocked: boolean }> => {
@@ -542,7 +549,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
 
   // 剧本 @autosave：写入自动存档槽位（读档用 F9 只覆盖快速档；自动档需另行提供读档入口）
   bus.on('autosave', (snap) => {
-    if (rollbackRuntime.isRestoring()) return;
+    if (galleryReplay || rollbackRuntime.isRestoring()) return;
     void saves.save(AUTO_SLOT, enrichSnapshot(snap)).then(() => {
       console.info('[starter] 自动存档（ngp cleared:', ngp.isCleared(), '）');
     }, (error) => {
@@ -575,6 +582,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   // 回合尾事件场景播完 → 恢复跳转前快照，剧情从挂起点续跑（回合头尾闭环）。
   // loadSnapshot 不可在事件回调内调用（撞解释器 #stepping 重入守卫），延迟到 UI 线程执行。
   bus.on('sceneEnd', ({ sceneId }) => {
+    if (galleryReplay && !turnResumeSnap) { if (!galleryReplay.restoring) scheduleReplayReturn(); return; }
     if (!turnResumeSnap) {
       if (playerConfig.endScenes.includes(sceneId)) setTimeout(() => {
         if (!ownerTeardown.disposed) showTitleScreen();
@@ -582,9 +590,10 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       return;
     }
     const snap = turnResumeSnap;
+    const replayAtEnd = galleryReplay;
     turnResumeSnap = null;
     setTimeout(() => {
-      if (ownerTeardown.disposed) return;
+      if (ownerTeardown.disposed || galleryReplay !== replayAtEnd) return;
       try {
         interp.loadSnapshot(snap);
       } catch (err) {
@@ -767,7 +776,83 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   const CLEAR_KEY = window.surdetProfile ? 'surdet:clearRecord' : `${browserPrefix}clearRecord`;
   const profileStorage = new LocalStorageProfileStorage(localStorage, `${browserPrefix}profile:`);
   let galleryCollection: Awaited<ReturnType<typeof createGalleryCollection>> | undefined;
-  let galleryReplay = false;
+  const replayExit = document.createElement('button');
+  replayExit.textContent = '结束回想';
+  replayExit.style.cssText = 'position:fixed;right:20px;top:16px;z-index:9000;padding:8px 18px;border:0;border-radius:4px;background:#fff8ed;color:#573c2f;font:16px/1.6 sans-serif';
+  replayExit.hidden = true;
+  replayExit.addEventListener('click', () => returnFromReplay());
+  document.body.append(replayExit);
+
+  function scheduleReplayReturn(error?: unknown): void {
+    const session = galleryReplay;
+    if (!session || session.restoring) return;
+    // Core cannot restore inside its own text/end callback. Identity also cancels stale callbacks.
+    queueMicrotask(() => { if (!ownerTeardown.disposed && galleryReplay === session) returnFromReplay(error); });
+  }
+
+  function returnFromReplay(error?: unknown): void {
+    const session = galleryReplay;
+    if (!session || session.restoring) return;
+    session.restoring = true;
+    try {
+      playerShell!.commands.reset(session.base);
+      host.reset(); runtime.resetSession();
+      runtime.controller.setPresentationPaused?.(false);
+      if (renderer.autoPlay) renderer.dispatchInput({ type: 'auto.toggle' });
+      interp.loadSnapshot(structuredClone(session.snapshot));
+      backlog.clear();
+      for (const line of session.history) backlog.add(line.speaker, line.text, line.voice);
+      if (session.base === 'title') showTitleScreen();
+      openGallery(session.base);
+      if (session.auto) renderer.dispatchInput({ type: 'auto.toggle' });
+      syncStoryWorkUi(); refreshCommandRail();
+      sessionStart += Date.now() - session.startedAt;
+      galleryReplay = null;
+      replayExit.hidden = true;
+      if (error) { console.error('[回想] 已中止并恢复原进度：', error); dialogue.showBanner('回想遇到错误，已恢复原进度。', 'tip'); }
+    } catch (failure) {
+      session.restoring = false;
+      // Keep the checkpoint and block ordinary save/load until a retry succeeds.
+      runtime.controller.setPresentationPaused?.(true);
+      console.error('[回想] 原进度恢复失败，检查点仍保留：', failure);
+      replayExit.textContent = '重试返回原进度';
+      dialogue.showBanner('原进度暂未恢复，请点击“重试返回原进度”。不要关闭游戏。', 'tip');
+    }
+  }
+
+  function startReplay(id: string): boolean {
+    if (galleryReplay || isUiBusy() || isVideoActive() || !isOverlay('gallery')) return false;
+    try {
+      const base = uiSnapshot().base;
+      if (base !== 'title' && (!['awaiting-advance', 'awaiting-choice'].includes(interp.status)
+        || !queries.presentation.canCaptureRollbackCheckpoint() || turnResumeSnap)) {
+        throw new Error('请等当前演出结束，在正文或选项处打开回想。');
+      }
+      const entry = galleryConfig.texts?.find(item => item.id === id);
+      const unlocked = effectiveGalleryUnlocks(interp.gallery.snapshot(), galleryCollection?.snapshot() ?? { cgs: [], music: [] }, galleryPolicy);
+      if (!entry || !unlocked.texts?.includes(id)) throw new Error('这段回想尚未解锁。');
+      const replay = prepareStoryReplay(entry, decls, registry, { systems: initialSystems, ...(initialGrowth ? { growth: initialGrowth } : {}) });
+      const original = interp.saveSnapshot() ?? {
+        meta: { id: '', createdAt: 0, updatedAt: 0, schemaVersion: SAVE_SCHEMA_VERSION }, kind: 'manual' as const,
+        position: null, variables: store.snapshot(), readSet: interp.readTracker.snapshot(), gallery: interp.gallery.snapshot(),
+        clears: interp.clearTracker.snapshot(), systems: systemHooks.snapshot!(), ...(growth ? { growth: growth.snapshot() } : {}),
+      };
+      // The title is an idle context, not a hidden story instruction to execute on return.
+      if (base === 'title') { original.position = null; original.callStack = []; }
+      galleryReplay = { snapshot: structuredClone(original), base, history: backlog.entries(), startedAt: Date.now(), auto: renderer.autoPlay, restoring: false };
+      replayExit.textContent = '结束回想'; replayExit.hidden = false;
+      playerShell!.commands.reset('game'); clearRollback(); host.reset(); runtime.resetSession();
+      if (renderer.autoPlay) renderer.dispatchInput({ type: 'auto.toggle' });
+      presentation.clear(); menu.hideTitle(); backlog.clear();
+      interp.loadSnapshot(replay);
+      syncStoryWorkUi(); refreshCommandRail();
+      return true;
+    } catch (error) {
+      if (galleryReplay) returnFromReplay(error);
+      else dialogue.showBanner(error instanceof Error ? error.message : String(error), 'tip');
+      return false;
+    }
+  }
   let collectionDisposed = false;
   let collectionNotice: HTMLElement | undefined;
   const collectionError = (error: unknown): void => {
@@ -779,16 +864,16 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     collectionNotice.textContent = '永久收藏未能保存或读取，原记录未修改。本次解锁仍可随剧情存档保存；请检查存储空间与访问权限后重开游戏。';
     document.body.append(collectionNotice);
   };
-  if (galleryPolicy.cgs === 'profile' || galleryPolicy.music === 'profile') {
+  if (Object.values(galleryPolicy).includes('profile')) {
     try {
       const storage = project.preview ? new MemoryProfileStorage() : window.surdetProfile ?? profileStorage;
       galleryCollection = await createGalleryCollection(storage, await galleryCollectionKey(project.id), galleryPolicy);
     } catch (error) { collectionError(error); }
   }
   bus.on('gallery', event => {
-    if (!galleryCollection || galleryReplay || rollbackRuntime.isRestoring() || event.type === 'text') return;
-    const section = event.type === 'cg' ? 'cgs' : 'music';
-    if (!galleryConfig[section].some(entry => entry.id === event.id)) return;
+    if (!galleryCollection || galleryReplay || rollbackRuntime.isRestoring()) return;
+    const section = event.type === 'cg' ? 'cgs' : event.type === 'text' ? 'texts' : 'music';
+    if (!galleryConfig[section]?.some(entry => entry.id === event.id)) return;
     void galleryCollection.unlock(section, event.id).catch(collectionError);
   });
   async function loadLegacyClearRecord(): Promise<GlobalClearRecord | null> {
@@ -832,6 +917,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
 
   // @clear：写入全局通关记录（结局收集 + 变量快照 + 周目计数）
   bus.on('clear', (p) => {
+    if (galleryReplay) return;
     const rec = clearRecord ?? { endings: [], playthroughs: 0, variables: {}, clearedAt: 0 };
     const freshEnding = !rec.endings.includes(p.ending);
     if (freshEnding) rec.endings.push(p.ending);
@@ -887,7 +973,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     }
   }
   // 每条文本推进后判定：覆盖 @set/@mod 改变量后的剧情节奏（变量在文本行之间变化）
-  bus.on('text', () => { if (!rollbackRuntime.isRestoring()) checkAchievements(); });
+  bus.on('text', () => { if (!rollbackRuntime.isRestoring() && !galleryReplay?.restoring) checkAchievements(); });
 
   // ===== 标题画面：开始/读档/鉴赏/设置/退出 =====
   function titleView() {
@@ -924,7 +1010,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         { id: 'qload', label: '快速读档' },
         { id: 'rollback', label: '回退一句' },
         { id: 'hide', label: '隐藏界面' },
-        { id: 'title', label: '回到标题' },
+        { id: 'title', label: galleryReplay ? '结束回想' : '回到标题' },
       ],
       onSelect: onSystemMenuSelect,
       onClose: onSystemMenuClose,
@@ -962,15 +1048,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       ...views,
       onPlayMusic: (id: string, src?: string) => audio.playBgm(src ?? id, { restart: true }),
       onReplayText: (item: (typeof views.texts)[number]) => {
-        if (!item.scene) return;
-        galleryReplay = true;
-        playerShell!.commands.reset('game');
-        clearRollback();
-        host.reset();
-        runtime.resetSession();
-        presentation.clear();
-        menu.hideTitle();
-        interp.hostJump(item.scene, item.label);
+        return startReplay(item.id);
       },
       onClose: closeGallery,
     };
@@ -1070,7 +1148,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         if (source === 'gallery-texts') {
           const entry = views.texts.find(value => value.id === item.id);
           if (!entry?.unlocked) return false;
-          views.onReplayText?.(entry);
+          if (!views.onReplayText(entry)) return false;
           uiDom?.hide('gallery');
           syncStoryWorkUi();
           return true;
@@ -1163,6 +1241,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
 
   /** 标题画面显示中；来源/返回由 PlayerShellController 持有。 */
   function showTitleScreen(): void {
+    if (galleryReplay && !galleryReplay.restoring) { returnFromReplay(); return; }
     for (const page of ['hud', 'dialogue', 'choices', 'toolbar'] as const) hideWorkPage(page);
     clearRollback();
     host.reset();
@@ -1183,12 +1262,12 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
 
   /** 标题菜单选择（E2E 探针 titleSelect 与画面点击共用同一入口；自我迭代②） */
   async function titleSelect(id: string): Promise<void> {
+    if (galleryReplay) { returnFromReplay(); return; }
     playerShell!.commands.consumePointer();
     const entry = project.additionalEntrypoints?.find((candidate) => candidate.id === id);
     switch (id) {
       case entry?.id:
       case 'new': {
-        galleryReplay = false;
         playerShell!.commands.reset('game');
         clearRollback();
         host.reset();
@@ -1262,6 +1341,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   // ===== 存档/读档 UI：多槽位 + 快速/自动档 =====
   const SLOT_IDS = ['1', '2', '3', '4', '5', '6', QUICK_SLOT, AUTO_SLOT];
   async function openSaveLoad(mode: 'save' | 'load', source: 'title' | 'game' | 'system-menu' = uiSnapshot().base): Promise<void> {
+    if (galleryReplay) { dialogue.showBanner('回想中不能存读档，请先结束回想。', 'tip'); return; }
     if (source === 'title') menu.hideTitle(false);
     let slots: SaveSlotView[];
     try {
@@ -1273,6 +1353,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       refreshCommandRail();
       return;
     }
+    if (galleryReplay) return;
     activeSaveLoad = { mode, slots };
     playerShell!.commands.open({ slot: 'save-load', source, mode });
   }
@@ -1340,6 +1421,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   let quickSaveInFlight: Promise<boolean> | null = null;
 
   function quickSave(): Promise<boolean> {
+    if (galleryReplay) return Promise.resolve(false);
     // 快速读档必须等当前 IPC 写入完成，否则连续 F5/F9 会读到旧槽位。
     if (quickSaveInFlight || isUiBusy()) return quickSaveInFlight ?? Promise.resolve(false);
     const snap = interp.saveSnapshot();
@@ -1375,6 +1457,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   }
 
   async function quickLoad(): Promise<boolean> {
+    if (galleryReplay) return false;
     if (quickSaveInFlight) await quickSaveInFlight;
     try {
       if (!await saves.has(QUICK_SLOT)) return false;
@@ -1382,7 +1465,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       console.error('[starter] 快速读档槽位读取失败：', err);
       return false;
     }
-    if (isUiBusy()) return false;
+    if (galleryReplay || isUiBusy()) return false;
     const origin = uiSnapshot();
     const railWasVisible = queries.diagnostics.projectionSnapshot().dialogue?.commandRailVisible === true;
     playerShell!.commands.beginOperation('loading');
@@ -1410,7 +1493,6 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   function completeLoadedSnapshot(snap: SaveSnapshot): void {
     clearRollback();
     interp.loadSnapshot(snap);
-    galleryReplay = false;
     sessionStart = Date.now() - Math.max(0, snap.meta.playTimeSec ?? 0) * 1000;
     playerShell!.commands.completeOperation({ base: 'game', overlay: 'none' });
     menu.hideTitle();
@@ -1421,6 +1503,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   }
 
   async function selectSaveLoad(mode: 'save' | 'load', slotId: string): Promise<boolean> {
+    if (galleryReplay) return false;
     playerShell!.commands.consumePointer();
     if (mode === 'save') {
       const snap = interp.saveSnapshot();
@@ -1463,6 +1546,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   }
 
   async function restoreSaveLoad(slotId: string): Promise<boolean> {
+    if (galleryReplay) return false;
     playerShell!.commands.consumePointer();
     const slot = activeSaveLoad?.slots.find((candidate) => candidate.id === slotId);
     if (!slot || !slot.backupAvailable) return false;
@@ -1662,7 +1746,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     assetBlobUrls,
     revokeObjectUrl: (url) => URL.revokeObjectURL(url),
   });
-  ownerTeardown.trackListener(() => { collectionDisposed = true; collectionNotice?.remove(); });
+  ownerTeardown.trackListener(() => { collectionDisposed = true; collectionNotice?.remove(); replayExit.remove(); galleryReplay = null; });
   ownerTeardown.trackListener(() => window.removeEventListener('resize', resizeHandler));
   ownerTeardown.trackListener(() => runtime.canvas.removeEventListener('pointerdown', canvasPointerDown));
   ownerTeardown.trackListener(() => runtime.canvas.removeEventListener('wheel', canvasWheel, canvasWheelOptions));
@@ -1889,7 +1973,8 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
 
   // 错误上报（渲染层崩溃可见化；桌面环境同步落日志文件）
   const errorHandler = (e: ErrorEvent): void => {
-    showFatal(e.message || String(e.error));
+    if (galleryReplay) scheduleReplayReturn(e.error ?? e.message);
+    else showFatal(e.message || String(e.error));
     void window.surdetApp?.log('error', e.message || String(e.error));
     void window.surdetApp?.reportError('renderer-error', e.message || String(e.error));
   };
@@ -1897,7 +1982,8 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   ownerTeardown.trackListener(() => window.removeEventListener('error', errorHandler));
   const unhandledRejectionHandler = (e: PromiseRejectionEvent): void => {
     const message = e.reason instanceof Error ? e.reason.message : String(e.reason);
-    showFatal(message);
+    if (galleryReplay) scheduleReplayReturn(e.reason);
+    else showFatal(message);
     void window.surdetApp?.reportError('renderer-unhandled-rejection', message);
   };
   window.addEventListener('unhandledrejection', unhandledRejectionHandler);

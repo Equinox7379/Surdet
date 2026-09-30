@@ -29,6 +29,8 @@ export interface GalleryTextDef {
   scene: string;
   /** 场景内起点标签（缺省场景开头） */
   label?: string;
+  /** Initial conditions, applied over project defaults by the shared Player. */
+  variables?: Record<string, import('@surdet/core').VarValue>;
 }
 
 /** 鉴赏配置（content/config/gallery.json） */

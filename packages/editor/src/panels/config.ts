@@ -8,7 +8,7 @@
  *  - 名词表导入/导出；审计面板一键加变体入口（addTerminologyVariant）
  */
 import { state, h, setStatus } from '../state.js';
-import { projectPortraitOverrides, readProjectStage, readProjectUi, type ProjectUiDocument } from '@surdet/core';
+import { projectPortraitOverrides, readProjectStage, readProjectUi, readGalleryReplayEntries, compileScene, type ProjectUiDocument } from '@surdet/core';
 import { assertConfigSourcesReadable, configSourceError, configSourcePath, parseConfigSource, type ConfigSourceName } from '../config-source.js';
 import { assetPathForHandle, assertProjectWriteUnlocked, readProjectSourceText, runProjectWriteOperation, writeProjectText } from '../project-io.js';
 import { editorWorkspaceStatus } from '../editor-workspace.js';
@@ -884,6 +884,10 @@ async function saveConfigFileUnlocked(
 ): Promise<boolean> {
   assertProjectWriteUnlocked();
   assertConfigSaveReady(name);
+  if (name === 'gallery' && errors.length === 0) {
+    try { await validateReplayTargets(json); }
+    catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+  }
   if (errors.length > 0) {
     setStatus(`${label}未保存：${errors[0]}${errors.length > 1 ? `（另有 ${errors.length - 1} 条）` : ''}`, false, 6000);
     return false;
@@ -1604,7 +1608,7 @@ function renderEventsSection(): HTMLElement {
 function renderGallerySection(): HTMLElement {
   const { sec, ops } = sectionShell('gallery');
   const ga = ensureGaRows();
-  for (const [section, label] of [['cgs', '图片收藏'], ['music', '音乐收藏']] as const) {
+  for (const [section, label] of [['cgs', '图片收藏'], ['music', '音乐收藏'], ['texts', '剧情回想']] as const) {
     const row = h('label', 'config-field', `${label}：`);
     const select = h('select');
     select.setAttribute('aria-label', `${label}保留方式`);
@@ -1635,14 +1639,16 @@ function renderGallerySection(): HTMLElement {
   textsSection.appendChild(renderObjectTable([
     { key: 'id', label: '回想标识' }, { key: 'name', label: '名称' },
     { key: 'scene', label: '回放场景' }, { key: 'label', label: '回放标签' },
-  ], ga.texts, { id: '', name: '', scene: '', label: '' }, { label: '剧情回想', addLabel: '新增回想' }));
+    { key: 'variables', label: '初始变量（JSON）' },
+  ], ga.texts, { id: '', name: '', scene: '', label: '', variables: '' }, { label: '剧情回想', addLabel: '新增回想' }));
+  textsSection.append(h('p', 'dim', '初始变量以 JSON 对象填写，例如 {"好感":10}；留空使用项目初值。回想不会写入正式存档或通关记录，结束后返回原位置。'));
   sec.appendChild(textsSection);
 
   const saveBtn = h('button', 'primary', '保存鉴赏配置');
   saveBtn.onclick = () => {
     const rows = ensureGaRows();
     const submittedRows = clone(rows);
-    const { json, errors } = rowsToGallery(state.configFiles.gallery, rows);
+    const { json, errors } = rowsToGallery(state.configFiles.gallery, rows, parseProjectConfigDocument(state.gameConfigText).variables as Record<string, unknown>);
     void saveConfigFile('gallery', json, errors, '鉴赏配置', submittedRows);
   };
   ops.appendChild(saveBtn);
@@ -1655,9 +1661,22 @@ function renderGallerySection(): HTMLElement {
 
 async function previewGalleryDraft(): Promise<void> {
   assertConfigSourcesReadable(['gallery']);
-  const { json, errors } = rowsToGallery(state.configFiles.gallery, ensureGaRows());
+  const { json, errors } = rowsToGallery(state.configFiles.gallery, ensureGaRows(), parseProjectConfigDocument(state.gameConfigText).variables as Record<string, unknown>);
   if (errors.length) throw new Error(errors[0]);
+  await validateReplayTargets(json, true);
   await openUiPlayerPreview(previewUiConfigText(previewThemeConfigText(previewStageConfigText(state.gameConfigText))), json);
+}
+
+async function validateReplayTargets(json: Record<string, unknown>, preview = false): Promise<void> {
+  const config = parseConfigObj();
+  for (const entry of readGalleryReplayEntries(json)) {
+    const target = state.scenes.get(entry.scene);
+    if (!target) throw new Error(`回想场景不存在：${entry.scene}`);
+    if (!preview && !target.handle) throw new Error(`请先保存回想场景：${entry.scene}`);
+    const text = preview ? target.text : await readProjectSourceText(target.handle!);
+    const scene = compileScene(text, target.file, target.id, (config.customInstructions ?? []) as string[]);
+    if (entry.label !== undefined && !scene.labels.has(entry.label)) throw new Error(`回想标签不存在：${entry.scene}.${entry.label}`);
+  }
 }
 
 /* ============================ 名词表编辑器（术语审计闭环） ============================ */
@@ -1960,7 +1979,7 @@ export async function saveDirtyConfigSections(): Promise<ConfigSaveOutcome> {
         case 'gallery': {
           const rows = ensureGaRows();
           const submittedRows = clone(rows);
-          const { json, errors } = rowsToGallery(state.configFiles.gallery, rows);
+          const { json, errors } = rowsToGallery(state.configFiles.gallery, rows, parseProjectConfigDocument(state.gameConfigText).variables as Record<string, unknown>);
           ok = await saveConfigFileUnlocked('gallery', json, errors, '鉴赏配置', submittedRows, configSessionRevision);
           break;
         }

@@ -2,7 +2,7 @@
 
 本指南面向编写剧情、配置与演出的内容作者。默认使用正式 Agent Port 工具，在隔离草稿中修改、验证和试玩；不需要先读引擎源码、长期台账或重新接线播放器。已有项目保持原位，新项目使用现有模板。
 
-本批公开创作合同为 **2.23.0**（60 项公开能力），新增可选的跨周目图片／音乐收藏策略；保留文本目录多语言播放、人物／界面／词条来源、按语言关联已有配音、主题配置、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+本批公开创作合同为 **2.24.0**（62 项公开能力），新增安全剧情回想、回想初始条件和可选的文本永久收藏；保留文本目录多语言播放、人物／界面／词条来源、按语言关联已有配音、主题配置、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
 
 ## 0. 准备项目与会话
 
@@ -453,15 +453,25 @@ Esc 或“取消调整”恢复暂存前画面；数值框 Enter 或“应用到
 
 “舞台配置与图片校准”单独读取实际图片、人工填写／拖选可见范围、确认后加入草稿，再显式保存配置。配置经原写入事务保存，提供本面板的明确撤销；不与普通角色移动草稿混为同一写入。参考图／测试截图不是 Owner 美术验收；正式作品仍需使用自己的已授权资源检查。
 
-### 可选的跨周目图片／音乐收藏
+### 可选的跨周目图片／音乐／回想收藏
 
 仍使用 `content/config/gallery.json` 与 `@unlock_cg` / `@unlock_music`。未提供 `unlockPolicy` 时解锁只随剧情存档，不会偷偷改为永久收藏。需要永久保留时：
 
 1. 在普通 direct 草稿中读 `project.gallery({view:"working"})`，取得 `unlockPolicy.value`（缺省为 null）、`effective` 与 `fingerprint`。
-2. 调用 `gallery.policy.patch`，例如 `{operationId:"collection-policy",expectedFingerprint:"读取的指纹",patch:{cgs:"profile",music:"profile"}}`。两类可以单独设为 `save` / `profile`；某字段设 null 恢复缺省，省略不改。candidate/integration 修改前拒绝，旧指纹拒绝；正常差异、试玩及获授权写回流程不变。
-3. Editor「配置 → 鉴赏」的中文保留方式与同一合同对应，可「试玩收藏草稿」，也可保存后重新打开检查。试玩收藏只存在内存，不写正式玩家记录。默认鉴赏与自定义 `gallery-cgs/gallery-music` 读取同一有效解锁结果。
+2. 调用 `gallery.policy.patch`，例如 `{operationId:"collection-policy",expectedFingerprint:"读取的指纹",patch:{cgs:"profile",music:"profile",texts:"profile"}}`。三类可以单独设为 `save` / `profile`；某字段设 null 恢复缺省，省略不改。candidate/integration 修改前拒绝，旧指纹拒绝；正常差异、试玩及获授权写回流程不变。
+3. Editor「配置 → 鉴赏」的中文保留方式与同一合同对应，可「试玩收藏草稿」，也可保存后重新打开检查。试玩收藏只存在内存，不写正式玩家记录。默认鉴赏与自定义 `gallery-cgs/gallery-music/gallery-texts` 读取同一有效解锁结果。
 
-永久记录按作品 package name 隔离，只有正常游玩中已登记条目的解锁指令会增加记录。读旧档不撤销永久收藏，也不将旧档批量导入；新游戏清空本局解锁、保留永久部分。关闭开关或移除条目不会删除历史收藏 ID；恢复相同 ID 可以再次显示，所以不要把旧 ID 改用于无关内容。浏览器数据仍受该设备、浏览器来源和存储权限限制，不是云同步。损坏/失败会提示并保留原记录，不冒充永久保存成功。本阶段不提供新的文本回想恢复、结局簿或角色资料；既有文本回想播放不新增永久收藏。
+永久记录按作品 package name 隔离，只有正常游玩中已登记条目的解锁指令会增加记录。读旧档不撤销永久收藏，也不将旧档批量导入；新游戏清空本局解锁、保留永久部分。关闭开关或移除条目不会删除历史收藏 ID；恢复相同 ID 可以再次显示，所以不要把旧 ID 改用于无关内容。浏览器数据仍受该设备、浏览器来源和存储权限限制，不是云同步。损坏/失败会提示并保留原记录，不冒充永久保存成功。回想中的解锁不写入永久记录；结局簿和角色资料不属于本单元。
+
+### 安全剧情回想
+
+在普通 direct 草稿使用 `gallery.text.create({operationId:"replay-create",id:"meeting",name:"雨后重逢",scene:"reunion",label:"entry",variables:{好感:10}})` 建立条目；scene/label 必须存在。省略 label 从场景开头进入，省略 variables 使用项目初值。初始变量不继承玩家当前状态，必须已声明、类型与范围正确；它是作者设置的初始条件，因此允许赋予 readonly 声明初值。
+
+修改前读 `project.gallery({view:"working"})`，复制对应 `texts[]` 的 fingerprint，再用 `gallery.text.patch({operationId:"replay-edit",id:"meeting",expectedFingerprint:"读取值",patch:{name:"新的标题",variables:{好感:20}}})`。patch 只接受 name/scene/label/variables；variables 整体替换，label/variables 设 null 移除，未知字段与其他条目保留。两个写入口都在 candidate/integration 落盘前拒绝。候选场景可以引用已登记回想；回想配置是候选封存的读取依赖，变更后须重新核对，不能直接放开候选写入口。
+
+在正常剧情中用 `@unlock_text meeting` 解锁，缺少解锁点会被项目校验拒绝。需要跨周目保留时显式设置 `unlockPolicy.texts:"profile"`。Editor「配置 → 鉴赏」可填写“初始变量（JSON）”、修改回想保留方式并试玩当前草稿。保存检查已保存的目标场景，试玩检查当前场景草稿；无效输入不覆盖原配置。
+
+共享 Player（Starter 和新项目）从标题或普通正文/选项暂停点进入回想，提供“结束回想”；自然结束或脚本错误也返回原鉴赏上下文。回想不写正常手动/快速/自动档、不读正常存档、不增加永久收藏与正式通关次数；回想耗时不计入原进度。返回按正式读档语义恢复当前句/选项、变量、已读、解锁、系统和舞台，并恢复原文字记录；不承诺逐字打字位置或保留原回退栈。演出等待、视频、系统事务期间不能进入。若恢复失败，保留检查点并显示重试，不允许继续覆盖正式存档。独立自定义宿主的旧 hostJump 回调不自动获得上述保证，需采用共享 Player 或自行接入同等隔离与恢复合同。
 
 ## 2. DSL 速查
 

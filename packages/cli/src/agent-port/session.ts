@@ -128,6 +128,8 @@ const ACTIVE_CHANGE_CAPABILITIES = new Set<AuthoringCapabilityId>([
   'gallery.cg.create',
   'gallery.cg.patch',
   'gallery.policy.patch',
+  'gallery.text.create',
+  'gallery.text.patch',
   'project.entry-scene.set',
   'project.player-config.patch',
   'runtime.run-from',

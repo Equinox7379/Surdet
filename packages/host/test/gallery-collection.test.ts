@@ -4,6 +4,18 @@ import { createGalleryCollection, galleryCollectionKey } from '../src/gallery-co
 import { MemoryProfileStorage, LocalStorageProfileStorage } from '../src/profile-store.js';
 
 describe('opt-in permanent gallery', () => {
+  it('opts texts in independently, reads old profiles and preserves other collection types', async () => {
+    const storage = new MemoryProfileStorage();
+    await storage.write('gallery', { version: 1, cgs: ['old'], music: [], extra: 'keep' });
+    const policy = readGalleryUnlockPolicy({ unlockPolicy: { texts: 'profile' } });
+    const collection = await createGalleryCollection(storage, 'gallery', policy);
+    await collection.unlock('texts', 'memory'); await collection.unlock('cgs', 'temporary');
+    const reopened = await createGalleryCollection(storage, 'gallery', policy);
+    expect(effectiveGalleryUnlocks({ cgs: [], music: [] }, reopened.snapshot(), policy)).toEqual({ cgs: [], music: [], texts: ['memory'] });
+    expect(await storage.read('gallery')).toEqual({ version: 1, cgs: ['old'], music: [], texts: ['memory'], extra: 'keep' });
+    await storage.write('bad', { version: 1, cgs: [], music: [], texts: null });
+    await expect(createGalleryCollection(storage, 'bad', policy)).rejects.toThrow('损坏');
+  });
   it('keeps story snapshots and legacy behavior separate from permanent collections', async () => {
     const policy = readGalleryUnlockPolicy({ unlockPolicy: { cgs: 'profile' } });
     const storage = new MemoryProfileStorage();
@@ -21,7 +33,7 @@ describe('opt-in permanent gallery', () => {
     expect(effectiveGalleryUnlocks(new GalleryState().snapshot(), restarted.snapshot(), policy).cgs).toEqual(['cg']);
     expect(effectiveGalleryUnlocks(old, restarted.snapshot(), readGalleryUnlockPolicy({}))).toEqual(old);
     const other = await createGalleryCollection(storage, await galleryCollectionKey('game-b'), policy);
-    expect(other.snapshot()).toEqual({ cgs: [], music: [] });
+    expect(other.snapshot()).toEqual({ cgs: [], music: [], texts: [] });
     const preview = await createGalleryCollection(new MemoryProfileStorage(), key, policy);
     await preview.unlock('cgs', 'preview-only');
     expect((await createGalleryCollection(storage, key, policy)).snapshot().cgs).toEqual(['cg']);
@@ -34,9 +46,9 @@ describe('opt-in permanent gallery', () => {
     const collection = await createGalleryCollection(storage, 'gallery', { cgs: 'profile', music: 'profile' });
     write.mockRejectedValueOnce(new Error('quota'));
     await expect(collection.unlock('cgs', 'failed')).rejects.toThrow('quota');
-    expect(collection.snapshot()).toEqual({ cgs: ['removed'], music: [] });
+    expect(collection.snapshot()).toEqual({ cgs: ['removed'], music: [], texts: [] });
     await Promise.all([collection.unlock('cgs', 'a'), collection.unlock('music', 'b'), collection.unlock('cgs', 'c')]);
-    expect(collection.snapshot()).toEqual({ cgs: ['removed', 'a', 'c'], music: ['b'] });
+    expect(collection.snapshot()).toEqual({ cgs: ['removed', 'a', 'c'], music: ['b'], texts: [] });
     expect((await createGalleryCollection(storage, 'gallery', { cgs: 'profile', music: 'profile' })).snapshot()).toEqual(collection.snapshot());
   });
 
@@ -53,8 +65,8 @@ describe('opt-in permanent gallery', () => {
   });
 
   it('rejects invalid or expanded policies and independently enables music', () => {
-    expect(readGalleryUnlockPolicy({ unlockPolicy: { music: 'profile' } })).toEqual({ cgs: 'save', music: 'profile' });
-    for (const unlockPolicy of [null, [], { cgs: true }, { texts: 'profile' }, { music: 'always' }]) {
+    expect(readGalleryUnlockPolicy({ unlockPolicy: { music: 'profile' } })).toEqual({ cgs: 'save', music: 'profile', texts: 'save' });
+    for (const unlockPolicy of [null, [], { cgs: true }, { texts: 'always' }, { music: 'always' }]) {
       expect(() => readGalleryUnlockPolicy({ unlockPolicy })).toThrow();
     }
   });
@@ -69,7 +81,7 @@ describe('opt-in permanent gallery', () => {
       const first = await createGalleryCollection(storage, 'gallery', policy);
       const second = await createGalleryCollection(storage, 'gallery', policy);
       await Promise.all([first.unlock('cgs', 'first'), second.unlock('music', 'second')]);
-      expect((await createGalleryCollection(storage, 'gallery', policy)).snapshot()).toEqual({ cgs: ['first'], music: ['second'] });
+      expect((await createGalleryCollection(storage, 'gallery', policy)).snapshot()).toEqual({ cgs: ['first'], music: ['second'], texts: [] });
       expect(request).toHaveBeenCalledTimes(2);
       const write = vi.spyOn(storage, 'write');
       await first.unlock('cgs', 'first');

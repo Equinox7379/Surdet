@@ -74,6 +74,37 @@ async function connectedProject(projectRoot: string, policy: 'observe' | 'stage'
 }
 
 describe('Surdet Agent Port MCP tool projection', () => {
+  it('authors replay entries and policies through public tools, validates and commits them', async () => {
+    const { session, client, server } = await connected('apply');
+    const call = async (name: string, args: Record<string, unknown> = {}) => {
+      const response = await client.callTool({ name, arguments: args });
+      expect(response.isError, textContent(response)).not.toBe(true);
+      return (response.structuredContent as any).result;
+    };
+    try {
+      await call('surdet_change_begin', { compositionMode: 'direct' });
+      await call('surdet_variable_ensure', { operationId: 'score', name: 'score', type: 'number', initial: 0 });
+      await call('surdet_gallery_text_create', { operationId: 'memory', id: 'memory', name: '回想', scene: 'start', variables: { score: 3 } });
+      await call('surdet_scene_create', { operationId: 'unlock', sceneId: 'unlock_memory', blocks: [
+        { kind: 'instruction', name: 'unlock_text', args: ['memory'] }, { kind: 'text', value: '回想已解锁。' },
+      ] });
+      const gallery = await call('surdet_project_gallery', { view: 'working' });
+      expect(gallery.texts).toContainEqual(expect.objectContaining({ id: 'memory', variables: { score: 3 } }));
+      await call('surdet_gallery_text_patch', { operationId: 'conditions', id: 'memory', expectedFingerprint: gallery.texts[0].fingerprint, patch: { variables: { score: 4 } } });
+      const stale = await client.callTool({ name: 'surdet_gallery_text_patch', arguments: { operationId: 'stale', id: 'memory', expectedFingerprint: gallery.texts[0].fingerprint, patch: { name: '过期' } } });
+      expect((stale.structuredContent as any).error.code).toBe('OBJECT_REF_STALE');
+      await call('surdet_gallery_policy_patch', { operationId: 'policy', expectedFingerprint: gallery.unlockPolicy.fingerprint, patch: { texts: 'profile' } });
+      const inspected = await call('surdet_object_inspect', { objectRef: 'gallery:texts:memory' });
+      expect(inspected.references).toEqual(expect.arrayContaining(['scene:start', 'variable:score']));
+      const validation = await call('surdet_project_validate');
+      expect(validation.ok, JSON.stringify(validation)).toBe(true);
+      await call('surdet_project_simulate'); await call('surdet_change_diff');
+      await call('surdet_runtime_run_from', { sceneId: 'unlock_memory', choices: [] });
+      await call('surdet_delivery_capsule', { label: '回想配置' });
+      await call('surdet_change_commit');
+      expect(JSON.parse(fs.readFileSync(path.join(session.projectRoot, 'content/config/gallery.json'), 'utf8'))).toMatchObject({ unlockPolicy: { texts: 'profile' }, texts: [{ variables: { score: 4 } }] });
+    } finally { await client.close(); await server.close(); await session.close(); }
+  });
   afterEach(() => {
     delete process.env['SURDET_AGENT_DATA_DIR'];
     for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
@@ -186,12 +217,12 @@ describe('Surdet Agent Port MCP tool projection', () => {
       expect(names).not.toContain('surdet_change_commit');
       expect(names).not.toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
       for (const action of ['commit', 'recover', 'undo'] as const) expect(names).not.toContain(nativeCapabilityToMcpTool(`asset.relocation.${action}`));
-      expect(names).toHaveLength(55);
+      expect(names).toHaveLength(57);
    }
    if (policy === 'apply') {
      expect(names).toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
       for (const action of ['commit', 'recover', 'undo'] as const) expect(names).toContain(nativeCapabilityToMcpTool(`asset.relocation.${action}`));
-      expect(names).toHaveLength(62);
+      expect(names).toHaveLength(64);
    }
    const described = await client.callTool({ name: 'surdet_session_describe', arguments: {} });
     expect(described.isError).not.toBe(true);
@@ -199,7 +230,7 @@ describe('Surdet Agent Port MCP tool projection', () => {
     const capabilities = await client.callTool({ name: 'surdet_capabilities_describe', arguments: {} });
     expect(capabilities.isError).not.toBe(true);
     expect((capabilities.structuredContent as any).ok).toBe(true);
-    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(60);
+    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(62);
     expect(names).not.toContain('surdet_review_write_decision');
     expect(names).not.toContain('surdet_review_approve');
     if (policy === 'stage') {
