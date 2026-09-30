@@ -196,6 +196,10 @@ describe('simulateSnapshot', () => {
     expect(report.pathsExplored).toBe(3);
     expect(report.paths.map((path) => path.finalVariables.trust).sort()).toEqual([-1, 1]);
     expect(report.paths.every((path) => path.termination === 'ended')).toBe(true);
+    expect(report.coverage.branches.map(branch => branch.status)).toEqual(['visited', 'visited']);
+    expect(report.coverage.branches.map(branch => branch.location.line)).toEqual([3, 4]);
+    expect(report.coverage.scenes[0]).toMatchObject({ sceneId: 'prologue', visited: true, sourceVersion: snapshot.scenes[0]!.file.sha256 });
+    expect(report.coverage.stops).toEqual([]);
   });
 
   it('reports an exhausted path budget as incomplete', async () => {
@@ -207,6 +211,8 @@ describe('simulateSnapshot', () => {
     expect(report.pathsExplored).toBe(1);
     expect(report.pathsExplored).toBeLessThanOrEqual(1);
     expect(report.paths.some((path) => path.termination === 'budget-exhausted')).toBe(true);
+    expect(report.coverage.branches.map(branch => branch.status)).toEqual(['budget-exhausted', 'budget-exhausted']);
+    expect(report.coverage.stops.map(stop => stop.kind)).toEqual(['path-budget', 'path-budget']);
   });
 
   it('carries the step budget into each choice branch instead of resetting it', async () => {
@@ -216,6 +222,7 @@ describe('simulateSnapshot', () => {
     expect(report.paths).toHaveLength(2);
     expect(report.runtimeErrors).toEqual([]);
     expect(report.paths.every((path) => path.status === 'incomplete' && path.termination === 'budget-exhausted' && path.prunedReason === 'step-budget')).toBe(true);
+    expect(report.coverage.stops.every(stop => stop.kind === 'step-budget' && stop.location !== null)).toBe(true);
     const sufficient = await simulateSnapshot(snapshot, { maxStepsPerPath: 3 });
     expect(sufficient.status).toBe('passed');
     expect(sufficient.paths).toHaveLength(2);
@@ -239,6 +246,8 @@ describe('simulateSnapshot', () => {
     expect(report.runtimeErrors[0]?.message).toContain('@check 断言失败');
     expect(report.endings).toEqual([{ ending: 'safe_end', times: 1 }]);
     expect(report.budgetExhausted).toBe(false);
+    expect(report.coverage.stops[0]).toMatchObject({ kind: 'runtime-error', location: { sceneId: 'caller_b', line: 3 } });
+    expect(report.coverage.scenes.filter(scene => scene.visited).map(scene => scene.sceneId).sort()).toEqual(['caller_a', 'caller_b', 'entry', 'shared']);
   });
 
   it('records state-signature pruning without losing path evidence', async () => {
@@ -257,6 +266,31 @@ describe('simulateSnapshot', () => {
     ))).toBe(true);
     expect(report.paths.some((path) => path.termination === 'ended')).toBe(true);
     expect(report.endings).toEqual([{ ending: 'done', times: 1 }]);
+    expect(report.coverage.branches.every(branch => branch.status === 'visited')).toBe(true);
+  });
+
+  it('distinguishes unavailable conditional options from unreachable scenes and observes all-hidden choices', async () => {
+    const files = {
+      'game.config.json': JSON.stringify({ entryScene: 'start', variables: { trust: { type: 'number', initial: 0 } } }),
+      'content/scenario/chapter/start.gal': '@scene start\n@choice\n  隐藏 [if:trust > 5] -> @jump hidden\n  显示 [if:trust == 0] -> @call shared.entry @end\n  普通 -> @end\n',
+      'content/scenario/shared.gal': '@scene shared\n@label entry\n@choice\n  条件失败 [if:false] -> @end\n@return\n',
+      'content/scenario/hidden.gal': '@scene hidden\n秘密正文。\n@end\n',
+    };
+    const storage: ProjectStorage = { rootIdentity: 'condition-coverage', listFiles: async () => Object.keys(files), exists: async path => path in files,
+      readText: async path => { const text = files[path as keyof typeof files]; return { path, text, bytes: text.length, sha256: digest(text) }; } };
+    const snapshot = await loadProjectSnapshot(storage, hasher), report = simulateSnapshot(snapshot);
+    expect(report.status).toBe('passed');
+    const start = report.coverage.branches.filter(branch => branch.location.sceneId === 'start');
+    expect(start.map(branch => [branch.optionIndex, branch.status, branch.selected])).toEqual([[0, 'condition-not-met', 0], [1, 'visited', 1], [2, 'visited', 1]]);
+    expect(start[1]!.location).toMatchObject({ file: 'content/scenario/chapter/start.gal', line: 4 });
+    expect(report.coverage.conditions.map(condition => [condition.expression, condition.trueCount, condition.falseCount])).toEqual([
+      // Restoring the real choice snapshot evaluates its conditions again for each branch.
+      ['trust > 5', 0, 3], ['trust == 0', 3, 0], ['false', 0, 1],
+    ]);
+    expect(report.coverage.scenes.find(scene => scene.sceneId === 'hidden')?.visited).toBe(false);
+    expect(report.coverage.scenes.find(scene => scene.sceneId === 'shared')?.visited).toBe(true);
+    expect(report.coverage.branches.find(branch => branch.location.sceneId === 'shared')?.status).toBe('condition-not-met');
+    expect(report.paths.map(path => path.choices)).toEqual([[1], [2]]);
   });
 
   it('uses one GrowthSystem runtime for simulated and explicit paths', async () => {
@@ -277,6 +311,20 @@ describe('simulateSnapshot', () => {
         source: expect.objectContaining({ sceneId: 'prologue', op: 'exp' }),
       }),
     ]));
+  });
+
+  it('records both outcomes when a real loop changes the same choice condition', async () => {
+    const files: Record<string, string> = {
+      'game.config.json': JSON.stringify({ entryScene: 'start', variables: { trust: { type: 'number', initial: 0 } } }),
+      'content/scenario/start.gal': '@scene start\n@label top\n@choice\n  下一轮 [if:trust == 0] -> @set trust = 1 @goto top\n  离开 [if:trust == 1] -> @end\n',
+    };
+    const storage: ProjectStorage = { rootIdentity: 'changing-condition', listFiles: async () => Object.keys(files), exists: async path => path in files,
+      readText: async path => { const text = files[path]!; return { path, text, bytes: text.length, sha256: digest(text) }; } };
+    const report = simulateSnapshot(await loadProjectSnapshot(storage, hasher));
+    expect(report.status).toBe('passed');
+    expect(report.coverage.conditions.every(condition => condition.trueCount > 0 && condition.falseCount > 0)).toBe(true);
+    expect(report.coverage.branches.map(branch => branch.status)).toEqual(['visited', 'visited']);
+    expect(report.paths[0]?.choices).toEqual([0, 1]);
   });
 
   it('keeps @exp strict when the snapshot has no growth config', async () => {

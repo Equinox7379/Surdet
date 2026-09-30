@@ -51,6 +51,23 @@
   line-height: 1.65;
 }
 
+.story-check-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--surdet-space-12) var(--surdet-space-24);
+  margin: var(--surdet-space-24) 0;
+}
+.story-check-controls label { display: grid; gap: var(--surdet-space-8); }
+.story-check-controls input { width: 160px; min-height: var(--surdet-control-height); }
+.story-check-controls button { min-height: var(--surdet-control-height); }
+.story-check-workspace textarea { width: min(100%, 600px); }
+.story-check-list { margin-top: var(--surdet-space-16); }
+.story-check-list summary { cursor: pointer; padding: var(--surdet-space-8) 0; }
+.story-check-list .project-health-scene-link { display: block; text-align: left; margin: var(--surdet-space-8) 0; }
+.story-check-results p { line-height: 1.65; overflow-wrap: anywhere; }
+.story-check-results button:disabled { cursor: default; opacity: .55; }
+
 .project-health-overview {
   display: grid;
   grid-template-columns: minmax(220px, 0.8fr) minmax(0, 2.2fr);

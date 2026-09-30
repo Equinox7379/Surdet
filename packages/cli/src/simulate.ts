@@ -7,7 +7,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { compileScene, type GrowthConfig, type VarValue } from '@surdet/core';
-import { parseSceneDocument, simulateSnapshot, type ProjectSnapshot } from '@surdet/authoring';
+import { parseSceneDocument, simulateSnapshot, type ProjectSnapshot, type StoryCoverage } from '@surdet/authoring';
 import { findGalFiles, sceneIdFromFile } from './scenario-loader.js';
 import { authoringDigest, collectTimelineFiles } from './timeline-loader.js';
 
@@ -35,6 +35,7 @@ export interface SimulateReport {
   saveRoundtrips: number;
   runtimeErrors: { scene: string | null; message: string }[];
   seed: number;
+  coverage: StoryCoverage;
 }
 
 function readJsonIfExists(full: string): Record<string, unknown> | null {
@@ -158,6 +159,7 @@ export function simulateProject(projectDir: string, opts: SimulateOptions = {}):
     saveRoundtrips: report.saveRoundtrips,
     runtimeErrors: report.runtimeErrors,
     seed: report.seed,
+    coverage: report.coverage,
   };
 }
 

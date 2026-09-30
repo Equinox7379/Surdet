@@ -619,6 +619,22 @@ const simulationPathSchema = strictObject({
   error: stringSchema,
 }, ['choices', 'finalVariables', 'status', 'termination']);
 
+const storyLocationSchema = strictObject({ sceneId: stringSchema, file: stringSchema, index: integerSchema,
+  line: integerSchema, col: integerSchema, sourceVersion: stringSchema }, ['sceneId', 'file', 'index', 'line', 'col', 'sourceVersion']);
+const storyCoverageSchema = strictObject({
+  scenes: arrayOf(strictObject({ sceneId: stringSchema, file: stringSchema, sourceVersion: stringSchema, visited: booleanSchema,
+    executedInstructions: integerSchema, totalInstructions: integerSchema }, ['sceneId', 'file', 'sourceVersion', 'visited', 'executedInstructions', 'totalInstructions'])),
+  branches: arrayOf(strictObject({ location: storyLocationSchema, optionIndex: integerSchema, label: stringSchema,
+    available: integerSchema, selected: integerSchema, conditionFalse: integerSchema, budgetStops: integerSchema,
+    status: { enum: ['visited', 'unvisited', 'condition-not-met', 'budget-exhausted'] } },
+    ['location', 'optionIndex', 'label', 'available', 'selected', 'conditionFalse', 'budgetStops', 'status'])),
+  conditions: arrayOf(strictObject({ location: storyLocationSchema, expression: stringSchema, optionIndex: integerSchema,
+    trueCount: integerSchema, falseCount: integerSchema }, ['location', 'expression', 'trueCount', 'falseCount'])),
+  stops: arrayOf(strictObject({ kind: { enum: ['runtime-error', 'path-budget', 'step-budget'] },
+    location: { oneOf: [storyLocationSchema, nullSchema] }, message: stringSchema }, ['kind', 'location', 'message'])),
+  hostInstructions: arrayOf(storyLocationSchema),
+}, ['scenes', 'branches', 'conditions', 'stops', 'hostInstructions']);
+
 const simulationReportProperties: SchemaProperties = {
   status: { enum: ['passed', 'failed', 'incomplete'] },
   entryScene: stringSchema,
@@ -632,12 +648,13 @@ const simulationReportProperties: SchemaProperties = {
   cyclesPruned: integerSchema,
   saveRoundtrips: integerSchema,
   seed: seedSchema,
+  coverage: storyCoverageSchema,
 };
 
 const simulationReportRequired = [
   'status', 'entryScene', 'pathsExplored', 'choiceBranches', 'paths', 'budgetExhausted',
   'runtimeErrors', 'endings', 'deadEndScenes', 'cyclesPruned', 'saveRoundtrips',
-  'seed',
+  'seed', 'coverage',
 ];
 
 const simulationReportSchema = strictObject(simulationReportProperties, simulationReportRequired);
@@ -687,7 +704,7 @@ const traceEventSchema = strictObject({
   kind: { enum: ['instruction', 'choice', 'state', 'condition', 'control-flow', 'scene-end'] },
   source: traceSourceSchema,
   stateDelta: arrayOf(traceStateDeltaSchema),
-  condition: strictObject({ expression: stringSchema, result: booleanSchema }, ['expression', 'result']),
+  condition: strictObject({ expression: stringSchema, result: booleanSchema, optionIndex: integerSchema }, ['expression', 'result']),
   controlFlow: strictObject({ from: stringSchema, to: stringSchema }, ['from', 'to']),
   choice: strictObject({ optionIndex: integerSchema, label: stringSchema }, ['optionIndex', 'label']),
 }, ['kind', 'source']);

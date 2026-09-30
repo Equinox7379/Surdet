@@ -12,6 +12,7 @@ export * from './script-import.js';
 export * from './scene-relocation.js';
 export * from './validation.js';
 export * from './simulation.js';
+export * from './story-coverage.js';
 export * from './evidence.js';
 export * from './diff.js';
 export * from './runtime-trace.js';

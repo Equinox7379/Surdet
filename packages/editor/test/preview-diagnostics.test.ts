@@ -15,6 +15,10 @@ describe('preview diagnostics', () => {
       generation: 1, level: 'error', phase: 'runtime', message: 'boom',
     });
     expect(normalizePreviewDiagnostic({ generation: 1, level: 'error' })).toBeNull();
+    expect(normalizePreviewDiagnostic({ generation: 1, level: 'error', phase: 'compile', message: 'bad', sceneId: 'side', line: 8, col: 2 }))
+      .toMatchObject({ sceneId: 'side', line: 8, col: 2 });
+    expect(normalizePreviewDiagnostic({ generation: 1, level: 'error', phase: 'compile', message: 'bad', line: -1, col: '2' }))
+      .not.toHaveProperty('line');
   });
 
   it('marks stale iframe generations', () => {

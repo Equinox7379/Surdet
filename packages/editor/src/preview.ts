@@ -19,7 +19,7 @@ import { readProjectStage, resolvePlayerTheme, resolveProjectTitleLogo, stageCon
  */
 import {
   compileScene, EventBus, Interpreter, SceneRegistry, VariableStore, SaveManager, QUICK_SLOT, AUTO_SLOT,
-  TimelineRegistry,
+  TimelineRegistry, SourceError,
   createSeededRandomSource,
   CalendarRunner, GrowthSystem, AchievementSystem, AffectionSystem, EventScheduler,
 } from '@surdet/core';
@@ -1213,7 +1213,10 @@ async function load(p: LoadPayload): Promise<void> {
     invalidatePreviewSession();
     const message = `预览失败：${err instanceof Error ? err.message : String(err)}`;
     failPreviewTrace(trace, message);
-    postPreviewDiagnostic({ generation, level: 'error', phase: 'compile', message, sceneId: p.sceneId });
+    const pos = err instanceof SourceError ? err.pos : null;
+    const source = pos ? p.scenes.find(scene => `${scene.id}.gal` === pos.file) : undefined;
+    postPreviewDiagnostic({ generation, level: 'error', phase: 'compile', message,
+      ...(source && pos ? { sceneId: source.id, line: pos.line, col: pos.col } : {}) });
     showError(message);
   }
 }

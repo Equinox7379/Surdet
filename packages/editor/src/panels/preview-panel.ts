@@ -25,6 +25,7 @@ import { previewCheckpointKey, readPreviewCheckpoint, writePreviewCheckpoint } f
 import type { FontRole } from '@surdet/renderer';
 import { assertUniquePortraitBindings, portraitSourcePaths, resolveProjectPortraits, resolveProjectFontPaths, type PortraitVisualDefinition } from '@surdet/core';
 import { normalizePreviewDiagnostic, type PreviewDiagnostic } from '../preview-diagnostics.js';
+import { prepareStoryPreview, activateStoryPreview, appendStoryPreview, appendStoryPreviewError } from '../story-check.js';
 import {
   dispatchPreviewTraceSelection,
   locateObjectForTraceEvent,
@@ -80,6 +81,10 @@ function previewSourceKey(): string {
     timelines: state.timelines.map((entry) => [entry.file, entry.text]),
     assets: state.dirAssets.map((entry) => [entry.sourcePath, entry.key, entry.expr, entry.bytes, entry.lastModified]),
   });
+}
+function storyPreviewSourceKey(source = previewSourceKey()): string {
+  const { scene: _scene, ...content } = JSON.parse(source);
+  return JSON.stringify(content);
 }
 /** 父窗口只接受当前 iframe generation；旧预览的迟到消息必须丢弃。 */
 export function acceptPreviewTraceMessage(message: PreviewTraceMessage | null, currentGeneration: number): PreviewTraceMessage | null {
@@ -780,6 +785,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       lastTraceSequence = -1;
       traceCompleted = false;
       currentPreviewTrace = [message];
+      appendStoryPreview(message);
       state.previewTrace = [];
       state.selectedTraceStep = null;
       publishTrace(message);
@@ -798,6 +804,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       traceCompleted = true;
     }
     currentPreviewTrace = [...currentPreviewTrace, current];
+    appendStoryPreview(current);
     publishTrace(current);
     if (current.type === 'surdet-preview-trace-event') state.previewTrace = [...state.previewTrace, current.event];
     renderTraceList();
@@ -810,6 +817,8 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     if (!isCurrentPreviewFrameSource(source, frame.contentWindow)) return;
     if (diagnostic.generation < latestGeneration) return;
     latestGeneration = diagnostic.generation;
+    if (diagnostic.level === 'error' && expectedTraceId !== null && diagnostic.generation === currentTraceGeneration)
+      appendStoryPreviewError(expectedTraceId, diagnostic.phase, diagnostic.message, diagnostic);
     diagnostics.textContent = `${diagnostic.level === 'error' ? '错误' : diagnostic.level === 'warning' ? '警告' : '状态'}：${diagnostic.message}${diagnostic.label ? `（@label ${diagnostic.label}）` : ''}`;
     diagnostics.className = `preview-diagnostics ${diagnostic.level}`;
   };
@@ -987,10 +996,25 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     ];
     const target = frame.contentWindow;
     if (!target) return;
+    const sourceKey = storyPreviewSourceKey(requestSource);
+    const previewRecord = await prepareStoryPreview({ traceId, owner: requestRoot, seed, working: isolated === undefined && reviewResult === null,
+      scope: isolated === undefined ? reviewResult === null ? '当前编辑内容（含草稿）' : '固定审阅内容'
+        : ({ 'saved-project': '已保存项目', 'working-change': '隔离工作变更', candidate: '封存候选', 'integration-result': '组合结果' } as const)[isolated.target.kind],
+      sources: message.payload.scenes.map(scene => {
+        const file = projected === undefined ? [...state.scenes.values()].find(entry => entry.id === scene.id)!.file
+          : projected.scenes.find(source => source.id === scene.id)!.file;
+        return { ...scene, file: file.startsWith('content/scenario/') ? file : `content/scenario/${file}` };
+      }),
+      contentKey: JSON.stringify({ scenes: message.payload.scenes, gameConfig, configs: message.payload.configs, timelines: message.payload.timelines }),
+      isCurrent: () => state.dirHandle === requestRoot && storyPreviewSourceKey() === sourceKey,
+    });
+    if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || requestKey() !== requestSource
+      || state.dirHandle !== requestRoot || !container.isConnected) return;
     stageWorkbench?.reset();
     currentPlayback = null;
     expectedTraceId = traceId;
     activeCheckpointKey = key;
+    activateStoryPreview(previewRecord);
     target.postMessage(message, '*', [...new Set(transfer)]);
     // A rejected or superseded read has not begun a new run. Only a published
     // payload replaces the previous observations and their source selection.

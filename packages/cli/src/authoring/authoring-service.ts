@@ -148,6 +148,7 @@ function incompleteSimulation(input: SimulationInput | undefined, report: Return
   const maxPaths = input?.maxPaths ?? 500;
   const maxStepsPerPath = input?.maxStepsPerPath ?? 20_000;
   return new AuthoringOperationError('SIMULATION_INCOMPLETE', '项目模拟达到预算上限；调整有界预算或缩小场景/路径后重试', {
+    report,
     pathsExplored: report.pathsExplored, maxPaths, maxStepsPerPath,
     ...(maxPaths < 2000 || maxStepsPerPath < 100000 ? { retryInput: {
       sceneId: report.entryScene, seed: report.seed,
@@ -787,7 +788,7 @@ export class AuthoringService {
     if (report.status === 'incomplete') throw incompleteSimulation(input, report);
     if (report.status === 'failed') {
       const firstError = report.runtimeErrors[0]?.message;
-      throw new AuthoringOperationError('RUNTIME_FAILED', firstError === undefined ? '项目模拟包含运行时失败' : `项目模拟包含运行时失败：${firstError}`);
+      throw new AuthoringOperationError('RUNTIME_FAILED', firstError === undefined ? '项目模拟包含运行时失败' : `项目模拟包含运行时失败：${firstError}`, { report });
     }
     return {
       projectIdentity: projectIdentityFromRoot(sourceSnapshot.rootIdentity),
@@ -1321,7 +1322,7 @@ export class AuthoringService {
       if (simulation.status === 'failed') {
         // 附首个运行时错误根因，Agent 无需二次取证据即可定位（如缺失时间轴的未注册 ID）。
         const firstError = simulation.runtimeErrors[0]?.message;
-        throw new AuthoringOperationError('RUNTIME_FAILED', firstError === undefined ? '项目模拟包含运行时失败' : `项目模拟包含运行时失败：${firstError}`);
+        throw new AuthoringOperationError('RUNTIME_FAILED', firstError === undefined ? '项目模拟包含运行时失败' : `项目模拟包含运行时失败：${firstError}`, { report: simulation, evidenceId: evidence.evidenceId });
       }
       return {
         ...metadataForChange(context.session),
