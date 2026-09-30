@@ -242,7 +242,7 @@ describe('editor authoring project storage', () => {
     expect(afterReplace.theme).toEqual({ colors: { accent: 8 }, future: { keep: true } });
     expect(afterReplace.player).toEqual({ titleLogo: 'logo', subtitle: 'untouched' });
 
-    await expect(commitThemeConfiguration('bad' as unknown as Record<string, unknown>, 'logo', diskText)).rejects.toThrow('theme 必须是对象或 null');
+    await expect(commitThemeConfiguration('bad' as unknown as Record<string, unknown>, 'logo', diskText)).rejects.toThrow('主题配置必须是对象');
     await expect(commitThemeConfiguration({ future: { keep: false } }, 'logo', diskText)).rejects.toThrow('不属于当前编辑器表单');
     expect(JSON.parse(diskText)).toEqual(afterReplace);
 

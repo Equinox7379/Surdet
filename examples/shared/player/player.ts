@@ -1040,7 +1040,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     const s = settings.settings;
     return {
       rows: [...SETTING_STEPS.map((d) => ({ id: d.key, label: d.label, display: d.format(s[d.key]) })),
-        ...(textCatalog ? [{ id: 'locale', label: '作品语言', display: ({ 'zh-CN': '中文', ja: '日本語', en: 'English' } as Record<string, string>)[textLocale] ?? textLocale }] : [])],
+        ...(textCatalog ? [{ id: 'locale', label: '作品语言', display: ({ 'zh-CN': '中文', ja: '日语', en: '英语' } as Record<string, string>)[textLocale] ?? textLocale }] : [])],
       onChange: onSettingsChange,
       onClose: closeSettings,
     };

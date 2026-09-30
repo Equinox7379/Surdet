@@ -60,6 +60,7 @@ afterEach(() => {
   state.assetCenterStatus = 'all';
   state.assetCenterFolder = 'all';
   state.assetCenterSort = 'path';
+  state.gameConfigText = '';
 });
 
 describe('Asset Center filters', () => {
@@ -75,6 +76,17 @@ describe('Asset Center filters', () => {
   it('renders a friendly display label without exposing the raw stable key syntax', () => {
     expect(friendlyAssetName(items[0]!)).toBe('Castle Hall');
     expect(friendlyAssetName({ ...items[0]!, key: '雨夜_站台' })).toBe('雨夜 站台');
+  });
+
+  it('uses authored character names for display and search without changing identifiers', () => {
+    state.gameConfigText = JSON.stringify({ characters: { lynn: { name: '凛' } } });
+    const portrait = { ...items[0]!, kind: 'portrait' as const, key: 'lynn:uniform', variant: 'smile' };
+    expect(friendlyAssetName(portrait)).toBe('凛 · uniform · smile');
+    state.assetCenterQuery = '凛';
+    expect(filterAssetItems([portrait])).toEqual([portrait]);
+    state.assetCenterQuery = 'lynn';
+    expect(filterAssetItems([portrait])).toEqual([portrait]);
+    expect(portrait.key).toBe('lynn:uniform');
   });
 
   it('sorts large libraries predictably and derives the largest measured files from shared facts', () => {

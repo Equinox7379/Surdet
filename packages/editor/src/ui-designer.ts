@@ -129,7 +129,10 @@ function newNode(type: ProjectUiNodeType, page: ProjectUiPageId): ProjectUiNode 
 }
 
 function nodeLabel(node: ProjectUiNode): string {
-  return `${TYPE_NAMES[node.type]} · ${node.id}`;
+  const label = node.text?.kind === 'literal' ? node.text.value
+    : node.text?.kind === 'data' ? DATA_FIELDS[node.text.field]
+      : node.text?.kind === 'setting' ? SETTING_NAMES[node.text.name] : undefined;
+  return `${TYPE_NAMES[node.type]} · ${label || node.id}`;
 }
 
 export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
@@ -189,6 +192,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
 
   function drawTree(parent: HTMLElement, node: ProjectUiNode, depth: number): void {
     const button = element('button', 'ui-tree-node', nodeLabel(node));
+    button.title = `组件标识：${node.id}`;
     button.type = 'button'; button.dataset.uiNode = node.id;
     button.style.paddingLeft = `${12 + depth * 16}px`;
     button.setAttribute('aria-current', String(selectedNodeId === node.id));

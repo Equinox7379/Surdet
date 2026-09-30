@@ -213,6 +213,57 @@ afterEach(() => {
 });
 
 describe('configuration draft state', () => {
+  it('edits the Chinese theme form through the existing draft, undo and save path', async () => {
+    const root = await renderFixture(JSON.stringify({ ...JSON.parse(INITIAL_GAME_CONFIG),
+      theme: { colors: { accent: 7 }, future: { keep: true } }, player: { subtitle: '保留' }, private: { keep: 1 } }));
+    expect(inspectConfigDraftState().dirty).toBe(false);
+    const color = byAttribute(root, 'aria-label', '主题色');
+    color.value = '#654321'; color.oninput?.();
+    const fonts = byAttribute(root, 'aria-label', '标题字体路径');
+    fonts.value = 'content/assets/fonts/title.ttf'; fonts.oninput?.();
+    const projected = JSON.parse(previewThemeConfigText(state.gameConfigText));
+    expect(projected).toMatchObject({ theme: { colors: { accent: 0x654321 }, future: { keep: true } },
+      fonts: { title: 'content/assets/fonts/title.ttf' }, player: { subtitle: '保留' }, private: { keep: 1 } });
+    const edited = readThemeConfigDraft();
+    configUndo(); expect(readThemeConfigDraft()).not.toBe(edited);
+    configRedo(); expect(readThemeConfigDraft()).toBe(edited);
+    vi.mocked(commitThemeConfiguration).mockImplementationOnce(async (theme, _logo, expected) => {
+      expect(theme).toMatchObject({ colors: { accent: 0x654321 }, future: { keep: true } });
+      state.gameConfigText = JSON.stringify(projected);
+      return { text: state.gameConfigText, before: JSON.parse(expected).theme, after: theme };
+    });
+    await saveThemeConfigDraftUnlocked();
+    expect(inspectConfigDraftState().dirty).toBe(false);
+  });
+
+  it('retains incomplete form input as a dirty draft and synchronizes raw corrections', async () => {
+    const root = await renderFixture();
+    const color = byAttribute(root, 'aria-label', '主题色');
+    color.value = '#12'; color.oninput?.();
+    expect(inspectConfigDraftState().dirty).toBe(true);
+    expect(JSON.parse(readThemeConfigDraft()).theme.colors.accent).toBe('#12');
+    expect(() => previewThemeConfigText(state.gameConfigText)).toThrow();
+    await expect(saveThemeConfigDraftUnlocked()).rejects.toThrow();
+    expect(root.textContent).toContain('六位色值');
+    const raw = byAttribute(root, 'aria-label', '主题配置文本');
+    raw.value = '{"theme":{"colors":{"accent":1193046}}}'; raw.oninput?.();
+    expect(byAttribute(root, 'aria-label', '主题色').value).toBe('#123456');
+    raw.value = '{'; raw.oninput?.();
+    expect(readThemeConfigDraft()).toBe('{');
+    expect(root.textContent).toContain('现有草稿不会丢失');
+  });
+
+  it('clears only the selected theme field and accepts supported fractional layout values', async () => {
+    const root = await renderFixture(JSON.stringify({ ...JSON.parse(INITIAL_GAME_CONFIG), theme: { colors: { accent: 7, text: 8 } }, fonts: { title: 'title.ttf', body: 'body.ttf' } }));
+    const color = byAttribute(root, 'aria-label', '主题色'); color.value = ''; color.oninput?.();
+    const font = byAttribute(root, 'aria-label', '标题字体路径'); font.value = ''; font.oninput?.();
+    const ratio = byAttribute(root, 'aria-label', '对话框高度比例'); ratio.value = '.001'; ratio.oninput?.();
+    const projected = JSON.parse(previewThemeConfigText(state.gameConfigText));
+    expect(projected.theme.colors).toEqual({ text: 8 });
+    expect(projected.fonts).toEqual({ body: 'body.ttf' });
+    expect(projected.theme.dialogHeightRatio).toBe(.001);
+  });
+
   it('restores exact historical configuration as an undoable draft and preserves it after failed save', async () => {
     await renderFixture();
     let diskText = state.gameConfigText;

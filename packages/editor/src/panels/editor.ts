@@ -12,6 +12,8 @@ import { selectAuthoringObject } from '../causal-selection.js';
 import { InstructionFieldSource } from '../instruction-field-source.js';
 import { installScriptV4, prepareScriptV4Render } from '../v4/script-workbench.js';
 import { editSceneLabel } from '../label-editing.js';
+import { instructionLabel, PARTICLE_NAMES } from '../script-presentation.js';
+import { decodeInstructionArgument } from '@surdet/authoring';
 
 export function currentText(): string {
   return state.current ? state.scenes.get(state.current)?.text ?? '' : '';
@@ -110,11 +112,12 @@ export const INSTR_FIELDS: Record<string, { labels: string[]; opSelect?: number;
   remove_item: { labels: ['数组变量', '道具标识'] },
   has_item: { labels: ['数组变量', '道具标识', '结果变量'] },
   particle: { labels: ['预设'] },
+  nvl: { labels: ['阅读模式'] },
   mov: { labels: ['角色', '位置', '毫秒'] },
   tint: { labels: ['十六进制颜色', '透明度', '毫秒'] },
   clear: { labels: ['结局标识（缺省=当前场景）'] },
   exp: { labels: ['角色标识', '经验值'] },
-  achievement: { labels: ['模式（填 unlock 解锁）', '成就标识'] },
+  achievement: { labels: ['操作', '成就标识'] },
   choice: { labels: [] },
 };
 
@@ -122,7 +125,7 @@ function kindBadge(l: LineModel): string {
   switch (l.kind) {
     case 'text': return '台词';
     case 'label': return '标签';
-    case 'instr': return '@' + l.name;
+    case 'instr': return instructionLabel(l.name);
     case 'choice-option': return '选项';
     case 'comment': return '注释';
     default: return '空行';
@@ -473,6 +476,24 @@ function renderInstrFields(
 
   labels.forEach((labelText, index) => {
     const value = source.value(line.raw, index);
+    const choices: Readonly<Record<string, string>> | undefined = index !== 0 ? undefined
+      : line.name === 'particle' ? { ...PARTICLE_NAMES, off: '关闭特效' }
+        : line.name === 'nvl' ? { on: '开启', off: '关闭', clear: '清空本页' }
+          : line.name === 'achievement' ? { unlock: '解锁' } : undefined;
+    if (choices) {
+      const select = h('select'); select.setAttribute('aria-label', labelText);
+      const decoded = decodeInstructionArgument(value);
+      if (!(decoded in choices)) {
+        const unknown = h('option', undefined, value ? `自定义：${value}` : '请选择'); unknown.value = value; select.append(unknown);
+      }
+      for (const [token, label] of Object.entries(choices)) {
+        const option = h('option', undefined, label); option.value = token; select.append(option);
+      }
+      select.value = decoded in choices ? decoded : value;
+      select.onchange = () => writeBack(select, index, select.value);
+      fields.append(select);
+      return;
+    }
     if (tpl?.opSelect === index) {
       const select = h('select');
       select.setAttribute('aria-label', labelText);

@@ -429,18 +429,18 @@ export function parseThemeEditorDraft(text: string): ThemeEditorDraft {
     if (!['theme', 'titleLogo', 'font', 'fonts', 'titleBackground'].includes(key)) throw new Error(`主题草稿不支持字段：${key}`);
   }
   const theme = raw['theme'] ?? null;
-  if (theme !== null && !isRecord(theme)) throw new Error('theme 必须是对象或 null。');
+  if (theme !== null && !isRecord(theme)) throw new Error('主题配置必须是对象，或填写 null 恢复默认。');
   const titleLogo = raw['titleLogo'] ?? null;
-  if (titleLogo !== null && typeof titleLogo !== 'string') throw new Error('titleLogo 必须是字符串或 null。');
+  if (titleLogo !== null && typeof titleLogo !== 'string') throw new Error('标题字标必须是素材键，或填写 null 恢复默认。');
   const playerConfig: NonNullable<ThemeEditorDraft['playerConfig']> = {};
   for (const key of ['font', 'titleBackground'] as const) if (Object.hasOwn(raw, key)) {
     const value = raw[key];
-    if (value !== null && typeof value !== 'string') throw new Error(`${key} 必须是字符串或 null。`);
+    if (value !== null && typeof value !== 'string') throw new Error(`${key === 'font' ? '字体路径' : '标题背景'}必须是文本，或填写 null 恢复默认。`);
     playerConfig[key] = value;
   }
   if (Object.hasOwn(raw, 'fonts')) {
     const value = raw['fonts'];
-    if (value !== null && !isRecord(value)) throw new Error('fonts 必须是字体角色对象或 null。');
+    if (value !== null && !isRecord(value)) throw new Error('分用途字体必须是配置对象，或填写 null 恢复默认。');
     if (isRecord(value)) for (const [role, path] of Object.entries(value)) {
       if (!['body', 'title', 'ui'].includes(role) || (path !== null && typeof path !== 'string')) throw new Error(`字体角色或路径无效：${role}`);
     }
@@ -451,8 +451,8 @@ export function parseThemeEditorDraft(text: string): ThemeEditorDraft {
 
 /** Project a complete Editor draft while retaining source fields outside its ownership. */
 export function projectThemeEditorDraft(config: Record<string, unknown>, draft: ThemeEditorDraft): Record<string, unknown> {
-  if (draft.theme !== null && !isRecord(draft.theme)) throw new Error('theme 必须是对象或 null。');
-  if (draft.titleLogo !== null && typeof draft.titleLogo !== 'string') throw new Error('titleLogo 必须是字符串或 null。');
+  if (draft.theme !== null && !isRecord(draft.theme)) throw new Error('主题配置必须是对象，或填写 null 恢复默认。');
+  if (draft.titleLogo !== null && typeof draft.titleLogo !== 'string') throw new Error('标题字标必须是素材键，或填写 null 恢复默认。');
   const projected = { ...config };
   if (draft.theme === null) {
     delete projected['theme'];

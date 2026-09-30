@@ -23,9 +23,9 @@ export function openProjectSearch(actions: SearchActions): void {
   input.setAttribute('aria-label', '搜索场景、正文、时间轴或工作区');
   input.setAttribute('role', 'combobox'); input.setAttribute('aria-controls', 'project-search-results');
   input.setAttribute('aria-expanded', 'true'); input.setAttribute('aria-autocomplete', 'list');
-  const close = h('button', undefined, 'Esc'); close.type = 'button'; close.setAttribute('aria-label', '关闭搜索');
+  const close = h('button', undefined, '关闭'); close.type = 'button'; close.setAttribute('aria-label', '关闭搜索');
   const results = h('div', 'project-search-results'); results.id = 'project-search-results'; results.setAttribute('role', 'listbox');
-  const footer = h('div', 'project-search-footer', '↑ ↓ 选择　Enter 打开');
+  const footer = h('div', 'project-search-footer', '↑ ↓ 选择　回车打开');
   footer.setAttribute('role', 'status');
   let entries: Array<{ title: string; location: string; icon: string; open(): void }> = [];
   let selected = 0;

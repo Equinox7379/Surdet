@@ -1,5 +1,5 @@
 import { bindStageEditingHooks } from './stage-editing.js';
-import { PROJECT_ASSET_RELOCATION_KINDS, AGENT_IMAGE_MAX_BYTES } from '@surdet/authoring';
+import { PROJECT_ASSET_RELOCATION_KINDS, AGENT_IMAGE_MAX_BYTES, parseProjectConfigDocument } from '@surdet/authoring';
 /**
  * Surdet 可视化剧本编辑器入口（E0 拆分后：仅装配与事件路由）。
  * 功能：打开游戏目录（File System Access）→ 场景列表 → 块式可视化编辑（raw 行为事实来源，
@@ -1107,6 +1107,11 @@ function currentObjectLabel(): string {
 }
 
 function projectBarProjection(): ProjectBarProjection {
+  let projectName = state.dirName || '未打开项目';
+  try {
+    const title = parseProjectConfigDocument(state.gameConfigText || '{}').title;
+    if (typeof title === 'string' && title.trim()) projectName = title;
+  } catch { /* Keep the directory identity when source configuration cannot be read. */ }
   const hasDirtyFiles = hasDirtyProjectFiles();
   const saveState: ProjectSaveState = hasDirtyFiles
     ? saveAttemptLeftDirty ? 'partial-failure' : 'dirty'
@@ -1124,7 +1129,7 @@ function projectBarProjection(): ProjectBarProjection {
     relayProtection: relay.protection,
     relayUpdate: relay.update,
     relayDirty: relay.dirty,
-    projectName: state.dirName || '未打开项目',
+    projectName,
     objectLabel: currentObjectLabel(),
     saveState,
     canUndo: depth.past > 0,

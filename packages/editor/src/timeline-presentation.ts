@@ -133,8 +133,8 @@ function naturalStepAtLeast(value: number): number {
 }
 
 function tickLabel(valueMs: number): string {
-  if (Math.abs(valueMs) < 1000) return `${Number(valueMs.toFixed(3))}ms`;
-  return `${Number((valueMs / 1000).toFixed(3))}s`;
+  if (Math.abs(valueMs) < 1000) return `${Number(valueMs.toFixed(3))}毫秒`;
+  return `${Number((valueMs / 1000).toFixed(3))}秒`;
 }
 
 export function buildTimelineTicks(

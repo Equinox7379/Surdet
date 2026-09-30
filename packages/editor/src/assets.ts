@@ -7,6 +7,17 @@
 import { parsePortraitFileName as parsePortraitIdentity, portraitSourcePaths, resolveProjectPortraits, samplePortraitVisual } from '@surdet/core';
 import { parseProjectConfigDocument } from '@surdet/authoring';
 
+/** Show the author's character name without renaming the asset binding. */
+export function portraitDisplayName(key: string, configText: string): string {
+  const [role, ...outfit] = key.split(':');
+  try {
+    const config = parseProjectConfigDocument(configText || '{}');
+    const characters = config.characters as Record<string, { name?: string }> | undefined;
+    const name = characters?.[role!]?.name;
+    return typeof name === 'string' && name.trim() ? [name, ...outfit].join(' · ') : key;
+  } catch { return key; } // Invalid source is reported by project validation, not hidden or rewritten here.
+}
+
 export type AssetKind = 'bg' | 'portrait' | 'avatar' | 'bgm' | 'ambience' | 'se' | 'voice' | 'video' | 'font' | 'other' | 'cg' | 'music' | 'text';
 
 /** 目录扫描出的素材文件条目 */
