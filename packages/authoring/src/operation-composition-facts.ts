@@ -80,6 +80,7 @@ export async function buildSceneOperationCompositionDraft(input: {
       { objectRef: 'config:galleryPolicy', expectedFingerprint: await input.hasher.sha256(stableStringify(readGalleryDocument(input.galleryText).document.unlockPolicy ?? null)) },
       { objectRef: 'config:galleryReplay', expectedFingerprint: await input.hasher.sha256(stableStringify(readGalleryDocument(input.galleryText).document.texts ?? [])) },
       { objectRef: 'config:galleryEndings', expectedFingerprint: await input.hasher.sha256(stableStringify(readGalleryDocument(input.galleryText).document.endings ?? [])) },
+      { objectRef: 'config:galleryDossiers', expectedFingerprint: await input.hasher.sha256(stableStringify({ profiles: readGalleryDocument(input.galleryText).document.profiles ?? [], terms: readGalleryDocument(input.galleryText).document.terms ?? [] })) },
       { objectRef: 'config:stage', expectedFingerprint: await input.hasher.sha256(stableStringify(input.stageConfig ?? null)) },
       { objectRef: 'config:fonts', expectedFingerprint: await input.hasher.sha256(stableStringify(input.fontPaths)) },
       { objectRef: 'config:theme', expectedFingerprint: await input.hasher.sha256(stableStringify({ theme: input.themeConfig ?? null, titleLogo: input.titleLogo ?? null })) },
@@ -140,6 +141,7 @@ export async function buildTimelineOperationCompositionDraft(input: {
       { objectRef: 'config:galleryPolicy', expectedFingerprint: await input.hasher.sha256(stableStringify(readGalleryDocument(input.workingFiles?.[GALLERY_PATH]).document.unlockPolicy ?? null)) },
       { objectRef: 'config:galleryReplay', expectedFingerprint: await input.hasher.sha256(stableStringify(readGalleryDocument(input.workingFiles?.[GALLERY_PATH]).document.texts ?? [])) },
       { objectRef: 'config:galleryEndings', expectedFingerprint: await input.hasher.sha256(stableStringify(readGalleryDocument(input.workingFiles?.[GALLERY_PATH]).document.endings ?? [])) },
+      { objectRef: 'config:galleryDossiers', expectedFingerprint: await input.hasher.sha256(stableStringify({ profiles: readGalleryDocument(input.workingFiles?.[GALLERY_PATH]).document.profiles ?? [], terms: readGalleryDocument(input.workingFiles?.[GALLERY_PATH]).document.terms ?? [] })) },
       { objectRef: 'config:portraits', expectedFingerprint: await input.hasher.sha256(stableStringify(projectPortraitOverrides(input.config))) },
     ],
   };
@@ -188,6 +190,10 @@ export async function buildCharacterOperationCompositionDraft(input: {
     }))],
     replayStatePreconditions: [
       { objectRef: 'config:characters', expectedFingerprint: input.charactersFingerprintBefore },
+      ...(input.capabilityId === 'character.remove' ? [{ objectRef: 'config:galleryDossiers', expectedFingerprint: await input.hasher.sha256(stableStringify({
+        profiles: readGalleryDocument(input.workingFilesBefore?.[GALLERY_PATH]).document.profiles ?? [],
+        terms: readGalleryDocument(input.workingFilesBefore?.[GALLERY_PATH]).document.terms ?? [],
+      })) }] : []),
       ...(migratedScenes.length === 0 ? [] : [{ objectRef: 'config:textCatalog', expectedFingerprint: await input.hasher.sha256(stableStringify(parseProjectConfigDocument(input.workingFilesBefore!['game.config.json'] ?? '{}').textCatalog ?? null)) }]),
       ...(migratedScenes.length === 0 ? [] : [{ objectRef: 'config:terminology', expectedFingerprint: await input.hasher.sha256(stableStringify(input.workingFilesBefore!['content/config/terminology.json'] ?? null)) }]),
       ...await Promise.all(migratedScenes.map(async ({ path, objectRef }) => ({

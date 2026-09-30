@@ -1,6 +1,6 @@
 import { parseProjectConfigDocument } from '@surdet/authoring';
 import { state } from './state.js';
-import { readGalleryUnlockPolicy, readGalleryReplayEntries, readGalleryEndings } from '@surdet/core';
+import { readGalleryUnlockPolicy, readGalleryReplayEntries, readGalleryEndings, readGalleryDossiers } from '@surdet/core';
 
 export type ConfigSourceName = keyof typeof state.handles;
 
@@ -13,7 +13,7 @@ export function parseConfigSource(name: ConfigSourceName, text: string): unknown
   const path = configSourcePath(name);
   if (name !== 'achievements') {
     const config = parseProjectConfigDocument(text, path);
-    if (name === 'gallery') { readGalleryUnlockPolicy(config); readGalleryReplayEntries(config); readGalleryEndings(config); }
+    if (name === 'gallery') { readGalleryUnlockPolicy(config); readGalleryReplayEntries(config); readGalleryEndings(config); readGalleryDossiers(config); }
     return config;
   }
   let value: unknown;

@@ -15,6 +15,7 @@ import {
   applyGalleryPolicyPatch,
   applyGalleryTextMutation,
   applyGalleryEndingMutation,
+  applyGalleryDossierMutation,
   inspectGallery,
   GALLERY_PATH,
   type GalleryTextPatchInput,
@@ -80,6 +81,26 @@ async function fingerprintOf(change: ChangeSession, id: string): Promise<string>
 }
 
 describe('gallery.cg authoring operations', () => {
+  it('creates dossier fragments and registers canonical terms without changing unrelated data', async () => {
+    const { change } = await open();
+    change.record.workingFiles['game.config.json'] = JSON.stringify({ characters: { rin: { name: '凛' } } });
+    change.record.workingFiles['content/config/terminology.json'] = JSON.stringify({ terms: [{ canonical: '旧词', variants: ['旧写法'], extra: 8 }], custom: true });
+    const first = await applyGalleryDossierMutation(change, 'profiles', { operationId: 'profile', id: 'rin.first', character: 'rin', title: '初见', description: '车站相遇。' }, hasher);
+    await applyGalleryDossierMutation(change, 'profiles', { operationId: 'secret', id: 'rin.secret', character: 'rin', title: '往事', description: '秘密。' }, hasher);
+    await applyGalleryDossierMutation(change, 'terms', { operationId: 'term', id: 'port', canonical: '雾港', description: '海边的小城。' }, hasher);
+    expect(JSON.parse(change.record.workingFiles['content/config/terminology.json']!)).toEqual({ terms: [{ canonical: '旧词', variants: ['旧写法'], extra: 8 }, { canonical: '雾港', variants: [] }], custom: true });
+    await applyGalleryDossierMutation(change, 'profiles', { operationId: 'profile-edit', id: 'rin.first', expectedFingerprint: first.fingerprint, patch: { title: null, description: '已经修订。' } }, hasher);
+    const saved = structuredClone(change.record);
+    await expect(applyGalleryDossierMutation(change, 'profiles', { operationId: 'missing-character', id: 'bad', character: 'missing' }, hasher)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    await expect(applyGalleryDossierMutation(change, 'profiles', { operationId: 'stale-profile', id: 'rin.first', expectedFingerprint: first.fingerprint, patch: { description: '过期稿' } }, hasher)).rejects.toMatchObject({ code: 'OBJECT_REF_STALE' });
+    expect(change.record).toEqual(saved);
+    const view = await inspectGallery(change.record.workingFiles[GALLERY_PATH], hasher);
+    expect(view.profiles[0]).toMatchObject({ character: 'rin', description: '已经修订。', objectRef: 'gallery:profiles:rin.first' });
+    expect(view.profiles[0]).not.toHaveProperty('title');
+    change.record.composition = { ...change.record.composition!, mode: 'candidate' }; const candidate = structuredClone(change.record);
+    await expect(applyGalleryDossierMutation(change, 'terms', { operationId: 'candidate-term', id: 'no', canonical: '不落盘' }, hasher)).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
+    expect(change.record).toEqual(candidate);
+  });
   it('creates and edits ending metadata with stale/rejected writes leaving the draft untouched', async () => {
     const { change } = await open(JSON.stringify({ ...JSON.parse(baseGallery), endings: [{ id: 'home', name: '归途', description: '旧说明', extra: 7 }] }));
     const before = (await inspectGallery(change.record.workingFiles[GALLERY_PATH], hasher)).endings[0]!;
@@ -130,7 +151,7 @@ describe('gallery.cg authoring operations', () => {
     const input = { operationId: 'policy', expectedFingerprint: before.fingerprint, patch: { cgs: 'profile' as const } };
     const result = await applyGalleryPolicyPatch(change, input, hasher);
     expect(workingGallery(change)).toEqual({ ...original, unlockPolicy: { cgs: 'profile' } });
-    expect(result.unlockPolicy.effective).toEqual({ cgs: 'profile', music: 'save', texts: 'save', endings: 'save' });
+    expect(result.unlockPolicy.effective).toEqual({ cgs: 'profile', music: 'save', texts: 'save', endings: 'save', profiles: 'save', terms: 'save' });
     await applyGalleryPolicyPatch(change, input, hasher); // idempotency
     const saved = structuredClone(change.record);
     await expect(applyGalleryPolicyPatch(change, { ...input, operationId: 'stale' }, hasher)).rejects.toMatchObject({ code: 'OBJECT_REF_STALE' });

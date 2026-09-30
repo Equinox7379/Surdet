@@ -31,7 +31,8 @@ function collectTextSourceRows(snapshot: ProjectSnapshot) {
   const terminology = snapshot.files.find(file => file.path === 'content/config/terminology.json');
   return catalogRead(() => collectProjectTextRows(snapshot.config, snapshot.scenes.map(scene => ({
     id: scene.id, path: scene.path, text: scene.file.text, sha256: scene.file.sha256,
-  })), terminology ? parseProjectConfigDocument(terminology.text, terminology.path) : undefined));
+  })), terminology ? parseProjectConfigDocument(terminology.text, terminology.path) : undefined,
+    parseProjectConfigDocument(snapshot.files.find(file => file.path === 'content/config/gallery.json')?.text ?? '{}', 'content/config/gallery.json')));
 }
 export async function collectTextSources(snapshot: ProjectSnapshot, hasher: TextHasher): Promise<CatalogSource[]> {
   return projectTextSources(collectTextSourceRows(snapshot), text => hasher.sha256(text));

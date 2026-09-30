@@ -16,6 +16,7 @@ import {
   applyGalleryPolicyPatch, type GalleryPolicyPatchInput,
   applyGalleryTextMutation, type GalleryTextCreateInput, type GalleryTextPatchInput,
   applyGalleryEndingMutation, type GalleryEndingCreateInput, type GalleryEndingPatchInput,
+  applyGalleryDossierMutation, type GalleryDossierCreateInput, type GalleryDossierPatchInput,
   inspectGallery,
   inspectPlayerConfig,
   inspectStageConfig, applyStageConfigPatch, type StageConfigPatchInput,
@@ -772,7 +773,7 @@ export class AuthoringService {
         object.fingerprint = hashText(stableStringify(declaration));
       }
     }
-    if ((object.kind === 'gallery-cg' || object.kind === 'gallery-text' || object.kind === 'gallery-ending')) object.fingerprint = hashText(stableStringify(object.details));
+    if ((object.kind === 'gallery-cg' || object.kind === 'gallery-text' || object.kind === 'gallery-ending' || object.kind === 'gallery-profile' || object.kind === 'gallery-term')) object.fingerprint = hashText(stableStringify(object.details));
     if (object.kind === 'text-catalog' || object.kind === 'text-key') object.fingerprint = hashText(stableStringify(object.details));
     return { ...metadata, result: { ...object, view, ...(page === undefined ? {} : { fragment: page }) } };
   }
@@ -846,6 +847,13 @@ export class AuthoringService {
   async galleryEndingMutate(changeId: string, input: GalleryEndingCreateInput | GalleryEndingPatchInput): Promise<ServiceResult<unknown>> {
     return this.withOpenChange(changeId, async context => {
       const result = await applyGalleryEndingMutation(context.session, input, { sha256: async text => hashText(text) });
+      return { ...metadataForChange(context.session), result };
+    });
+  }
+
+  async galleryDossierMutate(changeId: string, section: 'profiles' | 'terms', input: GalleryDossierCreateInput | GalleryDossierPatchInput): Promise<ServiceResult<unknown>> {
+    return this.withOpenChange(changeId, async context => {
+      const result = await applyGalleryDossierMutation(context.session, section, input, { sha256: async text => hashText(text) });
       return { ...metadataForChange(context.session), result };
     });
   }

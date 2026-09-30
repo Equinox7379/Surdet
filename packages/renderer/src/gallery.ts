@@ -40,6 +40,8 @@ export interface GalleryConfig {
   music: GalleryMusicDef[];
   texts?: GalleryTextDef[];
   endings?: import('@surdet/core').GalleryEndingEntry[];
+  profiles?: import('@surdet/core').GalleryProfileEntry[];
+  terms?: import('@surdet/core').GalleryTermEntry[];
 }
 
 /** 单个鉴赏条目的展示形态 */
@@ -58,13 +60,21 @@ export interface GalleryItemView {
 /** 合并配置与解锁状态 → 展示列表（顺序与配置一致） */
 export function buildGalleryViews(
   config: GalleryConfig,
-  unlocked: { cgs: string[]; music: string[]; texts?: string[]; endings?: string[] },
-): { cgs: GalleryItemView[]; music: GalleryItemView[]; texts: GalleryItemView[]; endings: GalleryItemView[] } {
+  unlocked: { cgs: string[]; music: string[]; texts?: string[]; endings?: string[]; profiles?: string[]; terms?: string[] },
+  names: { characters?: Record<string, string>; terms?: Record<string, string> } = {},
+): { cgs: GalleryItemView[]; music: GalleryItemView[]; texts: GalleryItemView[]; endings: GalleryItemView[]; profiles: GalleryItemView[]; terms: GalleryItemView[] } {
   const cgSet = new Set(unlocked.cgs);
   const musicSet = new Set(unlocked.music);
   const textSet = new Set(unlocked.texts ?? []);
   const endingSet = new Set(unlocked.endings ?? []);
+  const profileSet = new Set(unlocked.profiles ?? []), termSet = new Set(unlocked.terms ?? []);
   return {
+    profiles: (config.profiles ?? []).map(entry => ({ id: entry.id, unlocked: profileSet.has(entry.id),
+      name: profileSet.has(entry.id) ? `${names.characters?.[entry.character] ?? entry.character}${entry.title ? ` · ${entry.title}` : ''}` : '???',
+      description: profileSet.has(entry.id) ? entry.description : undefined })),
+    terms: (config.terms ?? []).map(entry => ({ id: entry.id, unlocked: termSet.has(entry.id),
+      name: termSet.has(entry.id) ? names.terms?.[entry.canonical] ?? entry.canonical : '???',
+      description: termSet.has(entry.id) ? entry.description : undefined })),
     endings: (config.endings ?? []).map(entry => ({ id: entry.id, unlocked: endingSet.has(entry.id),
       name: endingSet.has(entry.id) ? entry.name : '???', description: endingSet.has(entry.id) ? entry.description : undefined })),
     cgs: config.cgs.map((c) => ({ id: c.id, name: c.name, unlocked: cgSet.has(c.id), src: c.src })),

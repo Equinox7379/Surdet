@@ -135,7 +135,7 @@ export interface CoreEventMap extends EventMap {
   wait: { ms: number };
   /** @video 阻塞播放：宿主播放结束（或玩家点击跳过）后调 finishWait() 恢复 */
   video: { src: string };
-  gallery: { type: 'cg' | 'music' | 'text'; id: string; fresh: boolean };
+  gallery: { type: 'cg' | 'music' | 'text' | 'profile' | 'term'; id: string; fresh: boolean };
   /** @clear 周目通关：ending = 结局标识（缺省为当前场景 ID）；fresh = 首次达成 */
   clear: { ending: string; fresh: boolean };
   /** @exp 角色成长：levelsGained > 0 时宿主可播放升级演出/触发 levelEvents */
@@ -1091,6 +1091,15 @@ export class Interpreter {
         requireArg(instr, arg0, '@unlock_text');
         const fresh = this.gallery.unlockText(arg0!);
         this.#bus.emit('gallery', { type: 'text', id: arg0!, fresh });
+        return;
+      }
+      case 'unlock_profile':
+      case 'unlock_term': {
+        requireArg(instr, arg0, `@${instr.name}`);
+        const id = dequoteInstrArg(arg0!);
+        if (!id.trim()) throw new RuntimeError(`@${instr.name} 需要非空资料标识`, instr);
+        const fresh = instr.name === 'unlock_profile' ? this.gallery.unlockProfile(id) : this.gallery.unlockTerm(id);
+        this.#bus.emit('gallery', { type: instr.name === 'unlock_profile' ? 'profile' : 'term', id, fresh });
         return;
       }
       case 'clear': {

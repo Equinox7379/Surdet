@@ -8,7 +8,7 @@
  *  - 名词表导入/导出；审计面板一键加变体入口（addTerminologyVariant）
  */
 import { state, h, setStatus } from '../state.js';
-import { projectPortraitOverrides, readProjectStage, readProjectUi, readGalleryReplayEntries, compileScene, type ProjectUiDocument } from '@surdet/core';
+import { projectPortraitOverrides, readProjectStage, readProjectUi, readGalleryReplayEntries, readGalleryDossiers, parseTerminology, compileScene, type ProjectUiDocument } from '@surdet/core';
 import { assertConfigSourcesReadable, configSourceError, configSourcePath, parseConfigSource, type ConfigSourceName } from '../config-source.js';
 import { assetPathForHandle, assertProjectWriteUnlocked, readProjectSourceText, runProjectWriteOperation, writeProjectText } from '../project-io.js';
 import { editorWorkspaceStatus } from '../editor-workspace.js';
@@ -82,7 +82,7 @@ const CONFIG_SECTIONS: readonly ConfigSectionDescriptor[] = [
   { id: 'calendar', label: '日历与地图', description: '安排回合规则、地图节点、前置关系与据点指令。', file: 'content/config/calendar.json', render: renderCalendarSection },
   { id: 'growth', label: '角色成长', description: '设置经验曲线、等级范围和成长事件。', file: 'content/config/growth.json', render: renderGrowthSection },
   { id: 'events', label: '事件', description: '管理条件事件、日程事件和角色阶段文案。', file: 'content/config/events.json', render: renderEventsSection },
-  { id: 'gallery', label: '鉴赏', description: '维护图片、音乐、剧情回想与结局册。', file: 'content/config/gallery.json', render: renderGallerySection },
+  { id: 'gallery', label: '鉴赏', description: '维护图片、音乐、剧情回想、结局册、人物档案与用语辞典。', file: 'content/config/gallery.json', render: renderGallerySection },
   { id: 'terminology', label: '名词表', description: '统一规范词与常见变体，供审计检查使用。', file: 'content/config/terminology.json', render: renderTerminologySection },
 ];
 
@@ -888,6 +888,17 @@ async function saveConfigFileUnlocked(
     try { await validateReplayTargets(json); }
     catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
   }
+  if (name === 'terminology' && errors.length === 0 && state.dirHandle) {
+    try {
+      const directory = await (await state.dirHandle.getDirectoryHandle('content')).getDirectoryHandle('config');
+      let gallery: Record<string, unknown> = {};
+      try { gallery = parseProjectConfigDocument(await readProjectSourceText(await directory.getFileHandle('gallery.json'))); }
+      catch (error) { if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error; }
+      const known = new Set(parseTerminology(json).map(term => term.canonical));
+      const missing = readGalleryDossiers(gallery).terms.find(entry => !known.has(entry.canonical));
+      if (missing) errors.push(`规范词仍被用语辞典引用：${missing.canonical}，请先修改词条 ${missing.id}`);
+    } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+  }
   if (errors.length > 0) {
     setStatus(`${label}未保存：${errors[0]}${errors.length > 1 ? `（另有 ${errors.length - 1} 条）` : ''}`, false, 6000);
     return false;
@@ -1608,7 +1619,7 @@ function renderEventsSection(): HTMLElement {
 function renderGallerySection(): HTMLElement {
   const { sec, ops } = sectionShell('gallery');
   const ga = ensureGaRows();
-  for (const [section, label] of [['cgs', '图片收藏'], ['music', '音乐收藏'], ['texts', '剧情回想'], ['endings', '结局收藏']] as const) {
+  for (const [section, label] of [['cgs', '图片收藏'], ['music', '音乐收藏'], ['texts', '剧情回想'], ['endings', '结局收藏'], ['profiles', '人物档案'], ['terms', '用语辞典']] as const) {
     const row = h('label', 'config-field', `${label}：`);
     const select = h('select');
     select.setAttribute('aria-label', `${label}保留方式`);
@@ -1649,6 +1660,18 @@ function renderGallerySection(): HTMLElement {
   ], ga.endings ??= [], { id: '', name: '', description: '' }, { label: '结局册', addLabel: '新增结局' }));
   endingsSection.append(h('p', 'dim', '在剧情中用 @clear 结局标识 解锁对应条目。未解锁前不会显示名称或说明。'));
   sec.appendChild(endingsSection);
+  const profilesSection = configSubsection('人物档案');
+  profilesSection.appendChild(renderObjectTable([
+    { key: 'id', label: '资料标识' }, { key: 'character', label: '角色标识' }, { key: 'title', label: '片段标题' }, { key: 'description', label: '资料说明' },
+  ], ga.profiles ??= [], { id: '', character: '', title: '', description: '' }, { label: '人物档案', addLabel: '新增人物资料' }));
+  profilesSection.append(h('p', 'dim', '角色先在角色表保存；同一角色可登记多段资料，用 @unlock_profile 资料标识 分别解锁。'));
+  sec.appendChild(profilesSection);
+  const termsSection = configSubsection('用语辞典');
+  termsSection.appendChild(renderObjectTable([
+    { key: 'id', label: '词条标识' }, { key: 'canonical', label: '规范词' }, { key: 'description', label: '词条说明' },
+  ], ga.terms ??= [], { id: '', canonical: '', description: '' }, { label: '用语辞典', addLabel: '新增用语词条' }));
+  termsSection.append(h('p', 'dim', '规范词先在名词表保存；用 @unlock_term 词条标识 解锁名称和解释。'));
+  sec.appendChild(termsSection);
 
   const saveBtn = h('button', 'primary', '保存鉴赏配置');
   saveBtn.onclick = () => {
@@ -1675,6 +1698,17 @@ async function previewGalleryDraft(): Promise<void> {
 
 async function validateReplayTargets(json: Record<string, unknown>, preview = false): Promise<void> {
   const config = parseConfigObj();
+  const dossiers = readGalleryDossiers(json);
+  if (dossiers.profiles.length || dossiers.terms.length) {
+    const sourceConfig = preview ? config : parseProjectConfigDocument(await readProjectSourceText(await state.dirHandle!.getFileHandle('game.config.json')));
+    let terminology: unknown = state.configFiles.terminology;
+    if (!preview) {
+      const directory = await (await state.dirHandle!.getDirectoryHandle('content')).getDirectoryHandle('config');
+      try { terminology = parseProjectConfigDocument(await readProjectSourceText(await directory.getFileHandle('terminology.json'))); }
+      catch (error) { if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error; terminology = undefined; }
+    }
+    readGalleryDossiers(json, { characters: (sourceConfig.characters ?? {}) as Record<string, unknown>, terms: parseTerminology(terminology).map(term => term.canonical) });
+  }
   for (const entry of readGalleryReplayEntries(json)) {
     const target = state.scenes.get(entry.scene);
     if (!target) throw new Error(`回想场景不存在：${entry.scene}`);

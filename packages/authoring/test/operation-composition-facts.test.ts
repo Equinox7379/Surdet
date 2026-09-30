@@ -37,6 +37,7 @@ async function seal(change: ChangeSession) {
       { objectRef: 'config:galleryPolicy', expectedFingerprint: sha('null') },
       { objectRef: 'config:galleryReplay', expectedFingerprint: sha('[]') },
       { objectRef: 'config:galleryEndings', expectedFingerprint: sha('[]') },
+      { objectRef: 'config:galleryDossiers', expectedFingerprint: sha('{"profiles":[],"terms":[]}') },
         { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
         { objectRef: 'scene:A', expectedFingerprint: sha('@scene A\n旁白：开场。\n@end\n') },
       ],
@@ -74,6 +75,15 @@ async function insert(change: ChangeSession, operationId: string, sceneId: strin
 }
 
 describe('candidate operation-time facts', () => {
+  it('requires dossier definitions and records the metadata dependency before candidate persistence', async () => {
+    const missing = await candidate(), before = structuredClone(missing.record);
+    const input = { operationId: 'intro', sceneId: 'B', blocks: [{ kind: 'instruction' as const, name: 'unlock_profile', args: ['"intro"'] }] };
+    await expect(applySceneCreate(missing, input, hasher)).rejects.toMatchObject({ code: 'CANDIDATE_DEPENDENCY_NOT_READY' }); expect(missing.record).toEqual(before);
+    const ready = await candidate([], { characters: { rin: { name: '凛' } } }, { 'content/config/gallery.json': JSON.stringify({ cgs: [], music: [], profiles: [{ id: 'intro', character: 'rin', title: '初见' }] }) });
+    await applySceneCreate(ready, input, hasher);
+    expect(facts(ready, 'intro').requiredObjects).toContainEqual(expect.objectContaining({ objectRef: 'gallery:profiles:intro', source: 'base' }));
+    expect(facts(ready, 'intro').replayStatePreconditions).toContainEqual(expect.objectContaining({ objectRef: 'config:galleryDossiers' }));
+  });
   it('requires declared replay entries and seals their references without permitting candidate metadata writes', async () => {
     const missing = await candidate();
     const original = structuredClone(missing.record);
@@ -264,7 +274,10 @@ describe('candidate operation-time facts', () => {
     expect(created.producedObjects.find((item) => item.objectRef === 'config:characters')!.finalFingerprint).not.toBe(renamed.producedObjects.find((item) => item.objectRef === 'config:characters')!.finalFingerprint);
     expect(facts(change, 'remove').producedObjects).toContainEqual({ objectRef: 'character:rin', disposition: 'remove' });
     expect(facts(change, 'remove').producedObjects).toContainEqual({ objectRef: 'config:characters', disposition: 'update', finalFingerprint: sha('{}') });
-    expect(facts(change, 'remove').replayStateRequirements).toEqual([{ objectRef: 'config:characters', source: 'candidate', candidateOperationSequence: 2, expectedFingerprint: renamed.producedObjects.find((item) => item.objectRef === 'config:characters')!.finalFingerprint }]);
+    expect(facts(change, 'remove').replayStateRequirements).toEqual([
+      { objectRef: 'config:characters', source: 'candidate', candidateOperationSequence: 2, expectedFingerprint: renamed.producedObjects.find((item) => item.objectRef === 'config:characters')!.finalFingerprint },
+      { objectRef: 'config:galleryDossiers', source: 'base', expectedFingerprint: sha('{"profiles":[],"terms":[]}') },
+    ]);
   });
 
   it('rejects a state-only cycle between character units without changing record or evidence', async () => {
@@ -375,10 +388,12 @@ describe('candidate operation-time facts', () => {
       { objectRef: 'config:galleryPolicy', expectedFingerprint: sha('null') },
       { objectRef: 'config:galleryReplay', expectedFingerprint: sha('[]') },
       { objectRef: 'config:galleryEndings', expectedFingerprint: sha('[]') },
+      { objectRef: 'config:galleryDossiers', expectedFingerprint: sha('{"profiles":[],"terms":[]}') },
       { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
     ]);
     expect(facts(change, 'timeline-duration').replayStateRequirements).toEqual([
       { objectRef: 'config:fonts', source: 'base', expectedFingerprint: sha('{}') },
+      { objectRef: 'config:galleryDossiers', source: 'base', expectedFingerprint: sha('{"profiles":[],"terms":[]}') },
       { objectRef: 'config:galleryEndings', source: 'base', expectedFingerprint: sha('[]') },
       { objectRef: 'config:galleryPolicy', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'config:galleryReplay', source: 'base', expectedFingerprint: sha('[]') },
@@ -401,10 +416,12 @@ describe('candidate operation-time facts', () => {
       { objectRef: 'config:galleryPolicy', expectedFingerprint: sha('null') },
       { objectRef: 'config:galleryReplay', expectedFingerprint: sha('[]') },
       { objectRef: 'config:galleryEndings', expectedFingerprint: sha('[]') },
+      { objectRef: 'config:galleryDossiers', expectedFingerprint: sha('{"profiles":[],"terms":[]}') },
       { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
     ]);
     expect(facts(change, 'timeline-target').replayStateRequirements).toEqual([
       { objectRef: 'config:fonts', source: 'base', expectedFingerprint: sha('{}') },
+      { objectRef: 'config:galleryDossiers', source: 'base', expectedFingerprint: sha('{"profiles":[],"terms":[]}') },
       { objectRef: 'config:galleryEndings', source: 'base', expectedFingerprint: sha('[]') },
       { objectRef: 'config:galleryPolicy', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'config:galleryReplay', source: 'base', expectedFingerprint: sha('[]') },

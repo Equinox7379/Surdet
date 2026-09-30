@@ -443,6 +443,13 @@ const galleryRaw = {
 };
 
 describe('gallery ⇄ JSON', () => {
+  it('roundtrips dossier fields and independent policies while preserving unknown metadata', () => {
+    const raw = { ...galleryRaw, profiles: [{ id: 'rin.first', character: 'rin', title: '初见', description: '相遇。', extra: 8 }], terms: [{ id: 'port', canonical: '雾港', description: '小城。' }], unlockPolicy: { profiles: 'profile' as const, terms: 'save' as const } };
+    const rows = parseGalleryRows(raw); expect(rowsToGallery(raw, rows)).toEqual({ json: raw, errors: [] });
+    rows.profiles![0]!.description = '修订。';
+    expect((rowsToGallery(raw, rows).json.profiles as unknown[])[0]).toEqual({ ...raw.profiles[0], description: '修订。' });
+    rows.terms!.push({ id: 'port', canonical: '另一个词' }); expect(rowsToGallery(raw, rows).errors.length).toBeGreaterThan(0);
+  });
   it('round-trips ending metadata/policy without discarding unknown data and rejects duplicate IDs', () => {
     const raw = { ...galleryRaw, unknown: true, endings: [{ id: 'home', name: '归途', description: '雨停了。', extra: 9 }], unlockPolicy: { endings: 'profile' as const } };
     const rows = parseGalleryRows(raw);

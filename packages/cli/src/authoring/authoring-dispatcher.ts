@@ -151,6 +151,12 @@ export async function dispatchAuthoringCapability(
     case 'gallery.ending.create':
     case 'gallery.ending.patch':
       return { value: await service.galleryEndingMutate(requireChange(context), payload as unknown as Parameters<AuthoringService['galleryEndingMutate']>[1]), operationId: operationIdFrom(payload) };
+    case 'gallery.profile.create':
+    case 'gallery.profile.patch':
+      return { value: await service.galleryDossierMutate(requireChange(context), 'profiles', payload as unknown as Parameters<AuthoringService['galleryDossierMutate']>[2]), operationId: operationIdFrom(payload) };
+    case 'gallery.term.create':
+    case 'gallery.term.patch':
+      return { value: await service.galleryDossierMutate(requireChange(context), 'terms', payload as unknown as Parameters<AuthoringService['galleryDossierMutate']>[2]), operationId: operationIdFrom(payload) };
     case 'character.remove':
       return { value: await service.characterRemove(requireChange(context), payload as unknown as Parameters<AuthoringService['characterRemove']>[1]), operationId: operationIdFrom(payload) };
     case 'timeline.create':

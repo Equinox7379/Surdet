@@ -74,6 +74,55 @@ async function connectedProject(projectRoot: string, policy: 'observe' | 'stage'
 }
 
 describe('Surdet Agent Port MCP tool projection', () => {
+  it('authors character dossiers, canonical terms and translations through the public tools', async () => {
+    const { session, client, server } = await connected('apply');
+    const call = async (name: string, args: Record<string, unknown> = {}) => {
+      const response = await client.callTool({ name, arguments: args }); expect(response.isError, textContent(response)).not.toBe(true);
+      return (response.structuredContent as any).result;
+    };
+    try {
+      await call('surdet_change_begin', { compositionMode: 'direct' });
+      const config = await call('surdet_project_inspect', { view: 'working' });
+      await call('surdet_character_ensure', { operationId: 'rin', id: 'rin', name: '凛', expectedFingerprint: config.charactersFingerprint });
+      await call('surdet_gallery_profile_create', { operationId: 'intro', id: 'intro', character: 'rin', title: '初见', description: '在车站相遇。' });
+      await call('surdet_gallery_profile_create', { operationId: 'secret', id: 'secret', character: 'rin', title: '往事', description: '隐藏资料。' });
+      await call('surdet_gallery_term_create', { operationId: 'port', id: 'port', canonical: '雾港', description: '海边的小城。' });
+      expect((await call('surdet_project_gallery', { view: 'project' })).profiles).toEqual([]);
+      const gallery = await call('surdet_project_gallery', { view: 'working' });
+      await call('surdet_gallery_profile_patch', { operationId: 'intro-edit', id: 'intro', expectedFingerprint: gallery.profiles[0].fingerprint, patch: { description: '已经修订的初见。' } });
+      const stale = await client.callTool({ name: 'surdet_gallery_profile_patch', arguments: { operationId: 'stale', id: 'intro', expectedFingerprint: gallery.profiles[0].fingerprint, patch: { title: '过期' } } });
+      expect(stale.structuredContent).toMatchObject({ error: { code: 'OBJECT_REF_STALE' } });
+      await call('surdet_gallery_policy_patch', { operationId: 'policy', expectedFingerprint: gallery.unlockPolicy.fingerprint, patch: { profiles: 'profile', terms: 'save' } });
+      const object = await call('surdet_object_inspect', { view: 'working', objectRef: 'gallery:profiles:intro' });
+      expect(object.references).toContain('character:rin');
+      const known = await call('surdet_project_inspect', { view: 'working' });
+      const removed = await client.callTool({ name: 'surdet_character_remove', arguments: { operationId: 'remove-rin', id: 'rin', expectedFingerprint: known.charactersFingerprint } });
+      expect(removed.structuredContent).toMatchObject({ error: { code: 'OBJECT_PRECONDITION_FAILED' } });
+      await call('surdet_scene_create', { operationId: 'dossiers', sceneId: 'dossiers', blocks: [
+        { kind: 'instruction', name: 'unlock_profile', args: ['"intro"'] }, { kind: 'instruction', name: 'unlock_profile', args: ['secret'] },
+        { kind: 'instruction', name: 'unlock_term', args: ['port'] }, { kind: 'text', value: '资料已解锁。' },
+      ] });
+      const sources = await call('surdet_project_texts', { view: 'working' });
+      const description = sources.sources.find((source: any) => source.kind === 'gallery' && source.objectRef === 'gallery:terms:port' && source.field === 'description');
+      expect(description).toBeDefined();
+      await call('surdet_project_texts_patch', { operationId: 'bind-description', expectedRevision: sources.revision, expectedFingerprint: sources.fingerprint,
+        patch: { type: 'bind', sourceLocale: 'zh-CN', bindings: [{ key: 'port.description', sourceId: description.sourceId }] } });
+      const exported = await call('surdet_project_texts', { view: 'working', format: 'csv', locale: 'en' });
+      const csv = exported.csv.replace('"","untranslated"', '"A seaside town.","untranslated"');
+      expect(csv).not.toBe(exported.csv);
+      const preview = await call('surdet_project_texts_import_preview', { view: 'working', locale: 'en', csv });
+      expect(preview.ready).toBe(true);
+      await call('surdet_project_texts_patch', { operationId: 'import-description', expectedRevision: preview.revision, expectedFingerprint: preview.fingerprint,
+        patch: { type: 'import', locale: 'en', csv, previewFingerprint: preview.previewFingerprint } });
+      expect((await call('surdet_project_validate')).ok).toBe(true);
+      await call('surdet_project_simulate'); await call('surdet_runtime_run_from', { sceneId: 'dossiers', choices: [] });
+      await call('surdet_change_diff'); await call('surdet_delivery_capsule', { label: '人物与用语资料' }); await call('surdet_change_commit');
+      const saved = JSON.parse(fs.readFileSync(path.join(session.projectRoot, 'content/config/gallery.json'), 'utf8'));
+      expect(saved.profiles[0].description).toBe('已经修订的初见。'); expect(saved.terms[0].canonical).toBe('雾港');
+      expect(JSON.parse(fs.readFileSync(path.join(session.projectRoot, 'content/config/terminology.json'), 'utf8')).terms).toEqual([{ canonical: '雾港', variants: [] }]);
+      expect(JSON.parse(fs.readFileSync(path.join(session.projectRoot, 'game.config.json'), 'utf8')).textCatalog.entries[0].translations.en.value).toBe('A seaside town.');
+    } finally { await client.close(); await server.close(); await session.close(); }
+  });
   it('authors replay and ending entries through public tools, validates and commits them', async () => {
     const { session, client, server } = await connected('apply');
     const call = async (name: string, args: Record<string, unknown> = {}) => {
@@ -224,12 +273,12 @@ describe('Surdet Agent Port MCP tool projection', () => {
       expect(names).not.toContain('surdet_change_commit');
       expect(names).not.toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
       for (const action of ['commit', 'recover', 'undo'] as const) expect(names).not.toContain(nativeCapabilityToMcpTool(`asset.relocation.${action}`));
-      expect(names).toHaveLength(59);
+      expect(names).toHaveLength(63);
    }
    if (policy === 'apply') {
      expect(names).toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
       for (const action of ['commit', 'recover', 'undo'] as const) expect(names).toContain(nativeCapabilityToMcpTool(`asset.relocation.${action}`));
-      expect(names).toHaveLength(66);
+      expect(names).toHaveLength(70);
    }
    const described = await client.callTool({ name: 'surdet_session_describe', arguments: {} });
     expect(described.isError).not.toBe(true);
@@ -237,7 +286,7 @@ describe('Surdet Agent Port MCP tool projection', () => {
     const capabilities = await client.callTool({ name: 'surdet_capabilities_describe', arguments: {} });
     expect(capabilities.isError).not.toBe(true);
     expect((capabilities.structuredContent as any).ok).toBe(true);
-    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(64);
+    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(68);
     expect(names).not.toContain('surdet_review_write_decision');
     expect(names).not.toContain('surdet_review_approve');
     if (policy === 'stage') {

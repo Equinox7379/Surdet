@@ -122,7 +122,7 @@ describe('Agent Port gallery authoring', () => {
       expect((await call(first.client, 'change.begin', { compositionMode: 'direct' })).body.ok).toBe(true);
       const result = await call(first.client, 'gallery.policy.patch', { operationId: 'policy', expectedFingerprint: initial.fingerprint, patch: { cgs: 'profile', music: 'profile' } });
       expect(result.body.ok, JSON.stringify(result.body)).toBe(true);
-      expect((await call(first.client, 'project.gallery', { view: 'working' })).body.result.unlockPolicy.effective).toEqual({ cgs: 'profile', music: 'profile' });
+      expect((await call(first.client, 'project.gallery', { view: 'working' })).body.result.unlockPolicy.effective).toEqual({ cgs: 'profile', music: 'profile', texts: 'save', endings: 'save', profiles: 'save', terms: 'save' });
       expect((await call(first.client, 'project.gallery', { view: 'project' })).body.result.unlockPolicy.value).toBeNull();
       const stale = await call(first.client, 'gallery.policy.patch', { operationId: 'stale', expectedFingerprint: initial.fingerprint, patch: { cgs: null } });
       expect(stale.body.error.code).toBe('OBJECT_REF_STALE');
@@ -293,7 +293,7 @@ describe('Agent Port gallery authoring', () => {
     try {
       const projectFacts = await call(reopened.client, 'project.gallery');
       expect(projectFacts.body.result.view).toBe('project');
-      expect(projectFacts.body.result.unlockPolicy.effective).toEqual({ cgs: 'save', music: 'profile' });
+      expect(projectFacts.body.result.unlockPolicy.effective).toEqual({ cgs: 'save', music: 'profile', texts: 'save', endings: 'save', profiles: 'save', terms: 'save' });
       expect(projectFacts.body.result.cgs).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: 'gallery_new', name: '定稿 CG', objectRef: 'gallery:cgs:gallery_new' }),
       ]));

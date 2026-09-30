@@ -48,7 +48,7 @@ export function renderTextCatalogSection(options: {
     source.replaceChildren(...inspection.sources.map(item => {
       const option = h('option'); option.value = item.sourceId;
       const context = isStoryTextSource(item) ? `${item.sceneId} / ${item.label ?? '开头'} / ${item.line}`
-        : `${{ character: '人物显示名', ui: '界面文字', term: '词条' }[item.kind]} / ${item.objectRef}`;
+        : `${{ character: '人物显示名', ui: '界面文字', term: '词条', gallery: '剧情资料' }[item.kind]} / ${item.objectRef}`;
       option.textContent = `${context}：${item.speaker ? item.speaker + '：' : ''}${item.text}`;
       return option;
     }));

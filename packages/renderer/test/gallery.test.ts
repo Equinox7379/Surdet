@@ -13,6 +13,14 @@ const config: GalleryConfig = {
 };
 
 describe('buildGalleryViews', () => {
+  it('masks every locked dossier field and uses the supplied character/term names for unlocked fragments', () => {
+    const metadata = { ...config, profiles: [{ id: 'rin.first', character: 'rin', title: '初见', description: '相遇。' }, { id: 'rin.secret', character: 'rin', title: '秘密', description: '剧透。' }], terms: [{ id: 'port', canonical: '雾港', description: '小城。' }] };
+    const views = buildGalleryViews(metadata, { cgs: [], music: [], profiles: ['rin.first', 'removed'] }, { characters: { rin: 'Rin' }, terms: { 雾港: 'Harbor' } });
+    expect(views.profiles[0]).toMatchObject({ name: 'Rin · 初见', description: '相遇。', unlocked: true });
+    expect(views.profiles[1]).toEqual({ id: 'rin.secret', name: '???', description: undefined, unlocked: false });
+    expect(views.terms[0]).toEqual({ id: 'port', name: '???', description: undefined, unlocked: false });
+    expect(JSON.stringify(views)).not.toContain('秘密'); expect(JSON.stringify(views)).not.toContain('小城。');
+  });
   it('masks locked ending names and descriptions and counts only configured entries', () => {
     const endings = buildGalleryViews({ ...config, endings: [
       { id: 'home', name: '归途', description: '雨停了。' }, { id: 'secret', name: '秘密结局', description: '剧透' },

@@ -160,6 +160,8 @@ export class LegacyStageAdapter implements AdvStage {
     music: GalleryItemView[];
     texts?: GalleryItemView[];
     endings?: GalleryItemView[];
+    profiles?: GalleryItemView[];
+    terms?: GalleryItemView[];
     onPlayMusic?: (id: string, src?: string) => void;
     onReplayText?: (item: GalleryItemView) => void;
     onClose?: () => void;

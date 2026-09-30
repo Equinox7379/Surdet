@@ -31,7 +31,7 @@ export const IMPLEMENTED_INSTRUCTIONS: ReadonlySet<string> = new Set([
   'add_item', 'remove_item', 'has_item',
   // 状态（解释器直改 store）
   'set', 'mod', 'inc', 'dec', 'toggle', 'flag', 'unflag',
-  'unlock_cg', 'unlock_music', 'unlock_text',
+  'unlock_cg', 'unlock_music', 'unlock_text', 'unlock_profile', 'unlock_term',
   // 大系统指令（解释器转发 system 事件，由宿主消费）
   'battle', 'calendar', 'shop', 'item', 'affection', 'event',
   // 成就（解释器转发 system 事件，宿主 AchievementSystem 处理 unlock/check）

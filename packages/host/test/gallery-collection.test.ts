@@ -4,6 +4,21 @@ import { createGalleryCollection, galleryCollectionKey } from '../src/gallery-co
 import { MemoryProfileStorage, LocalStorageProfileStorage } from '../src/profile-store.js';
 
 describe('opt-in permanent gallery', () => {
+  it('keeps profile/term policies independent and protects rejected or corrupt collection writes', async () => {
+    const storage = new MemoryProfileStorage(), policy = readGalleryUnlockPolicy({ unlockPolicy: { profiles: 'profile', terms: 'save' } });
+    const key = await galleryCollectionKey('dossier-game');
+    const collection = await createGalleryCollection(storage, key, policy);
+    const write = vi.spyOn(storage, 'write'); write.mockRejectedValueOnce(new Error('quota'));
+    await expect(collection.unlock('profiles', 'failed')).rejects.toThrow('quota'); expect(collection.snapshot().profiles).toBeUndefined();
+    await collection.unlock('profiles', 'intro'); await collection.unlock('terms', 'port');
+    expect((await createGalleryCollection(storage, key, policy)).snapshot()).toMatchObject({ profiles: ['intro'] });
+    expect(collection.snapshot().terms).toBeUndefined();
+    expect((await createGalleryCollection(storage, await galleryCollectionKey('other-dossier-game'), policy)).snapshot().profiles).toBeUndefined();
+    const preview = await createGalleryCollection(new MemoryProfileStorage(), key, policy); await preview.unlock('profiles', 'preview-only');
+    expect(collection.snapshot().profiles).toEqual(['intro']);
+    await storage.write('bad', { version: 1, cgs: [], music: [], terms: null });
+    await expect(createGalleryCollection(storage, 'bad', policy)).rejects.toThrow('损坏');
+  });
   it('isolates ending policy, old profiles, project keys, previews and failed writes', async () => {
     const storage = new MemoryProfileStorage();
     const key = await galleryCollectionKey('ending-game');
@@ -17,7 +32,7 @@ describe('opt-in permanent gallery', () => {
     expect(collection.snapshot().endings).toEqual([]);
     await collection.unlock('endings', 'home');
     await collection.unlock('cgs', 'not-enabled');
-    expect(await storage.read(key)).toEqual({ version: 1, cgs: ['cg'], music: ['song'], texts: ['replay'], endings: ['home'], custom: true });
+    expect(await storage.read(key)).toEqual({ version: 1, cgs: ['cg'], music: ['song'], texts: ['replay'], endings: ['home'], custom: true, profiles: [], terms: [] });
     const reopened = await createGalleryCollection(storage, key, policy);
     expect(reopened.snapshot().endings).toEqual(['home']);
     const other = await createGalleryCollection(storage, await galleryCollectionKey('other-game'), policy);
@@ -39,7 +54,7 @@ describe('opt-in permanent gallery', () => {
     await collection.unlock('texts', 'memory'); await collection.unlock('cgs', 'temporary');
     const reopened = await createGalleryCollection(storage, 'gallery', policy);
     expect(effectiveGalleryUnlocks({ cgs: [], music: [] }, reopened.snapshot(), policy)).toEqual({ cgs: [], music: [], texts: ['memory'] });
-    expect(await storage.read('gallery')).toEqual({ version: 1, cgs: ['old'], music: [], texts: ['memory'], endings: [], extra: 'keep' });
+    expect(await storage.read('gallery')).toEqual({ version: 1, cgs: ['old'], music: [], texts: ['memory'], endings: [], extra: 'keep', profiles: [], terms: [] });
     await storage.write('bad', { version: 1, cgs: [], music: [], texts: null });
     await expect(createGalleryCollection(storage, 'bad', policy)).rejects.toThrow('损坏');
   });
@@ -92,7 +107,7 @@ describe('opt-in permanent gallery', () => {
   });
 
   it('rejects invalid or expanded policies and independently enables music', () => {
-    expect(readGalleryUnlockPolicy({ unlockPolicy: { music: 'profile' } })).toEqual({ cgs: 'save', music: 'profile', texts: 'save', endings: 'save' });
+    expect(readGalleryUnlockPolicy({ unlockPolicy: { music: 'profile' } })).toEqual({ cgs: 'save', music: 'profile', texts: 'save', endings: 'save', profiles: 'save', terms: 'save' });
     for (const unlockPolicy of [null, [], { cgs: true }, { texts: 'always' }, { music: 'always' }]) {
       expect(() => readGalleryUnlockPolicy({ unlockPolicy })).toThrow();
     }

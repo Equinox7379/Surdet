@@ -48,6 +48,8 @@ interface GalleryViews {
   readonly music: GalleryItemView[];
   readonly texts: GalleryItemView[];
   readonly endings: GalleryItemView[];
+  readonly profiles: GalleryItemView[];
+  readonly terms: GalleryItemView[];
 }
 
 /**
@@ -70,7 +72,7 @@ export class GalleryLayer implements GalleryProjectionPort {
 
   readonly #galleryLayer: Container;
   #theme: RendererTheme = DEFAULT_RENDERER_THEME;
-  #galleryTab: 'cg' | 'music' | 'text' | 'ending' = 'cg';
+  #galleryTab: 'cg' | 'music' | 'text' | 'ending' | 'profile' | 'term' = 'cg';
   #galleryMode: 'grid' | 'viewer' = 'grid';
   #galleryViews: GalleryViews | null = null;
   #galleryOnPlayMusic: ((id: string, src?: string) => void) | null = null;
@@ -79,7 +81,7 @@ export class GalleryLayer implements GalleryProjectionPort {
   #galleryViewerKey: string | null = null;
   #galleryHeader: Container | null = null;
   #galleryContent: Container | null = null;
-  #galleryTabs: { cg: PText; music: PText; text: PText; ending: PText } | null = null;
+  #galleryTabs: { cg: PText; music: PText; text: PText; ending: PText; profile: PText; term: PText } | null = null;
   #tabBorders = new Map<string, Graphics>();
   #scrollOffset = 0;
   #scrollContent: Container | null = null;
@@ -154,6 +156,8 @@ export class GalleryLayer implements GalleryProjectionPort {
     music: readonly GalleryItemView[];
     texts?: readonly GalleryItemView[];
     endings?: readonly GalleryItemView[];
+    profiles?: readonly GalleryItemView[];
+    terms?: readonly GalleryItemView[];
     onPlayMusic?: (id: string, source?: string) => void;
     onReplayText?: (item: GalleryItemView) => void;
     onClose?: () => void;
@@ -166,6 +170,8 @@ export class GalleryLayer implements GalleryProjectionPort {
       music: options.music.map((item) => ({ ...item })),
       texts: (options.texts ?? []).map((item) => ({ ...item })),
       endings: (options.endings ?? []).map((item) => ({ ...item })),
+      profiles: (options.profiles ?? []).map((item) => ({ ...item })),
+      terms: (options.terms ?? []).map((item) => ({ ...item })),
     };
     this.#galleryOnPlayMusic = options.onPlayMusic ?? null;
     this.#galleryOnReplayText = options.onReplayText ?? null;
@@ -265,6 +271,8 @@ export class GalleryLayer implements GalleryProjectionPort {
         music: mkBtn('音乐', this.#margin + 96, 80, () => this.#selectGalleryTab('music')),
         text: mkBtn('文本', this.#margin + 192, 80, () => this.#selectGalleryTab('text')),
         ending: mkBtn('结局', this.#margin + 288, 80, () => this.#selectGalleryTab('ending')),
+        profile: mkBtn('人物', this.#margin + 384, 80, () => this.#selectGalleryTab('profile')),
+        term: mkBtn('词典', this.#margin + 480, 80, () => this.#selectGalleryTab('term')),
       };
       const close = mkBtn('✕ 关闭', this.#w - 150, 150, () => this.#closeGallery());
       close.eventMode = 'static';
@@ -286,9 +294,11 @@ export class GalleryLayer implements GalleryProjectionPort {
     const mask = bindThemeGraphicsProjection(new Graphics().rect(this.#margin - 4, 92, this.#w - this.#margin * 2 + 8, this.#viewportHeight).fill(0xffffff), [null]);
     list.mask = mask;
     content.addChild(list, mask);
-    const items = this.#galleryTab === 'cg' ? views.cgs : this.#galleryTab === 'music' ? views.music : this.#galleryTab === 'ending' ? views.endings : views.texts;
+    const items = this.#galleryTab === 'cg' ? views.cgs : this.#galleryTab === 'music' ? views.music : this.#galleryTab === 'ending' ? views.endings
+      : this.#galleryTab === 'profile' ? views.profiles : this.#galleryTab === 'term' ? views.terms : views.texts;
     if (!items.length) {
-      const empty = this.#galleryTab === 'cg' ? '暂无鉴赏图片' : this.#galleryTab === 'music' ? '暂无音乐条目' : this.#galleryTab === 'ending' ? '已收集 0/0 个结局 · 暂无结局条目' : '暂无文本回想条目';
+      const empty = this.#galleryTab === 'cg' ? '暂无鉴赏图片' : this.#galleryTab === 'music' ? '暂无音乐条目' : this.#galleryTab === 'ending' ? '已收集 0/0 个结局 · 暂无结局条目'
+        : this.#galleryTab === 'profile' ? '已收集 0/0 项人物资料' : this.#galleryTab === 'term' ? '已收集 0/0 个词条' : '暂无文本回想条目';
       list.addChild(this.#text(empty, this.#w - this.#margin * 2, 'textMuted')).position.set(this.#margin, 8);
       this.#scrollHeight = 64;
     } else if (this.#galleryTab === 'cg') {
@@ -344,8 +354,10 @@ export class GalleryLayer implements GalleryProjectionPort {
     } else {
       const isMusic = this.#galleryTab === 'music';
       const isEnding = this.#galleryTab === 'ending';
+      const isReadOnly = isEnding || this.#galleryTab === 'profile' || this.#galleryTab === 'term';
       const width = Math.min(920, this.#w - this.#margin * 2);
-      const progress = isEnding ? this.#text(`已收集 ${items.filter(item => item.unlocked).length}/${items.length} 个结局`, width, 'textMuted') : null;
+      const unit = isEnding ? '个结局' : this.#galleryTab === 'profile' ? '项人物资料' : '个词条';
+      const progress = isReadOnly ? this.#text(`已收集 ${items.filter(item => item.unlocked).length}/${items.length} ${unit}`, width, 'textMuted') : null;
       if (progress) list.addChild(progress).position.set(this.#margin, 0);
       const rows = items.map((item) => {
         const row = new Container();
@@ -354,12 +366,12 @@ export class GalleryLayer implements GalleryProjectionPort {
         const label = this.#text(`${item.unlocked ? isMusic ? '♪' : '❐' : '?'}  ${item.unlocked ? item.name : '???'}`, width - 40, item.unlocked ? 'text' : 'textDisabled');
         label.position.set(20, 14);
         row.addChild(label);
-        const enabled = !isEnding && item.unlocked && Boolean(isMusic ? this.#galleryOnPlayMusic : this.#galleryOnReplayText);
-        const note = !item.unlocked ? '未解锁' : isEnding ? item.description ?? '' : !enabled ? (isMusic ? '当前无法播放' : '当前无法回想') : '';
+        const enabled = !isReadOnly && item.unlocked && Boolean(isMusic ? this.#galleryOnPlayMusic : this.#galleryOnReplayText);
+        const note = !item.unlocked ? '未解锁' : isReadOnly ? item.description ?? '' : !enabled ? (isMusic ? '当前无法播放' : '当前无法回想') : '';
         const status = note ? this.#text(note, width - 40, item.unlocked ? 'textMuted' : 'textDisabled') : null;
         if (status) row.addChild(status);
         const border = this.#controlBorder(row, width, 58);
-        bindPlayerControl(row, { label: item.unlocked ? `${isEnding ? '结局' : isMusic ? '播放' : '回想'} ${item.name}${isEnding && note ? `：${note}` : ''}` : '未解锁条目', width, height: 58, enabled, reveal: () => this.#reveal(row) });
+        bindPlayerControl(row, { label: item.unlocked ? `${isReadOnly ? isEnding ? '结局' : this.#galleryTab === 'profile' ? '人物资料' : '词条' : isMusic ? '播放' : '回想'} ${item.name}${isReadOnly && note ? `：${note}` : ''}` : '未解锁条目', width, height: 58, enabled, reveal: () => this.#reveal(row) });
         if (enabled) {
           row.cursor = 'pointer';
           row.on('pointerdown', () => isMusic ? this.#galleryOnPlayMusic?.(item.id, item.src) : this.#galleryOnReplayText?.({ ...item }));
@@ -388,7 +400,7 @@ export class GalleryLayer implements GalleryProjectionPort {
     this.#registerListener();
   }
 
-  #selectGalleryTab(tab: 'cg' | 'music' | 'text' | 'ending'): void {
+  #selectGalleryTab(tab: 'cg' | 'music' | 'text' | 'ending' | 'profile' | 'term'): void {
     this.#galleryTab = tab;
     this.#galleryMode = 'grid';
     this.#galleryViewerKey = null;
@@ -399,7 +411,7 @@ export class GalleryLayer implements GalleryProjectionPort {
   #updateTabStyles(): void {
     const tabs = this.#galleryTabs;
     if (!tabs) return;
-    for (const [tab, text] of Object.entries(tabs) as Array<['cg' | 'music' | 'text' | 'ending', PText]>) {
+    for (const [tab, text] of Object.entries(tabs) as Array<['cg' | 'music' | 'text' | 'ending' | 'profile' | 'term', PText]>) {
       const active = this.#galleryTab === tab;
       text.style = {
         fontFamily: this.#assets.fontFamily('ui'),

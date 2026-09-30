@@ -4,7 +4,7 @@
  */
 import {
   compileScene,
-  readGalleryUnlockPolicy, effectiveGalleryUnlocks, readGalleryReplayEntries, readGalleryEndings, effectiveEndingUnlocks,
+  readGalleryUnlockPolicy, effectiveGalleryUnlocks, readGalleryReplayEntries, readGalleryEndings, effectiveEndingUnlocks, readGalleryDossiers,
   collectProjectTextRows, projectTextSources, createProjectTextResolver, readTextCatalog, parseTerminology,
   type TextSceneSource,
   resolveProjectPortraits,
@@ -216,8 +216,9 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     if (scene.textSourceVersion) textScenes.push({ id, path, text: src, sha256: scene.textSourceVersion });
   }
   const projectTexts = createProjectTextResolver(textCatalog, textCatalog
-    ? await projectTextSources(collectProjectTextRows(gameConfig, textScenes, project.terminology), sha256) : []);
+    ? await projectTextSources(collectProjectTextRows(gameConfig, textScenes, project.terminology, { ...galleryConfig }), sha256) : []);
   const terminology = parseTerminology(project.terminology);
+  const dossiers = readGalleryDossiers({ ...galleryConfig }, { characters: gameConfig.characters ?? {}, terms: terminology.map(term => term.canonical) });
   const timelines = new TimelineRegistry();
   for (const definition of Object.values(timelineFiles)) timelines.register(definition);
 
@@ -873,7 +874,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   }
   bus.on('gallery', event => {
     if (!galleryCollection || galleryReplay || rollbackRuntime.isRestoring()) return;
-    const section = event.type === 'cg' ? 'cgs' : event.type === 'text' ? 'texts' : 'music';
+    const section = event.type === 'cg' ? 'cgs' : event.type === 'text' ? 'texts' : event.type === 'profile' ? 'profiles' : event.type === 'term' ? 'terms' : 'music';
     if (!galleryConfig[section]?.some(entry => entry.id === event.id)) return;
     void galleryCollection.unlock(section, event.id).catch(collectionError);
   });
@@ -1047,10 +1048,21 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
 
   function galleryView() {
     const permanent = galleryCollection?.snapshot();
-    const views = buildGalleryViews(galleryConfig as GalleryConfig, {
+    const translateDescription = (section: 'profiles' | 'terms', id: string, text?: string) => text === undefined ? undefined
+      : projectTexts.field('gallery', `gallery:${section}:${id}`, text, textLocale, 'description');
+    const displayConfig: GalleryConfig = { ...galleryConfig,
+      profiles: dossiers.profiles.map(entry => ({ ...entry,
+        title: entry.title === undefined ? undefined : projectTexts.field('gallery', `gallery:profiles:${entry.id}`, entry.title, textLocale, 'title'),
+        description: translateDescription('profiles', entry.id, entry.description) })),
+      terms: dossiers.terms.map(entry => ({ ...entry, description: translateDescription('terms', entry.id, entry.description) })),
+    };
+    const names = { characters: Object.fromEntries(Object.entries(gameConfig.characters ?? {}).map(([id, character]) => [id,
+      projectTexts.field('character', `character:${id}`, character.name ?? id, textLocale)])),
+      terms: Object.fromEntries(terminology.map(term => [term.canonical, projectTexts.field('term', `term:${term.canonical}`, term.canonical, textLocale)])) };
+    const views = buildGalleryViews(displayConfig, {
       ...effectiveGalleryUnlocks(interp.gallery.snapshot(), permanent ?? { cgs: [], music: [] }, galleryPolicy),
       endings: effectiveEndingUnlocks(interp.clearTracker.endings(), permanent?.endings ?? [], galleryPolicy.endings),
-    });
+    }, names);
     return {
       ...views,
       onPlayMusic: (id: string, src?: string) => audio.playBgm(src ?? id, { restart: true }),
@@ -1086,9 +1098,10 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         if (field === 'title') return titleView().view.title;
         if (field === 'subtitle') return titleView().view.subtitle ?? '';
         if (field === 'mode') return activeSaveLoad?.mode ?? '';
-        if (field === 'ending-progress') {
-          const endings = galleryView().endings;
-          return `已收集 ${endings.filter(entry => entry.unlocked).length}/${endings.length} 个结局`;
+        if (field === 'ending-progress' || field === 'profile-progress' || field === 'term-progress') {
+          const views = galleryView();
+          const items = field === 'ending-progress' ? views.endings : field === 'profile-progress' ? views.profiles : views.terms;
+          return `已收集 ${items.filter(entry => entry.unlocked).length}/${items.length} ${field === 'ending-progress' ? '个结局' : field === 'profile-progress' ? '项人物资料' : '个词条'}`;
         }
         if (field === 'speaker' || field === 'dialogue') {
           const dialogueProjection = queries.diagnostics.projectionSnapshot().dialogue;
@@ -1115,7 +1128,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         return { min: declaration.min ?? 0, max: declaration.max ?? 100, step: 1 };
       },
       content(source: ProjectUiContentSource): ProjectUiItem[] {
-        if (source === 'terms') return terminology.map(term => ({ id: term.canonical,
+        if (source === 'terms' && galleryConfig.terms === undefined) return terminology.map(term => ({ id: term.canonical,
           label: projectTexts.field('term', `term:${term.canonical}`, term.canonical, textLocale), disabled: true }));
         if (source === 'save-slots') return (activeSaveLoad?.slots ?? []).map(slot => ({
           id: slot.id, label: slot.label ?? (slot.id === 'quick' ? `快速存档${slot.empty ? '（空）' : ''}`
@@ -1132,13 +1145,15 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         if (source === 'choices') return renderer.status === 'choice' ? currentChoiceOptions.map(option => ({ id: String(option.index), label: option.label })) : [];
         if (source === 'settings') return settingsView().rows.map(row => ({ id: row.id, label: row.label, description: row.display, value: row.display }));
         const views = galleryView();
-        const items = source === 'gallery-cgs' ? views.cgs : source === 'gallery-music' ? views.music : source === 'gallery-endings' ? views.endings : views.texts;
+        const items = source === 'gallery-cgs' ? views.cgs : source === 'gallery-music' ? views.music : source === 'gallery-endings' ? views.endings
+          : source === 'gallery-profiles' ? views.profiles : source === 'gallery-terms' || source === 'terms' ? views.terms : views.texts;
+        const readOnly = ['gallery-endings', 'gallery-profiles', 'gallery-terms', 'terms'].includes(source);
         return items.map(item => ({ id: item.id, label: item.unlocked ? item.name : '???',
-          description: source === 'gallery-endings' ? item.unlocked ? item.description : '未解锁' : undefined,
-          disabled: source === 'gallery-endings' || !item.unlocked }));
+          description: readOnly ? item.unlocked ? item.description : '未解锁' : undefined,
+          disabled: readOnly || !item.unlocked }));
       },
       async select(source, item, restore) {
-        if (source === 'terms' || source === 'gallery-endings') return false;
+        if (['terms', 'gallery-endings', 'gallery-profiles', 'gallery-terms'].includes(source)) return false;
         if (source === 'save-slots') {
           const selected = await selectWorkUiSave(activeSaveLoad?.mode ?? mode ?? 'load', item.id, restore);
           if (selected) uiDom?.hide('save-load');

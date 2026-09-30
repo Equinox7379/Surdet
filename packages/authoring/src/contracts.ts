@@ -39,7 +39,7 @@ export interface ProjectStorage {
 }
 
 export interface AuthoringObject {
-  kind: 'scene' | 'label' | 'text' | 'choice' | 'choice-option' | 'condition' | 'condition-branch' | 'instruction' | 'variable' | 'timeline' | 'track' | 'cue' | 'asset' | 'character' | 'entry-scene' | 'gallery-cg' | 'gallery-text' | 'gallery-ending' | 'ui-config' | 'ui-page' | 'ui-node' | 'text-catalog' | 'text-key' | 'term';
+  kind: 'scene' | 'label' | 'text' | 'choice' | 'choice-option' | 'condition' | 'condition-branch' | 'instruction' | 'variable' | 'timeline' | 'track' | 'cue' | 'asset' | 'character' | 'entry-scene' | 'gallery-cg' | 'gallery-text' | 'gallery-ending' | 'gallery-profile' | 'gallery-term' | 'ui-config' | 'ui-page' | 'ui-node' | 'text-catalog' | 'text-key' | 'term';
   semanticId?: string;
   objectRef: string;
   parentRef?: string;
