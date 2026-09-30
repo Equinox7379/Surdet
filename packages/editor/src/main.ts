@@ -2097,7 +2097,10 @@ function renderMainArea(): void {
     pvEl.id = 'preview-view';
     pvEl.dataset['editorPanel'] = 'preview';
     col.appendChild(pvEl);
-    renderPreviewPanel(pvEl);
+    renderPreviewPanel(pvEl, { onDebugSource: source => {
+      const target = [...state.scenes.entries()].find(([, scene]) => scene.id === source.sceneId);
+      if (target) jumpToScene(target[0], source.line - 1);
+    } });
   } else if (state.mainTab === 'stats') {
     const stEl = h('section');
     stEl.id = 'stats-view';

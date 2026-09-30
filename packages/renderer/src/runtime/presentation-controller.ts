@@ -541,10 +541,22 @@ export class PresentationController {
     }
   }
 
-  setPresentationPaused(paused: boolean): void { this.#explicitPaused = paused; this.#audio.setVoicePaused?.(this.presentationPaused); this.#requestFrame(); }
+  setPresentationPaused(paused: boolean): void {
+    this.#explicitPaused = paused;
+    // Settle old clocks before the host can create a new wait/text in this same task.
+    if (!this.presentationPaused) this.#resumePausedClock();
+    this.#audio.setVoicePaused?.(this.presentationPaused); this.#requestFrame();
+  }
   get presentationPaused(): boolean {
     const menu = this.#queries.overlay?.menu?.().type ?? 'none';
     return this.#explicitPaused || this.#backlogOpen || ['system-menu', 'save-load', 'settings'].includes(menu);
+  }
+
+  #resumePausedClock(): void {
+    if (this.#pausedSince === null) return;
+    const delay = nowMs() - this.#pausedSince;
+    if (this.#waitDeadline !== null) this.#waitDeadline += delay;
+    this.#awaitSince += delay; this.#pausedSince = null; this.#menuProjectionBusy = false;
   }
 
   /** 帧推进（Pixi ticker 驱动）：打字中每帧把逐字进度推给舞台 */
@@ -557,12 +569,7 @@ export class PresentationController {
       this.#menuProjectionBusy = this.#updateMenuProjection?.(deltaMs) === true;
       return;
     }
-    if (this.#pausedSince !== null) {
-      const delay = nowMs() - this.#pausedSince;
-      if (this.#waitDeadline !== null) this.#waitDeadline += delay;
-      this.#awaitSince += delay; this.#pausedSince = null;
-      this.#menuProjectionBusy = false;
-    }
+    this.#resumePausedClock();
     if (!this.needsUpdate) return;
     this.#updateTimelines(deltaMs);
     // @wait 计时：到时（或快进中立即）结束等待并恢复解释器

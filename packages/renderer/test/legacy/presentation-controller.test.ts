@@ -797,4 +797,32 @@ describe('PresentationController', () => {
       expect(updateProjection).not.toHaveBeenCalled();
     } finally { controller.dispose(); }
   });
+
+  it('does not charge a previous debug pause to a wait created immediately after resume', () => {
+    let now = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const bus = new EventBus<CoreEventMap>(), waitEnd = vi.fn();
+    const running = controllerFor(stageHarness(), { onWaitEnd: waitEnd }); running.connect(bus);
+    try {
+      running.setPresentationPaused(true); running.update(16);
+      now = 10_000; running.setPresentationPaused(false);
+      bus.emit('wait', { ms: 100 }); running.update(0);
+      now = 10_100; running.update(100);
+      expect(waitEnd).toHaveBeenCalledOnce();
+    } finally { running.dispose(); clock.mockRestore(); }
+  });
+
+  it('preserves the remaining old wait across pause and charges its pause only once', () => {
+    let now = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const waitEnd = vi.fn(), running = controllerFor(stageHarness(), { onWaitEnd: waitEnd });
+    const bus = new EventBus<CoreEventMap>(); running.connect(bus);
+    try {
+      bus.emit('wait', { ms: 100 });
+      now = 20; running.setPresentationPaused(true); running.update(16);
+      now = 10_000; running.setPresentationPaused(false); running.update(0);
+      now = 10_079; running.update(79); expect(waitEnd).not.toHaveBeenCalled();
+      now = 10_080; running.update(1); expect(waitEnd).toHaveBeenCalledOnce();
+    } finally { running.dispose(); clock.mockRestore(); }
+  });
 });

@@ -1,5 +1,6 @@
 import { createStageWorkspace } from '../stage-workspace.js';
-import { projectThemeAssetKeys, resolveProjectTheme, resolveProjectTitleLogo } from '@surdet/core';
+import { projectThemeAssetKeys, resolveProjectTheme, resolveProjectTitleLogo, type RuntimeDebugLocation } from '@surdet/core';
+import { debugInstructionOptions, validDebugBreakpoints, normalizePreviewDebugState, type PreviewBreakpoint, type PreviewDebugState, type PreviewDebugCommand } from '../preview-debug.js';
 import '../styles/stage-workspace.css';
 /**
  * 预览面板（M6 E4，父窗口侧）：iframe 承载 preview.html 运行器，
@@ -40,6 +41,11 @@ let previewPanelMountRevision = 0;
 let publishedPreviewGeneration = 0;
 let activePreviewCleanup: (() => void) | null = null;
 let notifyPreviewSourceEdited: (() => void) | null = null;
+let notifyPreviewDebug: ((message: PreviewDebugState, source: MessageEventSource | null) => void) | null = null;
+let debugProjectRoot: typeof state.dirHandle | undefined;
+let debugging = false;
+let breakpoints: PreviewBreakpoint[] = [];
+let debugContentKey = '';
 
 /** One actual runtime owner across script, standalone preview and result review. */
 export function disposePreviewPanel(): void {
@@ -50,6 +56,7 @@ export function disposePreviewPanel(): void {
   notifyPreviewDiagnostic = null;
   notifyPreviewTrace = null;
   notifyPreviewSourceEdited = null;
+  notifyPreviewDebug = null;
   // Completed observations remain available when their source is opened.
   // Resource teardown must not erase the causal navigation's selected trace.
   cleanup?.();
@@ -141,6 +148,10 @@ function bindPreviewReadyListenerOnce(): void {
   window.addEventListener('message', (e: MessageEvent) => {
     const d = e.data as { type?: string } | null;
     if (d?.type === 'surdet-preview-ready') notifyPreviewReady?.(e.source);
+    if (d?.type === 'surdet-preview-debug-state') {
+      const debug = normalizePreviewDebugState(e.data);
+      if (debug) notifyPreviewDebug?.(debug, e.source);
+    }
     if (d?.type === 'surdet-preview-diagnostic') {
       const diagnostic = normalizePreviewDiagnostic((d as { diagnostic?: unknown }).diagnostic);
       if (diagnostic) notifyPreviewDiagnostic?.(diagnostic, e.source);
@@ -420,6 +431,7 @@ async function previewSourceFacts(assets: PreviewAssets, fonts: Partial<Record<F
 export interface PreviewPanelOptions {
   embedded?: boolean;
   onSourceStateChange?: () => void;
+  onDebugSource?: (source: RuntimeDebugLocation) => void;
 }
 
 export function renderPreviewPanel(container: HTMLElement, options: PreviewPanelOptions = {}): void {
@@ -429,6 +441,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   state.selectedTraceStep = null;
   container.innerHTML = '';
   const mountRevision = ++previewPanelMountRevision;
+  if (debugProjectRoot !== state.dirHandle) { debugProjectRoot = state.dirHandle; debugging = false; breakpoints = []; debugContentKey = ''; }
   let stageWorkbench: ReturnType<typeof createStageWorkspace> | undefined;
   if (state.reviewWorkspace === null) state.previewChoices = null;
   currentPreviewTrace = [];
@@ -507,6 +520,9 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   readingBtn.onclick = () => frame.contentWindow?.postMessage({ type: 'surdet-preview-reading-check' }, '*');
   controls.appendChild(readingBtn);
   controls.appendChild(resumeBtn);
+  const debugToggle = h('label', 'preview-fast'), debugCheck = h('input'); debugCheck.type = 'checkbox'; debugCheck.checked = debugging;
+  debugCheck.setAttribute('aria-label', '启用调试（从入口重播）'); debugToggle.append(debugCheck, document.createTextNode(' 启用调试（从入口重播）'));
+  controls.appendChild(debugToggle);
   toolbar.appendChild(controls);
   workspace.appendChild(toolbar);
 
@@ -524,6 +540,81 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   sourceState.dataset.previewSourceState = 'idle';
   sourceState.setAttribute('aria-live', 'polite');
   workspace.appendChild(sourceState);
+  const debugPanel = h('section', 'preview-debugger'); debugPanel.hidden = !debugging; debugPanel.setAttribute('aria-label', '真实调试');
+  const debugActions = h('div', 'preview-controls');
+  const pauseDebug = h('button', undefined, '暂停'), stepDebug = h('button', undefined, '单步'), continueDebug = h('button', undefined, '继续运行');
+  const locateDebug = h('button', undefined, '打开当前源码');
+  locateDebug.title = '离开本次预览，定位同版本源码；返回后需重新播放或沿原路径续接';
+  for (const button of [pauseDebug, stepDebug, continueDebug, locateDebug]) { button.type = 'button'; button.disabled = true; debugActions.appendChild(button); }
+  const debugStatus = h('p', undefined, '启用调试后重新播放，在实际指令执行前停住。'); debugStatus.setAttribute('aria-live', 'polite');
+  const variableDetails = h('details'); variableDetails.open = true; variableDetails.appendChild(h('summary', undefined, '变量（只读）'));
+  const debugVariables = h('pre', 'preview-debug-values'); variableDetails.appendChild(debugVariables);
+  const debugCalls = h('p', 'preview-debug-calls');
+  const breakpointControls = h('div', 'preview-controls'), breakpointScene = h('select'), breakpointStep = h('select'), addBreakpoint = h('button', undefined, '添加断点');
+  breakpointScene.setAttribute('aria-label', '断点场景'); breakpointStep.setAttribute('aria-label', '断点步骤'); addBreakpoint.type = 'button';
+  breakpointControls.append(breakpointScene, breakpointStep, addBreakpoint);
+  const breakpointList = h('ul', 'preview-debug-breakpoints');
+  debugPanel.append(debugActions, debugStatus, variableDetails, debugCalls, breakpointControls, breakpointList); workspace.appendChild(debugPanel);
+  let debugState: PreviewDebugState | null = null;
+  let debugSources: { id: string; text: string }[] = [];
+  const debugFresh = (): boolean => debugging && publishedSource !== null && publishedSource === requestKey()
+    && sourceState.dataset.previewSourceState === 'fresh' && currentTraceId === expectedTraceId && currentTraceGeneration >= 0;
+  const sendDebug = (action: PreviewDebugCommand['action']): void => {
+    if (!debugFresh()) { debugStatus.textContent = '当前内容或预览身份已变化，请重新播放后再调试。'; return; }
+    const message: PreviewDebugCommand = { type: 'surdet-preview-debug-command', traceId: currentTraceId!, generation: currentTraceGeneration,
+      action, ...(action === 'breakpoints' ? { breakpoints: validDebugBreakpoints(breakpoints, debugSources) } : {}) };
+    frame.contentWindow?.postMessage(message, location.origin);
+  };
+  const refreshDebug = (): void => {
+    const snapshot = debugState?.snapshot, fresh = debugFresh();
+    pauseDebug.disabled = !fresh || !snapshot || snapshot.paused || !['awaiting-advance', 'awaiting-choice'].includes(snapshot.status);
+    stepDebug.disabled = !fresh || !snapshot || !(snapshot.paused && snapshot.status === 'paused' || snapshot.status === 'awaiting-advance');
+    continueDebug.disabled = !fresh || !snapshot || ['idle', 'ended', 'error'].includes(snapshot.status);
+    locateDebug.disabled = !fresh || !snapshot?.current || !options.onDebugSource || selectedTarget !== null;
+    addBreakpoint.disabled = !fresh || breakpointStep.options.length === 0;
+  };
+  const refreshBreakpoints = (): void => {
+    const currentSources = selectedTarget === null ? collectPreviewScenes(state.scenes) : debugSources;
+    const valid = validDebugBreakpoints(breakpoints, currentSources);
+    breakpointList.replaceChildren();
+    for (const point of breakpoints) {
+      const row = h('li'); row.appendChild(document.createTextNode(`${point.sceneId} · ${point.caption}${valid.includes(point) ? '' : '（剧本已变，需重新确认）'} `));
+      const remove = h('button', undefined, '移除'); remove.type = 'button'; remove.setAttribute('aria-label', `移除断点 ${point.sceneId} 第 ${point.line} 行`);
+      remove.onclick = () => { breakpoints = breakpoints.filter(candidate => candidate !== point); refreshBreakpoints(); if (debugFresh()) sendDebug('breakpoints'); };
+      row.appendChild(remove); breakpointList.appendChild(row);
+    }
+  };
+  const refreshBreakpointSteps = (): void => {
+    try {
+      breakpointStep.replaceChildren(...debugInstructionOptions(debugSources, breakpointScene.value).map(point => {
+        const option = h('option', undefined, point.caption); option.value = String(point.index); return option;
+      }));
+    } catch (error) { breakpointStep.replaceChildren(); debugStatus.textContent = error instanceof Error ? error.message : String(error); }
+    refreshDebug();
+  };
+  breakpointScene.onchange = refreshBreakpointSteps;
+  addBreakpoint.onclick = () => {
+    if (!debugFresh()) return;
+    const point = debugInstructionOptions(debugSources, breakpointScene.value).find(point => point.index === Number(breakpointStep.value));
+    if (!point) return;
+    breakpoints = [...breakpoints.filter(old => !(old.sceneId === point.sceneId && old.index === point.index)), point];
+    refreshBreakpoints(); sendDebug('breakpoints');
+  };
+  pauseDebug.onclick = () => sendDebug('pause'); stepDebug.onclick = () => sendDebug('step'); continueDebug.onclick = () => sendDebug('continue');
+  locateDebug.onclick = () => { if (debugFresh() && debugState?.snapshot.current && selectedTarget === null) options.onDebugSource?.(debugState.snapshot.current); };
+  notifyPreviewDebug = (message, source) => {
+    if (mountRevision !== previewPanelMountRevision || !container.isConnected || source !== frame.contentWindow
+      || message.traceId !== expectedTraceId || message.traceId !== currentTraceId || message.generation !== currentTraceGeneration) return;
+    debugState = message;
+    const snapshot = message.snapshot, point = snapshot.current;
+    const pauseReason = snapshot.reason === 'breakpoint' ? '断点' : snapshot.reason === 'step' ? '单步' : snapshot.reason === 'entry' ? '入口' : '手动';
+    const status = snapshot.paused ? `已暂停（${pauseReason}）` : snapshot.status === 'paused' ? '宿主接管剧情' : snapshot.status === 'awaiting-choice' ? '等待真实选择' : snapshot.status === 'awaiting-timer' ? '等待计时或演出完成'
+      : snapshot.status === 'awaiting-advance' ? '等待继续阅读' : snapshot.status === 'ended' ? '已结束' : snapshot.status === 'error' ? '运行失败' : '运行中';
+    debugStatus.textContent = message.error ?? `${status}${point ? ` · ${point.sceneId} 第 ${point.line} 行 · 步骤 ${point.index + 1} · 剧本版本 ${point.sceneHash}` : ''}`;
+    debugVariables.textContent = Object.entries(snapshot.variables).map(([name, value]) => `${name} = ${JSON.stringify(value)}`).join('\n') || '当前没有剧情变量。';
+    debugCalls.textContent = snapshot.callStack.length ? `返回位置：${snapshot.callStack.map(point => `${point.sceneId} 第 ${point.line} 行`).join(' → ')}` : '调用栈为空。';
+    refreshDebug();
+  };
   let publishedSource: string | null = null;
   let expectedTraceId: string | null = null;
   type Publication = { publisher: NonNullable<ReturnType<typeof editorPreviewPublisher>>; previewId: string; previewGeneration: number };
@@ -552,6 +643,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     if (sourceState.dataset.previewSourceState !== 'stale' && publishedSource !== null && publishedSource !== requestKey()) {
       sourceState.dataset.previewSourceState = 'stale';
       sourceState.textContent = '内容已修改；当前画面仍属于上一次运行，请重新播放。';
+      refreshDebug(); refreshBreakpoints();
       void invalidate('source-changed').catch(() => {});
       options.onSourceStateChange?.();
     }
@@ -734,6 +826,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !container.isConnected) return;
     expectedTraceId = null;
     sourceState.dataset.previewSourceState = 'loading';
+    debugState = null; refreshDebug();
     sourceState.textContent = '正在读取所选内容，旧画面尚未替换。';
     const requestRoot = state.dirHandle;
     const requestedTarget = selectedTarget;
@@ -843,6 +936,13 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || requestKey() !== requestSource
       || state.dirHandle !== requestRoot || !container.isConnected) return;
     const gameConfig = parseProjectConfigDocument(requestConfigText || '{}');
+    debugSources = projected?.scenes ?? collectPreviewScenes(state.scenes);
+    const nextDebugContentKey = JSON.stringify({ project: isolated?.projectIdentity ?? state.autosaveProjectId ?? transientPreviewProjectKey, target: selectedTarget });
+    if (debugContentKey !== nextDebugContentKey) { breakpoints = []; debugContentKey = nextDebugContentKey; }
+    const previousBreakpointScene = breakpointScene.value;
+    breakpointScene.replaceChildren(...debugSources.map(scene => { const option = h('option', undefined, scene.id); option.value = scene.id; return option; }));
+    breakpointScene.value = debugSources.some(scene => scene.id === previousBreakpointScene) ? previousBreakpointScene : cur.id;
+    refreshBreakpointSteps(); refreshBreakpoints();
     const message = {
       type: 'surdet-preview-load',
       payload: {
@@ -873,6 +973,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
         choices: isolated === undefined ? state.previewChoices ?? undefined : undefined,
         startLabel: labelSel.value || undefined,
         fast: fastChk.checked,
+        debug: { enabled: debugging, pauseOnStart: debugging && !resume, breakpoints: validDebugBreakpoints(breakpoints, debugSources) },
       },
     };
     const transfer = [
@@ -980,6 +1081,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     void send();
   };
   resumeBtn.onclick = () => { void send(true); };
+  debugCheck.onchange = () => { debugging = debugCheck.checked; debugPanel.hidden = !debugging; void send(); };
   fastChk.onchange = () => {
     frame.contentWindow?.postMessage({ type: 'surdet-preview-fast', fast: fastChk.checked }, '*');
   };
