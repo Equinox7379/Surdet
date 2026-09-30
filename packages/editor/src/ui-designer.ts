@@ -35,7 +35,7 @@ const TYPE_NAMES: Record<ProjectUiNodeType, string> = {
 };
 const DATA_FIELDS: Record<string, string> = {
   id: '标识', label: '名称', description: '说明', value: '当前值', date: '日期',
-  speaker: '说话人', dialogue: '台词', title: '标题', subtitle: '副标题', mode: '存读档模式', 'ending-progress': '结局收集进度',
+  speaker: '说话人', dialogue: '台词', title: '标题', subtitle: '副标题', mode: '存读档模式', 'ending-progress': '结局收集进度', 'profile-progress': '人物资料收集进度', 'term-progress': '词条收集进度',
 };
 const SETTING_NAMES: Record<string, string> = {
   ...Object.fromEntries(SETTING_STEPS.map(setting => [setting.key, setting.label])),
@@ -43,7 +43,7 @@ const SETTING_NAMES: Record<string, string> = {
 };
 const SOURCE_NAMES: Record<NonNullable<ProjectUiNode['source']>, string> = {
   'save-slots': '存档列表', settings: '阅读设置', backlog: '文字记录', choices: '剧情选项',
-  'gallery-cgs': '图片鉴赏', 'gallery-music': '音乐鉴赏', 'gallery-texts': '剧情回想', 'gallery-endings': '结局册',
+  'gallery-cgs': '图片鉴赏', 'gallery-music': '音乐鉴赏', 'gallery-texts': '剧情回想', 'gallery-endings': '结局册', 'gallery-profiles': '人物档案', 'gallery-terms': '用语辞典',
   terms: '名词表',
 };
 const ACTION_NAMES: Record<NonNullable<ProjectUiNode['action']>['kind'], string> = {
@@ -358,7 +358,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     }
     if (node.source) {
       const select = element('select');
-      const sources = selectedPage === 'gallery' ? ['gallery-cgs', 'gallery-music', 'gallery-texts', 'gallery-endings', 'terms'] : [node.source];
+      const sources = selectedPage === 'gallery' ? ['gallery-cgs', 'gallery-music', 'gallery-texts', 'gallery-endings', 'gallery-profiles', 'gallery-terms', 'terms'] : [node.source];
       sources.forEach(source => select.appendChild(option(source, SOURCE_NAMES[source as keyof typeof SOURCE_NAMES])));
       select.value = node.source;
       select.onchange = () => apply({ type: 'node.update', page: selectedPage, id: node.id, patch: { source: select.value as ProjectUiNode['source'] } });

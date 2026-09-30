@@ -37,7 +37,7 @@ export interface ChangeCompositionMetadata {
 }
 
 export type CompositionReferenceKind =
-  | 'scene' | 'label' | 'timeline' | 'variable' | 'character' | 'gallery-cg' | 'gallery-text'
+  | 'scene' | 'label' | 'timeline' | 'variable' | 'character' | 'gallery-cg' | 'gallery-text' | 'gallery-profile' | 'gallery-term'
   | 'background-asset' | 'portrait-asset' | 'avatar-asset' | 'audio-asset' | 'video-asset' | 'font-asset';
 
 export interface RawCompositionReference {

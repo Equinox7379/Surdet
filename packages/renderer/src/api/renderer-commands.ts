@@ -192,6 +192,8 @@ export interface GalleryCommands {
     music: readonly GalleryItemView[];
     texts?: readonly GalleryItemView[];
     endings?: readonly GalleryItemView[];
+    profiles?: readonly GalleryItemView[];
+    terms?: readonly GalleryItemView[];
     onPlayMusic?: (id: string, source?: string) => void;
     onReplayText?: (item: GalleryItemView) => void;
     onClose?: () => void;

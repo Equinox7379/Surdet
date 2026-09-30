@@ -13,7 +13,7 @@ export type ProjectUiNodeType = typeof PROJECT_UI_NODE_TYPES[number];
 export type ProjectUiText =
   | { kind: 'literal'; value: string }
   | { kind: 'variable' | 'setting'; name: string }
-  | { kind: 'data'; field: 'id' | 'label' | 'description' | 'value' | 'date' | 'speaker' | 'dialogue' | 'title' | 'subtitle' | 'mode' | 'ending-progress' };
+  | { kind: 'data'; field: 'id' | 'label' | 'description' | 'value' | 'date' | 'speaker' | 'dialogue' | 'title' | 'subtitle' | 'mode' | 'ending-progress' | 'profile-progress' | 'term-progress' };
 export type ProjectUiBinding = { kind: 'variable' | 'setting'; name: string };
 export type ProjectUiAction =
   | { kind: 'start' | 'continue' | 'close' | 'back' | 'advance' | 'rollback' | 'auto' | 'skip' | 'hide' }
@@ -21,7 +21,7 @@ export type ProjectUiAction =
   | { kind: 'save' | 'load' | 'choice' | 'gallery-item'; id?: string }
   | { kind: 'setting-step'; name: string; direction: -1 | 1 };
 
-export type ProjectUiContentSource = 'save-slots' | 'backlog' | 'gallery-cgs' | 'gallery-music' | 'gallery-texts' | 'gallery-endings' | 'choices' | 'settings' | 'terms';
+export type ProjectUiContentSource = 'save-slots' | 'backlog' | 'gallery-cgs' | 'gallery-music' | 'gallery-texts' | 'gallery-endings' | 'gallery-profiles' | 'gallery-terms' | 'choices' | 'settings' | 'terms';
 
 export interface ProjectUiFrame {
   x: number; y: number; width: number; height: number;
@@ -74,7 +74,7 @@ export function projectUiRect(parent: ProjectUiRect, frame: ProjectUiFrame): Pro
 const PAGE_SET = new Set<string>(PROJECT_UI_PAGES);
 const TYPE_SET = new Set<string>(PROJECT_UI_NODE_TYPES);
 const CHILD_TYPES = new Set<ProjectUiNodeType>(['container', 'scroll', 'tabs', 'content']);
-const CONTENT_SOURCES = new Set<ProjectUiContentSource>(['save-slots', 'backlog', 'gallery-cgs', 'gallery-music', 'gallery-texts', 'gallery-endings', 'choices', 'settings', 'terms']);
+const CONTENT_SOURCES = new Set<ProjectUiContentSource>(['save-slots', 'backlog', 'gallery-cgs', 'gallery-music', 'gallery-texts', 'gallery-endings', 'gallery-profiles', 'gallery-terms', 'choices', 'settings', 'terms']);
 const SETTING_TYPES: Record<string, 'number' | 'string'> = {
   textSpeedCps: 'number', autoBaseDelayMs: 'number', autoPerCharMs: 'number',
   masterVolume: 'number', bgmVolume: 'number', ambienceVolume: 'number', seVolume: 'number', voiceVolume: 'number',
@@ -122,10 +122,10 @@ function validateText(value: unknown, config: Record<string, unknown>, location:
     else if (!Object.hasOwn(SETTING_TYPES, name)) throw new Error(`${location} 设置项不存在：${name}`);
   } else if (item.kind === 'data') {
     onlyKeys(item, ['kind', 'field'], location);
-    if (!['id', 'label', 'description', 'value', 'date', 'speaker', 'dialogue', 'title', 'subtitle', 'mode', 'ending-progress'].includes(String(item.field))) throw new Error(`${location}.field 不受支持`);
+    if (!['id', 'label', 'description', 'value', 'date', 'speaker', 'dialogue', 'title', 'subtitle', 'mode', 'ending-progress', 'profile-progress', 'term-progress'].includes(String(item.field))) throw new Error(`${location}.field 不受支持`);
     if (['id', 'label', 'description', 'value', 'date'].includes(String(item.field)) ? contentSource === undefined
       : ['speaker', 'dialogue'].includes(String(item.field)) ? page !== 'dialogue'
-      : item.field === 'ending-progress' ? page !== 'gallery'
+      : ['ending-progress', 'profile-progress', 'term-progress'].includes(String(item.field)) ? page !== 'gallery'
       : ['title', 'subtitle'].includes(String(item.field)) ? page !== 'title' : page !== 'save-load') {
       throw new Error(`${location}.field 在 ${page} 页面没有数据来源`);
     }
@@ -199,7 +199,7 @@ function validateNode(value: unknown, config: Record<string, unknown>, ids: Set<
   if (type === 'content') {
     const sourcePages: Record<ProjectUiContentSource, ProjectUiPageId> = {
       'save-slots': 'save-load', backlog: 'backlog', 'gallery-cgs': 'gallery', 'gallery-music': 'gallery',
-      'gallery-texts': 'gallery', 'gallery-endings': 'gallery', choices: 'choices', settings: 'settings', terms: 'gallery',
+      'gallery-texts': 'gallery', 'gallery-endings': 'gallery', 'gallery-profiles': 'gallery', 'gallery-terms': 'gallery', choices: 'choices', settings: 'settings', terms: 'gallery',
     };
     if (sourcePages[item.source as ProjectUiContentSource] !== page || contentSource !== undefined) throw new Error(`${location}.source 在 ${page} 页面不可用`);
   }

@@ -4,13 +4,14 @@ import type { AstBlock } from './dsl/ast.js';
 import { collectInterpolatedVars } from './runtime/interpreter.js';
 import { readProjectUi, type ProjectUiNode } from './project-ui.js';
 import { parseTerminology } from './terminology-audit.js';
+import { readGalleryDossiers } from './systems/gallery-dossiers.js';
 
 interface TextSourceBase { speaker: string; text: string; version: string }
 export interface StoryTextSource extends TextSourceBase {
   kind: 'dialogue' | 'choice'; sceneId: string; label: string | null; ordinal: number; sceneVersion: string;
 }
 export interface FieldTextSource extends TextSourceBase {
-  kind: 'character' | 'ui' | 'term'; objectRef: string; field?: 'tab';
+  kind: 'character' | 'ui' | 'term' | 'gallery'; objectRef: string; field?: 'tab' | 'title' | 'description';
 }
 export type TextSource = StoryTextSource | FieldTextSource;
 export interface TextVoiceBinding { asset: string; sourceVersion: string; text: string }
@@ -94,12 +95,13 @@ export function readTextCatalog(config: Record<string, unknown>): TextCatalog | 
       fields(src, ['sceneId', 'label', 'ordinal', 'sceneVersion', 'kind', 'speaker', 'text', 'version'], `${key}.source`);
       if (!Number.isSafeInteger(src.ordinal) || (src.ordinal as number) < 0) invalid(`${key} 来源序号非法`);
       source = { ...base, kind: src.kind, sceneId: string(src.sceneId, 'sceneId'), label: src.label === null ? null : string(src.label, 'label'), ordinal: src.ordinal as number, sceneVersion: version(src.sceneVersion) };
-    } else if (src.kind === 'character' || src.kind === 'ui' || src.kind === 'term') {
+    } else if (src.kind === 'character' || src.kind === 'ui' || src.kind === 'term' || src.kind === 'gallery') {
       fields(src, ['kind', 'objectRef', 'field', 'speaker', 'text', 'version'], `${key}.source`);
       const objectRef = string(src.objectRef, 'objectRef');
       if (!objectRef.startsWith(`${src.kind}:`) || objectRef.length <= src.kind.length + 1 || base.speaker !== '') invalid(`${key} 展示来源非法`);
-      if (src.field !== undefined && (src.kind !== 'ui' || src.field !== 'tab')) invalid(`${key} 展示字段非法`);
-      source = { ...base, kind: src.kind, objectRef, ...(src.field === 'tab' ? { field: 'tab' as const } : {}) };
+      if (src.kind === 'gallery' ? !/^gallery:(profiles|terms):.+$/.test(objectRef) || !['title', 'description'].includes(String(src.field))
+        : src.field !== undefined && (src.kind !== 'ui' || src.field !== 'tab')) invalid(`${key} 展示字段非法`);
+      source = { ...base, kind: src.kind, objectRef, ...(src.field === undefined ? {} : { field: src.field as FieldTextSource['field'] }) };
     } else invalid(`${key} 来源类型非法`);
     const target = textSourceId(source);
     if (targets.has(target)) invalid(`同一来源重复绑定：${target}`); targets.add(target);
@@ -132,7 +134,7 @@ export function textCatalogEntryText(entry: TextCatalogEntry, locale: string, so
 }
 
 /** Authoring and playback share exact source coordinates; no fuzzy matching or translated identifiers. */
-export function collectProjectTextRows(config: Record<string, unknown>, scenes: readonly TextSceneSource[], terminology?: unknown): CatalogSourceRow[] {
+export function collectProjectTextRows(config: Record<string, unknown>, scenes: readonly TextSceneSource[], terminology?: unknown, gallery: Record<string, unknown> = {}): CatalogSourceRow[] {
   const out: CatalogSourceRow[] = [], identities = new Set<string>();
   const add = (source: CatalogSourceRow): void => {
     if (identities.has(source.sourceId)) invalid(`场景或标签重复，来源无法唯一定位：${source.sourceId}`);
@@ -156,9 +158,9 @@ export function collectProjectTextRows(config: Record<string, unknown>, scenes: 
       add({ ...source, sourceId: JSON.stringify([source.sceneId, source.label, source.ordinal]), path: scene.path, line: row.line });
     }
   }
-  const field = (kind: FieldTextSource['kind'], id: string, text: string, path: string, tab = false): void => {
+  const field = (kind: FieldTextSource['kind'], id: string, text: string, path: string, displayField?: FieldTextSource['field']): void => {
     const objectRef = `${kind}:${id}`;
-    add({ kind, objectRef, text, speaker: '', sourceId: JSON.stringify([kind, objectRef, ...(tab ? ['tab'] : [])]), ...(tab ? { field: 'tab' as const } : {}), path, line: 1 });
+    add({ kind, objectRef, text, speaker: '', sourceId: JSON.stringify([kind, objectRef, ...(displayField ? [displayField] : [])]), ...(displayField ? { field: displayField } : {}), path, line: 1 });
   };
   for (const [id, value] of Object.entries(object(config.characters ?? {}, 'characters'))) {
     const character = object(value, `characters.${id}`);
@@ -169,13 +171,18 @@ export function collectProjectTextRows(config: Record<string, unknown>, scenes: 
     if (node.type === 'tabs') {
       const names = new Set<string>();
       for (const child of node.children ?? []) if (child.tab && !names.has(child.tab)) {
-        names.add(child.tab); field('ui', child.id, child.tab, 'game.config.json', true);
+        names.add(child.tab); field('ui', child.id, child.tab, 'game.config.json', 'tab');
       }
     }
     node.children?.forEach(visitUi);
   };
   Object.values(readProjectUi(config)?.pages ?? {}).forEach(visitUi);
   for (const term of parseTerminology(terminology)) field('term', term.canonical, term.canonical, 'content/config/terminology.json');
+  const dossiers = readGalleryDossiers(gallery);
+  for (const section of ['profiles', 'terms'] as const) for (const entry of dossiers[section]) {
+    if (section === 'profiles' && typeof entry.title === 'string') field('gallery', `${section}:${entry.id}`, entry.title, 'content/config/gallery.json', 'title');
+    if (entry.description !== undefined) field('gallery', `${section}:${entry.id}`, entry.description, 'content/config/gallery.json', 'description');
+  }
   return out;
 }
 
@@ -207,7 +214,7 @@ export function createProjectTextResolver(catalog: TextCatalog | null, sources: 
   };
   const story = new Map(sources.filter(isStoryTextSource).map(source => [JSON.stringify([source.sceneId, source.line, source.kind]), source]));
   return { sourceLocale, locales, diagnostics, resolve,
-    field: (kind: FieldTextSource['kind'], objectRef: string, original: string, locale: string, field?: 'tab') => resolve(JSON.stringify([kind, objectRef, ...(field ? [field] : [])]), original, locale),
+    field: (kind: FieldTextSource['kind'], objectRef: string, original: string, locale: string, field?: FieldTextSource['field']) => resolve(JSON.stringify([kind, objectRef, ...(field ? [field] : [])]), original, locale),
     story(sceneId: string, line: number, kind: 'dialogue' | 'choice', original: string, locale: string, sceneVersion: string): string {
       const source = story.get(JSON.stringify([sceneId, line, kind]));
       return source?.sceneVersion === sceneVersion ? resolve(source.sourceId, original, locale) : original;

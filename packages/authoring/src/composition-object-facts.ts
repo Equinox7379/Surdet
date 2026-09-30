@@ -29,6 +29,7 @@ export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, has
     { objectRef: 'config:galleryPolicy', expectedFingerprint: await hasher.sha256(stableStringify(readGalleryDocument(snapshot.files.find(file => file.path === GALLERY_PATH)?.text).document.unlockPolicy ?? null)) },
     { objectRef: 'config:galleryReplay', expectedFingerprint: await hasher.sha256(stableStringify(readGalleryDocument(snapshot.files.find(file => file.path === GALLERY_PATH)?.text).document.texts ?? [])) },
     { objectRef: 'config:galleryEndings', expectedFingerprint: await hasher.sha256(stableStringify(readGalleryDocument(snapshot.files.find(file => file.path === GALLERY_PATH)?.text).document.endings ?? [])) },
+    { objectRef: 'config:galleryDossiers', expectedFingerprint: await hasher.sha256(stableStringify({ profiles: readGalleryDocument(snapshot.files.find(file => file.path === GALLERY_PATH)?.text).document.profiles ?? [], terms: readGalleryDocument(snapshot.files.find(file => file.path === GALLERY_PATH)?.text).document.terms ?? [] })) },
     { objectRef: 'config:stage', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.config.stage ?? null)) },
     { objectRef: 'config:fonts', expectedFingerprint: await hasher.sha256(stableStringify(resolveProjectFontPaths(snapshot.config))) },
     { objectRef: 'config:theme', expectedFingerprint: await hasher.sha256(stableStringify({ theme: snapshot.config.theme ?? null, titleLogo: resolveProjectTitleLogo(snapshot.config) })) },

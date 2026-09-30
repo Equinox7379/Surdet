@@ -1,8 +1,9 @@
 import type { CompiledScene, LintIssue } from '@surdet/core';
-import { readGalleryUnlockPolicy, readGalleryReplayEntries, readGalleryEndings, type VarDeclaration } from '@surdet/core';
+import { readGalleryUnlockPolicy, readGalleryReplayEntries, readGalleryEndings, readGalleryDossiers, parseTerminology, type VarDeclaration } from '@surdet/core';
+import { decodeInstructionArgument } from './scene-document.js';
 
-type GallerySection = 'cgs' | 'music' | 'texts';
-type UnlockInstruction = 'unlock_cg' | 'unlock_music' | 'unlock_text';
+type GallerySection = 'cgs' | 'music' | 'texts' | 'profiles' | 'terms';
+type UnlockInstruction = 'unlock_cg' | 'unlock_music' | 'unlock_text' | 'unlock_profile' | 'unlock_term';
 
 const SECTION_RULES: Readonly<
   Record<
@@ -16,12 +17,16 @@ const SECTION_RULES: Readonly<
   cgs: { unlock: 'unlock_cg', assetFolder: 'bg' },
   music: { unlock: 'unlock_music', assetFolder: 'bgm' },
   texts: { unlock: 'unlock_text', assetFolder: null },
+  profiles: { unlock: 'unlock_profile', assetFolder: null },
+  terms: { unlock: 'unlock_term', assetFolder: null },
 };
 
 const UNLOCK_TO_SECTION: Readonly<Record<UnlockInstruction, GallerySection>> = {
   unlock_cg: 'cgs',
   unlock_music: 'music',
   unlock_text: 'texts',
+  unlock_profile: 'profiles',
+  unlock_term: 'terms',
 };
 
 interface GalleryEntry {
@@ -43,6 +48,7 @@ export interface GalleryValidationInput {
   readonly characters: Record<string, unknown> | null;
   readonly configPath: string;
   readonly variables?: Record<string, unknown>;
+  readonly terminology?: unknown;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -142,9 +148,14 @@ export function validateGalleryConfig(input: GalleryValidationInput): LintIssue[
   const cgs = parseEntries(raw.cgs, 'cgs', input.galleryPath, issues);
   const music = parseEntries(raw.music, 'music', input.galleryPath, issues);
   const texts = raw.texts === undefined ? [] : parseEntries(raw.texts, 'texts', input.galleryPath, issues);
-  const entries: Record<GallerySection, GalleryEntry[]> = { cgs, music, texts };
+  let dossierEntries: { profiles: GalleryEntry[]; terms: GalleryEntry[] } = { profiles: [], terms: [] };
+  try {
+    const dossiers = readGalleryDossiers(raw, { characters: input.characters ?? {}, terms: parseTerminology(input.terminology).map(term => term.canonical) });
+    dossierEntries = { profiles: dossiers.profiles.map(entry => ({ id: entry.id, name: entry.character })), terms: dossiers.terms.map(entry => ({ id: entry.id, name: entry.canonical })) };
+  } catch (error) { addIssue(issues, 'G001', String(error), input.galleryPath); }
+  const entries: Record<GallerySection, GalleryEntry[]> = { cgs, music, texts, ...dossierEntries };
 
-  const ids: Record<GallerySection, Set<string>> = { cgs: new Set(), music: new Set(), texts: new Set() };
+  const ids: Record<GallerySection, Set<string>> = { cgs: new Set(), music: new Set(), texts: new Set(), profiles: new Set(), terms: new Set() };
   for (const section of Object.keys(SECTION_RULES) as GallerySection[]) {
     for (const entry of entries[section]) {
       if (ids[section].has(entry.id)) {
@@ -186,14 +197,14 @@ export function validateGalleryConfig(input: GalleryValidationInput): LintIssue[
     }
   }
 
-  const unlocked: Record<GallerySection, Set<string>> = { cgs: new Set(), music: new Set(), texts: new Set() };
+  const unlocked: Record<GallerySection, Set<string>> = { cgs: new Set(), music: new Set(), texts: new Set(), profiles: new Set(), terms: new Set() };
   for (const scene of input.scenes.values()) {
     for (const instruction of scene.instructions) {
       if (instruction.op !== 'instr') continue;
       const section = Object.prototype.hasOwnProperty.call(UNLOCK_TO_SECTION, instruction.name)
         ? UNLOCK_TO_SECTION[instruction.name as UnlockInstruction] : undefined;
       if (section === undefined) continue;
-      const id = instruction.args[0];
+      const id = instruction.name === 'unlock_profile' || instruction.name === 'unlock_term' ? decodeInstructionArgument(instruction.args[0] ?? '') : instruction.args[0];
       if (!nonEmptyString(id) || !ids[section].has(id)) {
         addIssue(
           issues,

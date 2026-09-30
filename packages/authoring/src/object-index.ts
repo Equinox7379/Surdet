@@ -5,7 +5,7 @@ import type { AuthoringObject, ProjectAssetCatalog, ProjectAssetFileFact } from 
 import type { ProjectSnapshot, ProjectSnapshotScene } from './project-snapshot.js';
 import { GALLERY_PATH, readGalleryDocument, type GalleryCgEntry } from './gallery-operations.js';
 import { AuthoringOperationError } from './change-session.js';
-import { readGalleryReplayEntries, readGalleryEndings } from '@surdet/core';
+import { readGalleryReplayEntries, readGalleryEndings, readGalleryDossiers } from '@surdet/core';
 import { timelineIdFromPath } from './timeline-identity.js';
 import { PROJECT_UI_PAGES, readProjectUi, resolveProjectFontPaths, isStoryTextSource, parseTerminology, type ProjectUiNode } from '@surdet/core';
 import { parseProjectConfigDocument } from './config-document.js';
@@ -636,6 +636,13 @@ export function buildObjectIndex(snapshot: ProjectSnapshot): ObjectIndex {
   for (const timeline of snapshot.timelines) addTimelineObjects(timeline.path, timeline.text, objects, candidates);
   try {
     const { document } = readGalleryDocument(snapshot.files.find(file => file.path === GALLERY_PATH)?.text);
+    const dossiers = readGalleryDossiers(document);
+    for (const section of ['profiles', 'terms'] as const) for (const entry of dossiers[section]) {
+      const ref = `gallery:${section}:${entry.id}`;
+      addObject(objects, { kind: section === 'profiles' ? 'gallery-profile' : 'gallery-term', semanticId: ref, objectRef: ref, details: entry,
+        source: sourceOf(GALLERY_PATH, 1, JSON.stringify(entry)), references: [], referencedBy: [] }, candidates);
+      addReferenceCandidate(candidates, ref, section === 'profiles' ? `character:${entry.character}` : `term:${entry.canonical}`);
+    }
     for (const entry of readGalleryEndings(document)) {
       const ref = `gallery:endings:${entry.id}`;
       addObject(objects, { kind: 'gallery-ending', semanticId: ref, objectRef: ref, details: entry,

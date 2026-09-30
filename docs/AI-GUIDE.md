@@ -2,7 +2,7 @@
 
 本指南面向编写剧情、配置与演出的内容作者。默认使用正式 Agent Port 工具，在隔离草稿中修改、验证和试玩；不需要先读引擎源码、长期台账或重新接线播放器。已有项目保持原位，新项目使用现有模板。
 
-本批公开创作合同为 **2.25.0**（64 项公开能力），新增结局册与可选的结局永久收藏；保留文本目录多语言播放、人物／界面／词条来源、按语言关联已有配音、主题配置、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+本批公开创作合同为 **2.26.0**（68 项公开能力），新增分段解锁的人物档案、用语辞典及可选永久收藏；保留结局册、文本目录多语言播放、人物／界面／词条来源、按语言关联已有配音、主题配置、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
 
 ## 0. 准备项目与会话
 
@@ -238,7 +238,7 @@ Editor 的合法场景改名会同步已知引用及 `player.endScenes` 等结�
 
 ### 文本目录与译稿 CSV
 
-正文、选项、人物显示名、自定义界面字面文字和名词表规范词可按需登记到 `game.config.json.textCatalog`，不改剧本，也不自动为每行创建永久 ID。共享 Player 直接消费已确认译稿，不生成翻译或配音。
+正文、选项、人物显示名、自定义界面字面文字、名词表规范词，以及人物档案的片段标题/说明和用语解释可按需登记到 `game.config.json.textCatalog`，不改剧本，也不自动为每行创建永久 ID。共享 Player 直接消费已确认译稿，不生成翻译或配音。
 
 1. `project.texts({view:"working",locale:"en"})` 读取当前来源和已登记键。复制 **result.revision**、`fingerprint` 和真实 `sources[].sourceId`，不要用外层的来源项目版本或猜行号。JSON 的 sources/entries 分别按同一 offset/limit 分页；后续页必须携带首个 result.revision 作为 expectedRevision，变化则从头重读。
 2. 在 direct 草稿调用 `project.texts.patch`，传 `operationId / expectedRevision / expectedFingerprint`，patch 为 `{type:"bind",sourceLocale:"zh-CN",bindings:[{key:"intro.greeting",sourceId:"复制读取值"}]}`。同一键可显式重新绑定；交换多个键的来源必须同批提交。候选/integration 在修改前拒绝。
@@ -250,7 +250,7 @@ CSV 支持 UTF-8 BOM、双引号转义、逗号和字段内换行；导出对公
 
 **改稿规则：** 文本键是固定身份，sourceId 的段内序号只是当前已确认场景版本的坐标。场景正文 SHA-256 变化后，旧目录保持不变并显示 needs-rebind；不得按当前行号、全文相似度或序号直接认定原键属于下一句。先对照旧源文与当前 sources，显式重新绑定原键。绑定确认后，文本/说话人改变会标 needs-translation，原译文仍保留；未改变的文字可以继续使用旧译文。目录不参与存档位置迁移。
 
-**其他文本来源：** `sources[].kind` 除 `dialogue/choice` 外，还包括 `character/ui/term`。展示字段以 `objectRef` 定位：`character:角色标识`、`ui:组件标识`、`term:规范词`；UI 分页标题另带 `field:"tab"`。始终复制公开读取的 sourceId，不自行拼接。字段改文、组件改名或词条改名后须显式重新绑定；旧译稿保留并报告失配。`content/config/terminology.json` 纳入项目快照、工作预览及候选重放的只读依赖。词条翻译只影响名词表显示，不全文替换正文中的同名文字。
+**其他文本来源：** `sources[].kind` 除 `dialogue/choice` 外，还包括 `character/ui/term/gallery`。展示字段以 `objectRef` 定位：`character:角色标识`、`ui:组件标识`、`term:规范词`；UI 分页标题另带 `field:"tab"`。剧情资料使用 `gallery:profiles:资料标识` / `gallery:terms:词条标识`，另带 `field:"title"` / `field:"description"`；人物名和规范词仍复用原 character/term 来源。始终复制公开读取的 sourceId，不自行拼接。字段改文、组件改名或词条改名后须显式重新绑定；旧译稿保留并报告失配。`content/config/terminology.json` 纳入项目快照、工作预览及候选重放的只读依赖。词条翻译只影响名词表/辞典显示，不全文替换正文中的同名文字。
 
 **播放与试玩：** 在默认「设置 → 显示与输入 → 作品语言」选择源语言或目录中已有译文／配音的语言；自定义界面可用 `{kind:"setting",name:"locale"}` 读取偏好、`setting-step` 操作循环切换，名词表列表用 gallery 组件的 `content.source:"terms"`。偏好独立持久化，不随剧情存档恢复。语言切换刷新当前等待阅读的台词/选项，不执行剧情；变量插值发生在选定语言后，条件、原选项索引、角色标识与跳转不变。历史记录保留当时阅读的正文和人物显示名，NVL 已读旧段的正文保留原语言，当前段刷新。缺失、过期、来源变化的译文回退原文并给出诊断。编辑器可点「试玩已确认译稿」，使用独立测试进度；未确认 CSV 不参与播放。默认系统按钮仍为中文，不翻译路径、变量名、标签或任意运行数据。已有自定义启动器如需词条，按当前模板向 `startPlayer` 传入 `terminology`；旧启动器省略时不显示词条。
 
@@ -453,15 +453,15 @@ Esc 或“取消调整”恢复暂存前画面；数值框 Enter 或“应用到
 
 “舞台配置与图片校准”单独读取实际图片、人工填写／拖选可见范围、确认后加入草稿，再显式保存配置。配置经原写入事务保存，提供本面板的明确撤销；不与普通角色移动草稿混为同一写入。参考图／测试截图不是 Owner 美术验收；正式作品仍需使用自己的已授权资源检查。
 
-### 可选的跨周目图片／音乐／回想／结局收藏
+### 可选的跨周目收藏
 
 仍使用 `content/config/gallery.json` 与 `@unlock_cg` / `@unlock_music`。未提供 `unlockPolicy` 时解锁只随剧情存档，不会偷偷改为永久收藏。需要永久保留时：
 
 1. 在普通 direct 草稿中读 `project.gallery({view:"working"})`，取得 `unlockPolicy.value`（缺省为 null）、`effective` 与 `fingerprint`。
-2. 调用 `gallery.policy.patch`，例如 `{operationId:"collection-policy",expectedFingerprint:"读取的指纹",patch:{cgs:"profile",music:"profile",texts:"profile",endings:"profile"}}`。四类可以单独设为 `save` / `profile`；某字段设 null 恢复缺省，省略不改。candidate/integration 修改前拒绝，旧指纹拒绝；正常差异、试玩及获授权写回流程不变。
-3. Editor「配置 → 鉴赏」的中文保留方式与同一合同对应，可「试玩收藏草稿」，也可保存后重新打开检查。试玩收藏只存在内存，不写正式玩家记录。默认鉴赏与自定义 `gallery-cgs/gallery-music/gallery-texts/gallery-endings` 读取同一有效解锁结果。
+2. 调用 `gallery.policy.patch`，例如 `{operationId:"collection-policy",expectedFingerprint:"读取的指纹",patch:{cgs:"profile",music:"profile",texts:"profile",endings:"profile",profiles:"profile",terms:"profile"}}`。六类可以单独设为 `save` / `profile`；某字段设 null 恢复缺省，省略不改。candidate/integration 修改前拒绝，旧指纹拒绝；正常差异、试玩及获授权写回流程不变。
+3. Editor「配置 → 鉴赏」的中文保留方式与同一合同对应，可「试玩收藏草稿」，也可保存后重新打开检查。试玩收藏只存在内存，不写正式玩家记录。默认鉴赏与自定义 `gallery-cgs/gallery-music/gallery-texts/gallery-endings/gallery-profiles/gallery-terms` 读取同一有效解锁结果。
 
-永久记录按作品 package name 隔离，只有正常游玩中已登记条目的解锁指令会增加记录。读旧档不撤销永久收藏，也不将旧档批量导入；新游戏清空本局解锁、保留永久部分。关闭开关或移除条目不会删除历史收藏 ID；恢复相同 ID 可以再次显示，所以不要把旧 ID 改用于无关内容。浏览器数据仍受该设备、浏览器来源和存储权限限制，不是云同步。损坏/失败会提示并保留原记录，不冒充永久保存成功。回想中的解锁不写入永久记录；角色资料留待后续单元。
+永久记录按作品 package name 隔离，只有正常游玩中已登记条目的解锁指令会增加记录。读旧档不撤销永久收藏，也不将旧档批量导入；新游戏清空本局解锁、保留永久部分。关闭开关或移除条目不会删除历史收藏 ID；恢复相同 ID 可以再次显示，所以不要把旧 ID 改用于无关内容。浏览器数据仍受该设备、浏览器来源和存储权限限制，不是云同步。损坏/失败会提示并保留原记录，不冒充永久保存成功。回想中的解锁不写入永久记录。
 
 ### 安全剧情回想
 
@@ -482,6 +482,20 @@ Esc 或“取消调整”恢复暂存前画面；数值框 Enter 或“应用到
 本局达成事实沿用存档内的 `clears.endings`，未设置 `unlockPolicy.endings` 时随存档恢复，新游戏清空本局记录。只有显式设置 `endings:"profile"`，正常游玩才会增加当前作品永久收藏；不从旧存档或旧全局通关记录批量导入。回想与 Editor 试玩不写正式收藏，原有通关次数及新周目继承系统不变。
 
 Editor「配置 → 鉴赏 → 结局册」可以编写、保存并试玩当前草稿。默认鉴赏的“结局”页显示已收集数量；自定义鉴赏页使用 `source:"gallery-endings"` 读取同一只读列表，使用 `{kind:"data",field:"ending-progress"}` 显示进度。名称/说明在解锁前被遮蔽；结局条目只供阅读，不会点击后跳入剧情。
+
+### 人物档案与用语辞典
+
+沿用 `content/config/gallery.json`，人物片段在 `profiles` 中引用 `game.config.json.characters` 的角色标识，词条在 `terms` 中引用 `terminology.json` 的规范词。姓名、规范词不另复制；同一角色可以有多个独立解锁的资料片段。
+
+在 direct 草稿中先建立角色，再调用 `gallery.profile.create({operationId:"profile-first",id:"rin.first",character:"rin",title:"初见",description:"在末班电车的站台遇见了她。"})`。调用 `gallery.term.create({operationId:"term-harbor",id:"harbor",canonical:"雾港",description:"北方海岸的小城。"})` 创建词条；缺少规范词时会在同一事务内追加 `{canonical:"雾港",variants:[]}`，保留原名词表的其他内容。不删除原规范词、不全文替换剧情。
+
+先读 `project.gallery({view:"working"})`，从 `profiles[]` / `terms[]` 复制条目 fingerprint。再调用 `gallery.profile.patch({operationId:"profile-edit",id:"rin.first",expectedFingerprint:"读取值",patch:{title:"新的标题",description:null}})`，或 `gallery.term.patch({operationId:"term-edit",id:"harbor",expectedFingerprint:"读取值",patch:{description:"更新的解释"}})`。人物只改 character/title/description，用语只改 canonical/description；title/description 设 null 移除，省略不改。缺少角色、旧指纹、重复 ID 或类型不符会拒绝并保留原稿；四种写入口均在 candidate/integration 修改前拒绝，不提供删除或 ID 改名。
+
+正常剧情使用 `@unlock_profile rin.first` / `@unlock_term harbor` 解锁（标识包含空格时可加双引号）。所有资料须有实际解锁点，指令不得引用缺失条目；候选先准备已保存的资料，场景/时间轴读取并封存 `config:galleryDossiers`，资料变化后重新核对基线。仍被人物资料引用的角色不能删除。
+
+默认鉴赏的“人物”“词典”页与自定义 `gallery-profiles` / `gallery-terms` 使用同一只读列表、译稿和解锁遮蔽；解锁前不显示真实名称、标题或解释。`profile-progress` / `term-progress` 显示已收集数量。不点击后跳入剧情。已有 `source:"terms"` 在未声明 gallery.terms 时仍显示原规范词列表；声明后改用同一受解锁控制的用语辞典，不泄露隐藏名称。
+
+缺省资料进度随存档，旧档缺字段按空，新游戏清空本局。只有显式设置 `unlockPolicy.profiles/terms:"profile"` 才增加本作品永久记录；读旧档不撤销永久部分，回想与 Editor 试玩不写正式收藏。Editor「配置 → 鉴赏」可以编辑两类条目、保存重开及“试玩收藏草稿”；先在角色表/名词表保存被引用对象。名词表删除仍被辞典使用的规范词会拒绝。未保存标题、解释和策略可在独立试玩中生效，关闭试玩保留草稿，不覆盖来源。资料标题/解释沿原文本目录登记、CSV 预览/导入播放；修改后过期译稿回退原文。
 
 ## 2. DSL 速查
 

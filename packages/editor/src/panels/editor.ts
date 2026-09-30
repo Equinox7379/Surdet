@@ -104,6 +104,8 @@ export const INSTR_FIELDS: Record<string, { labels: string[]; opSelect?: number;
   unlock_cg: { labels: ['鉴赏图片标识'] },
   unlock_music: { labels: ['鉴赏音乐标识'] },
   unlock_text: { labels: ['剧情回想标识'] },
+  unlock_profile: { labels: ['人物资料标识'] },
+  unlock_term: { labels: ['用语词条标识'] },
   add_item: { labels: ['数组变量', '道具标识'] },
   remove_item: { labels: ['数组变量', '道具标识'] },
   has_item: { labels: ['数组变量', '道具标识', '结果变量'] },

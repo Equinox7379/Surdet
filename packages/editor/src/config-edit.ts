@@ -3,7 +3,7 @@
  * 的行模型 ⇄ JSON 双向转换与校验。UI 只管表格，落盘前全部经此处校验（编辑器不产出非法配置）。
  */
 import { parseProjectConfigDocument, patchGalleryUnlockPolicy } from '@surdet/authoring';
-import { parseExpr, collectVars, validateVarDecl, readGalleryReplayEntries, readGalleryEndings, type VarDeclaration, type LintIssue } from '@surdet/core';
+import { parseExpr, collectVars, validateVarDecl, readGalleryReplayEntries, readGalleryEndings, readGalleryDossiers, type VarDeclaration, type LintIssue } from '@surdet/core';
 import type { CompiledScene, GenericInstr, ChoiceInstr, CondJumpInstr, SetInstr, ModifyInstr, SwitchInstr, TextInstr } from '@surdet/core';
 
 /* ============================ 变量表 ============================ */
@@ -534,6 +534,8 @@ export function rowsToGrowth(raw: unknown, rows: GrowthRows): { json: Record<str
 export const GALLERY_CG_KEYS = ['id', 'name', 'src'];
 export const GALLERY_TEXT_KEYS = ['id', 'name', 'scene', 'label', 'variables'];
 export const GALLERY_ENDING_KEYS = ['id', 'name', 'description'];
+export const GALLERY_PROFILE_KEYS = ['id', 'character', 'title', 'description'];
+export const GALLERY_TERM_KEYS = ['id', 'canonical', 'description'];
 
 export interface GalleryRows {
   unlockPolicy?: Partial<import('@surdet/core').GalleryUnlockPolicy>;
@@ -541,6 +543,8 @@ export interface GalleryRows {
   music: RowMap[];
   texts: RowMap[];
   endings?: RowMap[];
+  profiles?: RowMap[];
+  terms?: RowMap[];
 }
 
 export function parseGalleryRows(raw: unknown): GalleryRows {
@@ -550,6 +554,8 @@ export function parseGalleryRows(raw: unknown): GalleryRows {
     music: listToRows(raw, 'music', GALLERY_CG_KEYS),
     texts: listToRows(raw, 'texts', GALLERY_TEXT_KEYS),
     endings: listToRows(raw, 'endings', GALLERY_ENDING_KEYS),
+    profiles: listToRows(raw, 'profiles', GALLERY_PROFILE_KEYS),
+    terms: listToRows(raw, 'terms', GALLERY_TERM_KEYS),
   };
 }
 
@@ -561,14 +567,19 @@ export function rowsToGallery(raw: unknown, rows: GalleryRows, variables?: Recor
   json.music = applyRowsToList(origList(raw, 'music'), rows.music, GALLERY_CG_KEYS, [], errors, '鉴赏音乐', 'id');
   json.texts = applyRowsToList(origList(raw, 'texts'), rows.texts, GALLERY_TEXT_KEYS, ['variables'], errors, '回想', 'id');
   if (rows.endings?.length || 'endings' in obj) json.endings = applyRowsToList(origList(raw, 'endings'), rows.endings ?? [], GALLERY_ENDING_KEYS, [], errors, '结局', 'id');
+  for (const section of ['profiles', 'terms'] as const) {
+    if (rows[section]?.length || section in obj) json[section] = applyRowsToList(origList(raw, section), rows[section] ?? [], section === 'profiles' ? GALLERY_PROFILE_KEYS : GALLERY_TERM_KEYS, [], errors, section === 'profiles' ? '人物资料' : '用语词条', 'id');
+    checkUniqueId(rows[section] ?? [], 'id', section === 'profiles' ? '人物资料' : '用语词条', errors);
+  }
   checkUniqueId(rows.cgs, 'id', 'CG', errors);
   checkUniqueId(rows.music, 'id', '鉴赏音乐', errors);
   checkUniqueId(rows.texts, 'id', '回想', errors);
   checkUniqueId(rows.endings ?? [], 'id', '结局', errors);
   try {
     readGalleryEndings(json);
+    readGalleryDossiers(json);
     readGalleryReplayEntries(json, variables === undefined ? undefined : Object.entries(variables).map(([name, decl]) => ({ ...(decl as Omit<VarDeclaration, 'name'>), name })));
-    const configured = patchGalleryUnlockPolicy(json, { cgs: rows.unlockPolicy?.cgs ?? null, music: rows.unlockPolicy?.music ?? null, texts: rows.unlockPolicy?.texts ?? null, endings: rows.unlockPolicy?.endings ?? null });
+    const configured = patchGalleryUnlockPolicy(json, { cgs: rows.unlockPolicy?.cgs ?? null, music: rows.unlockPolicy?.music ?? null, texts: rows.unlockPolicy?.texts ?? null, endings: rows.unlockPolicy?.endings ?? null, profiles: rows.unlockPolicy?.profiles ?? null, terms: rows.unlockPolicy?.terms ?? null });
     return { json: configured, errors };
   } catch (error) { errors.push(String(error)); return { json, errors }; }
 }

@@ -18,7 +18,7 @@ import { buildSpeakerCharacterRefs } from './object-index.js';
 import { buildCharacterOperationCompositionDraft, buildEntrySceneOperationCompositionDraft } from './operation-composition-facts.js';
 import type { CompositionOperation } from './composition-contracts.js';
 import { resolveUniqueScenarioPath } from './scenario-identity.js';
-import { portraitSourcePaths, projectPortraitOverrides, resolveProjectFontPaths, type ProjectFontRole } from '@surdet/core';
+import { portraitSourcePaths, projectPortraitOverrides, resolveProjectFontPaths, readGalleryDossiers, type ProjectFontRole } from '@surdet/core';
 
 const CONFIG_PATH = 'game.config.json';
 
@@ -414,6 +414,8 @@ export async function applyCharacterRemove(
       throw new AuthoringOperationError('OBJECT_NOT_FOUND', `角色不存在：${input.id}`);
     }
     const beforeCharacter = characters[input.id];
+    const profiles = readGalleryDossiers(parseProjectConfigDocument(record.workingFiles['content/config/gallery.json'] ?? '{}')).profiles.filter(entry => entry.character === input.id);
+    if (profiles.length) throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '角色仍被人物档案引用，请先修改相关资料', { references: profiles.map(entry => `gallery:profiles:${entry.id}`) });
     delete characters[input.id];
     config['characters'] = characters;
     const fingerprintAfter = await charactersFingerprint(config, hasher);
@@ -421,6 +423,7 @@ export async function applyCharacterRemove(
       compositionDraft: await buildCharacterOperationCompositionDraft({
         capabilityId: 'character.remove', id: input.id, beforeCharacter, characters, hasher,
         charactersFingerprintBefore: fingerprintBefore,
+        workingFilesBefore: record.workingFiles,
       }),
       result: {
         id: input.id,

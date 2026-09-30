@@ -27,6 +27,7 @@ import { validateTimeline, type TimelineDefinition } from '@surdet/core';
 import type { ProjectAssetCatalog } from './contracts.js';
 import { validateGalleryConfig } from './gallery-validation.js';
 import { GALLERY_PATH } from './gallery-operations.js';
+import { parseProjectConfigDocument } from './config-document.js';
 
 export type AuthoringValidationIssue = LintIssue & {
   objectRef?: string;
@@ -432,9 +433,14 @@ export function validateSnapshot(
 
   const galleryFile = snapshot.files.find((file) => file.path === GALLERY_PATH);
   if (galleryFile !== undefined) {
+    const terminologyFile = snapshot.files.find(file => file.path === 'content/config/terminology.json');
+    let terminology: unknown;
+    try { if (terminologyFile) terminology = parseProjectConfigDocument(terminologyFile.text, terminologyFile.path); }
+    catch (error) { rawIssues.push({ severity: 'error', code: 'G001', text: `名词表解析失败：${String(error)}`, file: terminologyFile!.path, line: 0, col: 0 }); }
     rawIssues.push(...validateGalleryConfig({
       text: galleryFile.text,
-      galleryPath: GALLERY_PATH, scenes, failedSceneIds: failedScenes, characters: null, configPath,
+      galleryPath: GALLERY_PATH, scenes, failedSceneIds: failedScenes, characters: (snapshot.config.characters ?? {}) as Record<string, unknown>, configPath,
+      terminology,
       variables: snapshot.variables,
       ...(assetCatalog === undefined ? {} : { bgAssets: new Set(assetCatalog.backgrounds.filter((entry) => entry.resolved).map((entry) => entry.key)) }),
     }));

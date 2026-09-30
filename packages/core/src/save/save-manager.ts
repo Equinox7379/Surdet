@@ -65,8 +65,8 @@ export interface SaveSnapshot {
   kind: 'manual' | 'quick' | 'auto';
   /** 已读标记（快进跳过用） */
   readSet: string[];
-  /** CG/音乐/文本回想解锁状态（texts 为后续版本新增，旧档无此字段） */
-  gallery: { cgs: string[]; music: string[]; texts?: string[] };
+  /** 图片/音乐/回想/人物/用语的本局解锁；旧档缺少的可选字段按空恢复。 */
+  gallery: import('../systems/gallery-state.js').GallerySnapshot;
   /** 通关记录（@clear 结局收集；后续版本新增，旧档无此字段按未通关） */
   clears?: { endings: string[] };
   /** 角色成长（经验/等级；后续版本新增，旧档无此字段按初始等级） */
@@ -214,6 +214,10 @@ export function assertValidSnapshot(
     }
     if (g.texts !== undefined && (!Array.isArray(g.texts) || !(g.texts as unknown[]).every((x) => typeof x === 'string'))) {
       fail('gallery.texts 必须是字符串数组');
+    }
+    for (const section of ['profiles', 'terms']) {
+      const ids = g[section];
+      if (ids !== undefined && (!Array.isArray(ids) || !ids.every(id => typeof id === 'string'))) fail(`gallery.${section} 必须是字符串数组`);
     }
   }
   if (s.clears !== undefined) {

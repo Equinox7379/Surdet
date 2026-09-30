@@ -157,7 +157,8 @@ content/timelines/intro_arrival.json
 | 指令 | 状态 | 说明 |
 |---|---|---|
 | `@battle` / `@calendar` / `@affection` / `@event` / `@shop` / `@item` | ✅ | 发 `system` 事件，由宿主驱动对应 System 类（`@shop`/`@item` 引擎无内置实现，需宿主自理） |
-| `@unlock_cg` / `@unlock_music` / `@unlock_text` | ✅ | 解锁 CG / 音乐 / 文本回想（鉴赏界面三 tab；texts 条目在 gallery.json 配 scene/label，点击跳回重播） |
+| `@unlock_cg` / `@unlock_music` / `@unlock_text` | ✅ | 解锁图片 / 音乐 / 剧情回想；texts 在 gallery.json 配 scene/label，共享 Player 隔离回放并返回原进度，不写正式存档或永久收藏。缺省解锁随剧情存档，永久收藏须显式开启。 |
+| `@unlock_profile` / `@unlock_term` | ✅ | 分别解锁 gallery.json.profiles 人物片段 / terms 用语解释，例如 `@unlock_profile rin.first`、`@unlock_term harbor`。ID 可加双引号；列表在解锁前遮蔽名称、标题和说明，缺省随档，可单独开启永久收藏。 |
 | `@shop` | ✅ | 打开商店覆盖层（宿主 ShopSystem 结算）；参数 = 金币变量 道具变量，缺省 `gold bag` |
 | `@scene` | ✅ | 声明性指令：仅用于与文件名推导的场景 ID 做一致性校验（lint SCENE_ID），运行时解释器不消费、无效果 |
 | `@end` | ✅ | 场景结束（可省略，引擎自动追加） |

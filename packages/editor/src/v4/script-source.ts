@@ -244,7 +244,7 @@ export function projectEditLayout(lines: readonly LineModel[], selected: number)
     if (line?.kind === 'label' || line?.kind === 'instr' && line.name === 'scene') { start = index; break; }
   }
   const actors = new Map<string, LayoutActor>();
-  const nonVisual = new Set(['scene', 'wait', 'voice', 'bgm', 'ambience', 'se', 'set', 'mod', 'inc', 'dec', 'toggle', 'flag', 'unflag', 'autosave', 'savepoint', 'unlock_cg', 'unlock_music', 'unlock_text']);
+  const nonVisual = new Set(['scene', 'wait', 'voice', 'bgm', 'ambience', 'se', 'set', 'mod', 'inc', 'dec', 'toggle', 'flag', 'unflag', 'autosave', 'savepoint', 'unlock_cg', 'unlock_music', 'unlock_text', 'unlock_profile', 'unlock_term']);
   for (let index = start; index <= selected; index++) {
     const line = lines[index]!;
     if (line.kind === 'text') { if (index === selected) result.dialogue = { speaker: line.speaker, value: line.value }; continue; }

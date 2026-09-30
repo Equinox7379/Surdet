@@ -29,7 +29,7 @@ export interface ProjectStatsInput {
 }
 
 const ASSET_INSTRUCTIONS = new Set([
-  'bg', 'show', 'bgm', 'ambience', 'se', 'voice', 'video', 'unlock_cg', 'unlock_music', 'unlock_text',
+  'bg', 'show', 'bgm', 'ambience', 'se', 'voice', 'video', 'unlock_cg', 'unlock_music', 'unlock_text', 'unlock_profile', 'unlock_term',
 ]);
 
 function targetScene(target: string): string {

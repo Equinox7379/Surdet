@@ -121,6 +121,11 @@ function addSceneInstructionReferences(
     return;
   }
 
+  if (name === 'unlock_profile' || name === 'unlock_term') {
+    const token = args[0] === undefined ? '' : decodeInstructionArgument(args[0]);
+    addReference(references, name === 'unlock_profile' ? 'gallery-profile' : 'gallery-term', 'candidate-external', token, source, `gallery:${name === 'unlock_profile' ? 'profiles' : 'terms'}:${token}`);
+    return;
+  }
   if (name === 'unlock_text') {
     const token = args[0] ?? '';
     addReference(references, 'gallery-text', 'candidate-external', token, source, `gallery:texts:${token}`);

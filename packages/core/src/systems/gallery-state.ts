@@ -8,23 +8,25 @@ export interface GallerySnapshot {
   cgs: string[];
   music: string[];
   texts?: string[];
+  profiles?: string[];
+  terms?: string[];
 }
 
 export type GalleryUnlockScope = 'save' | 'profile';
-export interface GalleryUnlockPolicy { cgs: GalleryUnlockScope; music: GalleryUnlockScope; texts?: GalleryUnlockScope; endings?: GalleryUnlockScope }
+export interface GalleryUnlockPolicy { cgs: GalleryUnlockScope; music: GalleryUnlockScope; texts?: GalleryUnlockScope; endings?: GalleryUnlockScope; profiles?: GalleryUnlockScope; terms?: GalleryUnlockScope }
 
 /** Only an explicit profile policy makes a collection permanent. */
 export function readGalleryUnlockPolicy(gallery: unknown): GalleryUnlockPolicy {
   const raw = (gallery as { unlockPolicy?: unknown } | null)?.unlockPolicy;
-  if (raw === undefined) return { cgs: 'save', music: 'save', texts: 'save', endings: 'save' };
+  if (raw === undefined) return { cgs: 'save', music: 'save', texts: 'save', endings: 'save', profiles: 'save', terms: 'save' };
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('鉴赏收藏策略必须是对象');
   const policy = raw as Record<string, unknown>;
   for (const [key, value] of Object.entries(policy)) {
-    if (!['cgs', 'music', 'texts', 'endings'].includes(key) || !['save', 'profile'].includes(value as string)) {
-      throw new Error(`无效的鉴赏收藏策略：${key}（图片、音乐、回想和结局支持 save/profile）`);
+    if (!['cgs', 'music', 'texts', 'endings', 'profiles', 'terms'].includes(key) || !['save', 'profile'].includes(value as string)) {
+      throw new Error(`无效的鉴赏收藏策略：${key}（各类收藏支持 save/profile）`);
     }
   }
-  return { cgs: (policy.cgs ?? 'save') as GalleryUnlockScope, music: (policy.music ?? 'save') as GalleryUnlockScope, texts: (policy.texts ?? 'save') as GalleryUnlockScope, endings: (policy.endings ?? 'save') as GalleryUnlockScope };
+  return { cgs: (policy.cgs ?? 'save') as GalleryUnlockScope, music: (policy.music ?? 'save') as GalleryUnlockScope, texts: (policy.texts ?? 'save') as GalleryUnlockScope, endings: (policy.endings ?? 'save') as GalleryUnlockScope, profiles: (policy.profiles ?? 'save') as GalleryUnlockScope, terms: (policy.terms ?? 'save') as GalleryUnlockScope };
 }
 
 /** Presentation union only: never put the permanent profile back into a story snapshot. */
@@ -33,6 +35,8 @@ export function effectiveGalleryUnlocks(story: GallerySnapshot, permanent: Galle
     cgs: policy.cgs === 'profile' ? [...new Set([...story.cgs, ...permanent.cgs])] : [...story.cgs],
     music: policy.music === 'profile' ? [...new Set([...story.music, ...permanent.music])] : [...story.music],
     texts: policy.texts === 'profile' ? [...new Set([...(story.texts ?? []), ...(permanent.texts ?? [])])] : [...(story.texts ?? [])],
+    ...(story.profiles || permanent.profiles ? { profiles: policy.profiles === 'profile' ? [...new Set([...(story.profiles ?? []), ...(permanent.profiles ?? [])])] : [...(story.profiles ?? [])] } : {}),
+    ...(story.terms || permanent.terms ? { terms: policy.terms === 'profile' ? [...new Set([...(story.terms ?? []), ...(permanent.terms ?? [])])] : [...(story.terms ?? [])] } : {}),
   };
 }
 
@@ -41,6 +45,20 @@ export class GalleryState {
   #music = new Set<string>();
   /** 文本回想解锁 ID（@unlock_text 驱动） */
   #texts = new Set<string>();
+  #profiles = new Set<string>();
+  #terms = new Set<string>();
+
+  unlockProfile(id: string): boolean {
+    if (this.#profiles.has(id)) return false;
+    this.#profiles.add(id);
+    return true;
+  }
+
+  unlockTerm(id: string): boolean {
+    if (this.#terms.has(id)) return false;
+    this.#terms.add(id);
+    return true;
+  }
 
   /** 解锁 CG，返回是否首次解锁（用于提示新解锁） */
   unlockCg(id: string): boolean {
@@ -87,12 +105,15 @@ export class GalleryState {
   }
 
   snapshot(): GallerySnapshot {
-    return { cgs: this.cgs, music: this.music, texts: this.texts };
+    return { cgs: this.cgs, music: this.music, texts: this.texts,
+      ...(this.#profiles.size ? { profiles: [...this.#profiles] } : {}), ...(this.#terms.size ? { terms: [...this.#terms] } : {}) };
   }
 
   restore(snap: GallerySnapshot): void {
     this.#cgs = new Set(snap.cgs);
     this.#music = new Set(snap.music);
     this.#texts = new Set(snap.texts ?? []); // 旧档无 texts 字段按空
+    this.#profiles = new Set(snap.profiles ?? []);
+    this.#terms = new Set(snap.terms ?? []);
   }
 }

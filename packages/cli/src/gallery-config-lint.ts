@@ -56,6 +56,10 @@ export function lintGalleryConfig(context: GalleryLintContext): void {
     return;
   }
   const config = readConfig(context.root);
+  const termPath = path.join(context.root, 'content/config/terminology.json');
+  let terminology: unknown;
+  try { if (fs.existsSync(termPath)) terminology = JSON.parse(fs.readFileSync(termPath, 'utf8').replace(/^\uFEFF/, '')); }
+  catch (error) { context.issues.push({ severity: 'error', code: 'G001', text: `名词表解析失败：${String(error)}`, file: termPath, line: 0, col: 0 }); }
   context.issues.push(...validateGalleryConfig({
     text,
     galleryPath,
@@ -66,6 +70,7 @@ export function lintGalleryConfig(context: GalleryLintContext): void {
     avatarAssets: indexAssetStems(path.join(context.root, 'content/assets/avatar')),
     characters: isRecord(config.characters) ? config.characters : null,
     variables: isRecord(config.variables) ? config.variables : {},
+    terminology,
     configPath: path.join(context.root, 'game.config.json'),
   }));
 }

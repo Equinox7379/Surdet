@@ -95,6 +95,19 @@ describe('validateGalleryConfig', () => {
     expect(issues.every((issue) => issue.severity === 'error')).toBe(true);
   });
 
+  it('checks quoted dossier unlocks, missing entries and missing unlock points', () => {
+    const gallery = JSON.stringify({ cgs: [], music: [], profiles: [{ id: 'rin.first', character: 'rin' }], terms: [{ id: 'port', canonical: '雾港' }] });
+    const context = { characters: { rin: { name: '凛' } }, terminology: { terms: [{ canonical: '雾港', variants: [] }] } };
+    const scene = compileScene('@unlock_profile "rin.first"\n@unlock_term "port"\n@end', 'a.gal', 'a');
+    expect(validateGalleryConfig(input(gallery, { ...context, scenes: new Map([['a', scene]]) }))).toEqual([]);
+    const missing = compileScene('@unlock_profile absent\n@unlock_term absent\n@end', 'a.gal', 'a');
+    const issues = validateGalleryConfig(input(gallery, { ...context, scenes: new Map([['a', missing]]) }));
+    expect(issues.filter(issue => issue.code === 'G006')).toHaveLength(2);
+    expect(issues.filter(issue => issue.code === 'G007')).toHaveLength(2);
+    expect(validateGalleryConfig(input(gallery, { ...context, characters: {} }))).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'G001', text: expect.stringContaining('人物不存在') })]));
+    expect(validateGalleryConfig(input(gallery, { ...context, terminology: { terms: [] } }))).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'G001', text: expect.stringContaining('规范词不存在') })]));
+  });
+
   it('reports malformed JSON against the supplied gallery path', () => {
     const issues = validateGalleryConfig(input('\uFEFF{"cgs":'));
 

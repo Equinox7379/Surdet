@@ -49,6 +49,8 @@ export interface RendererPlayerShellViews {
     readonly music: readonly GalleryItemView[];
     readonly texts?: readonly GalleryItemView[];
     readonly endings?: readonly GalleryItemView[];
+    readonly profiles?: readonly GalleryItemView[];
+    readonly terms?: readonly GalleryItemView[];
     readonly onPlayMusic?: (id: string, source?: string) => void;
     readonly onReplayText?: (item: GalleryItemView) => void;
     readonly onClose?: () => void;
