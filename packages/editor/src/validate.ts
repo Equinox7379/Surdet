@@ -33,6 +33,8 @@ export interface ProjectConfig {
   path: string;
   /** 当前内存词条配置，含尚未保存的修改。 */
   terminologyText?: string;
+  /** 当前已读取的鉴赏配置；缺文件时省略，不创建空配置。 */
+  galleryText?: string;
 }
 
 /** Phase 2C（A3）：项目 timelines 的最小输入（来自 state.timelines，保留未保存编辑缓冲）。 */
@@ -134,6 +136,8 @@ export async function validateProject(
   })));
   if (config?.terminologyText !== undefined) sharedFiles.push({ path: 'content/config/terminology.json', text: config.terminologyText,
     bytes: config.terminologyText.length, sha256: await validationDigest(config.terminologyText) });
+  if (config?.galleryText !== undefined) sharedFiles.push({ path: 'content/config/gallery.json', text: config.galleryText,
+    bytes: config.galleryText.length, sha256: await validationDigest(config.galleryText) });
   const configFile = config?.raw === undefined || config?.raw === null ? null : {
     path: config.path,
     text: JSON.stringify(config.raw),

@@ -77,6 +77,15 @@ function makeAuthoringSnapshot(
     const text = fs.readFileSync(terminologyPath, 'utf8');
     allFiles.push({ path: 'content/config/terminology.json', text, bytes: Buffer.byteLength(text, 'utf8'), sha256: createHash('sha256').update(text).digest('hex') });
   }
+  const galleryPath = path.join(root, 'content/config/gallery.json');
+  if (fs.existsSync(galleryPath)) {
+    try {
+      const text = fs.readFileSync(galleryPath, 'utf8');
+      allFiles.push({ path: 'content/config/gallery.json', text, bytes: Buffer.byteLength(text, 'utf8'), sha256: authoringDigest(text) });
+    } catch {
+      // 下方 lintGalleryConfig 报告实际读取失败，不将未读取配置记成成功。
+    }
+  }
   const variables = config && typeof config['variables'] === 'object' && config['variables'] !== null && !Array.isArray(config['variables'])
     ? config['variables'] as Record<string, unknown>
     : {};
@@ -210,7 +219,9 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
       // lint 是完整项目静态检查：timeline 引用完整性用 complete（Phase 2C）。
       { failedScenes, timelineReferenceScope: 'complete', assetCatalog },
     );
-    issues.push(...shared.issues);
+    // 原生 Gallery 适配在下方完整检查 G001–G008（含音乐/头像素材），不重复收集共享诊断。
+    // 快照仍包含真实配置，供对象引用和文本目录校验使用。
+    issues.push(...shared.issues.filter(issue => !/^G00[1-8]$/.test(issue.code ?? '')));
   }
 
   // 未使用标签（W006）+ 场景可达性（W007，需配置 entryScene；配置驱动的 hostJump 目标场景也算可达根）

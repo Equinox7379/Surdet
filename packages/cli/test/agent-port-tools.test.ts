@@ -74,6 +74,27 @@ async function connectedProject(projectRoot: string, policy: 'observe' | 'stage'
 }
 
 describe('Surdet Agent Port MCP tool projection', () => {
+  it.each([false, true])('rejects missing dossier definitions through public validation (gallery file %s)', async present => {
+    const root = makeProject('missing-gallery');
+    fs.writeFileSync(path.join(root, 'content/scenario/start.gal'), '@scene start\n@unlock_profile absent_profile\n@unlock_term absent_term\n@end\n');
+    const galleryPath = path.join(root, 'content/config/gallery.json');
+    if (present) { fs.mkdirSync(path.dirname(galleryPath), { recursive: true }); fs.writeFileSync(galleryPath, '{"cgs":[],"music":[]}'); }
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-missing-gallery-data-'));
+    temporaryRoots.push(data); process.env['SURDET_AGENT_DATA_DIR'] = data;
+    const { session, client, server } = await connectedProject(root, 'stage');
+    try {
+      const begun = await client.callTool({ name: 'surdet_change_begin', arguments: { compositionMode: 'direct' } });
+      expect(textEnvelope(begun)).toMatchObject({ ok: true, result: { compositionMode: 'direct' } });
+      const response = await client.callTool({ name: 'surdet_project_validate', arguments: {} });
+      expect(response.isError, textContent(response)).not.toBe(true);
+      const envelope = textEnvelope(response) as { result: { ok: boolean; issues: { code: string; file: string; line: number }[] } };
+      expect(envelope.result).toMatchObject({ ok: false, view: 'working' });
+      expect(envelope.result.issues.filter(issue => issue.code === 'G006').map(issue => ({ file: issue.file, line: issue.line })))
+        .toEqual([2, 3].map(line => ({ file: 'content/scenario/start.gal', line })));
+      expect(fs.existsSync(galleryPath)).toBe(present);
+    } finally { await client.close(); await server.close(); await session.close(); }
+  });
+
   it('authors character dossiers, canonical terms and translations through the public tools', async () => {
     const { session, client, server } = await connected('apply');
     const call = async (name: string, args: Record<string, unknown> = {}) => {
