@@ -1,6 +1,6 @@
 import * as crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { AGENT_IMAGE_MAX_BYTES, AuthoringOperationError, parsePreviewPublishInput, parsePreviewContentTarget, HUMAN_WORKSPACE_DIRTY_SCOPES, HUMAN_WORKSPACE_BUSY_REASONS,
+import { AGENT_IMAGE_MAX_BYTES, AuthoringOperationError, getCapabilityDefinition, parsePreviewPublishInput, parsePreviewContentTarget, HUMAN_WORKSPACE_DIRTY_SCOPES, HUMAN_WORKSPACE_BUSY_REASONS,
   HUMAN_WORKSPACE_BLOCKED_REASONS } from '@surdet/authoring';
 import { EditorWorkspaceAuthorityError, type EditorWorkspaceAuthority, type EditorWorkspaceStateInput,
   type ActiveEditorWriteInput } from '../editor-workspace-authority/editor-workspace-authority.js';
@@ -8,6 +8,8 @@ import type {
   ProjectAssetImportStagedItem,
   ProjectAssetImportTargetRequest,
 } from '@surdet/authoring';
+import { validateCapabilityInput } from '../authoring/schema-validator.js';
+import type { CheckpointInput, HistoryCompareInput } from '../authoring/content-history-service.js';
 import {
   AssetImportAuthorityError,
   type CommitOperationRequest,
@@ -79,6 +81,7 @@ const PUBLIC_CODES = new Set([
   'HUMAN_WORKSPACE_BUSY',
   'HUMAN_WORKSPACE_STATE_CORRUPT',
   'EDITOR_PROJECT_BASELINE_CHANGED',
+  'OBJECT_REF_STALE', 'OBJECT_NOT_FOUND', 'OPERATION_ID_CONFLICT', 'CHANGE_STORE_CORRUPT', 'PROJECT_INVALID',
 ]);
 
 type EmptyObject = Record<string, never>;
@@ -145,7 +148,7 @@ type Route = {
     | 'relocation-replace' | 'relocation-plan' | 'relocation-list' | 'relocation-query' | 'relocation-resume'
     | 'relocation-commit' | 'relocation-cancel' | 'relocation-recover' | 'relocation-undo'
     | 'scene-plan' | 'scene-commit' | 'workspace';
-  workspaceAction?: 'heartbeat' | 'snapshot' | 'begin' | 'publish' | 'renew' | 'finish' | 'abort' | 'revoke' | 'preview' | 'preview-sources' | 'preview-content';
+  workspaceAction?: 'heartbeat' | 'snapshot' | 'begin' | 'publish' | 'renew' | 'finish' | 'abort' | 'revoke' | 'preview' | 'preview-sources' | 'preview-content' | 'history' | 'history-checkpoint' | 'history-compare';
   method: 'POST' | 'PUT';
   operationId?: string;
   itemId?: string;
@@ -194,6 +197,8 @@ function sendJson(response: ServerResponse, status: number, body: unknown, close
 }
 
 function retryDisposition(code: string): 'same-request' | 'after-refresh' | 'after-human-action' | 'manual-recovery' | 'never' {
+  if (code === 'CHANGE_STORE_CORRUPT') return 'manual-recovery';
+  if (code === 'OBJECT_REF_STALE' || code === 'OBJECT_NOT_FOUND') return 'after-refresh';
   if (code === 'PREVIEW_OBSERVATION_CORRUPT') return 'manual-recovery';
   if (code.startsWith('PREVIEW_OBSERVATION_')) return 'after-refresh';
   if (code.startsWith('PREVIEW_CONTENT_') || ['CAPSULE_IDENTITY_MISMATCH', 'CANDIDATE_NOT_COMPOSABLE', 'COMPOSITION_REPLAY_FAILED', 'COMPOSITION_PLAN_INVALID', 'CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN'].includes(code)) return 'after-refresh';
@@ -205,6 +210,8 @@ function retryDisposition(code: string): 'same-request' | 'after-refresh' | 'aft
 }
 
 function statusForCode(code: string): number {
+  if (code === 'OBJECT_REF_STALE' || code === 'OPERATION_ID_CONFLICT' || code === 'CHANGE_STORE_CORRUPT') return 409;
+  if (code === 'OBJECT_NOT_FOUND') return 404;
   if (code === 'PREVIEW_OBSERVATION_LIMIT') return 413;
   if (code === 'PREVIEW_OBSERVATION_UNAVAILABLE') return 404;
   if (code === 'PREVIEW_OBSERVATION_STALE' || code === 'PREVIEW_OBSERVATION_CORRUPT') return 409;
@@ -612,7 +619,7 @@ async function publicRelocationList(authority: AssetImportAuthorityHttpTarget): 
 }
 
 function parseRoute(url: string): Route | null {
-  const workspace = url.match(new RegExp(`^${ASSET_IMPORT_AUTHORITY_BASE_PATH}/workspace/(heartbeat|snapshot|begin|publish|renew|finish|abort|revoke|preview|preview-sources|preview-content)$`));
+  const workspace = url.match(new RegExp(`^${ASSET_IMPORT_AUTHORITY_BASE_PATH}/workspace/(heartbeat|snapshot|begin|publish|renew|finish|abort|revoke|preview|preview-sources|preview-content|history|history-checkpoint|history-compare)$`));
   if (workspace) return { kind: 'workspace', workspaceAction: workspace[1] as Route['workspaceAction'],
     method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/status`) return { kind: 'status', method: 'POST', bindingRequired: false, operationTokenRequired: false, binary: false };
@@ -870,11 +877,22 @@ export function createAssetImportAuthorityHttpHandler(
             const extra = action === 'begin' ? ['expectedProjectRevision', 'expectedCoordinationRevision', 'purpose']
               : action === 'publish' ? ['writeLeaseId', 'path', 'text', 'expectedSha256']
                 : action === 'preview' ? ['preview'] : action === 'preview-content' ? ['target']
-                  : action === 'heartbeat' || action === 'preview-sources' ? [] : ['writeLeaseId'];
+                  : action === 'history-checkpoint' || action === 'history-compare' ? ['request']
+                    : action === 'heartbeat' || action === 'preview-sources' || action === 'history' ? [] : ['writeLeaseId'];
             const state = parseWorkspaceState(object, extra);
             if (action === 'heartbeat') {
               const record = await workspace.heartbeat(state);
               data = { workspaceGeneration: record.workspaceGeneration, heartbeatAt: record.heartbeatAt };
+            } else if (action === 'history') {
+              data = await workspace.history(state);
+            } else if (action === 'history-checkpoint' || action === 'history-compare') {
+              const id = action === 'history-checkpoint' ? 'project.history.checkpoint' : 'project.history.compare';
+              const request = await validateCapabilityInput(getCapabilityDefinition(id).inputSchema, object.request);
+              if (action === 'history-checkpoint') data = await workspace.historyCheckpoint(state, request as unknown as CheckpointInput);
+              else {
+                if (request.view !== undefined && request.view !== 'project') throw new AuthoringOperationError('INVALID_REQUEST', '编辑器历史比较只读取当前已保存项目');
+                data = await workspace.historyCompare(state, request as unknown as HistoryCompareInput);
+              }
             } else if (action === 'preview') {
               data = await workspace.publishPreview(state, parsePreviewPublishInput(object.preview));
             } else if (action === 'preview-sources') {

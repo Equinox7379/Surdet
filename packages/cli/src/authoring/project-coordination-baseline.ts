@@ -1,6 +1,6 @@
 import * as crypto from 'node:crypto';
 import {
-  loadProjectSnapshot,
+  loadProjectContentSnapshot,
   type ProjectStorage,
   type TextHasher,
 } from '@surdet/authoring';
@@ -45,7 +45,7 @@ export async function loadProjectCoordinationBaseline(
   const coordinationRevision = await hasher.sha256(
     canonical.map((file) => `${file.path}\0${file.sha256}`).join('\n'),
   );
-  const project = await loadProjectSnapshot(storage, hasher);
+  const project = await loadProjectContentSnapshot(storage, hasher);
   return {
     projectRevision: project.revision,
     coordinationRevision,

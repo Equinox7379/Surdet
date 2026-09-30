@@ -938,7 +938,36 @@ const relocationDetailSchema = strictObject({
 const relocationIdentitySchema = { type: 'string', pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' } as const;
 const relocationFingerprintSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' } as const;
 
+const historySummarySchema = strictObject({ checkpointId: importUuidSchema, label: stringSchema, createdAt: stringSchema,
+  contentRevision: importShaSchema, projectRevision: importShaSchema, fingerprint: importShaSchema, fileCount: integerSchema },
+['checkpointId', 'label', 'createdAt', 'contentRevision', 'projectRevision', 'fingerprint', 'fileCount']);
+const historyFileSchema = strictObject({ path: stringSchema, currentSha256: { oneOf: [importShaSchema, nullSchema] },
+  historicalSha256: { oneOf: [importShaSchema, nullSchema] }, currentText: { oneOf: [stringSchema, nullSchema] },
+  historicalText: { oneOf: [stringSchema, nullSchema] } }, ['path', 'currentSha256', 'historicalSha256']);
+
 const definitions = {
+  history: {
+    inputSchema: emptyInputSchema,
+    outputSchema: strictObject({ contentRevision: importShaSchema, checkpoints: arrayOf(historySummarySchema) }, ['contentRevision', 'checkpoints']),
+    example: { input: {}, expectedResultShape: { contentRevision: '...', checkpoints: [] } },
+  },
+  historyCheckpoint: {
+    inputSchema: strictObject({ operationId: importUuidSchema, label: { type: 'string', minLength: 1, maxLength: 200 }, expectedContentRevision: importShaSchema }, ['operationId', 'label', 'expectedContentRevision']),
+    outputSchema: historySummarySchema,
+    example: { input: { operationId: '123e4567-e89b-42d3-a456-426614174000', label: '第一章定稿', expectedContentRevision: '...' }, expectedResultShape: { checkpointId: '...', fingerprint: '...' } },
+  },
+  historyCompare: {
+    inputSchema: strictObject({ checkpointId: importUuidSchema, expectedFingerprint: importShaSchema, path: stringSchema, view: readViewSchema }, ['checkpointId']),
+    outputSchema: strictObject({ checkpoint: historySummarySchema, contentRevision: importShaSchema, workingRevision: integerSchema, files: arrayOf(historyFileSchema) }, ['checkpoint', 'contentRevision', 'files']),
+    example: { input: { checkpointId: '123e4567-e89b-42d3-a456-426614174000', view: 'working', path: 'content/scenario/main.gal' }, expectedResultShape: { checkpoint: {}, contentRevision: '...', files: [] } },
+  },
+  historyRestore: {
+    inputSchema: strictObject({ operationId: stringSchema, checkpointId: importUuidSchema, expectedFingerprint: importShaSchema,
+      expectedContentRevision: importShaSchema, expectedWorkingRevision: { type: 'integer', minimum: 0 }, paths: { ...stringArraySchema, minItems: 1, uniqueItems: true } },
+    ['operationId', 'checkpointId', 'expectedFingerprint', 'expectedContentRevision', 'expectedWorkingRevision', 'paths']),
+    outputSchema: strictObject({ checkpointId: importUuidSchema, paths: stringArraySchema }, ['checkpointId', 'paths']),
+    example: { input: { operationId: 'restore-1', checkpointId: '123e4567-e89b-42d3-a456-426614174000', expectedFingerprint: '...', expectedContentRevision: '...', expectedWorkingRevision: 0, paths: ['content/scenario/main.gal'] }, expectedResultShape: { checkpointId: '...', paths: ['content/scenario/main.gal'] } },
+  },
   assetRelocationReplace: {
     inputSchema: strictObject({ operationId: relocationIdentitySchema, targetPath: stringSchema,
       source: strictObject({ sourceId: stringSchema, path: stringSchema, sha256: relocationFingerprintSchema }, ['sourceId', 'path', 'sha256']),
@@ -1444,6 +1473,10 @@ const definitions = {
 export const AUTHORING_CAPABILITY_IDS = [
   'capabilities.describe',
   'project.inspect',
+  'project.history',
+  'project.history.checkpoint',
+  'project.history.compare',
+  'project.history.restore',
   'project.ui',
   'project.texts',
   'project.texts.import.preview',
@@ -1549,6 +1582,10 @@ const mutateRepair = [
 const imageImportErrors = ["IMPORT_OPERATION_NOT_FOUND","IMPORT_OPERATION_CONFLICT","IMPORT_PLAN_BLOCKED","IMPORT_PLAN_STALE","IMPORT_PROJECT_STALE","IMPORT_TARGET_UNSAFE","IMPORT_TARGET_EXISTS","IMPORT_RECOVERY_REQUIRED","IMPORT_LIMIT_EXCEEDED","IMPORT_UPLOAD_BUSY","IMPORT_UPLOAD_TIMEOUT","IMPORT_UPLOAD_MISMATCH","IMPORT_AUTHORITY_NOT_READY","IMPORT_FILESYSTEM_UNSUPPORTED","IMPORT_PUBLICATION_FAILED","IMPORT_IO_FAILED","ASSET_SOURCE_FORBIDDEN","ASSET_SOURCE_CHANGED","ASSET_IMAGE_INVALID","ASSET_MEDIA_INVALID","PROJECT_BUSY","HUMAN_WORKSPACE_DIRTY","HUMAN_WORKSPACE_BUSY","HUMAN_WORKSPACE_STATE_CORRUPT","SESSION_STATE_INVALID","POLICY_BLOCKED"] as const;
 
 const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
+  'project.history': { title: 'Read content history', purpose: 'List manually recorded saved content versions and the current saved contentRevision. Covers scenarios, timelines and supported content configs including achievements; excludes assets, package identity and engine files.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false, preconditions: [], possibleErrors: [...commonErrors, 'CHANGE_STORE_CORRUPT'], repairRecipes: readRepair },
+  'project.history.checkpoint': { title: 'Record saved content version', purpose: 'Record exact saved text, including malformed source, under a manual label. Copy expectedContentRevision from project.history. Working drafts are never captured. This is not an asset-inclusive backup or validation evidence.', minimumPolicy: 'stage', sideEffects: ['project-read', 'change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['saved contentRevision is current'], possibleErrors: [...commonErrors, 'OBJECT_REF_STALE', 'OPERATION_ID_CONFLICT', 'CHANGE_STORE_CORRUPT'], repairRecipes: readRepair },
+  'project.history.compare': { title: 'Compare content history', purpose: 'Compare one history version with explicit project or working content. Default is project. Omit path for file fingerprints; specify one path for full current/historical text. Copy checkpoint.fingerprint, contentRevision and workingRevision into restore.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['checkpoint exists; working view requires an active change'], possibleErrors: [...commonErrors, 'OBJECT_NOT_FOUND', 'OBJECT_REF_STALE', 'CHANGE_STORE_CORRUPT'], repairRecipes: readRepair },
+  'project.history.restore': { title: 'Restore content into direct draft', purpose: 'Merge explicitly selected historical files into the active direct draft after comparing working view. Keeps other files, never deletes current-only files, never restores approvals or save identities. Source stays unchanged until normal fresh validation, simulation, runtime and authorized change.commit.', minimumPolicy: 'stage', sideEffects: ['change-store-read', 'change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['active change is OPEN and direct', 'history and working fingerprints match the comparison'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_REF_STALE', 'OPERATION_ID_CONFLICT', 'CHANGE_STORE_CORRUPT'], repairRecipes: ['Begin a direct change, compare view=working, restore selected paths, inspect diff and validate/preview before committing.'] },
   'gallery.text.create': { title: 'Create story replay', purpose: 'Create one replay entry with scene, optional label and initial variable overrides over project defaults. Shared Player restores the origin after replay and blocks normal persistence. Direct only.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['active change is OPEN and direct', 'scene and label exist; overrides use declared variables and valid values'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'VALIDATION_FAILED', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'gallery.text.patch': { title: 'Patch story replay', purpose: 'Update name/scene/label/variables on one replay. Null removes label or variable overrides; variables replaces the whole override object. Direct only.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['active change is OPEN and direct', 'copy current entry fingerprint from project.gallery.texts'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'OBJECT_NOT_FOUND', 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'gallery.ending.create': { title: 'Create ending entry', purpose: 'Declare ending-book metadata. Normal @clear with the same id unlocks it; missing endings policy stays save-scoped. Direct only.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: false, preconditions: ['active change is OPEN and direct'], possibleErrors: [...commonErrors, 'UNSUPPORTED_OPERATION', 'VALIDATION_FAILED', 'OBJECT_PRECONDITION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
@@ -1625,6 +1662,10 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
 function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition {
   const item = metadata[id];
   const schema = definitions[id === 'project.ui' ? 'ui' : id === 'project.ui.patch' ? 'uiPatch' : id === 'project.stage-config.patch' ? 'stageConfigPatch' : id === 'project.player-config.patch' ? 'playerConfigPatch' : id === 'project.theme-config.patch' ? 'themeConfigPatch' : id === 'asset.sources' ? 'assetSources'
+    : id === 'project.history' ? 'history'
+    : id === 'project.history.checkpoint' ? 'historyCheckpoint'
+    : id === 'project.history.compare' ? 'historyCompare'
+    : id === 'project.history.restore' ? 'historyRestore'
     : id === 'project.gallery' ? 'gallery'
     : id === 'script.import.preview' ? 'scriptImportPreview'
     : id === 'project.texts' ? 'texts'

@@ -90,6 +90,7 @@ import { disposeUiPlayerPreview } from './ui-player-preview.js';
 import './styles/v4-workbench.css';
 import { clearTimelineViewState, clearTimelineViewStates, renderTimelinePanel, selectTimelineCue, bindTimelineHooks } from './panels/timeline-panel.js';
 import { renderStatsPanel, bindStatsHooks } from './panels/stats-panel.js';
+import { renderContentHistoryPanel } from './panels/content-history-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput, resetSearchSession } from './panels/search-panel.js';
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
 import { openReviewPanelWorkspace, renderReviewPanel, disposeReviewApply } from './panels/review-panel.js';
@@ -1092,6 +1093,7 @@ function currentObjectLabel(): string {
   if (state.mainTab === 'assets') return '素材中心';
   if (state.mainTab === 'config') return '项目配置';
   if (state.mainTab === 'stats') return '项目统计';
+  if (state.mainTab === 'history') return '内容历史';
   if (state.mainTab === 'audit') return '项目审计';
   if (state.mainTab === 'timeline' && state.currentTimeline !== null) {
     return `时间轴 ${state.currentTimeline}`;
@@ -1928,7 +1930,7 @@ function renderMainArea(): void {
   disposeAuthoringWorkbench();
   const main = document.getElementById('main');
   if (!main) return;
-  if (state.reviewPreviewReadOnly && ['editor', 'assets', 'flow', 'timeline', 'config', 'audit'].includes(state.mainTab)) {
+  if (state.reviewPreviewReadOnly && ['editor', 'assets', 'flow', 'timeline', 'config', 'audit', 'history'].includes(state.mainTab)) {
     const requestedMode = state.mainTab;
     const workspace = state.reviewWorkspace;
     state.mainTab = 'review';
@@ -2101,6 +2103,19 @@ function renderMainArea(): void {
       const target = [...state.scenes.entries()].find(([, scene]) => scene.id === source.sceneId);
       if (target) jumpToScene(target[0], source.line - 1);
     } });
+  } else if (state.mainTab === 'history') {
+    const historyEl = h('section'); historyEl.id = 'history-view'; historyEl.dataset['editorPanel'] = 'history';
+    col.appendChild(historyEl);
+    renderContentHistoryPanel(historyEl, {
+      assertReady: () => {
+        if (hasDirtyProjectFiles() || state.projectLoading || authoringProjectChanging || state.projectWriteLock !== null
+          || sceneAutosaveRecoveryPhase !== 'idle' || sceneLifecycleActionRunning || editorWorkspaceStatus().saving
+          || state.reviewPreviewReadOnly || state.reviewWorkspace !== null) {
+          throw new Error('请先保存或撤销当前草稿，并完成正在进行的操作，再记录或恢复历史。');
+        }
+      },
+      onRestored: () => { scheduleValidate(); persistCurrentAutosave(Date.now()); publishEditorWorkspaceState(); renderAll(); setStatus('已恢复为草稿，保存全部后写入项目。', true, 5000); },
+    });
   } else if (state.mainTab === 'stats') {
     const stEl = h('section');
     stEl.id = 'stats-view';

@@ -74,6 +74,44 @@ async function connectedProject(projectRoot: string, policy: 'observe' | 'stage'
 }
 
 describe('Surdet Agent Port MCP tool projection', () => {
+  it('records saved history and repairs malformed content through real MCP tools before authorized writeback', async () => {
+    const { session, client, server } = await connected('apply');
+    const root = session.projectRoot;
+    const call = async (name: string, args: Record<string, unknown> = {}) => {
+      const response = await client.callTool({ name, arguments: args });
+      expect(response.isError, textContent(response)).not.toBe(true);
+      expect(textEnvelope(response).ok).toBe(true);
+      return (response.structuredContent as any).result;
+    };
+    try {
+      const index = await call('surdet_project_history');
+      const request = { operationId: '123e4567-e89b-42d3-a456-426614174001', label: 'MCP 可用版', expectedContentRevision: index.contentRevision };
+      const saved = await call('surdet_project_history_checkpoint', request);
+      expect(await call('surdet_project_history_checkpoint', request)).toEqual(saved);
+      fs.writeFileSync(path.join(root, 'game.config.json'), '{broken');
+      const begin = await call('surdet_change_begin', { compositionMode: 'direct' });
+      const compared = await call('surdet_project_history_compare', { checkpointId: saved.checkpointId, view: 'working', path: 'game.config.json' });
+      expect(compared.files[0].currentText).toBe('{broken');
+      const restore = { operationId: 'mcp-restore', checkpointId: saved.checkpointId, expectedFingerprint: compared.checkpoint.fingerprint,
+        expectedContentRevision: compared.contentRevision, expectedWorkingRevision: compared.workingRevision, paths: ['game.config.json'] };
+      await call('surdet_project_history_restore', restore);
+      await call('surdet_project_history_restore', restore);
+      expect(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8')).toBe('{broken');
+      await call('surdet_change_diff'); await call('surdet_project_validate'); await call('surdet_project_simulate');
+      await call('surdet_runtime_run_from', { sceneId: 'start', choices: [], seed: 1 });
+      const capsule = await call('surdet_delivery_capsule', { label: '损坏来源已在草稿修复' });
+      expect(capsule.composition).toMatchObject({ eligibility: 'unavailable', reasons: [{ code: 'DIRECT_CHANGE' }] });
+      expect((await call('surdet_change_commit')).status).toBe('COMMITTED');
+      expect(JSON.parse(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8')).entryScene).toBe('start');
+      expect((await NodeChangeStore.openByChangeId(begin.changeId))!.record.workingRevision).toBe(1);
+      const candidate = await call('surdet_change_begin', { compositionMode: 'candidate' });
+      const beforeCandidate = (await NodeChangeStore.openByChangeId(candidate.changeId))!.record;
+      const refused = await client.callTool({ name: 'surdet_project_history_restore', arguments: restore });
+      expect(refused.isError).toBe(true);
+      expect((refused.structuredContent as any).error.code).toBe('UNSUPPORTED_OPERATION');
+      expect((await NodeChangeStore.openByChangeId(candidate.changeId))!.record).toEqual(beforeCandidate);
+    } finally { await client.close(); await server.close(); await session.close(); }
+  }, 15_000);
   it('preserves nonempty number arrays across real MCP inspection, simulation and runtime results', async () => {
     const root = makeProject('number-array-contract');
     const variables = {
@@ -347,12 +385,12 @@ describe('Surdet Agent Port MCP tool projection', () => {
       expect(names).not.toContain('surdet_change_commit');
       expect(names).not.toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
       for (const action of ['commit', 'recover', 'undo'] as const) expect(names).not.toContain(nativeCapabilityToMcpTool(`asset.relocation.${action}`));
-      expect(names).toHaveLength(63);
+      expect(names).toHaveLength(67);
    }
    if (policy === 'apply') {
      expect(names).toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
       for (const action of ['commit', 'recover', 'undo'] as const) expect(names).toContain(nativeCapabilityToMcpTool(`asset.relocation.${action}`));
-      expect(names).toHaveLength(70);
+      expect(names).toHaveLength(74);
    }
    const described = await client.callTool({ name: 'surdet_session_describe', arguments: {} });
     expect(described.isError).not.toBe(true);
@@ -360,7 +398,7 @@ describe('Surdet Agent Port MCP tool projection', () => {
     const capabilities = await client.callTool({ name: 'surdet_capabilities_describe', arguments: {} });
     expect(capabilities.isError).not.toBe(true);
     expect((capabilities.structuredContent as any).ok).toBe(true);
-    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(68);
+    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(72);
     expect(names).not.toContain('surdet_review_write_decision');
     expect(names).not.toContain('surdet_review_approve');
     if (policy === 'stage') {

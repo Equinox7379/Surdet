@@ -3,7 +3,7 @@ import { AssetImportClientError, type EditorWorkspaceClient, type EditorWorkspac
 import { bindEditorWorkspaceHooks, beginEditorWorkspaceWrite, connectEditorWorkspace, disconnectEditorWorkspace,
   editorWorkspaceStatus, editorWorkspaceTextChanges, finishEditorWorkspaceWrite, pollEditorWorkspace,
   publishEditorWorkspaceFile, publishEditorWorkspaceState, readEditorWorkspaceBaseline, editorPreviewPublisher,
-  enqueueEditorAssetRequest } from '../src/editor-workspace.js';
+  enqueueEditorAssetRequest, editorHistoryClient } from '../src/editor-workspace.js';
 
 const oldBaseline = { projectRevision: '1'.repeat(64), coordinationRevision: '2'.repeat(64), files: [
   { path: 'game.config.json', sha256: '3'.repeat(64) },
@@ -26,6 +26,9 @@ beforeEach(() => {
     sceneLifecycleWriting: false, autosaveRecoveryBlocked: false };
   disk = { projectIdentity: 'a'.repeat(32), diskBaseline: structuredClone(oldBaseline), mutationNotice: null };
   client = {
+    history: vi.fn(async () => ({ contentRevision: '1'.repeat(64), checkpoints: [] })),
+    historyCheckpoint: vi.fn(async () => { throw new Error('没有请求记录历史'); }),
+    historyCompare: vi.fn(async () => { throw new Error('没有请求比较历史'); }),
     previewSources: vi.fn(async () => []), previewContent: vi.fn(async () => { throw new Error('没有请求试玩内容'); }),
     heartbeat: vi.fn(async () => {}), snapshot: vi.fn(async () => structuredClone(disk)),
     preview: vi.fn(async ({ preview }) => ({ previewId: preview.action === 'invalidate' ? null : preview.previewId,
@@ -42,6 +45,22 @@ beforeEach(() => {
 afterEach(async () => { await disconnectEditorWorkspace(); });
 
 describe('bound Editor sequential relay', () => {
+  it('rejects a delayed history response after editing and invalidates old clients on rebinding', async () => {
+    await connectEditorWorkspace(client, root);
+    facts.projectTransition = false;
+    const history = editorHistoryClient(root)!;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.mocked(client.history).mockImplementationOnce(async () => { await gate; return { contentRevision: '1'.repeat(64), checkpoints: [] }; });
+    const reading = history.list().catch(error => error);
+    await vi.waitFor(() => expect(client.history).toHaveBeenCalled());
+    facts.configDirty = true;
+    release();
+    expect(await reading).toMatchObject({ message: expect.stringContaining('迟到') });
+    await disconnectEditorWorkspace();
+    await connectEditorWorkspace(client, root);
+    expect(() => history.assertCurrent()).toThrow('已经变化');
+  });
   it('serializes asset requests with preview and polling without retrying a mutation', async () => {
     await connectEditorWorkspace(client, root);
     facts.projectTransition = false;

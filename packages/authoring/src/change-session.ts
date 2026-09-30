@@ -10,7 +10,7 @@ import type {
 } from './contracts.js';
 import type { ChangeCompositionMetadata, JsonValue, OperationCompositionDraft, RecordedOperationCompositionFacts } from './composition-contracts.js';
 import type { IntegrationMetadata } from './integration-execution.js';
-import type { ProjectSnapshot } from './project-snapshot.js';
+import type { ProjectContentSnapshot } from './project-snapshot.js';
 
 export class AuthoringOperationError extends Error {
   constructor(
@@ -202,7 +202,7 @@ export interface BeginChangeOptions {
 }
 
 export async function beginChange(
-  snapshot: ProjectSnapshot,
+  snapshot: ProjectContentSnapshot,
   repository: ChangeRepository,
   storage?: ProjectWriteStorage,
   intent?: ChangeIntentMetadata,
@@ -552,7 +552,7 @@ async function markStale(change: ChangeSession): Promise<void> {
   await persistRecord(change, next);
 }
 
-export async function assertBaseStillMatches(change: ChangeSession, snapshot: ProjectSnapshot): Promise<void> {
+export async function assertBaseStillMatches(change: ChangeSession, snapshot: ProjectContentSnapshot): Promise<void> {
   assertOpen(change);
   if (snapshot.rootIdentity === change.record.projectRootIdentity && snapshot.revision === change.record.baseRevision) return;
   await markStale(change);

@@ -15,10 +15,13 @@ export interface ProjectSnapshotScene {
   compiled: CompiledScene;
 }
 
-export interface ProjectSnapshot {
+export interface ProjectContentSnapshot {
   rootIdentity: string;
   revision: string;
   files: ProjectFile[];
+}
+
+export interface ProjectSnapshot extends ProjectContentSnapshot {
   configFile: ProjectFile | null;
   config: Record<string, unknown>;
   growthFile?: ProjectFile | null;
@@ -35,7 +38,8 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-export async function loadProjectSnapshot(storage: ProjectStorage, hasher: TextHasher): Promise<ProjectSnapshot> {
+/** Exact saved text identity, available even when a document cannot be parsed. */
+export async function loadProjectContentSnapshot(storage: ProjectStorage, hasher: TextHasher): Promise<ProjectContentSnapshot> {
   const listed = await storage.listFiles();
   // Asset names are diagnosed by the asset catalog, not read as source files.
   const paths = [...new Set(listed.filter(file => !file.startsWith('content/assets/'))
@@ -44,6 +48,11 @@ export async function loadProjectSnapshot(storage: ProjectStorage, hasher: TextH
   const canonicalFiles = files.map((file, index) => ({ ...file, path: paths[index]! }));
   const revisionInput = canonicalFiles.map((file) => `${file.path}\0${file.sha256}`).join('\n');
   const revision = await hasher.sha256(revisionInput);
+  return { rootIdentity: storage.rootIdentity, revision, files: canonicalFiles };
+}
+
+export async function loadProjectSnapshot(storage: ProjectStorage, hasher: TextHasher): Promise<ProjectSnapshot> {
+  const { revision, files: canonicalFiles } = await loadProjectContentSnapshot(storage, hasher);
   const configFile = canonicalFiles.find((file) => file.path === 'game.config.json') ?? null;
   const growthFile = canonicalFiles.find((file) => file.path === 'content/config/growth.json') ?? null;
   let config: Record<string, unknown> = {};

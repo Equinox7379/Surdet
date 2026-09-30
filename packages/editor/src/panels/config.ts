@@ -102,6 +102,19 @@ function renderConfigWorkspace(root: HTMLElement): void {
   root.innerHTML = '';
   root.setAttribute('data-editor-panel', 'config');
   root.setAttribute('data-editor-region', 'config-workbench');
+  if (Object.keys(restoredConfigSources).length > 0) {
+    root.append(h('h2', undefined, '待保存的历史配置'),
+      h('p', 'dim', '历史文本已放入草稿。使用“保存全部”写入，或撤销后继续编辑配置。'));
+    for (const [name, source] of Object.entries(restoredConfigSources)) {
+      const details = h('details');
+      details.append(h('summary', undefined, configSourcePath(name as ConfigSourceName)), h('pre', undefined, source.text));
+      root.append(details);
+    }
+    const undoButton = h('button', 'v4-button', '撤销恢复');
+    undoButton.onclick = configUndo;
+    root.append(undoButton);
+    return;
+  }
 
   const workspace = h('div', 'config-workspace');
   workspace.dataset.showTechnicalNames = String(showConfigTechnicalNames);
@@ -199,6 +212,21 @@ let textBindingsDraft: TextBindingDraft[] = [];
 let configSessionRevision = 0;
 let configSessionLoaded = false;
 const configBaselines: Partial<Record<ConfigSectionId, string>> = {};
+let restoredConfigSources: Partial<Record<ConfigSourceName, { text: string; beforeText: string | null }>> = {};
+let lastHistoryPublishedText: Partial<Record<ConfigSourceName, string>> = {};
+let historyRestoreBefore: { name: ConfigSourceName; text: string | null } | undefined;
+
+/** Historical full-file text stays a draft until the existing save-all transaction. */
+export function restoreConfigSourceDraft(name: ConfigSourceName, text: string, beforeText: string | null): void {
+  assertProjectWriteUnlocked();
+  if (inspectConfigDraftState().dirty) throw new Error('请先保存或撤销当前配置草稿，再恢复历史配置');
+  parseConfigSource(name, text);
+  pushConfigHistory(false);
+  configHist.past.at(-1)!.historyRestoreBefore = { name, text: beforeText };
+  restoredConfigSources[name] = { text, beforeText };
+  configSessionLoaded = true;
+  notifyConfigDraftStateChanged();
+}
 
 function scheduleConfigDraftStateChanged(): void {
   const hook = configDraftStateChangedHook;
@@ -251,6 +279,7 @@ function notifyConfigDraftStateChanged(): void {
 
 /** 只读配置草稿投影：按行模型与最后成功读取/保存的 section baseline 比较。 */
 export function inspectConfigDraftState(): ConfigDraftInspection {
+  if (Object.keys(restoredConfigSources).length > 0) return { dirty: true, dirtySections: [] };
   const dirtySections: ConfigSectionId[] = [];
   for (const descriptor of CONFIG_SECTIONS) {
     const baseline = configBaselines[descriptor.id];
@@ -569,6 +598,8 @@ function ensureTermRows(): TerminologyTableRows { if (!termRows) termRows = pars
 /** 配置行模型全量快照（null = 尚未载入的区块，恢复时保持未载入语义；
  *  gameConfigText 一并入快照：撤销变量保存后内存态同步回退，覆盖顶层键口径） */
 interface ConfigSnapshot {
+  restoredConfigSources: typeof restoredConfigSources;
+  historyRestoreBefore?: { name: ConfigSourceName; text: string | null };
   charRows: CharacterTableEditRow[] | null;
   varRows: VariableRow[] | null;
   achRows: AchievementRow[] | null;
@@ -588,6 +619,9 @@ interface ConfigSnapshot {
 const configHist = createSnapshotHistory<ConfigSnapshot>();
 
 function clearConfigRowsAndHistory(): void {
+  restoredConfigSources = {};
+  lastHistoryPublishedText = {};
+  historyRestoreBefore = undefined;
   charRows = null;
   varRows = null;
   achRows = null;
@@ -623,13 +657,30 @@ function clone<T>(v: T): T {
 }
 
 function takeConfigSnapshot(): ConfigSnapshot {
-  return { ...clone({ charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows, stageDraft, themeDraft, uiDraft, textCsvDraft, textBindingsDraft }), gameConfigText: state.gameConfigText };
+  return { ...clone({ restoredConfigSources, historyRestoreBefore, charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows, stageDraft, themeDraft, uiDraft, textCsvDraft, textBindingsDraft }), gameConfigText: state.gameConfigText };
+}
+
+function rewriteHistoryConfigSources(snapshot: ConfigSnapshot, rewrite: (name: ConfigSourceName, text: string) => string): void {
+  for (const name of Object.keys(snapshot.restoredConfigSources) as ConfigSourceName[]) {
+    const source = snapshot.restoredConfigSources[name]!;
+    source.text = rewrite(name, source.text);
+    if (source.beforeText !== null) source.beforeText = rewrite(name, source.beforeText);
+  }
+  const before = snapshot.historyRestoreBefore;
+  if (before?.text !== null && before !== undefined) before.text = rewrite(before.name, before.text);
 }
 
 /** Rebase live rows, clean baselines and undo/redo together; never save unrelated edits. */
 export function prepareConfigSceneRename(from: string, to: string, fallbackEntry: string): () => void {
+  if (Object.keys(restoredConfigSources).length > 0) throw new Error('请先保存或撤销历史配置恢复，再改名场景');
+  const rewriteHistoryText = (name: ConfigSourceName, text: string): string => {
+    const file = configSourcePath(name), files = { [file]: text };
+    renameConfigReferences(files, from, to, fallbackEntry);
+    return files[file]!;
+  };
   const rewrite = (snapshot: ConfigSnapshot): ConfigSnapshot => {
     const next = clone(snapshot);
+    rewriteHistoryConfigSources(next, rewriteHistoryText);
     const files: Record<string, string> = { 'game.config.json': next.gameConfigText || '{}' };
     if (next.calRows) files['content/config/calendar.json'] = JSON.stringify(next.calRows);
     if (next.evRows) files['content/config/events.json'] = JSON.stringify(next.evRows);
@@ -658,6 +709,7 @@ export function prepareConfigSceneRename(from: string, to: string, fallbackEntry
   const current = rewrite(takeConfigSnapshot());
   const past = configHist.past.map(rewrite);
   const future = configHist.future.map(rewrite);
+  const published = Object.fromEntries(Object.entries(lastHistoryPublishedText).map(([name, text]) => [name, rewriteHistoryText(name as ConfigSourceName, text)]));
   const baselines = { ...configBaselines };
   for (const [section, field] of [['calendar', 'calRows'], ['events', 'evRows'], ['gallery', 'gaRows'], ['growth', 'grRows']] as const) {
     const baseline = baselines[section];
@@ -670,32 +722,45 @@ export function prepareConfigSceneRename(from: string, to: string, fallbackEntry
     ({ charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows } = current);
     configHist.past = past;
     configHist.future = future;
+    lastHistoryPublishedText = published;
     Object.assign(configBaselines, baselines);
     notifyConfigDraftStateChanged();
   };
 }
 
 function assertConfigSaveReady(name: ConfigSourceName): void {
+  if (Object.keys(restoredConfigSources).length > 0) throw new Error('历史配置草稿请使用“保存全部”');
   assertConfigSourcesReadable([name]);
   if (state.pendingSceneConfigRenames.length > 0) throw new Error('场景改名尚未写盘，请使用“保存全部”一起保存场景和配置引用');
 }
 
 /** Rebase saved catalog identities and gallery drafts without confirming pending text work. */
 export function prepareConfigLabelRename(sceneId: string, from: string, to?: string): () => void {
+  if (Object.keys(restoredConfigSources).length > 0) throw new Error('请先保存或撤销历史配置恢复，再修改标签');
   const rewrite = (rows: GalleryRows | null): GalleryRows | null => rows === null ? null
     : JSON.parse(renameGalleryLabel(JSON.stringify(rows), sceneId, from, to)) as GalleryRows;
   const current = rewrite(gaRows);
   if (to === undefined) return () => {};
+  const rewriteHistoryText = (name: ConfigSourceName, text: string): string => {
+    if (name === 'gallery') return renameGalleryLabel(text, sceneId, from, to);
+    const file = configSourcePath(name), files = { [file]: text };
+    applyConfigReferenceRename(files, { from, to, labelScene: sceneId }, sceneId);
+    return files[file]!;
+  };
   const rewriteSnapshot = (snapshot: ConfigSnapshot): ConfigSnapshot => {
     const files = { 'game.config.json': snapshot.gameConfigText || '{}' };
     applyConfigReferenceRename(files, { from, to, labelScene: sceneId }, sceneId);
-    return { ...snapshot, gameConfigText: files['game.config.json'], gaRows: rewrite(snapshot.gaRows) };
+    const next = { ...clone(snapshot), gameConfigText: files['game.config.json'], gaRows: rewrite(snapshot.gaRows) };
+    rewriteHistoryConfigSources(next, rewriteHistoryText);
+    return next;
   };
   const past = configHist.past.map(rewriteSnapshot);
   const future = configHist.future.map(rewriteSnapshot);
+  const published = Object.fromEntries(Object.entries(lastHistoryPublishedText).map(([name, text]) => [name, rewriteHistoryText(name as ConfigSourceName, text)]));
   const baseline = configBaselines.gallery === undefined ? undefined : JSON.stringify(rewrite(JSON.parse(configBaselines.gallery) as GalleryRows));
   return () => {
     gaRows = current; configHist.past = past; configHist.future = future;
+    lastHistoryPublishedText = published;
     if (baseline !== undefined) configBaselines.gallery = baseline;
     notifyConfigDraftStateChanged();
   };
@@ -703,11 +768,15 @@ export function prepareConfigLabelRename(sceneId: string, from: string, to?: str
 
 /** 变更前拍快照。coalesce=true：连续打字合并（同一撤销点）；结构操作（增删行/拖拽/导入）传 false */
 function pushConfigHistory(coalesce: boolean, notify = true): void {
+  if (Object.keys(restoredConfigSources).length > 0) throw new Error('请先保存或撤销历史配置恢复，再编辑配置');
   snapshotPush(configHist, takeConfigSnapshot(), Date.now(), coalesce);
+  historyRestoreBefore = undefined;
   if (notify) scheduleConfigDraftStateChanged();
 }
 
 function restoreConfigSnapshot(snap: ConfigSnapshot): void {
+  restoredConfigSources = clone(snap.restoredConfigSources);
+  historyRestoreBefore = snap.historyRestoreBefore;
   charRows = clone(snap.charRows);
   varRows = clone(snap.varRows);
   achRows = clone(snap.achRows);
@@ -725,6 +794,15 @@ function restoreConfigSnapshot(snap: ConfigSnapshot): void {
   rerenderConfig();
 }
 
+function retainHistoryReturnText(returnTo: ConfigSnapshot, destination: ConfigSnapshot): void {
+  for (const name of Object.keys(destination.restoredConfigSources) as ConfigSourceName[]) {
+    const text = lastHistoryPublishedText[name];
+    if (returnTo.restoredConfigSources[name] === undefined && text !== undefined) {
+      returnTo.restoredConfigSources[name] = { text, beforeText: destination.restoredConfigSources[name]!.text };
+    }
+  }
+}
+
 /** 配置页撤销（main.ts 在 mainTab==='config' 时路由至此） */
 export function configUndo(): void {
   const snap = snapshotUndo(configHist, takeConfigSnapshot());
@@ -732,6 +810,7 @@ export function configUndo(): void {
     setStatus('配置：没有可撤销的编辑', true, 2500);
     return;
   }
+  retainHistoryReturnText(configHist.future.at(-1)!, snap);
   restoreConfigSnapshot(snap);
   notifyConfigDraftStateChanged();
   setStatus('配置：已撤销（未写盘，保存后生效）', true, 2500);
@@ -744,6 +823,7 @@ export function configRedo(): void {
     setStatus('配置：没有可重做的编辑', true, 2500);
     return;
   }
+  retainHistoryReturnText(configHist.past.at(-1)!, snap);
   restoreConfigSnapshot(snap);
   notifyConfigDraftStateChanged();
   setStatus('配置：已重做（未写盘，保存后生效）', true, 2500);
@@ -1961,6 +2041,45 @@ export interface ConfigSaveOutcome {
  * 各配置区仍复用自己的校验、共享事务和写盘实现；此入口不再次申请写锁。
  */
 export async function saveDirtyConfigSections(): Promise<ConfigSaveOutcome> {
+  if (Object.keys(restoredConfigSources).length > 0) {
+    let saved = 0, failures = 0;
+    for (const name of Object.keys(restoredConfigSources) as ConfigSourceName[]) {
+      const source = restoredConfigSources[name]!;
+      try {
+        const parsed = parseConfigSource(name, source.text);
+        state.handles[name] = await writeProjectText(configSourcePath(name), source.text, state.handles[name]);
+        if (name === 'gameConfig') {
+          state.gameConfigText = source.text;
+          const entry = (parsed as Record<string, unknown>).entryScene;
+          state.entryScene = typeof entry === 'string' ? entry : state.scenes.values().next().value?.id ?? '';
+        } else state.configFiles[name] = parsed;
+        delete state.configReadErrors[name];
+        // A later undo stages the previous full text, including unknown fields.
+        // Creation is not converted into a destructive deletion by undo.
+        for (const snapshot of [...configHist.past, ...configHist.future]) {
+          const before = snapshot.historyRestoreBefore;
+          if (before?.name === name && snapshot.restoredConfigSources[name] === undefined && before.text !== null) {
+            snapshot.restoredConfigSources[name] = { text: before.text, beforeText: source.text };
+          }
+        }
+        lastHistoryPublishedText[name] = source.text;
+        delete restoredConfigSources[name];
+        saved++;
+      } catch (error) {
+        failures++;
+        setStatus(`历史配置未保存：${error instanceof Error ? error.message : String(error)}`, false, 6000);
+      }
+    }
+    if (failures === 0) {
+      charRows = null; varRows = null; achRows = null; calRows = null; evRows = null; grRows = null; gaRows = null; termRows = null;
+      stageDraft = null; stageSourceBaseline = undefined; themeDraft = null; themeSourceBaseline = undefined; uiDraft = undefined; uiSourceBaseline = undefined;
+      captureAllConfigBaselines();
+      requestValidateHook();
+      rerenderConfig();
+    }
+    notifyConfigDraftStateChanged();
+    return { saved, failures, remainingDirty: inspectConfigDraftState().dirty };
+  }
   const dirtySections = inspectConfigDraftState().dirtySections;
   let saved = 0;
   let failures = 0;

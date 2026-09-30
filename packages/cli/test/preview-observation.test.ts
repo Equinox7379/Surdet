@@ -16,6 +16,7 @@ import { createAgentPortServer } from '../src/agent-port/server.js';
 import { NodeProjectStorage } from '../src/authoring/node-project-storage.js';
 import { PreviewObservationService } from '../src/authoring/preview-observation-service.js';
 import { NodeLocalLeaseManager } from '../src/authoring/node-local-lease.js';
+import { NodeChangeStore } from '../src/authoring/node-change-store.js';
 
 const cleanups: (() => Promise<unknown>)[] = [];
 const sha = (value: string | Buffer) => crypto.createHash('sha256').update(value).digest('hex');
@@ -94,6 +95,24 @@ async function fixture() {
     preview: { action: 'append', previewId: begin.previewId, previewGeneration: begin.previewGeneration, messages: value } });
   return { project, dataRoot, editor, workspace, begin, messages, read, publish, append, session, mcp };
 }
+
+it('preserves history stale/conflict/corrupt errors through real binding, HTTP and the Editor client', async () => {
+  const f = await fixture();
+  const index = await f.editor.workspace.history(f.workspace);
+  const request = { operationId: crypto.randomUUID(), label: '保存版本', expectedContentRevision: index.contentRevision };
+  const saved = await f.editor.workspace.historyCheckpoint({ ...f.workspace, request });
+  expect((await f.editor.workspace.history(f.workspace)).checkpoints[0]).toEqual(saved);
+  await expect(f.editor.workspace.historyCheckpoint({ ...f.workspace, request: { ...request, label: '冲突' } })).rejects.toMatchObject({ code: 'OPERATION_ID_CONFLICT' });
+  await expect(f.editor.workspace.historyCompare({ ...f.workspace, request: { checkpointId: saved.checkpointId, expectedFingerprint: '0'.repeat(64) } }))
+    .rejects.toMatchObject({ code: 'OBJECT_REF_STALE', retryDisposition: 'after-refresh', message: expect.stringContaining('历史版本已变化') });
+  const compared = await f.editor.workspace.historyCompare({ ...f.workspace, request: { checkpointId: saved.checkpointId, path: 'content/scenario/chapter/start.gal' } });
+  expect(compared.files[0]!.historicalText).toContain('开始');
+  const store = await NodeChangeStore.forProject(await fs.realpath(f.project), f.dataRoot);
+  const file = path.join(store.projectDirectory, 'content-history', `${saved.checkpointId}.json`);
+  await fs.writeFile(file, '{broken');
+  await expect(f.editor.workspace.history(f.workspace)).rejects.toMatchObject({ code: 'CHANGE_STORE_CORRUPT', retryDisposition: 'manual-recovery', message: expect.stringContaining('原文件已保留') });
+  expect(await fs.readFile(file, 'utf8')).toBe('{broken');
+});
 
 it('preserves temporary and manual-recovery lease failures across preview HTTP and the browser client', async () => {
   const f = await fixture();

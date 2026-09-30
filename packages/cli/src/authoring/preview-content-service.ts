@@ -3,7 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { DslError } from '@surdet/core';
 import {
-  AuthoringOperationError, isPreviewAssetPath, isPreviewSourcePath, isSnapshotPath, loadProjectSnapshot, parsePreviewContentTarget, stableStringify,
+  AuthoringOperationError, isPreviewAssetPath, isPreviewSourcePath, isSnapshotPath, isContentHistoryPath, loadProjectSnapshot, parsePreviewContentTarget, stableStringify,
   fingerprintWorkingObject, fingerprintWorkingObjectValue,
   type PreviewContent, type PreviewContentOption, type PreviewContentTarget, type ProjectStorage, type ChangeRecord,
 } from '@surdet/authoring';
@@ -39,11 +39,13 @@ async function directories(directory: string): Promise<string[]> {
 }
 function overlay(disk: NodeProjectStorage, record: ChangeRecord): ProjectStorage {
   const working = new ChangeRecordProjectStorage(record);
+  const owns = (file: string) => isSnapshotPath(file) || isContentHistoryPath(file)
+    && (Object.hasOwn(record.baseFiles, file) || Object.hasOwn(record.workingFiles, file));
   return {
     rootIdentity: disk.rootIdentity,
-    listFiles: async () => [...new Set([...(await disk.listFiles()).filter(file => !isSnapshotPath(file)), ...await working.listFiles()])].sort(),
-    readText: file => isSnapshotPath(file) ? working.readText(file) : disk.readText(file),
-    exists: file => isSnapshotPath(file) ? working.exists(file) : disk.exists(file),
+    listFiles: async () => [...new Set([...(await disk.listFiles()).filter(file => !owns(file)), ...await working.listFiles()])].sort(),
+    readText: file => owns(file) ? working.readText(file) : disk.readText(file),
+    exists: file => owns(file) ? working.exists(file) : disk.exists(file),
   };
 }
 

@@ -172,6 +172,7 @@ const {
   readStageConfigDraft, editStageConfigDraft, saveStageConfigDraftUnlocked, previewStageConfigText,
   readThemeConfigDraft, editThemeConfigDraft, saveThemeConfigDraftUnlocked, previewThemeConfigText,
   editTextCsvDraft, readTextCsvDraft,
+  restoreConfigSourceDraft,
 } = await import('../src/panels/config.js');
 const { commitStageConfiguration, commitThemeConfiguration } = await import('../src/authoring-project-storage.js');
 const { commitTextCatalogPatch, loadEditorProjectSnapshot, createEditorProjectStorage } = await import('../src/authoring-project-storage.js');
@@ -212,6 +213,93 @@ afterEach(() => {
 });
 
 describe('configuration draft state', () => {
+  it('restores exact historical configuration as an undoable draft and preserves it after failed save', async () => {
+    await renderFixture();
+    let diskText = state.gameConfigText;
+    const before = diskText;
+    const historical = '{\n  "entryScene": "start", "variables": {}, "privateExtension": {"keep": true}\n}\n';
+    let fail = true;
+    state.handles.gameConfig = {
+      getFile: async () => new File([diskText], 'game.config.json'),
+      createWritable: async () => ({ write: async (value: unknown) => { if (fail) throw new Error('磁盘失败'); diskText = String(value); }, close: async () => {} }),
+    } as unknown as FileSystemFileHandle;
+    restoreConfigSourceDraft('gameConfig', historical, before);
+    expect(diskText).toBe(before);
+    expect(inspectConfigDraftState().dirty).toBe(true);
+    configUndo();
+    expect(inspectConfigDraftState().dirty).toBe(false);
+    configRedo();
+    await expect(saveDirtyConfigSections()).resolves.toMatchObject({ failures: 1, remainingDirty: true });
+    expect(diskText).toBe(before);
+    fail = false;
+    await expect(saveDirtyConfigSections()).resolves.toMatchObject({ saved: 1, failures: 0, remainingDirty: false });
+    expect(diskText).toBe(historical);
+    expect(state.gameConfigText).toBe(historical);
+    configUndo();
+    expect(inspectConfigDraftState().dirty).toBe(true);
+    await saveDirtyConfigSections();
+    expect(diskText).toBe(before);
+    configRedo();
+    await saveDirtyConfigSections();
+    expect(diskText).toBe(historical);
+  });
+
+  it('protects existing drafts and can stage a valid replacement for malformed source', async () => {
+    const root = await renderFixture();
+    editTextCsvDraft('未确认的译稿');
+    expect(() => restoreConfigSourceDraft('gameConfig', '{}', state.gameConfigText)).toThrow('当前配置草稿');
+    expect(readTextCsvDraft()).toBe('未确认的译稿');
+    resetConfigSession();
+    await renderFixture('{broken');
+    expect(state.configReadErrors.gameConfig).toBeDefined();
+    restoreConfigSourceDraft('gameConfig', INITIAL_GAME_CONFIG, '{broken');
+    expect(inspectConfigDraftState().dirty).toBe(true);
+    expect(() => prepareConfigSceneRename('start', 'other', 'start')).toThrow('历史配置');
+    configUndo();
+    expect(state.gameConfigText).toBe('{broken');
+    expect(inspectConfigDraftState().dirty).toBe(false);
+    void root;
+  });
+
+  it('keeps ordinary configuration undo entries intact across a historical full-file save', async () => {
+    const root = await renderFixture();
+    let diskText = state.gameConfigText;
+    state.handles.gameConfig = {
+      getFile: async () => new File([diskText], 'game.config.json'),
+      createWritable: async () => ({ write: async (value: unknown) => { diskText = String(value); }, close: async () => {} }),
+    } as unknown as FileSystemFileHandle;
+    const variable = byAttribute(root, 'aria-label', '变量名，第 1 行');
+    variable.value = 'trust.changed'; variable.oninput?.();
+    await saveDirtyConfigSections();
+    const beforeHistory = diskText;
+    restoreConfigSourceDraft('gameConfig', '{"entryScene":"start","variables":{}}', beforeHistory);
+    await saveDirtyConfigSections();
+    configUndo(); await saveDirtyConfigSections();
+    expect(diskText).toBe(beforeHistory);
+    configUndo();
+    expect(inspectConfigDraftState().dirtySections).toContain('variables');
+    await saveDirtyConfigSections();
+    expect(JSON.parse(diskText).variables.trust).toBeDefined();
+    expect(JSON.parse(diskText).variables['trust.changed']).toBeUndefined();
+  });
+
+  it('rebases saved historical configuration undo through a later scene rename', async () => {
+    await renderFixture();
+    let diskText = state.gameConfigText;
+    state.handles.gameConfig = {
+      getFile: async () => new File([diskText], 'game.config.json'),
+      createWritable: async () => ({ write: async (value: unknown) => { diskText = String(value); }, close: async () => {} }),
+    } as unknown as FileSystemFileHandle;
+    restoreConfigSourceDraft('gameConfig', '{"entryScene":"start","variables":{},"unknown":"历史"}', diskText);
+    await saveDirtyConfigSections();
+    prepareConfigSceneRename('start', 'renamed', 'renamed')();
+    configUndo();
+    await saveDirtyConfigSections();
+    expect(JSON.parse(diskText).entryScene).toBe('renamed');
+    configRedo();
+    await saveDirtyConfigSections();
+    expect(JSON.parse(diskText)).toMatchObject({ entryScene: 'renamed', unknown: '历史' });
+  });
   async function textFixture(): Promise<FakeElement> {
     state.scenes = new Map([['start', { id: 'start', file: 'start.gal', text: '@scene start\n旁白：你好。\n旁白：再见。\n@end\n', eol: '\n', dirty: false, handle: null }]]);
     state.timelines = []; state.dirAssets = [];

@@ -10,6 +10,8 @@ import {
   evidenceFreshness,
   inspectTransactionRecovery,
   loadProjectSnapshot,
+  loadProjectContentSnapshot,
+  type ManifestObjectFacts,
   type AutonomyPolicy,
   type ChangeRecord,
   type EvidenceFreshness,
@@ -264,7 +266,7 @@ export async function generateDeliveryCapsule(
         throw new AuthoringOperationError('PROJECT_IDENTITY_MISMATCH', `变更事务 '${changeId}' 不属于当前项目`);
       }
 
-      const snapshot = await loadProjectSnapshot(storage, { sha256: async (text) => hashText(text) });
+      const snapshot = await loadProjectContentSnapshot(storage, { sha256: async (text) => hashText(text) });
       const evidence = await leasedStore.readAllEvidence(changeId);
       const diff = await leasedStore.readDiff(changeId);
       const journal = await leasedStore.readLatestJournal(changeId);
@@ -304,17 +306,21 @@ export async function generateDeliveryCapsule(
       const beforeRevision = record.status === 'COMMITTED' ? record.baseRevision : snapshot.revision;
       // v2：working/base 双快照 → 对象事实 → 确定性 manifest；unavailable 仍封存审计 capsule。
       const hasher = { sha256: async (text: string) => hashText(text) };
-      const workingSnapshot = await loadProjectSnapshot(new ChangeRecordProjectStorage(record, 'working'), hasher);
-      const baseSnapshot = await loadProjectSnapshot(new ChangeRecordProjectStorage(record, 'base'), hasher);
+      let objectFacts: ManifestObjectFacts | undefined;
+      if (record.integration !== undefined || record.composition?.mode !== 'direct') {
+        const workingSnapshot = await loadProjectSnapshot(new ChangeRecordProjectStorage(record, 'working'), hasher);
+        const baseSnapshot = await loadProjectSnapshot(new ChangeRecordProjectStorage(record, 'base'), hasher);
+        objectFacts = {
+          ...projectCompositionObjectFacts(baseSnapshot, workingSnapshot, await storage.listFiles(), record.integration === undefined && record.composition?.mode === 'candidate' ? record.composition.baseAssetRefs : undefined),
+          baseReplayStates: await buildReplayStateBaseObjects(baseSnapshot, hasher),
+        };
+      }
       const composition = await buildCompositionManifest({
         record,
         projectIdentity: session.projectIdentity,
         invocationFacts: successInvocationFacts(invocations),
         semanticDiff: semanticEntries(diff).filter(isSemanticEntry),
-        objectFacts: {
-          ...projectCompositionObjectFacts(baseSnapshot, workingSnapshot, await storage.listFiles(), record.integration === undefined && record.composition?.mode === 'candidate' ? record.composition.baseAssetRefs : undefined),
-          baseReplayStates: await buildReplayStateBaseObjects(baseSnapshot, hasher),
-        },
+        ...(objectFacts === undefined ? {} : { objectFacts }),
       }, hasher);
       // Wave 5：integration change 的 provenance 与失败审计（在 composition manifest 之后构造）。
       let integrationProvenance: DeliveryCapsulePayload['integrationProvenance'];

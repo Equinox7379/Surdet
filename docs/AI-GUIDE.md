@@ -2,7 +2,7 @@
 
 本指南面向编写剧情、配置与演出的内容作者。默认使用正式 Agent Port 工具，在隔离草稿中修改、验证和试玩；不需要先读引擎源码、长期台账或重新接线播放器。已有项目保持原位，新项目使用现有模板。
 
-本批公开创作合同为 **2.27.0**（68 项公开能力），作品界面新增变量条件、只读数值条、数组列表/数量和有限赋值按钮；保留人物档案、用语辞典、结局册与可选永久收藏，以及多语言、已有配音、主题、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+本批公开创作合同为 **2.28.0**（72 项公开能力），作品界面新增变量条件、只读数值条、数组列表/数量和有限赋值按钮；保留人物档案、用语辞典、结局册与可选永久收藏，以及多语言、已有配音、主题、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
 
 ## 0. 准备项目与会话
 
@@ -47,6 +47,16 @@ ID 是原生名称，不是 MCP 工具名。省略参数仍返回完整列表。
 4. **验证工作版本。** 调用 `project.validate`、`project.simulate`；用 `runtime.run-from` 指定起点、选择与变量走关键路径。label 仅指真实场景标签，从场景开头运行就省略。已有 trace 可用 `runtime.read-trace` 查询，画面观测用 `runtime.read-preview`。
 5. **修正后继续。** 读取错误 code/details/repairActions，修正输入或重新取得事实。修改后重读对象；旧匿名引用和指纹不是稳定地址。不能将运行失败、预算不足或未覆盖路线称为成功。
 6. **查看与交付。** 用 `change.diff` 查看差异，在编辑器明确选中该 working-change 试玩，再继续原 change 返修。stage 交付草稿/胶囊不会自动写回项目；经授权的 apply 才能提交，integration 仍需原人类批准。胶囊固定的是封存事实，更新后的工作画面不能冒充封存版本。新作品交付时更新项目 README 的标题、剧情介绍、启动方式与实际素材范围，不沿用不再符合内容的模板说明。
+
+### 保存内容版本与安全恢复
+
+`project.history`（MCP：`surdet_project_history`）列出手动记录的已保存版本及当前 `contentRevision`。需要记下一个版本时，调用 `project.history.checkpoint`，传新的 UUID `operationId`、`label` 与读取的 `expectedContentRevision`；同一请求重试保留原编号。记录仅包含已保存的剧本、时间轴、game.config.json 和受支持的内容配置（含成就），不包含图片、声音、package/save 身份、引擎源码或活动批准。未保存草稿不会被混入版本；版本存在也不表示它通过质量检查。
+
+恢复时先 `change.begin({compositionMode:"direct"})`，再调用 `project.history.compare({checkpointId,view:"working"})` 查看文件差异。指定单个 `path` 可读取完整当前/历史文本。把返回的 `checkpoint.fingerprint`、`contentRevision`、`workingRevision` 分别作为 `project.history.restore` 的 `expectedFingerprint`、`expectedContentRevision`、`expectedWorkingRevision`，同时传 `checkpointId`、稳定的 `operationId` 和明确选定的 `paths`。恢复只合并这些历史文件，保留其他当前文件，不删除历史中缺少的文件。版本失配须重新比较；candidate/integration 在修改前拒绝。当前配置损坏时，普通 direct 草稿仍可建立并恢复有效历史配置。
+
+恢复后继续用原 `change.diff`、验证、模拟、运行和 Editor 的 working-change 试玩；经授权的 apply 才能 `change.commit`。普通胶囊仍不可组合或代替批准。历史里的素材引用不会找回已删除的素材，必须核对实际资源。很早的 direct 草稿若未捕获成就文件基线，会要求新建草稿后恢复该文件。
+
+Editor 的“历史”使用同一版本库：填写名称记录已保存版，选择版本和一个有差异的文件，核对两侧全文后点击“恢复这个文件为草稿”。先处理当前未保存修改；既有文件恢复沿原撤销/重做，再用“保存全部”写回。找回已删除的文件作为普通新建草稿处理，保存后不会通过撤销偷偷删除文件。整份配置恢复在保存或撤销前保持为完整文本草稿，避免窄字段表单覆盖未知字段。外部修改须先同步；损坏的历史记录会保留并明确报错。内容文件须能无损读取为 UTF-8；语法错误仍可记录，非法编码需先修正。版本库位于现有 Agent 数据目录的项目命名空间，换机器/移动项目不会自动迁移，不是包含素材的完整交接包。
 
 ### 从已有文字或表格导入剧本
 

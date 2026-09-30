@@ -7,6 +7,7 @@ export type EditorModeId =
   | 'preview'
   | 'review'
   | 'stats'
+  | 'history'
   | 'audit';
 
 export type EditorModeGroupId = 'create' | 'check' | 'project';
@@ -38,6 +39,7 @@ export const EDITOR_MODES: readonly EditorModeDefinition[] = [
   { id: 'preview', label: '预览', panelId: 'preview-view', group: 'check' },
   { id: 'review', label: '审阅', panelId: 'review-view', group: 'check' },
   { id: 'stats', label: '统计', panelId: 'stats-view', group: 'project' },
+  { id: 'history', label: '历史', panelId: 'history-view', group: 'project' },
   { id: 'audit', label: '审计', panelId: 'audit-view', group: 'project' },
 ] as const;
 
