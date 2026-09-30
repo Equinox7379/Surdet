@@ -4,7 +4,7 @@ import { resolveUniqueTimelinePath } from './timeline-identity.js';
 import type { TextHasher } from './contracts.js';
 import { resolveUniqueScenarioPath } from './scenario-identity.js';
 import { GALLERY_PATH, readGalleryDocument } from './gallery-operations.js';
-import { projectPortraitOverrides, resolveProjectFontPaths, readGalleryReplayEntries } from '@surdet/core';
+import { projectPortraitOverrides, resolveProjectFontPaths, readGalleryReplayEntries, readGalleryEndings } from '@surdet/core';
 
 export type ComposableObjectRef =
   | `scene:${string}`
@@ -13,6 +13,7 @@ export type ComposableObjectRef =
   | `character:${string}`
   | `gallery:cgs:${string}`
   | `gallery:texts:${string}`
+  | `gallery:endings:${string}`
   | 'config:characters'
   | 'config:fonts'
   | 'config:theme'
@@ -21,6 +22,7 @@ export type ComposableObjectRef =
   | 'config:terminology'
   | 'config:galleryPolicy'
   | 'config:galleryReplay'
+  | 'config:galleryEndings'
   | 'config:stage'
   | 'config:portraits'
   | 'config:entryScene';
@@ -121,6 +123,10 @@ function readWorkingObject(workingFiles: Readonly<Record<string, string>>, objec
     const entry = readGalleryReplayEntries(readGalleryDocument(workingFiles[GALLERY_PATH]).document).find(item => item.id === id);
     return entry === undefined ? absent() : present(entry);
   }
+  if (objectRef.startsWith('gallery:endings:')) {
+    const entry = readGalleryEndings(readGalleryDocument(workingFiles[GALLERY_PATH]).document).find(item => item.id === objectRef.slice('gallery:endings:'.length));
+    return entry === undefined ? absent() : present(entry);
+  }
   const fullConfig = parseProjectConfigDocument(workingFiles['game.config.json'] ?? '{}');
   if (objectRef === 'config:stage') return present(fullConfig.stage ?? null);
   if (objectRef === 'config:theme') return present({ theme: fullConfig.theme ?? null, titleLogo: fullConfig.player !== undefined && typeof fullConfig.player === 'object' && fullConfig.player !== null ? (fullConfig.player as Record<string, unknown>)['titleLogo'] ?? null : null });
@@ -129,6 +135,7 @@ function readWorkingObject(workingFiles: Readonly<Record<string, string>>, objec
   if (objectRef === 'config:terminology') return present(workingFiles['content/config/terminology.json'] ?? null);
   if (objectRef === 'config:galleryPolicy') return present(readGalleryDocument(workingFiles[GALLERY_PATH]).document.unlockPolicy ?? null);
   if (objectRef === 'config:galleryReplay') return present(readGalleryDocument(workingFiles[GALLERY_PATH]).document.texts ?? []);
+  if (objectRef === 'config:galleryEndings') return present(readGalleryDocument(workingFiles[GALLERY_PATH]).document.endings ?? []);
   if (objectRef === 'config:fonts') return present(resolveProjectFontPaths(fullConfig));
   if (objectRef === 'config:portraits') return present(projectPortraitOverrides(fullConfig));
   if (objectRef.startsWith('variable:')) {

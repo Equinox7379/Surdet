@@ -60,10 +60,10 @@ export function compositionFactIdentityIssue(input: JsonValue | undefined, facts
   if (!Array.isArray(preconditions) || !Array.isArray(replay)) return '重放状态事实形状无效';
     const expectedRefs = facts.capabilityId === 'character.ensure' || facts.capabilityId === 'character.remove'
       ? ['config:characters', ...(facts.producedObjects.some(item => item.objectRef.startsWith('scene:')) ? ['config:textCatalog', 'config:terminology'] : []), ...facts.producedObjects.filter((item) => item.objectRef.startsWith('scene:')).map((item) => item.objectRef)]
-      : facts.capabilityId === 'scene.create' ? ['config:galleryReplay', 'config:galleryPolicy', 'config:fonts', 'config:portraits', 'config:stage', 'config:theme', 'config:ui', 'config:textCatalog', 'config:terminology']
-      : facts.capabilityId === 'scene.patch' ? ['config:galleryReplay', 'config:galleryPolicy', 'config:fonts', 'config:portraits', 'config:stage', 'config:theme', 'config:ui', 'config:textCatalog', 'config:terminology', facts.primaryObject]
-      : facts.capabilityId === 'timeline.create' ? ['config:galleryReplay', 'config:galleryPolicy', 'config:portraits', 'config:stage', 'config:theme', 'config:ui', 'config:textCatalog', 'config:terminology', 'config:fonts']
-      : facts.capabilityId === 'timeline.patch' ? [facts.primaryObject, 'config:galleryReplay', 'config:galleryPolicy', 'config:portraits', 'config:stage', 'config:theme', 'config:ui', 'config:textCatalog', 'config:terminology', 'config:fonts']
+      : facts.capabilityId === 'scene.create' ? ['config:galleryEndings', 'config:galleryReplay', 'config:galleryPolicy', 'config:fonts', 'config:portraits', 'config:stage', 'config:theme', 'config:ui', 'config:textCatalog', 'config:terminology']
+      : facts.capabilityId === 'scene.patch' ? ['config:galleryEndings', 'config:galleryReplay', 'config:galleryPolicy', 'config:fonts', 'config:portraits', 'config:stage', 'config:theme', 'config:ui', 'config:textCatalog', 'config:terminology', facts.primaryObject]
+      : facts.capabilityId === 'timeline.create' ? ['config:galleryEndings', 'config:galleryReplay', 'config:galleryPolicy', 'config:portraits', 'config:stage', 'config:theme', 'config:ui', 'config:textCatalog', 'config:terminology', 'config:fonts']
+      : facts.capabilityId === 'timeline.patch' ? [facts.primaryObject, 'config:galleryEndings', 'config:galleryReplay', 'config:galleryPolicy', 'config:portraits', 'config:stage', 'config:theme', 'config:ui', 'config:textCatalog', 'config:terminology', 'config:fonts']
       : facts.capabilityId === 'gallery.cg.create' ? ['config:galleryPolicy']
       : facts.capabilityId === 'gallery.cg.patch' ? [facts.primaryObject, 'config:galleryPolicy']
       : facts.capabilityId === 'variable.patch-initial'

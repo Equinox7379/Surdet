@@ -36,6 +36,7 @@ async function seal(change: ChangeSession) {
       { objectRef: 'config:terminology', expectedFingerprint: sha('null') },
       { objectRef: 'config:galleryPolicy', expectedFingerprint: sha('null') },
       { objectRef: 'config:galleryReplay', expectedFingerprint: sha('[]') },
+      { objectRef: 'config:galleryEndings', expectedFingerprint: sha('[]') },
         { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
         { objectRef: 'scene:A', expectedFingerprint: sha('@scene A\n旁白：开场。\n@end\n') },
       ],
@@ -373,10 +374,12 @@ describe('candidate operation-time facts', () => {
       { objectRef: 'config:terminology', expectedFingerprint: sha('null') },
       { objectRef: 'config:galleryPolicy', expectedFingerprint: sha('null') },
       { objectRef: 'config:galleryReplay', expectedFingerprint: sha('[]') },
+      { objectRef: 'config:galleryEndings', expectedFingerprint: sha('[]') },
       { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
     ]);
     expect(facts(change, 'timeline-duration').replayStateRequirements).toEqual([
       { objectRef: 'config:fonts', source: 'base', expectedFingerprint: sha('{}') },
+      { objectRef: 'config:galleryEndings', source: 'base', expectedFingerprint: sha('[]') },
       { objectRef: 'config:galleryPolicy', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'config:galleryReplay', source: 'base', expectedFingerprint: sha('[]') },
       { objectRef: 'config:portraits', source: 'base', expectedFingerprint: sha('[]') },
@@ -397,10 +400,12 @@ describe('candidate operation-time facts', () => {
       { objectRef: 'config:terminology', expectedFingerprint: sha('null') },
       { objectRef: 'config:galleryPolicy', expectedFingerprint: sha('null') },
       { objectRef: 'config:galleryReplay', expectedFingerprint: sha('[]') },
+      { objectRef: 'config:galleryEndings', expectedFingerprint: sha('[]') },
       { objectRef: 'config:portraits', expectedFingerprint: sha('[]') },
     ]);
     expect(facts(change, 'timeline-target').replayStateRequirements).toEqual([
       { objectRef: 'config:fonts', source: 'base', expectedFingerprint: sha('{}') },
+      { objectRef: 'config:galleryEndings', source: 'base', expectedFingerprint: sha('[]') },
       { objectRef: 'config:galleryPolicy', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'config:galleryReplay', source: 'base', expectedFingerprint: sha('[]') },
       { objectRef: 'config:portraits', source: 'base', expectedFingerprint: sha('[]') },

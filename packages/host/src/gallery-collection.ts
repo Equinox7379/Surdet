@@ -1,15 +1,15 @@
 import type { GalleryUnlockPolicy } from '@surdet/core';
 
-interface Collection { version: 1; cgs: string[]; music: string[]; texts: string[] }
+interface Collection { version: 1; cgs: string[]; music: string[]; texts: string[]; endings: string[] }
 
 function readCollection(value: unknown): Collection {
-  if (value === null) return { version: 1, cgs: [], music: [], texts: [] };
+  if (value === null) return { version: 1, cgs: [], music: [], texts: [], endings: [] };
   const record = value as Collection;
-  if (!record || record.version !== 1 || ![record.cgs, record.music, record.texts === undefined ? [] : record.texts].every(ids =>
+  if (!record || record.version !== 1 || ![record.cgs, record.music, record.texts === undefined ? [] : record.texts, record.endings === undefined ? [] : record.endings].every(ids =>
     Array.isArray(ids) && ids.every(id => typeof id === 'string' && id.trim().length > 0))) {
     throw new Error('永久收藏记录损坏，原记录未修改');
   }
-  return { ...record, cgs: [...new Set(record.cgs)], music: [...new Set(record.music)], texts: [...new Set(record.texts ?? [])] };
+  return { ...record, cgs: [...new Set(record.cgs)], music: [...new Set(record.music)], texts: [...new Set(record.texts ?? [])], endings: [...new Set(record.endings ?? [])] };
 }
 
 /** Keys are project-scoped even in hosts sharing one profile directory. */
@@ -30,8 +30,8 @@ export async function createGalleryCollection(storage: {
   let committed = readCollection(await storage.read(key, { strict: true }));
   let pending = Promise.resolve();
   return {
-    snapshot: () => ({ cgs: [...committed.cgs], music: [...committed.music], texts: [...committed.texts] }),
-    unlock(section: 'cgs' | 'music' | 'texts', id: string): Promise<void> {
+    snapshot: () => ({ cgs: [...committed.cgs], music: [...committed.music], texts: [...committed.texts], endings: [...committed.endings] }),
+    unlock(section: 'cgs' | 'music' | 'texts' | 'endings', id: string): Promise<void> {
       if (policy[section] !== 'profile') return Promise.resolve();
       const persist = async () => {
         // Re-read before each write to preserve records added by another live session.
@@ -40,6 +40,7 @@ export async function createGalleryCollection(storage: {
           cgs: [...new Set([...latest.cgs, ...committed.cgs])],
           music: [...new Set([...latest.music, ...committed.music])],
           texts: [...new Set([...latest.texts, ...committed.texts])],
+          endings: [...new Set([...latest.endings, ...committed.endings])],
         };
         if (!next[section].includes(id)) next[section].push(id);
         if (JSON.stringify(next) !== JSON.stringify(latest)) await storage.write(key, next);

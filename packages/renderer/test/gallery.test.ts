@@ -13,6 +13,15 @@ const config: GalleryConfig = {
 };
 
 describe('buildGalleryViews', () => {
+  it('masks locked ending names and descriptions and counts only configured entries', () => {
+    const endings = buildGalleryViews({ ...config, endings: [
+      { id: 'home', name: '归途', description: '雨停了。' }, { id: 'secret', name: '秘密结局', description: '剧透' },
+    ] }, { cgs: [], music: [], endings: ['removed', 'home', 'home'] }).endings;
+    expect(endings).toEqual([{ id: 'home', name: '归途', description: '雨停了。', unlocked: true },
+      { id: 'secret', name: '???', description: undefined, unlocked: false }]);
+    expect(endings.filter(entry => entry.unlocked)).toHaveLength(1);
+    expect(buildGalleryViews(config, { cgs: [], music: [] }).endings).toEqual([]);
+  });
   it('已解锁条目保留名称，未解锁标记 unlocked=false', () => {
     const views = buildGalleryViews(config, { cgs: ['cg1'], music: [] });
     expect(views.cgs[0]).toEqual({ id: 'cg1', name: '初遇', unlocked: true, src: 'bg_a' });

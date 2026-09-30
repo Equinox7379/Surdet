@@ -14,6 +14,7 @@ import {
   applyGalleryCgPatch,
   applyGalleryPolicyPatch,
   applyGalleryTextMutation,
+  applyGalleryEndingMutation,
   inspectGallery,
   GALLERY_PATH,
   type GalleryTextPatchInput,
@@ -79,6 +80,25 @@ async function fingerprintOf(change: ChangeSession, id: string): Promise<string>
 }
 
 describe('gallery.cg authoring operations', () => {
+  it('creates and edits ending metadata with stale/rejected writes leaving the draft untouched', async () => {
+    const { change } = await open(JSON.stringify({ ...JSON.parse(baseGallery), endings: [{ id: 'home', name: '归途', description: '旧说明', extra: 7 }] }));
+    const before = (await inspectGallery(change.record.workingFiles[GALLERY_PATH], hasher)).endings[0]!;
+    const edited = await applyGalleryEndingMutation(change, { operationId: 'ending-edit', id: 'home', expectedFingerprint: before.fingerprint, patch: { name: '雨后', description: null } }, hasher);
+    expect(edited.entry).toEqual({ id: 'home', name: '雨后', extra: 7 });
+    const saved = structuredClone(change.record);
+    await expect(applyGalleryEndingMutation(change, { operationId: 'stale', id: 'home', expectedFingerprint: before.fingerprint, patch: { name: '旧稿' } }, hasher)).rejects.toMatchObject({ code: 'OBJECT_REF_STALE' });
+    await expect(applyGalleryEndingMutation(change, { operationId: 'bad', id: 'new', name: ' ' }, hasher)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(change.record).toEqual(saved);
+    const created = await applyGalleryEndingMutation(change, { operationId: 'new', id: 'night', name: '夜航', description: '两人一起回家。' }, hasher);
+    expect((await inspectGallery(change.record.workingFiles[GALLERY_PATH], hasher)).endings[1]).toMatchObject({ ...created.entry, fingerprint: created.fingerprint });
+    expect(workingGallery(change).customRoot).toEqual({ keep: true });
+    const direct = structuredClone(change.record);
+    change.record.composition = { ...change.record.composition!, mode: 'candidate' };
+    const candidate = structuredClone(change.record);
+    await expect(applyGalleryEndingMutation(change, { operationId: 'candidate', id: 'no', name: '不落盘' }, hasher)).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
+    expect(change.record).toEqual(candidate);
+    change.record.composition = direct.composition;
+  });
   it('creates and patches replay conditions while rejecting stale and invalid mutations atomically', async () => {
     const { change } = await open();
     change.record.workingFiles['game.config.json'] = JSON.stringify({ variables: { score: { type: 'number', initial: 0 } } });
@@ -110,7 +130,7 @@ describe('gallery.cg authoring operations', () => {
     const input = { operationId: 'policy', expectedFingerprint: before.fingerprint, patch: { cgs: 'profile' as const } };
     const result = await applyGalleryPolicyPatch(change, input, hasher);
     expect(workingGallery(change)).toEqual({ ...original, unlockPolicy: { cgs: 'profile' } });
-    expect(result.unlockPolicy.effective).toEqual({ cgs: 'profile', music: 'save', texts: 'save' });
+    expect(result.unlockPolicy.effective).toEqual({ cgs: 'profile', music: 'save', texts: 'save', endings: 'save' });
     await applyGalleryPolicyPatch(change, input, hasher); // idempotency
     const saved = structuredClone(change.record);
     await expect(applyGalleryPolicyPatch(change, { ...input, operationId: 'stale' }, hasher)).rejects.toMatchObject({ code: 'OBJECT_REF_STALE' });

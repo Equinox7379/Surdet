@@ -39,6 +39,7 @@ export interface GalleryConfig {
   cgs: GalleryCgDef[];
   music: GalleryMusicDef[];
   texts?: GalleryTextDef[];
+  endings?: import('@surdet/core').GalleryEndingEntry[];
 }
 
 /** 单个鉴赏条目的展示形态 */
@@ -51,17 +52,21 @@ export interface GalleryItemView {
   /** 文本回想：回想场景与起点标签（点击重播用） */
   scene?: string;
   label?: string;
+  description?: string;
 }
 
 /** 合并配置与解锁状态 → 展示列表（顺序与配置一致） */
 export function buildGalleryViews(
   config: GalleryConfig,
-  unlocked: { cgs: string[]; music: string[]; texts?: string[] },
-): { cgs: GalleryItemView[]; music: GalleryItemView[]; texts: GalleryItemView[] } {
+  unlocked: { cgs: string[]; music: string[]; texts?: string[]; endings?: string[] },
+): { cgs: GalleryItemView[]; music: GalleryItemView[]; texts: GalleryItemView[]; endings: GalleryItemView[] } {
   const cgSet = new Set(unlocked.cgs);
   const musicSet = new Set(unlocked.music);
   const textSet = new Set(unlocked.texts ?? []);
+  const endingSet = new Set(unlocked.endings ?? []);
   return {
+    endings: (config.endings ?? []).map(entry => ({ id: entry.id, unlocked: endingSet.has(entry.id),
+      name: endingSet.has(entry.id) ? entry.name : '???', description: endingSet.has(entry.id) ? entry.description : undefined })),
     cgs: config.cgs.map((c) => ({ id: c.id, name: c.name, unlocked: cgSet.has(c.id), src: c.src })),
     music: config.music.map((m) => ({ id: m.id, name: m.name, unlocked: musicSet.has(m.id), src: m.src })),
     texts: (config.texts ?? []).map((t) => ({

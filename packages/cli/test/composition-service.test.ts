@@ -201,7 +201,7 @@ describe('CompositionService compare/plan/dry-run', () => {
     expect(fs.readFileSync(path.join(fixture.projectRoot, 'game.config.json'), 'utf8')).toBe(edited);
   });
 
-  it.each(['catalog', 'terminology', 'galleryPolicy', 'galleryReplay'])('seals %s state and rejects replay after its baseline changes', async target => {
+  it.each(['catalog', 'terminology', 'galleryPolicy', 'galleryReplay', 'galleryEndings'])('seals %s state and rejects replay after its baseline changes', async target => {
     const fixture = await setup('text-catalog-baseline');
     const configPath = path.join(fixture.projectRoot, 'game.config.json');
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -224,10 +224,12 @@ describe('CompositionService compare/plan/dry-run', () => {
     expect(operation.replayStateRequirements).toContainEqual({ objectRef: 'config:terminology', source: 'base', expectedFingerprint: await realHasher.sha256(stableStringify(terms)) });
     expect(operation.replayStateRequirements).toContainEqual({ objectRef: 'config:galleryPolicy', source: 'base', expectedFingerprint: await realHasher.sha256('null') });
     expect(operation.replayStateRequirements).toContainEqual({ objectRef: 'config:galleryReplay', source: 'base', expectedFingerprint: await realHasher.sha256('[]') });
+    expect(operation.replayStateRequirements).toContainEqual({ objectRef: 'config:galleryEndings', source: 'base', expectedFingerprint: await realHasher.sha256('[]') });
     expect((await planFromComparison(fixture, refs)).plan.dryRun.status).toBe('passed');
     if (target === 'catalog') { config.textCatalog.sourceLocale = 'ja'; fs.writeFileSync(configPath, JSON.stringify(config)); }
     else if (target === 'terminology') fs.writeFileSync(termPath, '{"terms":[]}');
     else if (target === 'galleryReplay') fs.writeFileSync(path.join(fixture.projectRoot, 'content/config/gallery.json'), '{"cgs":[],"music":[],"texts":[{"id":"memory","name":"回想","scene":"start"}]}');
+    else if (target === 'galleryEndings') fs.writeFileSync(path.join(fixture.projectRoot, 'content/config/gallery.json'), '{"cgs":[],"music":[],"endings":[{"id":"home","name":"归途"}]}');
     else fs.writeFileSync(path.join(fixture.projectRoot, 'content/config/gallery.json'), '{"cgs":[],"music":[],"unlockPolicy":{"cgs":"profile"}}');
     expect((await fixture.service.compare(refs)).comparison.status).toBe('review-only');
   });

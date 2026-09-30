@@ -82,7 +82,7 @@ const CONFIG_SECTIONS: readonly ConfigSectionDescriptor[] = [
   { id: 'calendar', label: '日历与地图', description: '安排回合规则、地图节点、前置关系与据点指令。', file: 'content/config/calendar.json', render: renderCalendarSection },
   { id: 'growth', label: '角色成长', description: '设置经验曲线、等级范围和成长事件。', file: 'content/config/growth.json', render: renderGrowthSection },
   { id: 'events', label: '事件', description: '管理条件事件、日程事件和角色阶段文案。', file: 'content/config/events.json', render: renderEventsSection },
-  { id: 'gallery', label: '鉴赏', description: '维护图片、音乐和剧情回想入口。', file: 'content/config/gallery.json', render: renderGallerySection },
+  { id: 'gallery', label: '鉴赏', description: '维护图片、音乐、剧情回想与结局册。', file: 'content/config/gallery.json', render: renderGallerySection },
   { id: 'terminology', label: '名词表', description: '统一规范词与常见变体，供审计检查使用。', file: 'content/config/terminology.json', render: renderTerminologySection },
 ];
 
@@ -1608,7 +1608,7 @@ function renderEventsSection(): HTMLElement {
 function renderGallerySection(): HTMLElement {
   const { sec, ops } = sectionShell('gallery');
   const ga = ensureGaRows();
-  for (const [section, label] of [['cgs', '图片收藏'], ['music', '音乐收藏'], ['texts', '剧情回想']] as const) {
+  for (const [section, label] of [['cgs', '图片收藏'], ['music', '音乐收藏'], ['texts', '剧情回想'], ['endings', '结局收藏']] as const) {
     const row = h('label', 'config-field', `${label}：`);
     const select = h('select');
     select.setAttribute('aria-label', `${label}保留方式`);
@@ -1643,6 +1643,12 @@ function renderGallerySection(): HTMLElement {
   ], ga.texts, { id: '', name: '', scene: '', label: '', variables: '' }, { label: '剧情回想', addLabel: '新增回想' }));
   textsSection.append(h('p', 'dim', '初始变量以 JSON 对象填写，例如 {"好感":10}；留空使用项目初值。回想不会写入正式存档或通关记录，结束后返回原位置。'));
   sec.appendChild(textsSection);
+  const endingsSection = configSubsection('结局册');
+  endingsSection.appendChild(renderObjectTable([
+    { key: 'id', label: '结局标识' }, { key: 'name', label: '名称' }, { key: 'description', label: '结局说明' },
+  ], ga.endings ??= [], { id: '', name: '', description: '' }, { label: '结局册', addLabel: '新增结局' }));
+  endingsSection.append(h('p', 'dim', '在剧情中用 @clear 结局标识 解锁对应条目。未解锁前不会显示名称或说明。'));
+  sec.appendChild(endingsSection);
 
   const saveBtn = h('button', 'primary', '保存鉴赏配置');
   saveBtn.onclick = () => {

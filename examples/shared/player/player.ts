@@ -4,7 +4,7 @@
  */
 import {
   compileScene,
-  readGalleryUnlockPolicy, effectiveGalleryUnlocks, readGalleryReplayEntries,
+  readGalleryUnlockPolicy, effectiveGalleryUnlocks, readGalleryReplayEntries, readGalleryEndings, effectiveEndingUnlocks,
   collectProjectTextRows, projectTextSources, createProjectTextResolver, readTextCatalog, parseTerminology,
   type TextSceneSource,
   resolveProjectPortraits,
@@ -198,6 +198,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   }));
   const store = new VariableStore(decls);
   readGalleryReplayEntries({ ...galleryConfig }, decls);
+  readGalleryEndings({ ...galleryConfig });
 
   // 场景注册
   const registry = new SceneRegistry();
@@ -918,6 +919,9 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   // @clear：写入全局通关记录（结局收集 + 变量快照 + 周目计数）
   bus.on('clear', (p) => {
     if (galleryReplay) return;
+    if (galleryCollection && !rollbackRuntime.isRestoring() && galleryConfig.endings?.some(entry => entry.id === p.ending)) {
+      void galleryCollection.unlock('endings', p.ending).catch(collectionError);
+    }
     const rec = clearRecord ?? { endings: [], playthroughs: 0, variables: {}, clearedAt: 0 };
     const freshEnding = !rec.endings.includes(p.ending);
     if (freshEnding) rec.endings.push(p.ending);
@@ -1042,8 +1046,11 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   }
 
   function galleryView() {
-    const views = buildGalleryViews(galleryConfig as GalleryConfig, effectiveGalleryUnlocks(
-      interp.gallery.snapshot(), galleryCollection?.snapshot() ?? { cgs: [], music: [] }, galleryPolicy));
+    const permanent = galleryCollection?.snapshot();
+    const views = buildGalleryViews(galleryConfig as GalleryConfig, {
+      ...effectiveGalleryUnlocks(interp.gallery.snapshot(), permanent ?? { cgs: [], music: [] }, galleryPolicy),
+      endings: effectiveEndingUnlocks(interp.clearTracker.endings(), permanent?.endings ?? [], galleryPolicy.endings),
+    });
     return {
       ...views,
       onPlayMusic: (id: string, src?: string) => audio.playBgm(src ?? id, { restart: true }),
@@ -1079,6 +1086,10 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         if (field === 'title') return titleView().view.title;
         if (field === 'subtitle') return titleView().view.subtitle ?? '';
         if (field === 'mode') return activeSaveLoad?.mode ?? '';
+        if (field === 'ending-progress') {
+          const endings = galleryView().endings;
+          return `已收集 ${endings.filter(entry => entry.unlocked).length}/${endings.length} 个结局`;
+        }
         if (field === 'speaker' || field === 'dialogue') {
           const dialogueProjection = queries.diagnostics.projectionSnapshot().dialogue;
           return field === 'speaker' ? dialogueProjection?.speakerText ?? '' : dialogueProjection?.dialogText ?? '';
@@ -1121,11 +1132,13 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         if (source === 'choices') return renderer.status === 'choice' ? currentChoiceOptions.map(option => ({ id: String(option.index), label: option.label })) : [];
         if (source === 'settings') return settingsView().rows.map(row => ({ id: row.id, label: row.label, description: row.display, value: row.display }));
         const views = galleryView();
-        const items = source === 'gallery-cgs' ? views.cgs : source === 'gallery-music' ? views.music : views.texts;
-        return items.map(item => ({ id: item.id, label: item.unlocked ? item.name : '???', disabled: !item.unlocked }));
+        const items = source === 'gallery-cgs' ? views.cgs : source === 'gallery-music' ? views.music : source === 'gallery-endings' ? views.endings : views.texts;
+        return items.map(item => ({ id: item.id, label: item.unlocked ? item.name : '???',
+          description: source === 'gallery-endings' ? item.unlocked ? item.description : '未解锁' : undefined,
+          disabled: source === 'gallery-endings' || !item.unlocked }));
       },
       async select(source, item, restore) {
-        if (source === 'terms') return false;
+        if (source === 'terms' || source === 'gallery-endings') return false;
         if (source === 'save-slots') {
           const selected = await selectWorkUiSave(activeSaveLoad?.mode ?? mode ?? 'load', item.id, restore);
           if (selected) uiDom?.hide('save-load');
@@ -1276,6 +1289,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         menu.hideTitle();
         store.reset();
         interp.gallery.restore({ cgs: [], music: [], texts: [] });
+        interp.clearTracker.restore(undefined);
         systemHooks.restore!(structuredClone(initialSystems));
         if (growth && initialGrowth) growth.restore(structuredClone(initialGrowth));
         clearCountedThisSession = false; // 新周目会话开始，周目计数重新可用

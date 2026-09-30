@@ -58,6 +58,27 @@ function findText(root: Container, value: string): PText {
   return found as PText;
 }
 
+it('shows ending progress and descriptions without invoking replay or music', () => {
+  const runtime = makeGalleryRuntime();
+  const replay = vi.fn(); const music = vi.fn();
+  const facade = new RendererFacade({ stage: { destroy: vi.fn(), hideCommandRail: vi.fn() } as unknown as RendererStagePort,
+    controller: makeController(), monitor: new RenderPerformanceMonitor(), galleryLayer: runtime.layer });
+  try {
+    facade.commands.gallery.showGallery({ cgs: [], music: [], endings: [
+      { id: 'home', name: '归途', description: '雨停了。', unlocked: true },
+      { id: 'secret', name: '剧透名称', description: '剧透说明', unlocked: false },
+    ], onReplayText: replay, onPlayMusic: music });
+    findText(runtime.root, '结局').emit('pointerdown', pointerEvent);
+    expect(runtime.layer.debugSnapshot()).toMatchObject({ overlay: { tab: 'ending' } });
+    expect(findText(runtime.root, '已收集 1/2 个结局').text).toContain('1/2');
+    expect(findText(runtime.root, '雨停了。').text).toBe('雨停了。');
+    const row = findParentWithText(runtime.root, '❐  归途');
+    row.emit('pointerdown', pointerEvent);
+    expect(replay).not.toHaveBeenCalled(); expect(music).not.toHaveBeenCalled();
+    expect(findText(runtime.root, '未解锁').text).toBe('未解锁');
+  } finally { disposeGalleryRuntime(runtime); }
+});
+
 function findParentWithText(root: Container, value: string): Container {
   const visit = (container: Container): Container | undefined => {
     if (container.children.some((child) => child instanceof PText && child.text === value)) return container;
