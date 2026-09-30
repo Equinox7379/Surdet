@@ -1099,6 +1099,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
 
   function writeWorkVariable(page: ProjectUiPageId, name: string, value: string | number | boolean): void {
     const state = uiSnapshot();
+    if (state.operation !== 'idle') throw new Error('本次修改未执行：存读档事务期间不能修改剧情变量，请在事务结束后重试。');
     if (!workPageVisible(page) || (state.base === 'game' && (state.overlay !== 'none' || !['awaiting-advance', 'awaiting-choice'].includes(interp.status)))) {
       throw new Error('当前不是可修改剧情变量的阅读暂停点，请返回正文或选项后再操作。');
     }
@@ -1817,6 +1818,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   bus.on('stateReset', () => { releaseCtrlTempSkip(); });
   const ctrlKeyDown = (e: KeyboardEvent): void => {
     if (e.key !== 'Control') return;
+    if (uiDom?.ownsInput(e.target)) return;
     if (isTitleScreen()) { ctrlTempSkip = false; return; }
     if (e.repeat) return;
     if (ctrlTempSkip) {

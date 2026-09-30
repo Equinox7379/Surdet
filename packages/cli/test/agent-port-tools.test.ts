@@ -74,6 +74,59 @@ async function connectedProject(projectRoot: string, policy: 'observe' | 'stage'
 }
 
 describe('Surdet Agent Port MCP tool projection', () => {
+  it('preserves nonempty number arrays across real MCP inspection, simulation and runtime results', async () => {
+    const root = makeProject('number-array-contract');
+    const variables = {
+      numbers: { type: 'number[]', initial: [2, 5], readonly: true },
+      empty: { type: 'number[]', initial: [] },
+      bag: { type: 'string[]', initial: ['车票'] },
+      inventory: { type: 'object', initial: { stats: { hp: 2 }, rewards: [{ score: 5 }], numeric: [2, 5] } },
+      trust: { type: 'number', initial: 0 },
+      name: { type: 'string', initial: '旅人' },
+      gate: { type: 'flag', initial: true },
+    };
+    fs.writeFileSync(path.join(root, 'game.config.json'), JSON.stringify({ entryScene: 'start', variables }));
+    fs.writeFileSync(path.join(root, 'content/scenario/start.gal'), '@scene start\n@set trust = 1\n旁白：继续。\n@end\n');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-number-contract-data-'));
+    temporaryRoots.push(data); process.env['SURDET_AGENT_DATA_DIR'] = data;
+    const { session, client, server } = await connectedProject(root, 'stage');
+    const call = async (name: string, args: Record<string, unknown> = {}) => {
+      const response = await client.callTool({ name, arguments: args });
+      expect(response.isError, textContent(response)).not.toBe(true);
+      expect(textEnvelope(response).ok).toBe(true);
+      return (response.structuredContent as any).result;
+    };
+    try {
+      await call('surdet_change_begin', { compositionMode: 'direct' });
+      const inspected = await call('surdet_project_inspect');
+      expect(inspected.variables.find((entry: any) => entry.name === 'numbers').declaration.initial).toEqual([2, 5]);
+      const ensured = await call('surdet_variable_ensure', { operationId: 'array-initial', name: 'extra', type: 'number[]', initial: [7, 9] });
+      expect(ensured).toBeTruthy();
+      const inventoryObject = await call('surdet_object_inspect', { objectRef: 'variable:inventory' });
+      const inventory = { stats: { hp: 3 }, rewards: [{ score: 7 }], numeric: [5, 8] };
+      await call('surdet_variable_patch_initial', { operationId: 'object-initial', name: 'inventory', expectedFingerprint: inventoryObject.fingerprint, initial: inventory });
+      const expected = { numbers: [2, 5], empty: [], bag: ['车票'], inventory, trust: 1, name: '旅人', gate: true, extra: [7, 9] };
+      const simulation = await call('surdet_project_simulate');
+      expect(simulation.report.paths[0].finalVariables).toEqual(expected);
+      const run = await call('surdet_runtime_run_from', { sceneId: 'start', choices: [] });
+      expect(run.finalVariables).toEqual(expected);
+      await call('surdet_runtime_read_trace', { traceId: run.traceId });
+      const runSchema = AUTHORING_CAPABILITY_REGISTRY.find(item => item.id === 'runtime.run-from')!.outputSchema;
+      const validator = standardSchemaFromJson(runSchema);
+      for (const invalid of [{ ...run, finalVariables: { illegal: () => 1 } }, { ...run, unexpected: true }, { ...run, status: 'failed' }]) {
+        expect((await validator['~standard'].validate(invalid)).issues).toBeDefined();
+      }
+      const rejected = await client.callTool({ name: 'surdet_runtime_run_from', arguments: { sceneId: 'start', choices: [], variables: { numbers: [[2, 5]] } } });
+      expect(rejected.isError).toBe(true);
+      expect(textEnvelope(rejected)).toMatchObject({ ok: false }); // JSON-safe does not bypass the declared number[] type.
+      expect((await standardSchemaFromJson(createEnvelopeJsonSchema(runSchema))['~standard'].validate(rejected.structuredContent)).issues).toBeUndefined();
+      const malformed = await client.callTool({ name: 'surdet_runtime_run_from', arguments: { sceneId: 'start', choices: [], unexpected: true } });
+      expect(malformed.isError).toBe(true);
+      expect(textContent(malformed)).toContain('Input validation error');
+      expect(malformed.structuredContent).toBeUndefined(); // Protocol rejection is not a fabricated domain envelope.
+    } finally { await client.close(); await server.close(); await session.close(); }
+  });
+
   it.each([false, true])('rejects missing dossier definitions through public validation (gallery file %s)', async present => {
     const root = makeProject('missing-gallery');
     fs.writeFileSync(path.join(root, 'content/scenario/start.gal'), '@scene start\n@unlock_profile absent_profile\n@unlock_term absent_term\n@end\n');

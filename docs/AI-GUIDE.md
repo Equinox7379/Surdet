@@ -221,7 +221,7 @@ toggle/slider/input 的 `binding:{kind:"variable"|"setting",name}` 必须匹配�
 
 按钮 action 为有限操作：start/continue/back/close/advance/rollback/auto/skip/hide；`{kind:"open",page:"settings"}`；存读档页须明确 `{kind:"open",page:"save-load",mode:"save"|"load"}`。save/load 可带槽位 id，不带时打开列表；choice/gallery-item 使用当前条目或明确 id；setting-step 使用 name 和 direction: ±1。content.source 为 save-slots/backlog/gallery-cgs/gallery-music/gallery-texts/choices/settings，须放在对应页面，子节点可读取当前条目。原保存确认、暂停、返回及失败恢复继续有效。
 
-阅读页（hud/dialogue/choices/toolbar）按钮可用 `{kind:"variable-set",name:"panelOpen",value:true}`，只向已声明的可写数值/字符串/开关赋同类型字面值，数值沿原 VariableStore 范围处理；不支持数组赋值、脚本或任意运算。正常游戏中的变量控件与此按钮只在正文/选项阅读暂停点写入，菜单、视频、定时等待等期间拒绝；旧标题页姓名输入仍按原入口工作。隐藏、禁用的控件不执行操作，点击不代替剧情推进。变量仍随普通存档恢复、新游戏重置。
+阅读页（hud/dialogue/choices/toolbar）按钮可用 `{kind:"variable-set",name:"panelOpen",value:true}`，只向已声明的可写数值/字符串/开关赋同类型字面值，数值沿原 VariableStore 范围处理；不支持数组赋值、脚本或任意运算。正常游戏中的变量控件与此按钮只在正文/选项阅读暂停点写入，菜单、视频、定时等待及存读档事务期间拒绝，事务完成或失败后可重试；旧标题页姓名输入仍按原入口工作。隐藏、禁用的控件不执行操作，点击不代替剧情推进，作品控件中的 Ctrl+A 不启动剧情快进。变量仍随普通存档恢复、新游戏重置。
 
 修改支持 page.set/page.remove、node.insert/node.update/node.remove/node.copy/node.reorder。更新节点只传所需字段，frame/style 等子对象整项替换；复制需提供 newId，后代也产生新 ID。例如：
 

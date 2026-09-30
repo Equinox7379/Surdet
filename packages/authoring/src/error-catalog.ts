@@ -336,6 +336,7 @@ export function createEnvelopeJsonSchema(resultSchema: JsonSchema): JsonSchema {
   };
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
+    ...(resultSchema.$defs ? { $defs: resultSchema.$defs } : {}),
     oneOf: [
       {
         type: 'object',
