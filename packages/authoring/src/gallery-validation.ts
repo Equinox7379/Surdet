@@ -1,5 +1,5 @@
 import type { CompiledScene, LintIssue } from '@surdet/core';
-import { readGalleryUnlockPolicy } from '@surdet/core';
+import { readGalleryUnlockPolicy, readGalleryReplayEntries, type VarDeclaration } from '@surdet/core';
 
 type GallerySection = 'cgs' | 'music' | 'texts';
 type UnlockInstruction = 'unlock_cg' | 'unlock_music' | 'unlock_text';
@@ -42,6 +42,7 @@ export interface GalleryValidationInput {
   readonly avatarAssets?: ReadonlySet<string>;
   readonly characters: Record<string, unknown> | null;
   readonly configPath: string;
+  readonly variables?: Record<string, unknown>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -132,6 +133,10 @@ export function validateGalleryConfig(input: GalleryValidationInput): LintIssue[
 
   try { readGalleryUnlockPolicy(raw); }
   catch (error) { addIssue(issues, 'G001', String(error), input.galleryPath); }
+  try {
+    readGalleryReplayEntries(raw, input.variables === undefined ? undefined
+      : Object.entries(input.variables).map(([name, declaration]) => ({ ...(declaration as Omit<VarDeclaration, 'name'>), name })));
+  } catch (error) { addIssue(issues, 'G001', String(error), input.galleryPath); }
   const cgs = parseEntries(raw.cgs, 'cgs', input.galleryPath, issues);
   const music = parseEntries(raw.music, 'music', input.galleryPath, issues);
   const texts = raw.texts === undefined ? [] : parseEntries(raw.texts, 'texts', input.galleryPath, issues);

@@ -201,7 +201,7 @@ describe('CompositionService compare/plan/dry-run', () => {
     expect(fs.readFileSync(path.join(fixture.projectRoot, 'game.config.json'), 'utf8')).toBe(edited);
   });
 
-  it.each(['catalog', 'terminology', 'galleryPolicy'])('seals %s state and rejects replay after its baseline changes', async target => {
+  it.each(['catalog', 'terminology', 'galleryPolicy', 'galleryReplay'])('seals %s state and rejects replay after its baseline changes', async target => {
     const fixture = await setup('text-catalog-baseline');
     const configPath = path.join(fixture.projectRoot, 'game.config.json');
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -223,9 +223,11 @@ describe('CompositionService compare/plan/dry-run', () => {
     expect(operation.replayStateRequirements).toContainEqual({ objectRef: 'config:textCatalog', source: 'base', expectedFingerprint: await realHasher.sha256(stableStringify(config.textCatalog)) });
     expect(operation.replayStateRequirements).toContainEqual({ objectRef: 'config:terminology', source: 'base', expectedFingerprint: await realHasher.sha256(stableStringify(terms)) });
     expect(operation.replayStateRequirements).toContainEqual({ objectRef: 'config:galleryPolicy', source: 'base', expectedFingerprint: await realHasher.sha256('null') });
+    expect(operation.replayStateRequirements).toContainEqual({ objectRef: 'config:galleryReplay', source: 'base', expectedFingerprint: await realHasher.sha256('[]') });
     expect((await planFromComparison(fixture, refs)).plan.dryRun.status).toBe('passed');
     if (target === 'catalog') { config.textCatalog.sourceLocale = 'ja'; fs.writeFileSync(configPath, JSON.stringify(config)); }
     else if (target === 'terminology') fs.writeFileSync(termPath, '{"terms":[]}');
+    else if (target === 'galleryReplay') fs.writeFileSync(path.join(fixture.projectRoot, 'content/config/gallery.json'), '{"cgs":[],"music":[],"texts":[{"id":"memory","name":"回想","scene":"start"}]}');
     else fs.writeFileSync(path.join(fixture.projectRoot, 'content/config/gallery.json'), '{"cgs":[],"music":[],"unlockPolicy":{"cgs":"profile"}}');
     expect((await fixture.service.compare(refs)).comparison.status).toBe('review-only');
   });
@@ -380,6 +382,26 @@ describe('CompositionService compare/plan/dry-run', () => {
     expect(gallery.cgs).toEqual(expect.arrayContaining([{ id: 'sunrise', name: '黎明之约' }, { id: 'moon', name: '月下归途', src: 'moonrise' }]));
     expect(await serviceB.executePlan({ planId: planned.plan.planId, artifactSha256: planned.identity.sha256, executeOperationId: 'gallery-resume' })).toMatchObject({ changeId: resumed.changeId, workingRevision: 5 });
     expect(treeSnapshot(fixture.projectRoot)).toEqual(baseline);
+  });
+  it('seals and composes candidate scenes referencing an existing direct-authored replay', async () => {
+    const fixture = await setup('text-replay-candidates');
+    const galleryPath = path.join(fixture.projectRoot, 'content/config/gallery.json');
+    fs.mkdirSync(path.dirname(galleryPath), { recursive: true });
+    fs.writeFileSync(galleryPath, JSON.stringify({ cgs: [], music: [], texts: [{ id: 'memory', name: '回想', scene: 'start' }] }));
+    const refs = [];
+    for (const name of ['replay_a', 'replay_b']) {
+      const sealed = await sealCandidate(fixture.projectRoot, name, async session => {
+        const created = await session.invoke('scene.create', { operationId: name, sceneId: name,
+          blocks: [{ kind: 'instruction', name: 'unlock_text', args: ['memory'] }, { kind: 'text', value: '已解锁回想。' }] });
+        expect(created, JSON.stringify(created)).toMatchObject({ ok: true });
+      });
+      refs.push(sealed.ref);
+    }
+    const planned = await planFromComparison(fixture, refs);
+    expect(planned.plan.dryRun.status, JSON.stringify(planned.plan.dryRun)).toBe('passed');
+    const result = await fixture.service.executePlan({ planId: planned.plan.planId, artifactSha256: planned.identity.sha256, executeOperationId: 'combine-replay-references' });
+    expect(result.status).toBe('READY');
+    expect((await NodeChangeStoreStatic.openByChangeId(result.changeId))!.record.workingFiles['content/scenario/replay_a.gal']).toContain('@unlock_text memory');
   });
 
   it('requires an explicit selection for competing patches to the same CG', async () => {

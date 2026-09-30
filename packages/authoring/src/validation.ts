@@ -435,6 +435,7 @@ export function validateSnapshot(
     rawIssues.push(...validateGalleryConfig({
       text: galleryFile.text,
       galleryPath: GALLERY_PATH, scenes, failedSceneIds: failedScenes, characters: null, configPath,
+      variables: snapshot.variables,
       ...(assetCatalog === undefined ? {} : { bgAssets: new Set(assetCatalog.backgrounds.filter((entry) => entry.resolved).map((entry) => entry.key)) }),
     }));
   }

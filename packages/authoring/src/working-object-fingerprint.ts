@@ -4,7 +4,7 @@ import { resolveUniqueTimelinePath } from './timeline-identity.js';
 import type { TextHasher } from './contracts.js';
 import { resolveUniqueScenarioPath } from './scenario-identity.js';
 import { GALLERY_PATH, readGalleryDocument } from './gallery-operations.js';
-import { projectPortraitOverrides, resolveProjectFontPaths } from '@surdet/core';
+import { projectPortraitOverrides, resolveProjectFontPaths, readGalleryReplayEntries } from '@surdet/core';
 
 export type ComposableObjectRef =
   | `scene:${string}`
@@ -12,6 +12,7 @@ export type ComposableObjectRef =
   | `variable:${string}`
   | `character:${string}`
   | `gallery:cgs:${string}`
+  | `gallery:texts:${string}`
   | 'config:characters'
   | 'config:fonts'
   | 'config:theme'
@@ -19,6 +20,7 @@ export type ComposableObjectRef =
   | 'config:textCatalog'
   | 'config:terminology'
   | 'config:galleryPolicy'
+  | 'config:galleryReplay'
   | 'config:stage'
   | 'config:portraits'
   | 'config:entryScene';
@@ -114,6 +116,11 @@ function readWorkingObject(workingFiles: Readonly<Record<string, string>>, objec
   }
 
   const config = parseConfigObject(workingFiles['game.config.json']);
+  if (objectRef.startsWith('gallery:texts:')) {
+    const id = objectRef.slice('gallery:texts:'.length);
+    const entry = readGalleryReplayEntries(readGalleryDocument(workingFiles[GALLERY_PATH]).document).find(item => item.id === id);
+    return entry === undefined ? absent() : present(entry);
+  }
   const fullConfig = parseProjectConfigDocument(workingFiles['game.config.json'] ?? '{}');
   if (objectRef === 'config:stage') return present(fullConfig.stage ?? null);
   if (objectRef === 'config:theme') return present({ theme: fullConfig.theme ?? null, titleLogo: fullConfig.player !== undefined && typeof fullConfig.player === 'object' && fullConfig.player !== null ? (fullConfig.player as Record<string, unknown>)['titleLogo'] ?? null : null });
@@ -121,6 +128,7 @@ function readWorkingObject(workingFiles: Readonly<Record<string, string>>, objec
   if (objectRef === 'config:textCatalog') return present(fullConfig.textCatalog ?? null);
   if (objectRef === 'config:terminology') return present(workingFiles['content/config/terminology.json'] ?? null);
   if (objectRef === 'config:galleryPolicy') return present(readGalleryDocument(workingFiles[GALLERY_PATH]).document.unlockPolicy ?? null);
+  if (objectRef === 'config:galleryReplay') return present(readGalleryDocument(workingFiles[GALLERY_PATH]).document.texts ?? []);
   if (objectRef === 'config:fonts') return present(resolveProjectFontPaths(fullConfig));
   if (objectRef === 'config:portraits') return present(projectPortraitOverrides(fullConfig));
   if (objectRef.startsWith('variable:')) {

@@ -14,6 +14,7 @@ import {
   applyGalleryCgCreate,
   applyGalleryCgPatch,
   applyGalleryPolicyPatch, type GalleryPolicyPatchInput,
+  applyGalleryTextMutation, type GalleryTextCreateInput, type GalleryTextPatchInput,
   inspectGallery,
   inspectPlayerConfig,
   inspectStageConfig, applyStageConfigPatch, type StageConfigPatchInput,
@@ -770,7 +771,7 @@ export class AuthoringService {
         object.fingerprint = hashText(stableStringify(declaration));
       }
     }
-    if (object.kind === 'gallery-cg') object.fingerprint = hashText(stableStringify(object.details));
+    if ((object.kind === 'gallery-cg' || object.kind === 'gallery-text')) object.fingerprint = hashText(stableStringify(object.details));
     if (object.kind === 'text-catalog' || object.kind === 'text-key') object.fingerprint = hashText(stableStringify(object.details));
     return { ...metadata, result: { ...object, view, ...(page === undefined ? {} : { fragment: page }) } };
   }
@@ -830,6 +831,13 @@ export class AuthoringService {
   async galleryPolicyPatch(changeId: string, input: GalleryPolicyPatchInput): Promise<ServiceResult<unknown>> {
     return this.withOpenChange(changeId, async context => {
       const result = await applyGalleryPolicyPatch(context.session, input, { sha256: async text => hashText(text) });
+      return { ...metadataForChange(context.session), result };
+    });
+  }
+
+  async galleryTextMutate(changeId: string, input: GalleryTextCreateInput | GalleryTextPatchInput): Promise<ServiceResult<unknown>> {
+    return this.withOpenChange(changeId, async context => {
+      const result = await applyGalleryTextMutation(context.session, input, { sha256: async text => hashText(text) });
       return { ...metadataForChange(context.session), result };
     });
   }

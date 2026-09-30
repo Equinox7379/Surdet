@@ -2,7 +2,8 @@ import { AuthoringOperationError, runOperation, stableStringify, type ChangeSess
 import { parseProjectConfigDocument, serializeProjectConfigDocument } from './config-document.js';
 import type { GalleryCgCreateInput, GalleryCgPatchInput, LedgerDiffEntry, TextHasher } from './contracts.js';
 import type { OperationCompositionDraft } from './composition-contracts.js';
-import { readGalleryUnlockPolicy, type GalleryUnlockPolicy } from '@surdet/core';
+import { readGalleryUnlockPolicy, readGalleryReplayEntries, compileScene, type GalleryReplayEntry, type GalleryUnlockPolicy, type VarDeclaration } from '@surdet/core';
+import { sceneIdFromScenarioPath } from './scenario-identity.js';
 
 export const GALLERY_PATH = 'content/config/gallery.json';
 
@@ -33,9 +34,12 @@ export function readGalleryDocument(text: string | undefined): { document: Recor
 export async function inspectGallery(text: string | undefined, hasher: TextHasher): Promise<{
   unlockPolicy: { value: unknown; effective: GalleryUnlockPolicy; fingerprint: string };
   cgs: Array<{ id: string; name: string; src?: string; objectRef: string; fingerprint: string }>;
+  texts: Array<GalleryReplayEntry & { objectRef: string; fingerprint: string }>;
 }> {
   const { cgs, document } = readGalleryDocument(text);
-  return { unlockPolicy: await inspectGalleryUnlockPolicy(document, hasher), cgs: await Promise.all(cgs.map(async (entry) => ({
+  return { texts: await Promise.all(readGalleryReplayEntries(document).map(async entry => ({ ...entry,
+    objectRef: `gallery:texts:${entry.id}`, fingerprint: await hasher.sha256(stableStringify(entry)) }))),
+    unlockPolicy: await inspectGalleryUnlockPolicy(document, hasher), cgs: await Promise.all(cgs.map(async (entry) => ({
     id: entry.id, name: entry.name, ...(entry.src === undefined ? {} : { src: entry.src }),
     objectRef: `gallery:cgs:${entry.id}`, fingerprint: await hasher.sha256(stableStringify(entry)),
   }))) };
@@ -58,7 +62,7 @@ export interface GalleryPolicyPatchInput {
 export function patchGalleryUnlockPolicy(document: Record<string, unknown>, patch: GalleryPolicyPatchInput['patch']): Record<string, unknown> {
   readGalleryUnlockPolicy(document);
   if (!patch || typeof patch !== 'object' || Array.isArray(patch) || !Object.keys(patch).length
-    || Object.keys(patch).some(key => key !== 'cgs' && key !== 'music')) throw new AuthoringOperationError('INVALID_REQUEST', '收藏策略只接受 cgs/music');
+    || Object.keys(patch).some(key => !['cgs', 'music', 'texts'].includes(key))) throw new AuthoringOperationError('INVALID_REQUEST', '收藏策略只接受 cgs/music/texts');
   const next = { ...(document.unlockPolicy as Record<string, unknown> | undefined) };
   for (const [key, value] of Object.entries(patch)) {
     if (value === null) delete next[key];
@@ -96,6 +100,60 @@ export interface GalleryCgOperationResult {
   fingerprint: string;
   entry: GalleryCgEntry;
   diffEntry: LedgerDiffEntry;
+}
+
+export interface GalleryTextCreateInput { operationId: string; id: string; name: string; scene: string; label?: string; variables?: GalleryReplayEntry['variables'] }
+export interface GalleryTextPatchInput { operationId: string; id: string; expectedFingerprint: string; patch: {
+  name?: string; scene?: string; label?: string | null; variables?: GalleryReplayEntry['variables'] | null;
+} }
+
+export async function applyGalleryTextMutation(change: ChangeSession, input: GalleryTextCreateInput | GalleryTextPatchInput, hasher: TextHasher) {
+  if (change.record.composition?.mode !== 'direct' || change.record.integration !== undefined) {
+    throw new AuthoringOperationError('UNSUPPORTED_OPERATION', '回想条目修改只支持普通 direct 草稿');
+  }
+  return runOperation(change, input, async record => {
+    const source = record.workingFiles[GALLERY_PATH];
+    const { document } = readGalleryDocument(source);
+    const texts = [...readGalleryReplayEntries(document)];
+    const index = texts.findIndex(entry => entry.id === input.id);
+    const before = texts[index];
+    const patching = 'patch' in input;
+    const fingerprintBefore = before ? await hasher.sha256(stableStringify(before)) : undefined;
+    let entry: GalleryReplayEntry;
+    if (patching) {
+      if (!before) throw new AuthoringOperationError('OBJECT_NOT_FOUND', `回想不存在：${input.id}`);
+      if (fingerprintBefore !== input.expectedFingerprint) throw new AuthoringOperationError('OBJECT_REF_STALE', '回想已修改，请重新读取 project.gallery');
+      if (!input.patch || typeof input.patch !== 'object' || Array.isArray(input.patch) || !Object.keys(input.patch).length
+        || Object.keys(input.patch).some(key => !['name', 'scene', 'label', 'variables'].includes(key))) throw new AuthoringOperationError('INVALID_REQUEST', '回想修改只接受 name/scene/label/variables');
+      entry = { ...before };
+      for (const [key, value] of Object.entries(input.patch)) {
+        if (value === null && (key === 'label' || key === 'variables')) delete entry[key];
+        else entry[key] = value;
+      }
+    } else {
+      if (before) throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `回想已存在：${input.id}`);
+      entry = { id: input.id, name: input.name, scene: input.scene,
+        ...(input.label === undefined ? {} : { label: input.label }), ...(input.variables === undefined ? {} : { variables: input.variables }) };
+    }
+    const config = parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}');
+    try {
+      const declarations = Object.entries((config.variables ?? {}) as Record<string, Omit<VarDeclaration, 'name'>>).map(([name, decl]) => ({ ...decl, name }));
+      readGalleryReplayEntries({ texts: [entry] }, declarations);
+      const targets = Object.entries(record.workingFiles).filter(([path]) => path.startsWith('content/scenario/') && /\.gal$/i.test(path) && sceneIdFromScenarioPath(path) === entry.scene);
+      if (targets.length !== 1) throw new Error(`回想场景不存在或不唯一：${entry.scene}`);
+      const [path, text] = targets[0]!;
+      const scene = compileScene(text, path, entry.scene, (config.customInstructions ?? []) as string[]);
+      if (entry.label !== undefined && !scene.labels.has(entry.label)) throw new Error(`回想标签不存在：${entry.label}`);
+    } catch (error) { throw new AuthoringOperationError('VALIDATION_FAILED', String(error)); }
+    if (patching) texts[index] = entry; else texts.push(entry);
+    const fingerprint = await hasher.sha256(stableStringify(entry));
+    const objectRef = `gallery:texts:${entry.id}`;
+    return { result: { entry, objectRef, fingerprint, diffEntry: {
+      kind: patching ? 'gallery.text.patch' : 'gallery.text.create', operationId: input.operationId,
+      objectBefore: before ? objectRef : undefined, objectAfter: objectRef, fingerprintBefore, fingerprintAfter: fingerprint,
+      directChange: { path: GALLERY_PATH, before: before ?? null, after: entry }, potentialImpact: [], observedImpact: [],
+    } satisfies LedgerDiffEntry }, workingFiles: { ...record.workingFiles, [GALLERY_PATH]: serializeProjectConfigDocument({ ...document, texts }, source ?? '') } };
+  });
 }
 
 async function applyGalleryCgMutation(

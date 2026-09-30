@@ -121,6 +121,11 @@ function addSceneInstructionReferences(
     return;
   }
 
+  if (name === 'unlock_text') {
+    const token = args[0] ?? '';
+    addReference(references, 'gallery-text', 'candidate-external', token, source, `gallery:texts:${token}`);
+    return;
+  }
   if (name === 'unlock_cg') {
     // Core stores the exact argument for unlock_cg, including any literal quotes.
     const token = args[0] ?? '';

@@ -443,6 +443,19 @@ const galleryRaw = {
 };
 
 describe('gallery ⇄ JSON', () => {
+  it('roundtrips replay JSON conditions and rejects undeclared or incorrectly typed variables', () => {
+    const variables = { score: { type: 'number', initial: 0 } };
+    const raw = { cgs: [], music: [], unlockPolicy: { texts: 'profile' as const }, texts: [{ id: 'm', name: '回想', scene: 'main', variables: { score: 2 }, extra: true }] };
+    const rows = parseGalleryRows(raw);
+    expect(rows.texts[0]!.variables).toBe('{"score":2}');
+    expect(rowsToGallery(raw, rows, variables)).toEqual({ json: raw, errors: [] });
+    rows.texts[0]!.variables = '{"missing":1}';
+    expect(rowsToGallery(raw, rows, variables).errors.join()).toContain('未声明');
+    rows.texts[0]!.variables = '{"score":"bad"}';
+    expect(rowsToGallery(raw, rows, variables).errors.length).toBeGreaterThan(0);
+    rows.texts[0]!.variables = '';
+    expect((rowsToGallery(raw, rows, variables).json.texts as unknown[])[0]).toEqual({ id: 'm', name: '回想', scene: 'main', extra: true });
+  });
   it('roundtrips optional collection policy and preserves sibling data', () => {
     const raw = { ...galleryRaw, unknown: { keep: true }, unlockPolicy: { cgs: 'profile' as const } };
     const rows = parseGalleryRows(raw);

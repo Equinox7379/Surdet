@@ -13,6 +13,7 @@ import {
   applyGalleryCgCreate,
   applyGalleryCgPatch,
   applyGalleryPolicyPatch,
+  applyGalleryTextMutation,
   inspectGallery,
   GALLERY_PATH,
 } from '../src/gallery-operations.js';
@@ -77,6 +78,28 @@ async function fingerprintOf(change: ChangeSession, id: string): Promise<string>
 }
 
 describe('gallery.cg authoring operations', () => {
+  it('creates and patches replay conditions while rejecting stale and invalid mutations atomically', async () => {
+    const { change } = await open();
+    change.record.workingFiles['game.config.json'] = JSON.stringify({ variables: { score: { type: 'number', initial: 0 } } });
+    change.record.workingFiles['content/scenario/start.gal'] = '@scene start\n@label memory\n旁白：回想。\n@end\n';
+    const created = await applyGalleryTextMutation(change, { operationId: 'new-text', id: 'another', name: '另一段', scene: 'start', label: 'memory', variables: { score: 2 } }, hasher);
+    expect((await inspectGallery(change.record.workingFiles[GALLERY_PATH], hasher)).texts.find(entry => entry.id === 'another')).toMatchObject({ fingerprint: created.fingerprint, variables: { score: 2 } });
+    expect(workingGallery(change).customRoot).toEqual({ keep: true });
+    const saved = structuredClone(change.record);
+    for (const patch of [{ variables: { missing: 1 } }, { variables: { score: 'bad' } }, { label: 'absent' }]) {
+      await expect(applyGalleryTextMutation(change, { operationId: 'invalid', id: 'another', expectedFingerprint: created.fingerprint, patch }, hasher)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+      expect(change.record).toEqual(saved);
+    }
+    await applyGalleryTextMutation(change, { operationId: 'clear-conditions', id: 'another', expectedFingerprint: created.fingerprint, patch: { label: null, variables: null } }, hasher);
+    await expect(applyGalleryTextMutation(change, { operationId: 'stale-text', id: 'another', expectedFingerprint: created.fingerprint, patch: { name: '过期' } }, hasher)).rejects.toMatchObject({ code: 'OBJECT_REF_STALE' });
+    expect(workingGallery(change).texts).toContainEqual({ id: 'another', name: '另一段', scene: 'start' });
+  });
+  it('refuses text mutations in candidates before persistence', async () => {
+    const change = await beginChange(snapshot(), new InMemoryChangeRepository(), undefined, undefined, { composition: { mode: 'candidate', operationFactsVersion: '1.0.0', baseAssetRefs: [] } });
+    const original = structuredClone(change.record);
+    await expect(applyGalleryTextMutation(change, { operationId: 'no', id: 'm', name: '回想', scene: 'start' }, hasher)).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
+    expect(change.record).toEqual(original);
+  });
   it('reads, narrowly patches and fingerprints collection policies without rewriting gallery entries', async () => {
     const { change } = await open();
     const original = workingGallery(change);
@@ -85,7 +108,7 @@ describe('gallery.cg authoring operations', () => {
     const input = { operationId: 'policy', expectedFingerprint: before.fingerprint, patch: { cgs: 'profile' as const } };
     const result = await applyGalleryPolicyPatch(change, input, hasher);
     expect(workingGallery(change)).toEqual({ ...original, unlockPolicy: { cgs: 'profile' } });
-    expect(result.unlockPolicy.effective).toEqual({ cgs: 'profile', music: 'save' });
+    expect(result.unlockPolicy.effective).toEqual({ cgs: 'profile', music: 'save', texts: 'save' });
     await applyGalleryPolicyPatch(change, input, hasher); // idempotency
     const saved = structuredClone(change.record);
     await expect(applyGalleryPolicyPatch(change, { ...input, operationId: 'stale' }, hasher)).rejects.toMatchObject({ code: 'OBJECT_REF_STALE' });
