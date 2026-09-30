@@ -498,7 +498,7 @@ describe('Wave 8 candidate readiness through Agent Port', () => {
   });
 
   it('validates strict mode/status and nested readiness fields under contract 2.26', async () => {
-    expect(AUTHORING_CONTRACT_VERSION).toBe('2.27.0');
+    expect(AUTHORING_CONTRACT_VERSION).toBe('2.28.0');
     const schema = standardSchemaFromJson(CANDIDATE_COMPOSITION_READINESS_SCHEMA);
     const readiness = { mode: 'candidate', status: 'ready', operationFactsVersion: '1.0.0', operationCount: 0, issueCount: 0, issues: [], truncated: false };
     expect((await schema['~standard'].validate(readiness)).issues).toBeUndefined();

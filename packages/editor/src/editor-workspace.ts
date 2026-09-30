@@ -83,6 +83,29 @@ export function editorWorkspaceStatus() {
   };
 }
 
+/** History requests share the existing binding and reject responses after a switch or edit. */
+export function editorHistoryClient(root: FileSystemDirectoryHandle | null) {
+  const current = connection;
+  if (current === null || current.root !== root || current.lost || current.baseline === null) return null;
+  const request = <T>(run: (state: EditorWorkspaceState) => Promise<T>) => enqueue(current, async () => {
+    if (connection !== current || current.lost || current.saving) throw new Error('工作区已变化或正在保存，请稍后刷新历史。');
+    const state = stateFor(current);
+    const value = await run(state);
+    if (connection !== current || current.lost || current.saving || stateFor(current).workspaceGeneration !== state.workspaceGeneration) {
+      throw new Error('工作区已变化，未使用迟到的历史结果。');
+    }
+    return value;
+  });
+  return {
+    assertCurrent: () => {
+      if (connection !== current || current.lost || current.saving) throw new Error('工作区已经变化，请重新打开历史。');
+    },
+    list: () => request(state => current.client.history(state)),
+    checkpoint: (input: Parameters<EditorWorkspaceClient['historyCheckpoint']>[0]['request']) => request(state => current.client.historyCheckpoint({ ...state, request: input })),
+    compare: (input: Parameters<EditorWorkspaceClient['historyCompare']>[0]['request']) => request(state => current.client.historyCompare({ ...state, request: input })),
+  };
+}
+
 /** Capture the existing binding: a late preview must never publish into another workspace. */
 export function editorPreviewPublisher(root: FileSystemDirectoryHandle | null) {
   const current = connection;

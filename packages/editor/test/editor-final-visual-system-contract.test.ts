@@ -59,6 +59,7 @@ const modeStyleOwner: Readonly<Record<(typeof EDITOR_MODES)[number]['id'], strin
   preview: '/src/styles/preview-workspace.css',
   review: '/src/styles/review-workspace.css',
   stats: '/src/styles/project-health-workspace.css',
+  history: '/src/styles/content-history.css',
   audit: '/src/styles/project-health-workspace.css',
 };
 
@@ -81,10 +82,10 @@ describe('Frontend Pass 10 final visual system contract', () => {
     expect(shell).toBeGreaterThan(components);
   });
 
-  it('keeps the exact nine modes and gives every mode an explicit style owner', () => {
+  it('keeps the supported modes and gives every mode an explicit style owner', () => {
     expect(EDITOR_MODES.map(({ id }) => id)).toEqual([
       'editor', 'assets', 'flow', 'timeline', 'config',
-      'preview', 'review', 'stats', 'audit',
+      'preview', 'review', 'stats', 'history', 'audit',
     ]);
     for (const mode of EDITOR_MODES) {
       expect(hrefs, `${mode.id} must load ${modeStyleOwner[mode.id]}`)

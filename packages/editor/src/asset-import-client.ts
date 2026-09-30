@@ -12,8 +12,9 @@ import type {
   PreviewPublishInput,
   PreviewPublishAck,
   PreviewContent, PreviewContentOption, PreviewContentTarget,
+  ContentHistoryIndex, ContentHistorySummary, ContentHistoryComparison,
 } from '@surdet/authoring';
-import { isPreviewSourcePath, parsePreviewContentTarget, stableStringify } from '@surdet/authoring';
+import { isPreviewSourcePath, isContentHistoryPath, parsePreviewContentTarget, stableStringify } from '@surdet/authoring';
 import type { ProjectDiskBaseline } from './project-disk-baseline';
 
 const AUTHORITY_HEADER = 'x-surdet-asset-import-authority';
@@ -376,6 +377,9 @@ export interface EditorWorkspaceSettlement {
 }
 
 export interface EditorWorkspaceClient {
+  history(state: EditorWorkspaceState): Promise<ContentHistoryIndex>;
+  historyCheckpoint(state: EditorWorkspaceState & { request: { operationId: string; label: string; expectedContentRevision: string } }): Promise<ContentHistorySummary>;
+  historyCompare(state: EditorWorkspaceState & { request: { checkpointId: string; expectedFingerprint?: string; path?: string } }): Promise<ContentHistoryComparison>;
   heartbeat(state: EditorWorkspaceState): Promise<void>;
   preview(state: EditorWorkspaceState & { preview: PreviewPublishInput }): Promise<PreviewPublishAck>;
   previewSources(state: EditorWorkspaceState): Promise<PreviewContentOption[]>;
@@ -1124,6 +1128,11 @@ function parseSceneCommitResult(value: unknown): SceneLifecycleCommitResult {
 }
 
 const WORKSPACE_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  OBJECT_REF_STALE: '内容或历史版本已变化，请刷新历史并重新查看差异。',
+  OBJECT_NOT_FOUND: '找不到所选版本或内容文件，请刷新后重新选择。',
+  OPERATION_ID_CONFLICT: '这次记录的请求标识已用于其他内容，请刷新后重新操作。',
+  CHANGE_STORE_CORRUPT: '保存的版本记录已损坏，原文件已保留，请检查版本数据。',
+  PROJECT_INVALID: '项目内容无法按当前格式读取，请检查源文件及其编码。',
   PREVIEW_OBSERVATION_UNAVAILABLE: '当前预览连接不可用，请从绑定项目重新播放。',
   PREVIEW_OBSERVATION_STALE: '预览或内容版本已变化，本次观察未继续发布。',
   PREVIEW_CONTENT_BASE_CHANGED: '来源项目已改变，不再匹配这份隔离内容的基线。请核对来源与候选；没有替换内容或写回项目。',
@@ -1820,7 +1829,38 @@ export function createAssetImportAuthorityClient(
 
   const workspaceRequest = <T>(action: string, body: object, parser: (value: unknown) => T): Promise<T> =>
     request(`/workspace/${action}`, { ...body, browserSessionId }, parser, { binding: true, operationKind: 'workspace' });
+  const parseHistorySummary = (value: unknown): ContentHistorySummary => {
+    if (!isRecord(value) || !isUuid(value.checkpointId) || typeof value.label !== 'string' || !isTimestamp(value.createdAt)
+      || !isSha256(value.contentRevision) || !isSha256(value.projectRevision) || !isSha256(value.fingerprint)
+      || !Number.isSafeInteger(value.fileCount) || (value.fileCount as number) < 0) throw invalidResponse();
+    return value as unknown as ContentHistorySummary;
+  };
   const workspace: EditorWorkspaceClient = {
+    history: state => workspaceRequest('history', state, value => {
+      if (!isRecord(value) || !isSha256(value.contentRevision) || !Array.isArray(value.checkpoints)) throw invalidResponse();
+      return { contentRevision: value.contentRevision, checkpoints: value.checkpoints.map(parseHistorySummary) };
+    }),
+    historyCheckpoint: state => workspaceRequest('history-checkpoint', state, value => {
+      const summary = parseHistorySummary(value);
+      if (summary.checkpointId !== state.request.operationId || summary.contentRevision !== state.request.expectedContentRevision) throw invalidResponse();
+      return summary;
+    }),
+    historyCompare: state => workspaceRequest('history-compare', state, value => {
+      if (!isRecord(value) || !isSha256(value.contentRevision) || !Array.isArray(value.files)) throw invalidResponse();
+      const checkpoint = parseHistorySummary(value.checkpoint);
+      if (checkpoint.checkpointId !== state.request.checkpointId
+        || state.request.expectedFingerprint !== undefined && checkpoint.fingerprint !== state.request.expectedFingerprint) throw invalidResponse();
+      const files = value.files.map(file => {
+        if (!isRecord(file) || !isProjectRelativePath(file.path) || !isContentHistoryPath(file.path)
+          || file.currentSha256 !== null && !isSha256(file.currentSha256)
+          || file.historicalSha256 !== null && !isSha256(file.historicalSha256)
+          || file.currentText !== undefined && file.currentText !== null && typeof file.currentText !== 'string'
+          || file.historicalText !== undefined && file.historicalText !== null && typeof file.historicalText !== 'string') throw invalidResponse();
+        return file as unknown as ContentHistoryComparison['files'][number];
+      });
+      if (state.request.path !== undefined && (files.length !== 1 || files[0]!.path !== state.request.path)) throw invalidResponse();
+      return { checkpoint, contentRevision: value.contentRevision, files };
+    }),
     heartbeat: state => workspaceRequest('heartbeat', state, value => {
       if (!isRecord(value) || !Number.isSafeInteger(value.workspaceGeneration) || !isTimestamp(value.heartbeatAt)) throw invalidResponse();
     }),

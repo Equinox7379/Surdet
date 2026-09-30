@@ -469,16 +469,17 @@ export async function buildCompositionManifestFromRecordedFacts(
 }
 
 export async function buildCompositionManifest(
-  input: BuildCompositionManifestInput,
+  input: Omit<BuildCompositionManifestInput, 'objectFacts'> & { objectFacts?: ManifestObjectFacts },
   hasher: TextHasher,
 ): Promise<
   | { eligibility: 'ready'; reasons: []; manifest: CompositionManifest }
   | { eligibility: 'unavailable'; reasons: CompositionIneligibility[] }
 > {
-  if (input.record.integration === undefined && input.record.composition?.mode === 'candidate') return buildCompositionManifestFromRecordedFacts(input, hasher);
   if (input.record.integration === undefined && input.record.composition?.mode === 'direct') return {
     eligibility: 'unavailable', reasons: [{ code: 'DIRECT_CHANGE', message: '普通隔离草稿不参与候选组合或正式结果审批；使用 change.diff、working-change 试玩和原 change 续接。' }],
   };
+  if (input.objectFacts === undefined) throw new AuthoringOperationError('INVALID_REQUEST', '候选或组合结果封装必须提供实际对象事实');
+  if (input.record.integration === undefined && input.record.composition?.mode === 'candidate') return buildCompositionManifestFromRecordedFacts({ ...input, objectFacts: input.objectFacts }, hasher);
   if (input.record.integration === undefined && input.record.composition === undefined) return {
     eligibility: 'unavailable', reasons: [
       { code: 'OPERATION_FACTS_MISSING', message: '旧变更没有操作时点事实；请创建新候选。已封存 capsule 仍可读取' },

@@ -26,6 +26,7 @@ import {
 import { ProjectMutationNoticeStore } from '../authoring/project-mutation-notice-store.js';
 import { PreviewObservationService } from '../authoring/preview-observation-service.js';
 import { PreviewContentService } from '../authoring/preview-content-service.js';
+import { ContentHistoryService, type CheckpointInput, type HistoryCompareInput } from '../authoring/content-history-service.js';
 
 export interface EditorWorkspaceStateInput {
   workspaceSessionId: string;
@@ -252,6 +253,29 @@ export class EditorWorkspaceAuthority {
       throw new AuthoringOperationError('PREVIEW_OBSERVATION_STALE', '当前绑定工作区尚未加载所选内容的来源基线');
     }
     return resolved.content;
+  }
+
+  async history(input: EditorWorkspaceStateInput) {
+    await this.requireSession(input);
+    return new ContentHistoryService(this.leaseManager).list(this.projectRootIdentity);
+  }
+
+  private async assertHistoryWorkspace(input: EditorWorkspaceStateInput): Promise<void> {
+    await this.requireSession(input);
+    const baseline = await this.baseline();
+    if (baseline.projectRevision !== input.loadedProjectRevision || baseline.coordinationRevision !== input.loadedCoordinationRevision) {
+      throw new EditorWorkspaceAuthorityError('EDITOR_PROJECT_BASELINE_CHANGED', '项目文件已变化，请先同步项目再查看恢复差异', { diskBaseline: baseline });
+    }
+  }
+
+  async historyCheckpoint(input: EditorWorkspaceStateInput, request: CheckpointInput) {
+    await this.assertHistoryWorkspace(input);
+    return new ContentHistoryService(this.leaseManager).checkpoint(this.projectRootIdentity, request);
+  }
+
+  async historyCompare(input: EditorWorkspaceStateInput, request: HistoryCompareInput) {
+    await this.assertHistoryWorkspace(input);
+    return new ContentHistoryService(this.leaseManager).compare(this.projectRootIdentity, request);
   }
 
   async beginWrite(input: BeginEditorWriteInput): Promise<{

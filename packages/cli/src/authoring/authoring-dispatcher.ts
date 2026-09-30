@@ -77,6 +77,14 @@ export async function dispatchAuthoringCapability(
       return { value: await service.describeCapabilities(payload as { ids?: string[]; detail?: 'summary' | 'full' }) };
     case 'project.inspect':
       return { value: await service.inspectProject(requireProject(context), readChange(context, payload, false)) };
+    case 'project.history':
+      return { value: await service.history(requireProject(context)) };
+    case 'project.history.checkpoint':
+      return { value: await service.historyCheckpoint(requireProject(context), payload as unknown as Parameters<AuthoringService['historyCheckpoint']>[1]), operationId: operationIdFrom(payload) };
+    case 'project.history.compare':
+      return { value: await service.historyCompare(requireProject(context), payload as unknown as Parameters<AuthoringService['historyCompare']>[1], readChange(context, payload, false)) };
+    case 'project.history.restore':
+      return { value: await service.historyRestore(requireChange(context), payload as unknown as Parameters<AuthoringService['historyRestore']>[1]), operationId: operationIdFrom(payload) };
     case 'project.ui':
       return { value: await service.projectUi(requireProject(context), readChange(context, payload, false)) };
     case 'project.texts':

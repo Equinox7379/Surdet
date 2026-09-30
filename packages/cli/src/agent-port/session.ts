@@ -9,7 +9,7 @@ import {
   createSuccessEnvelope,
   evidenceFreshness,
   getCapabilityDefinition,
-  loadProjectSnapshot,
+  loadProjectContentSnapshot,
   nativeCapabilityToMcpTool,
   normalizeAuthoringError,
   humanWorkspaceCommitBlock,
@@ -114,6 +114,7 @@ export interface SessionDescription {
 }
 
 const ACTIVE_CHANGE_CAPABILITIES = new Set<AuthoringCapabilityId>([
+  'project.history.restore',
   'scene.create',
   'scene.remove',
   'scene.rename',
@@ -712,7 +713,7 @@ export async function openAgentPortSession(options: AgentPortOptions): Promise<A
     throw new AuthoringOperationError('CONTRACT_VERSION_UNSUPPORTED', `不支持的 authoring contract version：${options.requestedContractVersion}`);
   }
   const storage = await NodeProjectStorage.open(options.projectRoot);
-  const snapshot = await loadProjectSnapshot(storage, { sha256: async (text) => hashText(text) });
+  const snapshot = await loadProjectContentSnapshot(storage, { sha256: async (text) => hashText(text) });
   let resumedChangeId: string | undefined;
   if (options.resumeChangeId !== undefined) {
     const discovered = await NodeChangeStore.openByChangeId(options.resumeChangeId);

@@ -86,6 +86,10 @@ import {
   timelineFingerprint,
   validateSnapshot,
   loadProjectSnapshot,
+  loadProjectContentSnapshot,
+  loadSavedContent,
+  restoreContentHistory,
+  type ContentHistoryRestoreInput,
   type AuthoringObject,
   type ChangeSession,
   type CharacterEnsureInput,
@@ -122,6 +126,7 @@ import { ChangeRecordProjectStorage } from './working-project-storage.js';
 import { HumanWorkspaceStore } from './human-workspace-store.js';
 import { assertHumanWorkspaceAllowsAgentCommit } from './human-workspace-gate.js';
 import { loadProjectCoordinationBaseline } from './project-coordination-baseline.js';
+import { ContentHistoryService, type CheckpointInput, type HistoryCompareInput } from './content-history-service.js';
 import { AgentImageImportService, type AuthorizedImageSource, type ImageImportCapability } from './agent-image-import-service.js';
 import { ProjectMutationNoticeStore } from './project-mutation-notice-store.js';
 
@@ -621,6 +626,53 @@ export class AuthoringService {
     return { snapshot: context.snapshot, assetFiles, gallery, metadata: metadataForChange(context.session), view: 'working' as const };
   }
 
+  async history(projectRoot: string) {
+    const storage = await NodeProjectStorage.open(projectRoot);
+    const result = await new ContentHistoryService(this.leaseManager).list(storage.rootIdentity);
+    return { projectIdentity: projectIdentityFromRoot(storage.rootIdentity),
+      projectRevision: (await loadProjectContentSnapshot(storage, { sha256: async text => hashText(text) })).revision, result };
+  }
+
+  async historyCheckpoint(projectRoot: string, input: CheckpointInput) {
+    const storage = await NodeProjectStorage.open(projectRoot);
+    const result = await new ContentHistoryService(this.leaseManager).checkpoint(storage.rootIdentity, input);
+    return { projectIdentity: projectIdentityFromRoot(storage.rootIdentity), projectRevision: result.projectRevision, result };
+  }
+
+  async historyCompare(projectRoot: string, input: HistoryCompareInput, changeId?: string) {
+    const storage = await NodeProjectStorage.open(projectRoot);
+    const change = changeId === undefined ? undefined : await openChangeIdentityContext(changeId, this.leaseManager.dataRoot);
+    if (change !== undefined && change.storage.rootIdentity !== storage.rootIdentity) {
+      throw new AuthoringOperationError('PROJECT_IDENTITY_MISMATCH', '指定草稿不属于当前项目');
+    }
+    const result = await new ContentHistoryService(this.leaseManager).compare(storage.rootIdentity, input,
+      change === undefined ? undefined : { files: change.session.record.workingFiles, revision: change.session.record.workingRevision });
+    return { ...(change === undefined ? { projectIdentity: projectIdentityFromRoot(storage.rootIdentity),
+      projectRevision: (await loadProjectContentSnapshot(storage, { sha256: async text => hashText(text) })).revision } : metadataForChange(change.session)), result };
+  }
+
+  async historyRestore(changeId: string, input: ContentHistoryRestoreInput) {
+    const restore = async (store: NodeChangeStore) => {
+      const record = await store.read(changeId);
+      if (record === null) throw new AuthoringOperationError('CHANGE_NOT_FOUND', '草稿不存在');
+      const session = openChange(record, store);
+      const result = await restoreContentHistory(session, input, async () => {
+        const history = await new ContentHistoryService(this.leaseManager).read(record.projectRootIdentity, input.checkpointId);
+        // Older direct drafts did not capture achievements.json. Keep their base
+        // immutable; a new direct draft captures this supported content source.
+        if (input.paths.includes('content/config/achievements.json') && !Object.hasOwn(record.baseContents, 'content/config/achievements.json')) {
+          const source = await NodeProjectStorage.open(record.projectRootIdentity);
+          if ((await source.listFiles()).includes('content/config/achievements.json')) {
+            throw new AuthoringOperationError('OBJECT_REF_STALE', '这个旧草稿未包含成就配置基线，请新建 direct 草稿后恢复');
+          }
+        }
+        return { fingerprint: history.summary.fingerprint, files: history.files };
+      }, { sha256: async text => hashText(text) });
+      return { ...metadataForChange(session), result };
+    };
+    return this.leasedStore === undefined ? withChangeLeaseRetry(changeId, restore, this.leaseManager) : restore(this.leasedStore);
+  }
+
   async inspectProject(projectRoot: string, changeId?: string): Promise<ServiceResult<ReturnType<typeof inspectProject> & { view: 'project' | 'working'; charactersFingerprint: string; playerConfig: Awaited<ReturnType<typeof inspectPlayerConfig>>; stageConfig: Awaited<ReturnType<typeof inspectStageConfig>>; themeConfig: Awaited<ReturnType<typeof inspectThemeConfig>> }>> {
     const { snapshot, assetFiles, gallery, metadata, view } = await this.readProjectView(projectRoot, changeId, true);
     const index = buildObjectIndex(snapshot);
@@ -1098,6 +1150,15 @@ export class AuthoringService {
 
   async begin(projectRoot: string, intent?: ChangeIntentMetadata, options?: { compositionMode: 'candidate' | 'direct' }): Promise<ServiceResult<{ changeId: string; baseRevision: string; workingRevision: number; compositionMode: 'candidate' | 'direct' }>> {
     const storage = await NodeProjectStorage.open(projectRoot);
+    if (options?.compositionMode !== 'candidate') {
+      return withProjectLeaseRetry(this.leaseManager, storage.rootIdentity, async () => {
+        const snapshot = await loadSavedContent(storage, { sha256: async text => hashText(text) });
+        const store = await NodeChangeStore.forProject(snapshot.rootIdentity, this.leaseManager.dataRoot);
+        const session = await beginChange(snapshot, store, storage, intent);
+        return { ...metadataForChange(session), result: { changeId: session.record.changeId,
+          baseRevision: session.record.baseRevision, workingRevision: session.record.workingRevision, compositionMode: 'direct' } };
+      });
+    }
     const { snapshot, assetFiles } = await this.loadProjectContext(storage);
     const store = await NodeChangeStore.forProject(snapshot.rootIdentity, this.leaseManager.dataRoot);
     const baseAssetRefs = resolvedCompositionAssetRefs(assetFiles.map((file) => file.path), snapshot);
@@ -1355,7 +1416,7 @@ export class AuthoringService {
     const storage = await NodeProjectStorage.open(projectRoot);
     const lease = await this.leaseManager.acquire({ scope: 'project', resourceId: storage.rootIdentity });
     try {
-      const snapshot = await loadProjectSnapshot(storage, { sha256: async text => hashText(text) });
+      const snapshot = await loadProjectContentSnapshot(storage, { sha256: async text => hashText(text) });
       const result = await new PreviewObservationService(this.leaseManager.dataRoot).read(storage.rootIdentity, query);
       return { projectIdentity: projectIdentityFromRoot(storage.rootIdentity), projectRevision: snapshot.revision, result };
     } finally { await lease.release(); }
@@ -1439,7 +1500,7 @@ export class AuthoringService {
     return this.withOpenChange(changeId, async (context) => {
       return withProjectLeaseRetry(this.leaseManager, context.session.record.projectRootIdentity, async (projectLease) => {
         await assertHumanWorkspaceAllowsAgentCommit(this.humanWorkspaceStore, context.storage.rootIdentity);
-        const freshProject = await loadSnapshot(context.storage);
+        const freshProject = await loadProjectContentSnapshot(context.storage, { sha256: async text => hashText(text) });
         await assertBaseStillMatches(context.session, freshProject);
         if (verifiedApproval !== undefined) {
           await bindVerifiedApproval(context.session, verifiedApproval);
