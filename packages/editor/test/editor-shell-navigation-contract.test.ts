@@ -77,18 +77,18 @@ afterEach(() => {
 });
 
 describe('editor shell navigation contract', () => {
-  it('defines the exact nine Chinese modes in stable order with unique panel ids', () => {
+  it('defines the exact ten Chinese modes in stable order with unique panel ids', () => {
     expect(EDITOR_MODES.map(({ id }) => id)).toEqual([
       'editor', 'assets', 'flow', 'timeline', 'config',
-      'preview', 'review', 'stats', 'audit',
+      'preview', 'review', 'stats', 'history', 'audit',
     ]);
     expect(EDITOR_MODES.map(({ label }) => label)).toEqual([
       '剧本', '素材', '流程', '时间轴', '配置',
-      '预览', '审阅', '统计', '审计',
+      '预览', '审阅', '统计', '历史', '审计',
     ]);
     expect(EDITOR_MODES.map(({ panelId }) => panelId)).toEqual([
       'editor-workspace', 'asset-center-view', 'flow-view', 'timeline-view', 'config-view',
-      'preview-view', 'review-view', 'stats-view', 'audit-view',
+      'preview-view', 'review-view', 'stats-view', 'history-view', 'audit-view',
     ]);
     expect(new Set(EDITOR_MODES.map(({ panelId }) => panelId)).size).toBe(EDITOR_MODES.length);
     expect(EDITOR_MODE_GROUPS).toEqual([
@@ -98,7 +98,7 @@ describe('editor shell navigation contract', () => {
     ]);
     expect(EDITOR_MODES.map(({ group }) => group)).toEqual([
       'create', 'create', 'create', 'create', 'create',
-      'check', 'check', 'project', 'project',
+      'check', 'check', 'project', 'project', 'project',
     ]);
   });
 

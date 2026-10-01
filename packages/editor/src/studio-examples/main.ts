@@ -183,7 +183,7 @@ function renderDocument(): void {
   }).join('')}</div>`;
 }
 function renderAssets(): void {
-  el('#document-content').innerHTML = `<div class="asset-browser"><div class="chapter-eyebrow">素材浏览</div><h1>这段故事的画面</h1><p>复用仓库已有图片。选中背景或表情指令后，可从属性面板切换。</p><h2>背景 <small>${backgrounds.length}</small></h2><div class="asset-grid">${backgrounds.map((item) => `<figure><img src="${item.url}" alt="${esc(item.name)}"/><figcaption><b>${esc(item.name)}</b><code>${item.key}</code></figcaption></figure>`).join('')}</div><h2>许知遥 · 通勤装 <small>${portraits.length}</small></h2><div class="asset-grid portraits">${portraits.map((item) => `<figure><img src="${item.url}" alt="许知遥 · ${item.name}"/><figcaption><b>${item.name}</b><code>${item.key}</code></figcaption></figure>`).join('')}</div></div>`;
+  el('#document-content').innerHTML = `<div class="asset-browser"><div class="chapter-eyebrow">素材浏览</div><h1>这段故事的画面</h1><p>复用仓库已有图片。选中背景或表情指令后，可从属性面板切换。</p><h2>背景 <small>${backgrounds.length}</small></h2><div class="asset-grid">${backgrounds.map((item) => `<figure><img src="${item.url}" alt="${esc(item.name)}"/><figcaption><b>${esc(item.name)}</b><code>${item.key}</code></figcaption></figure>`).join('')}</div><h2>许知遥 · 通勤装 <small>${portraits.length}</small></h2><div class="asset-grid portraits">${portraits.map((item) => `<figure><img src="${item.url}" alt="许知遥 · ${esc(item.name)}"/><figcaption><b>${esc(item.name)}</b><code>${item.key}</code></figcaption></figure>`).join('')}</div></div>`;
 }
 function renderFlow(): void {
   const lines = parseScript(scene().text);

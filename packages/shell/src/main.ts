@@ -187,12 +187,12 @@ function registerAppIpc(): void {
     assertTrustedSender(e);
     return writeCrashReport(app.getPath('userData'), { context: typeof context === 'string' ? context : 'renderer', error: typeof message === 'string' ? message : String(message) });
   });
-  ipcMain.handle('release:check', async (e, manifestUrl: unknown) => {
+  ipcMain.handle('release:check', async (e, ...sources: unknown[]) => {
     assertTrustedSender(e);
+    if (sources.length > 0) throw new Error('更新检查不接受页面传入的来源，只读取当前作品的本地版本清单。');
     const currentVersion = app.getVersion();
     const localManifest = path.join(gameRoot(), 'release', 'update-manifest.json');
-    const source = typeof manifestUrl === 'string' && /^https?:\/\//i.test(manifestUrl) ? manifestUrl : localManifest;
-    return checkReleaseManifest(source, currentVersion);
+    return checkReleaseManifest(localManifest, currentVersion);
   });
   ipcMain.handle('asset:list', (e) => {
     assertTrustedSender(e);

@@ -22,6 +22,27 @@ function writeJson(file: string, value: unknown): void {
 }
 
 describe('agent authoring CLI JSON contract', () => {
+  it('finishes delayed stdout and stderr writes before exiting, preserving success and failure codes', () => {
+    // Windows terminals can write asynchronously too. Delay the real writes to
+    // make premature exit deterministic without depending on an OS pipe size.
+    const delayWrites = `for (const stream of [process.stdout, process.stderr]) {
+      const write = stream.write;
+      stream.write = function (...args) { setTimeout(() => write.apply(this, args), 25); return true; };
+    }`;
+    const run = (args: string[]) => spawnSync(process.execPath,
+      ['--import', `data:text/javascript,${encodeURIComponent(delayWrites)}`, cliEntry, ...args],
+      { cwd: repoRoot, encoding: 'utf8', timeout: 10000 });
+    const success = run(['capabilities', 'describe', '--json']);
+    expect(success.status).toBe(0);
+    expect(success.stderr).toBe('');
+    expect(success.stdout.length).toBeGreaterThan(65536);
+    expect(JSON.parse(success.stdout).result.capabilities).toHaveLength(72);
+    const failure = run(['lint', '--not-a-valid-option']);
+    expect(failure.status).toBe(1);
+    expect(failure.stdout).toBe('');
+    expect(failure.stderr).toContain('不支持参数 --not-a-valid-option');
+  });
+
   it('describes exactly the registered capabilities with one JSON stdout document', () => {
     const result = runCli(['capabilities', 'describe', '--json']);
 
