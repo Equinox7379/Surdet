@@ -20,6 +20,10 @@ describe('writeJsonAtomic', () => {
     expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ volume: 0.7, nested: { ok: true } });
     expect(fs.existsSync(`${file}.tmp`)).toBe(false);
     expect(fs.readFileSync(unrelated, 'utf8')).toBe('keep');
+    writeJsonAtomic(file, { volume: 0.4 });
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ volume: 0.4 });
+    expect(fs.existsSync(`${file}.tmp`)).toBe(false);
+    expect(fs.readFileSync(unrelated, 'utf8')).toBe('keep');
   });
 
   it('rename 失败时只清理自己的临时文件并重新抛出原错误', () => {

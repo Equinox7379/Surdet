@@ -283,7 +283,7 @@ describe('timeline autosave conflict panel', () => {
     expect(onSaveAsNew).not.toHaveBeenCalled();
     expect(onDiscard).toHaveBeenCalledWith(item.key);
     expect(onDownload).toHaveBeenCalledWith(item.key);
-    expect(textOf(container)).toContain('自动备份 JSON 无法解析');
+    expect(textOf(container)).toContain('自动备份配置文本 无法解析');
   });
 
   it('disables Replace Current when the recorded target path cannot be normalized safely', () => {

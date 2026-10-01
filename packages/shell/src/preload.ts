@@ -42,7 +42,10 @@ contextBridge.exposeInMainWorld('surdetApp', {
 });
 
 contextBridge.exposeInMainWorld('surdetRelease', {
-  check: (manifestUrl?: string): Promise<unknown> => ipcRenderer.invoke('release:check', manifestUrl) as Promise<unknown>,
+  check: async (...sources: unknown[]): Promise<unknown> => {
+    if (sources.length > 0) throw new Error('更新检查不接受页面传入的来源，只读取当前作品的本地版本清单。');
+    return ipcRenderer.invoke('release:check') as Promise<unknown>;
+  },
 });
 
 /** 素材桥：打包 exe 内素材经 AES-256-GCM 加密（SDAT2），主进程读取并解密返回字节；

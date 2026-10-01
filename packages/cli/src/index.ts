@@ -186,9 +186,9 @@ async function main(): Promise<number> {
 
 main()
   .then((code) => {
-    process.exit(code);
+    process.exitCode = code;
   })
   .catch((err: unknown) => {
     process.stderr.write(`surdet: 内部错误：${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
+    process.exitCode = 1;
   });

@@ -238,7 +238,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
       events: { events: [{ id: 'e', scene: 'old', note: 'old' }], scheduled: [{ id: 's', scene: 'old' }] },
       growth: { profiles: [{ levelEvents: { '2': 'old' }, note: 'old' }] },
       calendar: { nodes: [{ eventId: 'old' }], baseCommands: [{ eventId: 'old' }] },
-      gallery: { texts: [{ scene: 'old', label: 'same', note: 'old' }] },
+      gallery: { texts: [{ id: 'memory', name: '回想', scene: 'old', label: 'same', note: 'old' }] },
     };
     state.scenes = new Map([['old', scene('old', fileHandle(null, log, 'old.gal'))]]);
     state.gameConfigText = rootText;
@@ -258,7 +258,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
       events: { events: [{ scene: 'new', note: 'old' }], scheduled: [{ scene: 'new' }] },
       growth: { profiles: [{ levelEvents: { '2': 'new' }, note: 'old' }] },
       calendar: { nodes: [{ eventId: 'new' }], baseCommands: [{ eventId: 'new' }] },
-      gallery: { texts: [{ scene: 'new', label: 'same', note: 'old' }] },
+      gallery: { texts: [{ id: 'memory', name: '回想', scene: 'new', label: 'same', note: 'old' }] },
     });
     const writes = state.pendingSceneConfigWrites;
     const renames = state.pendingSceneConfigRenames;
@@ -279,7 +279,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
   });
 
   it('标签回想改名保留来源指纹与未知字段；重命名链及恢复不触碰其他配置', async () => {
-    const source = '\uFEFF{"texts":[{"scene":"a","label":"entry","note":"entry"}],"custom":true}\r\n';
+    const source = '\uFEFF{"texts":[{"id":"memory","name":"回想","scene":"a","label":"entry","note":"entry"}],"custom":true}\r\n';
     const raw = JSON.parse(source.slice(1));
     state.scenes = new Map([['a', scene('a', fileHandle(null, log, 'a.gal'))]]);
     state.gameConfigText = '{"entryScene":"a"}';
@@ -291,7 +291,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     (await prepareSceneLabelConfigRename('a', 'arrival', '抵达'))();
     expect(state.pendingSceneConfigWrites).toHaveLength(1);
     expect(state.pendingSceneConfigWrites[0]!.expectedSha256).toBe(await sceneTextSha256(source));
-    expect(JSON.parse(state.pendingSceneConfigWrites[0]!.text.slice(1))).toEqual({ ...raw, texts: [{ scene: 'a', label: '抵达', note: 'entry' }] });
+    expect(JSON.parse(state.pendingSceneConfigWrites[0]!.text.slice(1))).toEqual({ ...raw, texts: [{ id: 'memory', name: '回想', scene: 'a', label: '抵达', note: 'entry' }] });
     const writes = state.pendingSceneConfigWrites, renames = state.pendingSceneConfigRenames;
     await expect(prepareSceneConfigRecovery([], renames)).rejects.toThrow('不能部分恢复');
     const restore = await prepareSceneConfigRecovery(writes, renames); state.configFiles.gallery = raw; restore();
