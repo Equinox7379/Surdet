@@ -976,7 +976,8 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined, requiredBac
     const url = URL.createObjectURL(new Blob([buffer as unknown as BlobPart], { type: mime }));
     try {
       await fn(url);
-      urls.push(url);
+      if (previewDisposed) URL.revokeObjectURL(url);
+      else urls.push(url);
     } catch (err) {
       URL.revokeObjectURL(url);
       if (requiredSource) configuredFailure ??= new Error(`${label}加载失败：${requiredSource} · ${err instanceof Error ? err.message : String(err)}`);
@@ -1029,6 +1030,7 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined, requiredBac
       (url) => rendererAssets.registerAvatar(asset.key, url, asset.image.mime),
     )),
   ]);
+  if (previewDisposed) { for (const url of urls) URL.revokeObjectURL(url); return; }
   appliedAssetUrls = urls;
   if (configuredFailure) throw configuredFailure;
 }
@@ -1274,16 +1276,25 @@ function readCurrentReading() {
   get calendar(): CalendarRunner | null { return calendar; },
 };
 
-window.addEventListener('beforeunload', () => {
+function disposePreview(): void {
+  if (previewDisposed) return;
   previewDisposed = true;
   activePreviewTrace = null;
   invalidatePreviewSession();
+  previewAudio.stopAll();
+  previewAudio.dispose();
+  releaseAppliedFontUrls();
+  for (const url of appliedAssetUrls) URL.revokeObjectURL(url);
+  appliedAssetUrls = [];
   runtime = null;
   try {
     runtimeLifecycle?.dispose();
   } catch (err) {
     console.warn('[preview] RendererRuntime dispose failed:', err);
   }
-});
+}
+// Removing an iframe does not run beforeunload. pagehide owns that teardown too.
+window.addEventListener('pagehide', disposePreview);
+window.addEventListener('beforeunload', disposePreview);
 
 void boot();
