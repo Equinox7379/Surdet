@@ -86,6 +86,12 @@ async function waitForPublishedPreviewLoad(result: { frame: HTMLIFrameElement; l
   assert(published(), `preview load was not published: ${result.frame.contentDocument?.URL}; messages=${JSON.stringify(result.loads.map(value => (value as { type?: string } | null)?.type))}`);
 }
 
+async function waitForFontRead(delayed: DelayedFontRoot): Promise<void> {
+  const deadline = performance.now() + 2000;
+  while (!delayed.requested() && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+  assert(delayed.requested(), 'font read did not become asynchronous');
+}
+
 function fixture(sourceText = SOURCE): SceneEntry {
   disposeScriptV4(); disposePreviewPanel();
   resetSearchSession(); state.reviewPreviewReadOnly = false;
@@ -915,7 +921,7 @@ export const v4WorkbenchCases: BrowserCase[] = [
     state.previewTrace = [observed]; state.selectedTraceStep = 0;
     const delayed = makeDelayedFontRoot('preview-edit-project', [1, 2, 3]); state.dirHandle = delayed.root;
     await startPreviewLoad(host);
-    assert(delayed.requested(), 'font read did not become asynchronous');
+    await waitForFontRead(delayed);
     state.scenes.get('start')!.text += '\r\n// changed during preview read';
     delayed.release(); await tick(); await nextTask();
     assert(state.previewTrace[0] === observed && state.selectedTraceStep === 0, 'aborted preview erased the prior observation');
@@ -931,7 +937,7 @@ export const v4WorkbenchCases: BrowserCase[] = [
     state.previewTrace = [observed]; state.selectedTraceStep = 0;
     const delayed = makeDelayedFontRoot('preview-project-a', [4, 5, 6]); state.dirHandle = delayed.root;
     await startPreviewLoad(host);
-    assert(delayed.requested(), 'font read did not become asynchronous');
+    await waitForFontRead(delayed);
     const nextScene: SceneEntry = { id: 'next', file: 'next.gal', text: '@scene next\n@end', eol: '\n', dirty: false, handle: null };
     state.dirName = 'preview-project-b'; state.dirHandle = makeFontRoot('preview-project-b', [7, 8, 9]);
     state.scenes = new Map([['next', nextScene]]); state.current = 'next';
@@ -949,7 +955,7 @@ export const v4WorkbenchCases: BrowserCase[] = [
     state.previewTrace = [observed]; state.selectedTraceStep = 0;
     const delayed = makeDelayedFontRoot('preview-detach-project', [10, 11, 12]); state.dirHandle = delayed.root;
     await startPreviewLoad(host);
-    assert(delayed.requested(), 'font read did not become asynchronous');
+    await waitForFontRead(delayed);
     disposePreviewPanel();
     delayed.release(); await tick(); await nextTask();
     assert(state.previewTrace[0] === observed && state.selectedTraceStep === 0, 'detached preview erased the prior observation');

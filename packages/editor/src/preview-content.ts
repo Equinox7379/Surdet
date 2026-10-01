@@ -24,5 +24,5 @@ export async function projectPreviewContent(content: PreviewContent) {
   }));
   return { scenes: snapshot.scenes.map(scene => ({ id: scene.id, text: scene.file.text, file: scene.path })),
     entryScene: snapshot.entryScene, configText: snapshot.configFile?.text ?? '{}', configs,
-    timelines: snapshot.timelines.map(file => ({ id: file.path, text: file.text })), index: buildObjectIndex(snapshot) };
+    timelines: snapshot.timelines.map(file => ({ id: file.path, text: file.text })), index: buildObjectIndex(snapshot), snapshot };
 }

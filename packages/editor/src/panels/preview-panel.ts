@@ -11,13 +11,14 @@ import '../styles/stage-workspace.css';
 import { state, h, setStatus } from '../state.js';
 import { assertConfigSourcesReadable } from '../config-source.js';
 import { parseScript } from '../model.js';
-import { isPreviewSourcePath, normalizePreviewTraceMessage, parseProjectConfigDocument, previewSourceText,
+import { buildProjectAssetIntelligence, isPreviewSourcePath, normalizePreviewTraceMessage, parseProjectConfigDocument, previewSourceText,
   type RuntimeTraceEvent, type PreviewTraceMessage, type PreviewTraceEventMessage,
-  type PreviewSourceFacts, type PreviewPublishInput, type PreviewContent, type PreviewContentOption, type PreviewContentTarget } from '@surdet/authoring';
+  type ProjectSnapshot, type PreviewSourceFacts, type PreviewPublishInput, type PreviewContent, type PreviewContentOption, type PreviewContentTarget } from '@surdet/authoring';
 export { normalizePreviewTraceMessage, type PreviewTraceMessage, type PreviewTraceStartMessage,
   type PreviewTraceEventMessage, type PreviewTraceCompleteMessage } from '@surdet/authoring';
-import { createEditorProjectStorage } from '../authoring-project-storage.js';
+import { createEditorProjectStorage, loadEditorProjectSnapshot } from '../authoring-project-storage.js';
 import { assetPathForHandle } from '../project-io.js';
+import type { DirAsset } from '../assets.js';
 import { editorPreviewPublisher, editorWorkspaceStatus } from '../editor-workspace.js';
 import { inspectConfigDraftState, previewStageConfigText, previewThemeConfigText, previewUiConfigText, readUiConfigDraft, readStageConfigDraft, readThemeConfigDraft } from './config.js';
 import { previewTextHash, projectPreviewContent } from '../preview-content.js';
@@ -272,7 +273,7 @@ function parsePreviewSpeakerProfiles(configText: string): SpeakerProfile[] {
 }
 
 /** 从项目目录读取 game.config.json 的字体角色文件；旧版 font 自动作为三个角色的来源。 */
-async function readProjectFonts(configText: string): Promise<Partial<Record<FontRole, PreviewFont>>> {
+export async function readProjectFonts(configText: string, signal: AbortSignal): Promise<Partial<Record<FontRole, PreviewFont>>> {
   const cfg = configText.trim() ? parseProjectConfigDocument(configText) : {};
   const root = state.dirHandle;
   if (!root) return {};
@@ -281,23 +282,26 @@ async function readProjectFonts(configText: string): Promise<Partial<Record<Font
   const MIME: Record<string, string> = { woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', otf: 'font/otf' };
   const result: Partial<Record<FontRole, PreviewFont>> = {};
   for (const role of ['body', 'title', 'ui'] as FontRole[]) {
+    signal.throwIfAborted();
     const fontPath = paths[role];
     if (!fontPath) continue;
     const segs = fontPath.split('/').filter((s) => s.length > 0);
     const fname = segs.pop()!;
     let dir: FileSystemDirectoryHandle = root;
     try {
-      for (const s of segs) dir = await dir.getDirectoryHandle(s);
+      for (const s of segs) { signal.throwIfAborted(); dir = await dir.getDirectoryHandle(s); }
       const file = await (await dir.getFileHandle(fname)).getFile();
+      signal.throwIfAborted();
       // Metadata can survive replacement. Hash the bytes from this read before
       // the iframe decides whether its existing FontFace can be reused.
       const buffer = await file.arrayBuffer();
+      signal.throwIfAborted();
       const digest = await crypto.subtle.digest('SHA-256', buffer);
       const ext = (file.name.split('.').pop() ?? '').toLowerCase();
       result[role] = { buffer, mime: MIME[ext] ?? 'font/ttf', sourcePath: fontPath,
         version: [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('') };
     }
-    catch (error) { throw new Error(`字体读取失败：${fontPath}（${error instanceof Error ? error.message : String(error)}）`); }
+    catch (error) { signal.throwIfAborted(); throw new Error(`字体读取失败：${fontPath}（${error instanceof Error ? error.message : String(error)}）`); }
   }
   return result;
 }
@@ -329,8 +333,26 @@ const AUDIO_MIME: Record<string, string> = {
   mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4', flac: 'audio/flac',
 };
 
+/** Include all supplied scenes, timeline cues and configuration, not only the opening scene.
+ * Keep the shared reference semantics; implicit speaker avatars are a preview runtime default. */
+export function previewAssetPaths(snapshot: ProjectSnapshot, assets: readonly DirAsset[]): Set<string> {
+  const facts = assets.flatMap(asset => {
+    const path = asset.sourcePath ?? (asset.handle ? assetPathForHandle(asset.handle) : undefined);
+    return path ? [{ path }] : [];
+  });
+  const index = buildProjectAssetIntelligence(snapshot, facts);
+  const paths = new Set(index.items.filter(asset => asset.references.length > 0 && asset.sourcePath)
+    .map(asset => asset.sourcePath!));
+  const avatars = new Set(parsePreviewSpeakerProfiles(JSON.stringify(snapshot.config)).map(profile => profile.avatarKey));
+  for (const asset of assets) if (asset.kind === 'avatar' && avatars.has(asset.key)) {
+    const path = asset.sourcePath ?? (asset.handle ? assetPathForHandle(asset.handle) : undefined);
+    if (path) paths.add(path);
+  }
+  return paths;
+}
+
 /** 读取项目目录中的背景和立绘字节。文件句柄不能跨 iframe 传递，只下发可结构化克隆的二进制数据。 */
-async function readProjectImages(configText: string): Promise<PreviewAssets> {
+export async function readProjectImages(configText: string, signal: AbortSignal, requiredPaths: ReadonlySet<string>): Promise<PreviewAssets> {
   const backgrounds = new Map<string, { key: string; image: PreviewImage }>();
   const portraits = new Map<string, { charId: string; costume: string; expression: string; image: PreviewImage; configured?: true }>();
   const visualImages = new Map<string, PreviewImage>();
@@ -345,12 +367,16 @@ async function readProjectImages(configText: string): Promise<PreviewAssets> {
   }));
   assertUniquePortraitBindings(bindings);
   for (const asset of state.dirAssets) {
+    signal.throwIfAborted();
     if (!asset.handle) continue;
+    const sourcePath = asset.sourcePath ?? assetPathForHandle(asset.handle);
+    if (!sourcePath || !requiredPaths.has(sourcePath) || asset.kind === 'font') continue;
     try {
       const file = await asset.handle.getFile();
+      signal.throwIfAborted();
       const ext = (file.name.split('.').pop() ?? '').toLowerCase();
       const buffer = await file.arrayBuffer();
-      const sourcePath = asset.sourcePath ?? assetPathForHandle(asset.handle);
+      signal.throwIfAborted();
       if (asset.kind === 'video') {
         videos.set(asset.key, { key: asset.key, file: { buffer, mime: file.type || ({ mp4: 'video/mp4', webm: 'video/webm', ogv: 'video/ogg' }[ext]) || 'application/octet-stream', sourcePath } });
         continue;
@@ -378,11 +404,13 @@ async function readProjectImages(configText: string): Promise<PreviewAssets> {
         portraits.set(`${binding.role}:${binding.outfit}:${binding.expression}`, { charId: binding.role, costume: binding.outfit, expression: binding.expression, image,
           ...(binding.configured ? { configured: true } : {}) });
       }
-    } catch {
-      // 单个损坏/失权素材不应阻断整个剧情预览；舞台会为缺失项保留占位回退。
+    } catch (error) {
+      signal.throwIfAborted();
+      throw new Error(`素材读取失败：${sourcePath}（${error instanceof Error ? error.message : String(error)}）；恢复文件或权限后可重新播放。`);
     }
   }
   for (const binding of bindings) {
+    if (!binding.configured && !portraitSourcePaths(binding).some(path => requiredPaths.has(path))) continue;
     if (binding.visual) {
       const images: Record<string, PreviewImage> = {};
       for (const path of portraitSourcePaths(binding)) {
@@ -643,8 +671,16 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       sourceState.textContent = `预览可继续，观察记录未能同步：${error instanceof Error ? error.message : String(error)}`;
     });
   };
-  activePreviewCleanup = () => { stageWorkbench?.dispose(); expectedTraceId = null; void invalidate('closed').catch(() => {}); frame.remove(); };
+  let sendRevision = 0;
+  let loading: AbortController | null = null;
+  let loadingSource: string | null = null;
+  activePreviewCleanup = () => { loading?.abort(); stageWorkbench?.dispose(); expectedTraceId = null; void invalidate('closed').catch(() => {}); frame.remove(); };
   notifyPreviewSourceEdited = () => {
+    if (sourceState.dataset.previewSourceState === 'loading' && loadingSource !== null && loadingSource !== requestKey()) {
+      loading?.abort();
+      sourceState.dataset.previewSourceState = 'stale';
+      sourceState.textContent = '读取期间内容已修改，本次未启动，请重新播放。';
+    }
     if (sourceState.dataset.previewSourceState !== 'stale' && publishedSource !== null && publishedSource !== requestKey()) {
       sourceState.dataset.previewSourceState = 'stale';
       sourceState.textContent = '内容已修改；当前画面仍属于上一次运行，请重新播放。';
@@ -823,8 +859,12 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     diagnostics.className = `preview-diagnostics ${diagnostic.level}`;
   };
   /** 异步读取素材期间若用户重新选择播放入口，旧请求不得晚到覆盖新选择。 */
-  let sendRevision = 0;
   const send = async (resume = false, capturedPlayback?: import('@surdet/authoring').PreviewPlaybackCheckpoint | null): Promise<void> => {
+    loading?.abort();
+    const controller = new AbortController();
+    loading = controller;
+    loadingSource = null;
+    const signal = controller.signal;
     const revision = ++sendRevision;
     if (!ready) return;
     try { await invalidate('reload'); }
@@ -849,6 +889,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       isolated = loaded;
       projected = projection;
     } catch (error) {
+      if (signal.aborted || mountRevision !== previewPanelMountRevision) return;
       sourceState.dataset.previewSourceState = 'stale';
       sourceState.textContent = `所选内容未能加载；保留的旧画面不代表新版本：${error instanceof Error ? error.message : String(error)}`;
       return;
@@ -881,17 +922,21 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     const requestScene = state.current ? state.scenes.get(state.current) : undefined;
     const requestAssets = state.dirAssets;
     const requestSource = requestKey();
+    loadingSource = requestSource;
     // 使用本次选择的内容版本，不从编辑器原配置借用字体。
     let cachedFonts: Partial<Record<FontRole, PreviewFont>>;
     let assets: PreviewAssets;
     let requestConfigText: string;
     try {
       requestConfigText = projected?.configText ?? previewUiConfigText(previewThemeConfigText(previewStageConfigText(state.gameConfigText)));
-      cachedFonts = await readProjectFonts(requestConfigText);
-      assets = await readProjectImages(requestConfigText);
+      const snapshot = projected?.snapshot ?? await loadEditorProjectSnapshot();
+      signal.throwIfAborted();
+      const requiredPaths = previewAssetPaths({ ...snapshot, config: parseProjectConfigDocument(requestConfigText) }, requestAssets);
+      cachedFonts = await readProjectFonts(requestConfigText, signal);
+      assets = await readProjectImages(requestConfigText, signal, requiredPaths);
     }
     catch (error) {
-      if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !container.isConnected) return;
+      if (signal.aborted || revision !== sendRevision || mountRevision !== previewPanelMountRevision || !container.isConnected) return;
       sourceState.dataset.previewSourceState = 'stale';
       sourceState.textContent = `预览未启动：${error instanceof Error ? error.message : String(error)}`;
       return;
