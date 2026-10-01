@@ -77,7 +77,8 @@ export function appendStoryPreviewError(traceId: string, phase: string, message:
 }
 
 /** Export fixed facts only: no raw errors, variable values, story text or presentation snapshots. */
-export function storyDiagnostic(input: { check?: StoryCheckResult | null; checkCurrent?: boolean; failure?: StoryCheckFailure | null; preview?: StoryPreview | null }) {
+export function storyDiagnostic(input: { check?: StoryCheckResult | null; checkCurrent?: boolean;
+  failure?: { error: StoryCheckFailure; inputRevision: string; current: boolean } | null; preview?: StoryPreview | null }) {
   const check = input.check, preview = input.preview;
   return {
     schemaVersion: 1, kind: 'surdet-story-diagnostic', exportedAt: new Date().toISOString(),
@@ -87,8 +88,9 @@ export function storyDiagnostic(input: { check?: StoryCheckResult | null; checkC
       scenes: check.report.coverage.scenes, branches: check.report.coverage.branches.map(({ label: _label, ...branch }) => branch),
       conditions: check.report.coverage.conditions.map(({ expression: _expression, ...condition }) => condition),
       stops: check.report.coverage.stops.map(({ message: _message, ...stop }) => stop), hostInstructions: check.report.coverage.hostInstructions } } : {}),
-    ...(input.failure ? { checkFailure: { code: input.failure.code, ...(input.failure.file ? { file: input.failure.file } : {}),
-      ...(input.failure.line ? { line: input.failure.line, col: input.failure.col ?? 1 } : {}) } } : {}),
+    ...(input.failure ? { checkFailure: { inputRevision: input.failure.inputRevision, current: input.failure.current,
+      code: input.failure.error.code, ...(input.failure.error.file ? { file: input.failure.error.file } : {}),
+      ...(input.failure.error.line ? { line: input.failure.error.line, col: input.failure.error.col ?? 1 } : {}) } } : {}),
     ...(preview ? { preview: { revision: preview.revision, scope: preview.scope, current: preview.working ? preview.isCurrent() : null, status: preview.status, seed: preview.seed,
       eventCount: preview.eventCount, sampledEvents: preview.events.length, scenes: preview.scenes, choices: preview.choices, conditions: preview.conditions,
       events: preview.events, errors: preview.errors.map(({ message: _message, ...error }) => error) } } : {}),

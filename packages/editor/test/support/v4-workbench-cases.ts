@@ -133,6 +133,43 @@ function searchKey(key: string, options: KeyboardEventInit = {}): void {
   control('#search-input').dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options }));
 }
 export const v4WorkbenchCases: BrowserCase[] = [
+  { name: 'story check failure exports retain their original input version and current state', run: async () => {
+    const scene = fixture('@scene start\n@if true\n'); resetConfigSession(); resetStoryChecks();
+    const panel = document.createElement('section'); control('#main').append(panel);
+    renderStoryCheckPanel(panel, () => {});
+    const run = [...panel.querySelectorAll('button')].find(button => button.textContent === '运行剧情检查')!;
+    const download = [...panel.querySelectorAll('button')].find(button => button.textContent === '导出检查与试玩诊断')!;
+    const check = async () => {
+      run.click(); const deadline = performance.now() + 5000;
+      while (run.disabled && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+      assert(!run.disabled, 'real worker did not finish');
+    };
+    const exported = async () => {
+      let blob: Blob | null = null; const original = URL.createObjectURL;
+      URL.createObjectURL = value => { if (value instanceof Blob) blob = value; return original(value); };
+      try {
+        download.click(); const deadline = performance.now() + 5000;
+        while (!blob && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+        assert(blob, 'failure diagnostic was not created'); return JSON.parse(await (blob as Blob).text());
+      } finally { URL.createObjectURL = original; }
+    };
+    await check(); const before = await exported();
+    assert(before.checkFailure.code === 'S003' && before.checkFailure.current === true
+      && /^[a-f0-9]{64}$/.test(before.checkFailure.inputRevision), 'current compile failure lost its input identity');
+    scene.text = '@scene start\n已修正的私有正文\n@end\n'; refreshStoryChecks();
+    const stale = await exported();
+    assert(stale.checkFailure.current === false && stale.checkFailure.inputRevision === before.checkFailure.inputRevision,
+      'stale failure borrowed the new draft identity');
+    assert(!JSON.stringify(stale).includes('私有正文') && !JSON.stringify(stale).includes('@if'), 'failure export leaked source');
+    const location = [...panel.querySelectorAll('button')].find(button => button.textContent === '打开错误位置')!;
+    assert(location.disabled, 'stale error navigation was enabled');
+    await check(); const after = await exported();
+    assert(after.simulation.current === true && !after.checkFailure, 'new completed check retained the old failure');
+    scene.text = '@scene start\n@if false\n'; await check(); const different = await exported();
+    assert(different.checkFailure.current === true && different.checkFailure.inputRevision !== before.checkFailure.inputRevision,
+      'different failed inputs share an identity');
+    disposeStoryCheckPanel();
+  } },
   { name: 'story check uses the real worker and rejects stale locations and cancelled results', run: async () => {
     const scene = fixture('@scene start\n@choice\n  继续 -> @end\n'); resetConfigSession(); resetStoryChecks();
     const panel = document.createElement('section'); control('#main').append(panel);
