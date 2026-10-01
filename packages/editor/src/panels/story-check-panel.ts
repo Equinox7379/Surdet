@@ -3,6 +3,7 @@ import type { VarValue } from '@surdet/core';
 import { state, h } from '../state.js';
 import { assertConfigSourcesReadable } from '../config-source.js';
 import { workingGameConfigText } from '../project-io.js';
+import { previewTextHash } from '../preview-content.js';
 import { inspectConfigDraftState } from './config.js';
 import { clearStoryPreview, readStoryPreview, storyDiagnostic, storyInputKey, type StoryCheckInput, type StoryCheckResult, type StoryCheckFailure } from '../story-check.js';
 
@@ -139,13 +140,20 @@ export function renderStoryCheckPanel(container: HTMLElement, onSource: (file: s
     } catch (error) { status.textContent = error instanceof Error ? error.message : String(error); }
   };
   cancel.onclick = () => { stop(); status.textContent = '已取消，本次没有生成新检查结果。'; render(); };
-  download.onclick = () => {
+  download.onclick = async () => {
     if (!mounted()) return;
     const record = saved?.owner === owner ? saved : null, failure = failed?.owner === owner ? failed : null, preview = readStoryPreview();
-    const value = storyDiagnostic({ check: record?.result, checkCurrent: current(record), failure: failure?.error, preview: preview?.owner === owner ? preview : null });
-    const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }));
-    const a = h('a'); a.href = url; a.download = 'surdet-story-diagnostic.json'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-    status.textContent = '已导出版本、位置与计数；正文、变量值、原始错误详情和画面快照未包含。';
+    try {
+      // Hash the captured input even if it could not compile. Never identify an old error with the later draft.
+      const inputRevision = failure ? await previewTextHash(failure.key) : null;
+      if (!mounted()) return;
+      const value = storyDiagnostic({ check: record?.result, checkCurrent: current(record),
+        failure: failure && inputRevision ? { error: failure.error, inputRevision, current: current(failure) } : null,
+        preview: preview?.owner === owner ? preview : null });
+      const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }));
+      const a = h('a'); a.href = url; a.download = 'surdet-story-diagnostic.json'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      status.textContent = '已导出版本、位置与计数；正文、变量值、原始错误详情和画面快照未包含。';
+    } catch (error) { if (mounted()) status.textContent = `诊断导出失败，请重试：${error instanceof Error ? error.message : String(error)}`; }
   };
   controls.append(run, cancel, download); root.append(controls, extra, status, body); container.append(root); render();
 }

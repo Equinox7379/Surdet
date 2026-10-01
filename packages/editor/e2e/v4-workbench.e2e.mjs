@@ -8,7 +8,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const result = await build({ configFile: false, root, publicDir: false, logLevel: 'error', build: {
   write: false, minify: false, lib: { entry: path.join(root, 'test/support/v4-workbench-cases.ts'), name: 'SurdetV4Checks', formats: ['iife'] },
 } });
-const chunks = (Array.isArray(result) ? result : [result]).flatMap((item) => item.output ?? []).filter((item) => item.type === 'chunk' && item.isEntry);
+const output = (Array.isArray(result) ? result : [result]).flatMap((item) => item.output ?? []);
+const chunks = output.filter((item) => item.type === 'chunk' && item.isEntry);
 if (chunks.length !== 1) throw new Error('Expected one V4 test entry');
 let browser;
 try {
@@ -21,6 +22,13 @@ try {
   // This harness observes parent messages; the full app test runs the real player.
   // Serve a stable child document instead of racing an unavailable iframe URL.
   await page.route('http://127.0.0.1/preview.html', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><body></body>' }));
+  // Workers and any imported build resources must come from this exact build, including hashed names.
+  for (const asset of output) {
+    await page.route(new URL(asset.fileName, fixtureUrl).href, route => route.fulfill({
+      contentType: asset.fileName.endsWith('.js') ? 'text/javascript' : asset.fileName.endsWith('.css') ? 'text/css' : 'application/octet-stream',
+      body: asset.type === 'chunk' ? asset.code : typeof asset.source === 'string' ? asset.source : Buffer.from(asset.source),
+    }));
+  }
   await page.goto(fixtureUrl);
   await page.addScriptTag({ content: chunks[0].code });
   const filter = process.argv[2];

@@ -33,13 +33,14 @@ describe('story check snapshots and diagnostics', () => {
     const snapshot = await storySnapshot({ files }), report = simulateSnapshot(snapshot);
     report.coverage.stops.push({ kind: 'runtime-error', location: report.coverage.branches[0]!.location, message: 'D:/PRIVATE_ERROR_SECRET' });
     const exported = storyDiagnostic({ check: { revision: snapshot.revision, report, options: { seed: 0, initialVariables: { secret: 'PRIVATE_OVERRIDE' } } }, checkCurrent: false,
-      failure: { code: 'DSL001', file: 'content/scenario/chapter/start.gal', line: 3, message: 'D:/PRIVATE_ABSOLUTE_ROOT' } });
+      failure: { inputRevision: snapshot.revision, current: false,
+        error: { code: 'DSL001', file: 'content/scenario/chapter/start.gal', line: 3, message: 'D:/PRIVATE_ABSOLUTE_ROOT' } } });
     expect(exported.simulation).toMatchObject({ current: false, initialOverrideCount: 1, seed: report.seed });
     expect(exported.simulation!.branches).toHaveLength(report.coverage.branches.length);
     expect(exported.simulation!.branches[0]!.location).toMatchObject({ line: 3, sourceVersion: snapshot.scenes[0]!.file.sha256 });
     const json = JSON.stringify(exported);
     for (const secret of ['PRIVATE_', 'expression', 'finalVariables', 'initialVariables', 'message', 'label', 'D:/']) expect(json).not.toContain(secret);
-    expect(exported.checkFailure).toEqual({ code: 'DSL001', file: 'content/scenario/chapter/start.gal', line: 3, col: 1 });
+    expect(exported.checkFailure).toEqual({ inputRevision: snapshot.revision, current: false, code: 'DSL001', file: 'content/scenario/chapter/start.gal', line: 3, col: 1 });
   });
 
   it('ignores wrong generations, duplicate and completed preview events, and retains the actual error source', async () => {
