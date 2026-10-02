@@ -11,12 +11,12 @@ import '../styles/stage-workspace.css';
 import { state, h, setStatus } from '../state.js';
 import { assertConfigSourcesReadable } from '../config-source.js';
 import { parseScript } from '../model.js';
-import { buildProjectAssetIntelligence, isPreviewSourcePath, normalizePreviewTraceMessage, parseProjectConfigDocument, previewSourceText,
+import { buildProjectAssetIntelligence, isPreviewSourcePath, loadProjectSnapshot, normalizePreviewTraceMessage, parseProjectConfigDocument, previewSourceText,
   type RuntimeTraceEvent, type PreviewTraceMessage, type PreviewTraceEventMessage,
   type ProjectSnapshot, type PreviewSourceFacts, type PreviewPublishInput, type PreviewContent, type PreviewContentOption, type PreviewContentTarget } from '@surdet/authoring';
 export { normalizePreviewTraceMessage, type PreviewTraceMessage, type PreviewTraceStartMessage,
   type PreviewTraceEventMessage, type PreviewTraceCompleteMessage } from '@surdet/authoring';
-import { createEditorProjectStorage, loadEditorProjectSnapshot } from '../authoring-project-storage.js';
+import { createEditorProjectStorage } from '../authoring-project-storage.js';
 import { assetPathForHandle } from '../project-io.js';
 import type { DirAsset } from '../assets.js';
 import { editorPreviewPublisher, editorWorkspaceStatus } from '../editor-workspace.js';
@@ -273,9 +273,8 @@ function parsePreviewSpeakerProfiles(configText: string): SpeakerProfile[] {
 }
 
 /** 从项目目录读取 game.config.json 的字体角色文件；旧版 font 自动作为三个角色的来源。 */
-export async function readProjectFonts(configText: string, signal: AbortSignal): Promise<Partial<Record<FontRole, PreviewFont>>> {
+export async function readProjectFonts(configText: string, signal: AbortSignal, root: FileSystemDirectoryHandle | null): Promise<Partial<Record<FontRole, PreviewFont>>> {
   const cfg = configText.trim() ? parseProjectConfigDocument(configText) : {};
-  const root = state.dirHandle;
   if (!root) return {};
   const paths = resolveProjectFontPaths(cfg);
   if (Object.keys(paths).length === 0) return {};
@@ -352,7 +351,7 @@ export function previewAssetPaths(snapshot: ProjectSnapshot, assets: readonly Di
 }
 
 /** 读取项目目录中的背景和立绘字节。文件句柄不能跨 iframe 传递，只下发可结构化克隆的二进制数据。 */
-export async function readProjectImages(configText: string, signal: AbortSignal, requiredPaths: ReadonlySet<string>): Promise<PreviewAssets> {
+export async function readProjectImages(configText: string, signal: AbortSignal, requiredPaths: ReadonlySet<string>, assetEntries: readonly DirAsset[]): Promise<PreviewAssets> {
   const backgrounds = new Map<string, { key: string; image: PreviewImage }>();
   const portraits = new Map<string, { charId: string; costume: string; expression: string; image: PreviewImage; configured?: true }>();
   const visualImages = new Map<string, PreviewImage>();
@@ -361,12 +360,12 @@ export async function readProjectImages(configText: string, signal: AbortSignal,
   const videos = new Map<string, { key: string; file: PreviewImage }>();
   const audio = new Map<string, { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }>();
   const config = JSON.parse(configText.replace(/^\uFEFF/, '') || '{}');
-  const bindings = resolveProjectPortraits(config, state.dirAssets.flatMap(asset => {
+  const bindings = resolveProjectPortraits(config, assetEntries.flatMap(asset => {
     const path = asset.sourcePath ?? (asset.handle ? assetPathForHandle(asset.handle) : undefined);
     return path === undefined ? [] : [path];
   }));
   assertUniquePortraitBindings(bindings);
-  for (const asset of state.dirAssets) {
+  for (const asset of assetEntries) {
     signal.throwIfAborted();
     if (!asset.handle) continue;
     const sourcePath = asset.sourcePath ?? assetPathForHandle(asset.handle);
@@ -426,19 +425,60 @@ export async function readProjectImages(configText: string, signal: AbortSignal,
     }
   }
   for (const key of [...projectThemeAssetKeys(resolveProjectTheme(config)), resolveProjectTitleLogo(config)].filter((key): key is string => Boolean(key))) {
-    if (!backgrounds.has(key) || state.dirAssets.filter(asset => asset.kind === 'bg' && asset.key === key).length !== 1)
+    if (!backgrounds.has(key) || assetEntries.filter(asset => asset.kind === 'bg' && asset.key === key).length !== 1)
       throw new Error(`主题图片不存在、不唯一或不可读取：${key}`);
   }
   return { backgrounds: [...backgrounds.values()], portraits: [...portraits.values()], visuals, avatars: [...avatars.values()], audio: [...audio.values()], videos: [...videos.values()] };
 }
 
-async function readProjectTimelines(): Promise<unknown[]> {
-  return parsePreviewTimelines(state.timelines).definitions;
+/** Fix one request's text, metadata and handles before the first resource await.
+ * This is request-local data, not a cache; source-change guards still own publication. */
+export function capturePreviewContent(projection?: Awaited<ReturnType<typeof projectPreviewContent>>) {
+  const source = {
+    ...state,
+    scenes: new Map([...state.scenes].map(([key, scene]) => [key, { ...scene }])),
+    timelines: state.timelines.map(timeline => ({ ...timeline })),
+    dirAssets: state.dirAssets.map(asset => ({ ...asset })),
+    configFiles: structuredClone(state.configFiles),
+    configReadErrors: { ...state.configReadErrors },
+    handles: { ...state.handles },
+  };
+  const sourceConfig = source.gameConfigText === '' && source.handles.gameConfig === null ? '{}' : source.gameConfigText;
+  const configText = projection?.configText ?? previewUiConfigText(previewThemeConfigText(previewStageConfigText(sourceConfig)));
+  return {
+    root: source.dirHandle,
+    assetEntries: source.dirAssets,
+    storage: createEditorProjectStorage(source),
+    snapshot: projection?.snapshot,
+    configText,
+    scenes: projection?.scenes ?? collectPreviewScenes(source.scenes),
+    sourceScenes: projection?.scenes ?? [...source.scenes.values()],
+    configs: projection?.configs ?? {
+      calendar: source.configFiles.calendar ?? undefined,
+      events: source.configFiles.events ?? undefined,
+      growth: source.configFiles.growth ?? undefined,
+      achievements: source.configFiles.achievements ?? undefined,
+    },
+    timelines: projection?.timelines ?? source.timelines,
+    timelinePreviewId: projection === undefined ? source.previewTimelineId ?? undefined : undefined,
+    choices: projection === undefined && source.previewChoices !== null ? { ...source.previewChoices } : undefined,
+  };
+}
+
+/** Read only the captured request. It must not pick up another project's handles. */
+export async function loadPreviewResources(content: ReturnType<typeof capturePreviewContent>, signal: AbortSignal) {
+  signal.throwIfAborted();
+  const snapshot = content.snapshot ?? await loadProjectSnapshot(content.storage, content.storage);
+  signal.throwIfAborted();
+  const requiredPaths = previewAssetPaths({ ...snapshot, config: parseProjectConfigDocument(content.configText) }, content.assetEntries);
+  const cachedFonts = await readProjectFonts(content.configText, signal, content.root);
+  const assets = await readProjectImages(content.configText, signal, requiredPaths, content.assetEntries);
+  signal.throwIfAborted();
+  return { cachedFonts, assets, timelineContent: parsePreviewTimelines(content.timelines) };
 }
 
 /** Hash the buffers actually sent to the iframe, before transferring their ownership. */
-async function previewSourceFacts(assets: PreviewAssets, fonts: Partial<Record<FontRole, PreviewFont>>, content?: PreviewContent): Promise<PreviewSourceFacts> {
-  const storage = createEditorProjectStorage();
+async function previewSourceFacts(assets: PreviewAssets, fonts: Partial<Record<FontRole, PreviewFont>>, storage: ReturnType<typeof createEditorProjectStorage>, content?: PreviewContent): Promise<PreviewSourceFacts> {
   const files = content === undefined
     ? await Promise.all((await storage.listFiles()).filter(isPreviewSourcePath).map(async path => ({ path,
       sha256: await storage.sha256(previewSourceText(path, (await storage.readText(path)).text)) })))
@@ -924,17 +964,11 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     const requestSource = requestKey();
     loadingSource = requestSource;
     // 使用本次选择的内容版本，不从编辑器原配置借用字体。
-    let cachedFonts: Partial<Record<FontRole, PreviewFont>>;
-    let assets: PreviewAssets;
-    let requestConfigText: string;
+    let capturedContent: ReturnType<typeof capturePreviewContent>;
+    let resources: Awaited<ReturnType<typeof loadPreviewResources>>;
     try {
-      const sourceConfig = state.gameConfigText === '' && state.handles.gameConfig === null ? '{}' : state.gameConfigText;
-      requestConfigText = projected?.configText ?? previewUiConfigText(previewThemeConfigText(previewStageConfigText(sourceConfig)));
-      const snapshot = projected?.snapshot ?? await loadEditorProjectSnapshot();
-      signal.throwIfAborted();
-      const requiredPaths = previewAssetPaths({ ...snapshot, config: parseProjectConfigDocument(requestConfigText) }, requestAssets);
-      cachedFonts = await readProjectFonts(requestConfigText, signal);
-      assets = await readProjectImages(requestConfigText, signal, requiredPaths);
+      capturedContent = capturePreviewContent(projected);
+      resources = await loadPreviewResources(capturedContent, signal);
     }
     catch (error) {
       if (signal.aborted || revision !== sendRevision || mountRevision !== previewPanelMountRevision || !container.isConnected) return;
@@ -942,10 +976,11 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       sourceState.textContent = `预览未启动：${error instanceof Error ? error.message : String(error)}`;
       return;
     }
+    const { cachedFonts, assets, timelineContent } = resources;
+    const requestConfigText = capturedContent.configText;
     const fonts = clonePreviewFontsForTransfer(cachedFonts);
-    const timelineContent = projected === undefined ? undefined : parsePreviewTimelines(projected.timelines);
-    if (timelineContent?.issues.length) { sourceState.textContent = `所选版本的演出无法加载：${timelineContent.issues.join('；')}`; sourceState.dataset.previewSourceState = 'stale'; return; }
-    const timelines = timelineContent?.definitions ?? await readProjectTimelines();
+    if (projected !== undefined && timelineContent.issues.length) { sourceState.textContent = `所选版本的演出无法加载：${timelineContent.issues.join('；')}`; sourceState.dataset.previewSourceState = 'stale'; return; }
+    const timelines = timelineContent.definitions;
     if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !container.isConnected) return;
     if (state.dirHandle !== requestRoot || state.current !== requestSceneKey
       || (requestSceneKey !== null && state.scenes.get(requestSceneKey) !== requestScene)
@@ -965,7 +1000,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       && ((!status.dirty && !inspectConfigDraftState().dirty) || (isolated !== undefined && isolated.target.kind !== 'saved-project')) && !status.saving && status.update === 'none') {
       const previewGeneration = ++publishedPreviewGeneration;
       try {
-        const source = await previewSourceFacts(assets, cachedFonts, isolated);
+        const source = await previewSourceFacts(assets, cachedFonts, capturedContent.storage, isolated);
         if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || requestKey() !== requestSource) return;
         await publisher.publish({ action: 'begin', previewId: traceId, previewGeneration, sceneId: cur.id,
           seed,
@@ -991,7 +1026,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || requestKey() !== requestSource
       || state.dirHandle !== requestRoot || !container.isConnected) return;
     const gameConfig = parseProjectConfigDocument(requestConfigText || '{}');
-    debugSources = projected?.scenes ?? collectPreviewScenes(state.scenes);
+    debugSources = capturedContent.scenes;
     const nextDebugContentKey = JSON.stringify({ project: isolated?.projectIdentity ?? state.autosaveProjectId ?? transientPreviewProjectKey, target: selectedTarget });
     if (debugContentKey !== nextDebugContentKey) { breakpoints = []; debugContentKey = nextDebugContentKey; }
     const previousBreakpointScene = breakpointScene.value;
@@ -1010,22 +1045,17 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
         sceneId: cur.id,
         projectKey: isolated ? `${isolated.projectIdentity}:${JSON.stringify(isolated.target)}` : state.autosaveProjectId ?? transientPreviewProjectKey,
         // 全量场景下发：预览内跨场景 @jump 可正常跳转（多场景预览）
-        scenes: projected?.scenes ?? collectPreviewScenes(state.scenes),
+        scenes: capturedContent.scenes,
         speakerProfiles: parsePreviewSpeakerProfiles(requestConfigText),
         // 变量声明一并下发：真实剧本的 @set/@mod/@if 需要变量表（否则运行时错误卡死）
         variables: parsePreviewVariables(requestConfigText),
         // 编辑器管理的四套配置下发：预览轻宿主（日历/成长/成就/好感）；battle/shop 无配置仍占位
-        configs: projected?.configs ?? {
-          calendar: state.configFiles.calendar ?? undefined,
-          events: state.configFiles.events ?? undefined,
-          growth: state.configFiles.growth ?? undefined,
-          achievements: state.configFiles.achievements ?? undefined,
-        },
+        configs: capturedContent.configs,
         fonts: Object.keys(fonts).length > 0 ? fonts : undefined,
         assets,
         timelines: timelines.length > 0 ? timelines : undefined,
-        timelinePreviewId: isolated === undefined ? state.previewTimelineId ?? undefined : undefined,
-        choices: isolated === undefined ? state.previewChoices ?? undefined : undefined,
+        timelinePreviewId: capturedContent.timelinePreviewId,
+        choices: capturedContent.choices,
         startLabel: labelSel.value || undefined,
         fast: fastChk.checked,
         debug: { enabled: debugging, pauseOnStart: debugging && !resume, breakpoints: validDebugBreakpoints(breakpoints, debugSources) },
@@ -1047,8 +1077,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       scope: isolated === undefined ? reviewResult === null ? '当前编辑内容（含草稿）' : '固定审阅内容'
         : ({ 'saved-project': '已保存项目', 'working-change': '隔离工作变更', candidate: '封存候选', 'integration-result': '组合结果' } as const)[isolated.target.kind],
       sources: message.payload.scenes.map(scene => {
-        const file = projected === undefined ? [...state.scenes.values()].find(entry => entry.id === scene.id)!.file
-          : projected.scenes.find(source => source.id === scene.id)!.file;
+        const file = capturedContent.sourceScenes.find(source => source.id === scene.id)!.file;
         return { ...scene, file: file.startsWith('content/scenario/') ? file : `content/scenario/${file}` };
       }),
       contentKey: JSON.stringify({ scenes: message.payload.scenes, gameConfig, configs: message.payload.configs, timelines: message.payload.timelines }),

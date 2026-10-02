@@ -2,9 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadProjectSnapshot } from '@surdet/authoring';
 import { state } from '../src/state.js';
 import type { DirAsset } from '../src/assets.js';
-import { previewAssetPaths, readProjectFonts, readProjectImages } from '../src/panels/preview-panel.js';
+import { capturePreviewContent, loadPreviewResources, previewAssetPaths, readProjectFonts, readProjectImages } from '../src/panels/preview-panel.js';
+import { previewTextHash, projectPreviewContent } from '../src/preview-content.js';
 
-const original = { dirAssets: state.dirAssets, dirHandle: state.dirHandle };
+const original = { dirAssets: state.dirAssets, dirHandle: state.dirHandle, scenes: state.scenes, current: state.current,
+  gameConfigText: state.gameConfigText, configFiles: state.configFiles, timelines: state.timelines,
+  configReadErrors: state.configReadErrors, handles: state.handles };
 afterEach(() => Object.assign(state, original));
 const path = (name: string) => `content/assets/${name}`;
 function image(name: string, getFile = vi.fn(async () => new File(['pixels'], name.split('/').at(-1)!))): DirAsset {
@@ -16,11 +19,61 @@ async function snapshot(config: object, scenes: Record<string, string>, timeline
     ...Object.fromEntries(Object.entries(scenes).map(([id, text]) => [`content/scenario/${id}.gal`, text])),
     ...Object.fromEntries(Object.entries(timelines).map(([id, value]) => [`content/timelines/${id}.json`, JSON.stringify(value)])) };
   return loadProjectSnapshot({ rootIdentity: 'preview-test', listFiles: async () => Object.keys(files),
-    exists: async key => key in files, readText: async key => ({ path: key, text: files[key]!, sha256: files[key]!, bytes: files[key]!.length }) },
-  { sha256: async text => text });
+    exists: async key => key in files, readText: async key => ({ path: key, text: files[key]!, sha256: await previewTextHash(files[key]!), bytes: files[key]!.length }) },
+  { sha256: previewTextHash });
 }
 
 describe('preview asset loading', () => {
+  it('captures one content version and keeps its files and handles across a pending read and project switch', async () => {
+    let release!: (file: File) => void;
+    const font = new File([new Uint8Array([1, 2, 3])], 'body.woff2');
+    const readFont = vi.fn(async () => font).mockImplementationOnce(() => new Promise<File>(resolve => { release = resolve; }));
+    state.dirHandle = { getFileHandle: async () => ({ getFile: readFont }) } as unknown as FileSystemDirectoryHandle;
+    state.current = 'start';
+    state.scenes = new Map([['start', { id: 'start', file: 'start.gal', text: '@scene start\n@bg used\n旧正文。\n@end', eol: '\n', dirty: true, handle: null }]]);
+    state.gameConfigText = '{"font":"body.woff2","theme":{"buttonSkin":"used"},"custom":{"keep":true}}';
+    state.configFiles = { ...original.configFiles, events: { events: [], custom: 'old' } };
+    state.configReadErrors = {};
+    state.timelines = [{ id: 'shot', file: 'shot.json', text: '{"id":"shot","durationMs":0,"tracks":[]}', eol: '\n', dirty: false, handle: null }];
+    state.dirAssets = [image('bg/used.png')];
+    const content = capturePreviewContent();
+    const reading = loadPreviewResources(content, new AbortController().signal);
+    await vi.waitFor(() => expect(readFont).toHaveBeenCalledOnce());
+    const wrongRead = vi.fn(async () => { throw new Error('new project must not be read'); });
+    state.dirHandle = { getFileHandle: wrongRead } as unknown as FileSystemDirectoryHandle;
+    state.dirAssets[0]!.handle = { getFile: wrongRead } as unknown as FileSystemFileHandle;
+    state.scenes.get('start')!.text = '@scene start\n新正文。';
+    state.timelines[0]!.text = '{"id":"changed"}';
+    (state.configFiles.events as { custom: string }).custom = 'new';
+    state.gameConfigText = '{}';
+    release(font);
+    const loaded = await reading;
+    expect(wrongRead).not.toHaveBeenCalled();
+    expect(content.scenes[0]!.text).toContain('旧正文');
+    expect(content.configs.events).toEqual({ events: [], custom: 'old' });
+    expect(loaded.timelineContent.definitions).toEqual([{ id: 'shot', durationMs: 0, tracks: [] }]);
+    expect(loaded.assets.backgrounds.map(asset => asset.key)).toEqual(['used']);
+    expect([...new Uint8Array(loaded.cachedFonts.body!.buffer)]).toEqual([1, 2, 3]);
+    expect((await content.storage.readText('content/scenario/start.gal')).text).toContain('旧正文');
+    expect((await content.storage.readText('game.config.json')).text).toContain('"keep":true');
+  });
+
+  it('uses the selected saved content rather than borrowing the current Editor scenes or config', async () => {
+    const selected = await snapshot({ custom: 'sealed' }, { fixed: '@scene fixed\n封存正文。\n@end' });
+    const files = Object.fromEntries(selected.files.map(file => [file.path, file.text]));
+    const projection = await projectPreviewContent({ projectIdentity: 'preview-test', contentRevision: selected.revision, files,
+      target: { kind: 'saved-project' }, title: '已保存版本', projectRevision: selected.revision, coordinationRevision: 'fixture' });
+    state.gameConfigText = '{"custom":"unrelated"}';
+    state.dirAssets = []; state.dirHandle = null;
+    const content = capturePreviewContent(projection);
+    const loaded = await loadPreviewResources(content, new AbortController().signal);
+    expect(content.scenes.map(scene => scene.id)).toEqual(['fixed']);
+    expect(JSON.parse(content.configText)).toEqual({ custom: 'sealed' });
+    expect(loaded.assets.backgrounds).toEqual([]);
+    expect(content.choices).toBeUndefined();
+    expect(content.timelinePreviewId).toBeUndefined();
+  });
+
   it('selects dependencies from later scenes, timeline cues, skins and implicit avatars; excludes unused images', async () => {
     const source = await snapshot({ characters: { lynn: { name: '凛' } }, theme: { buttonSkin: 'skin' } },
       { start: '@scene start\n@jump later', later: '@scene later\n@bg beach\n@voice greeting\n凛：你好。' },
@@ -33,7 +86,7 @@ describe('preview asset loading', () => {
   it('does not read unrelated files, even when their handles would fail', async () => {
     const unused = vi.fn(async () => { throw new Error('permission denied'); });
     state.dirAssets = [image('bg/unused.png', unused), image('bg/used.png')];
-    const result = await readProjectImages('{}', new AbortController().signal, new Set([path('bg/used.png')]));
+    const result = await readProjectImages('{}', new AbortController().signal, new Set([path('bg/used.png')]), state.dirAssets);
     expect(result.backgrounds.map(value => value.key)).toEqual(['used']);
     expect(unused).not.toHaveBeenCalled();
   });
@@ -48,7 +101,7 @@ describe('preview asset loading', () => {
       .map(asset => ({ ...asset, kind: asset.sourcePath!.includes('/portrait/') ? 'portrait' : 'bg' }));
     const paths = previewAssetPaths(source, state.dirAssets);
     expect(paths).toEqual(new Set([base, alternate, path('bg/cover.png')]));
-    const loaded = await readProjectImages(JSON.stringify(config), new AbortController().signal, paths);
+    const loaded = await readProjectImages(JSON.stringify(config), new AbortController().signal, paths, state.dirAssets);
     expect(Object.keys(loaded.visuals[0]!.images).sort()).toEqual([base, alternate].sort());
     expect(loaded.backgrounds.map(asset => asset.key)).toEqual(['cover']);
   });
@@ -59,7 +112,7 @@ describe('preview asset loading', () => {
     const second = vi.fn(async () => new File(['next'], 'next.png'));
     state.dirAssets = [image('bg/first.png', first), image('bg/next.png', second)];
     const controller = new AbortController();
-    const reading = readProjectImages('{}', controller.signal, new Set(state.dirAssets.map(value => value.sourcePath!)));
+    const reading = readProjectImages('{}', controller.signal, new Set(state.dirAssets.map(value => value.sourcePath!)), state.dirAssets);
     const rejected = expect(reading).rejects.toMatchObject({ name: 'AbortError' });
     controller.abort();
     const file = new File(['first'], 'first.png'), buffer = vi.spyOn(file, 'arrayBuffer');
@@ -71,8 +124,8 @@ describe('preview asset loading', () => {
     const read = vi.fn().mockRejectedValueOnce(new Error('permission denied')).mockResolvedValue(new File(['ok'], 'used.png'));
     state.dirAssets = [image('bg/used.png', read)];
     const paths = new Set([path('bg/used.png')]);
-    await expect(readProjectImages('{}', new AbortController().signal, paths)).rejects.toThrow('素材读取失败：content/assets/bg/used.png');
-    expect((await readProjectImages('{}', new AbortController().signal, paths)).backgrounds).toHaveLength(1);
+    await expect(readProjectImages('{}', new AbortController().signal, paths, state.dirAssets)).rejects.toThrow('素材读取失败：content/assets/bg/used.png');
+    expect((await readProjectImages('{}', new AbortController().signal, paths, state.dirAssets)).backgrounds).toHaveLength(1);
     expect(read).toHaveBeenCalledTimes(2);
   });
 
@@ -81,7 +134,7 @@ describe('preview asset loading', () => {
     const read = vi.fn(() => new Promise<File>(resolve => { complete = resolve; }));
     state.dirHandle = { getFileHandle: async () => ({ getFile: read }) } as unknown as FileSystemDirectoryHandle;
     const controller = new AbortController();
-    const reading = readProjectFonts(JSON.stringify({ font: 'body.woff2' }), controller.signal);
+    const reading = readProjectFonts(JSON.stringify({ font: 'body.woff2' }), controller.signal, state.dirHandle);
     const rejected = expect(reading).rejects.toMatchObject({ name: 'AbortError' });
     await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
     controller.abort();

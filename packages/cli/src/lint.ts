@@ -407,7 +407,7 @@ function checkSceneReachability(
  * 新增配置文件只需在此加一条（file + 表达式提取器 + 可选内建变量豁免）。
  * 当前覆盖：calendar.json nodes[].visibleWhen + baseCommands[].when、
  * combat.json damage.base（内建 atk/def/power）、events.json events[].when + scheduled[].when、
- * ngp.json clearCondition、achievements.json [].when。
+ * ngp.json clearCondition。数组根 achievements.json 在表外按自身合同读取。
  */
 interface ConfigExprScan {
   file: string;
@@ -495,17 +495,6 @@ const CONFIG_EXPR_SCANS: readonly ConfigExprScan[] = [
     file: 'ngp.json',
     extract: (cfg) => (typeof cfg['clearCondition'] === 'string' ? [cfg['clearCondition'] as string] : []),
   },
-  {
-    file: 'achievements.json',
-    extract: (cfg) => {
-      // achievements.json 是顶层数组（非对象）：runConfigLint 已把数组原样传入
-      const defs = Array.isArray(cfg) ? cfg : [];
-      return defs
-        .filter((d): d is Record<string, unknown> => typeof d === 'object' && d !== null)
-        .map((d) => d['when'])
-        .filter((w): w is string => typeof w === 'string' && w.length > 0);
-    },
-  },
 ];
 
 /**
@@ -566,6 +555,10 @@ function lintConfigExpressions(
       });
     }
   }
+  const achievements = readAchievementsConfig(configDir, issues);
+  for (const expr of extractWhenExpressions(achievements).filter(value => value.length > 0)) {
+    check(expr, path.join('content/config', 'achievements.json'));
+  }
 }
 
 function readConfigJson(
@@ -577,11 +570,25 @@ function readConfigJson(
   if (!fs.existsSync(full)) return null;
   try {
     const text = fs.readFileSync(full, 'utf8');
-    if (name !== 'achievements.json') return parseProjectConfigDocument(text, full);
+    return parseProjectConfigDocument(text, full);
+  } catch (err) {
+    issues.push({
+      severity: 'error', code: 'CONFIG',
+      text: `${full}: JSON 解析失败：${err instanceof Error ? err.message : String(err)}`,
+      file: full, line: 0, col: 0,
+    });
+    return null;
+  }
+}
+
+function readAchievementsConfig(dir: string, issues: LintIssue[]): unknown[] | null {
+  const full = path.join(dir, 'achievements.json');
+  if (!fs.existsSync(full)) return null;
+  try {
+    const text = fs.readFileSync(full, 'utf8');
     const value: unknown = JSON.parse(text.replace(/^\uFEFF/, ''));
     if (!Array.isArray(value)) throw new Error('achievements.json 必须是 JSON 数组');
-    // The achievements extractor is the one documented array consumer.
-    return value as unknown as Record<string, unknown>;
+    return value;
   } catch (err) {
     issues.push({
       severity: 'error',

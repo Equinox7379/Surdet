@@ -352,6 +352,29 @@ describe('lintProject', () => {
     expect(issues[0]?.file).toContain('events.json');
   });
 
+  it.each(['', ' ', '{}', 'null', '42', '"text"'])('rejects an existing non-array achievements document without rewriting it (%j)', text => {
+    const dir = makeProject({ 'game.config.json': '{"variables":{}}',
+      'content/scenario/start.gal': '@scene start\n@end\n', 'content/config/achievements.json': text });
+    const issues = lintProject(dir).issues.filter(issue => issue.code === 'CONFIG');
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.file).toBe(path.join(dir, 'content/config/achievements.json'));
+    expect(fs.readFileSync(path.join(dir, 'content/config/achievements.json'), 'utf8')).toBe(text);
+  });
+
+  it('keeps BOM object/array configs and unknown fields, and validates the real array expressions', () => {
+    const events = '\uFEFF{"events":[],"custom":{"keep":true}}\r\n';
+    const achievements = '\uFEFF[{"id":"first","when":"ghost > 0","custom":42}]\r\n';
+    const dir = makeProject({ 'game.config.json': '{"variables":{}}',
+      'content/scenario/start.gal': '@scene start\n@end\n',
+      'content/config/events.json': events, 'content/config/achievements.json': achievements });
+    const issues = lintProject(dir).issues;
+    expect(issues.filter(issue => issue.code === 'CONFIG')).toEqual([]);
+    expect(issues.filter(issue => issue.code === 'V002')).toHaveLength(1);
+    expect(issues.find(issue => issue.code === 'V002')?.file).toBe(path.join('content/config', 'achievements.json'));
+    expect(fs.readFileSync(path.join(dir, 'content/config/events.json'), 'utf8')).toBe(events);
+    expect(fs.readFileSync(path.join(dir, 'content/config/achievements.json'), 'utf8')).toBe(achievements);
+  });
+
   it('customInstructions 声明后未知指令不再告警', () => {
     const dir = makeProject({
       'game.config.json': JSON.stringify({ customInstructions: ['mypower'], variables: {} }),
