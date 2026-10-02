@@ -40,10 +40,27 @@ import { inspectPlayerConfig } from './config-operations.js';
 import { renameConfigReferences } from './scene-relocation.js';
 import { assertTextCatalogTargetRemovable, renameTextCatalogReferences } from './text-catalog.js';
 
-function sceneCharacters(files: Record<string, string>): Record<string, unknown> {
-  const characters = parseProjectConfigDocument(files['game.config.json'] ?? '{}')['characters'];
+function sceneCharacters(config: Record<string, unknown>): Record<string, unknown> {
+  const characters = config.characters;
   return typeof characters === 'object' && characters !== null && !Array.isArray(characters)
     ? characters as Record<string, unknown> : {};
+}
+
+/** Capture the current working configuration once for each scene operation. */
+function sceneCompositionConfig(files: Record<string, string>) {
+  const config = parseProjectConfigDocument(files['game.config.json'] ?? '{}');
+  return {
+    stageConfig: config.stage,
+    themeConfig: config.theme,
+    uiConfig: config.ui,
+    textCatalog: config.textCatalog,
+    terminologyText: files['content/config/terminology.json'],
+    galleryText: files['content/config/gallery.json'],
+    variables: config.variables as Record<string, unknown> | undefined,
+    titleLogo: resolveProjectTitleLogo(config),
+    characters: sceneCharacters(config),
+    fontPaths: resolveProjectFontPaths(config),
+  };
 }
 
 function scenePath(sceneId: string): string {
@@ -577,15 +594,7 @@ export async function applySceneCreate(change: ChangeSession, input: SceneCreate
       result: { sceneId: input.sceneId, path },
       compositionDraft: await buildSceneOperationCompositionDraft({
         capabilityId: 'scene.create', sceneId: input.sceneId, path, afterText: text,
-        stageConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').stage,
-        themeConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').theme,
-        uiConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').ui,
-        textCatalog: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').textCatalog,
-        terminologyText: record.workingFiles['content/config/terminology.json'],
-        galleryText: record.workingFiles['content/config/gallery.json'],
-        variables: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').variables as Record<string, unknown> | undefined,
-        titleLogo: resolveProjectTitleLogo(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')),
-        characters: sceneCharacters(record.workingFiles), fontPaths: resolveProjectFontPaths(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')), hasher,
+        ...sceneCompositionConfig(record.workingFiles), hasher,
       }),
       workingFiles: { ...record.workingFiles, [path]: text },
     };
@@ -617,7 +626,7 @@ export async function applySceneRemove(change: ChangeSession, input: SceneRemove
     for (const file of scenes) {
       if (file === path) continue; // The removed file's own references disappear with it.
       try {
-        for (const ref of analyzeSceneCompositionReferences({ sceneId: sceneIdFromScenarioPath(file), path: file, text: record.workingFiles[file]!, characters: sceneCharacters(record.workingFiles) })) {
+        for (const ref of analyzeSceneCompositionReferences({ sceneId: sceneIdFromScenarioPath(file), path: file, text: record.workingFiles[file]!, characters: sceneCharacters(config) })) {
           if (ref.kind === 'scene' && ref.objectRef === `scene:${input.sceneId}`) {
             references.push({ path: file, line: ref.source.line, kind: 'scene', target: ref.token });
           }
@@ -824,15 +833,7 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
         result: { path, line: startLine, kind: patch.kind },
         compositionDraft: await buildSceneOperationCompositionDraft({
           capabilityId: 'scene.patch', sceneId, path, beforeText: source, afterText: text,
-          stageConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').stage,
-        themeConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').theme,
-        uiConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').ui,
-        textCatalog: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').textCatalog,
-        terminologyText: record.workingFiles['content/config/terminology.json'],
-        galleryText: record.workingFiles['content/config/gallery.json'],
-        variables: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').variables as Record<string, unknown> | undefined,
-        titleLogo: resolveProjectTitleLogo(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')),
-        characters: sceneCharacters(record.workingFiles), fontPaths: resolveProjectFontPaths(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')), hasher,
+          ...sceneCompositionConfig(record.workingFiles), hasher,
         }),
         workingFiles: { ...record.workingFiles, [path]: text },
       };
@@ -889,15 +890,7 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
       result: { path, line: index + 1, kind: patch.kind },
       compositionDraft: await buildSceneOperationCompositionDraft({
         capabilityId: 'scene.patch', sceneId, path, beforeText: source, afterText: text,
-        stageConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').stage,
-        themeConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').theme,
-        uiConfig: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').ui,
-        textCatalog: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').textCatalog,
-        terminologyText: record.workingFiles['content/config/terminology.json'],
-        galleryText: record.workingFiles['content/config/gallery.json'],
-        variables: parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}').variables as Record<string, unknown> | undefined,
-        titleLogo: resolveProjectTitleLogo(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')),
-        characters: sceneCharacters(record.workingFiles), fontPaths: resolveProjectFontPaths(parseProjectConfigDocument(record.workingFiles['game.config.json'] ?? '{}')), hasher,
+        ...sceneCompositionConfig(record.workingFiles), hasher,
       }),
       workingFiles: { ...record.workingFiles, [path]: text },
     };
