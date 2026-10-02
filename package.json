@@ -2,7 +2,8 @@
   "name": "surdet",
   "private": true,
   "version": "0.1.0",
-  "description": "Surdet Engine - a mature, data-driven desktop galgame engine",
+  "license": "MIT",
+  "description": "Surdet Engine - a data-driven visual novel engine and shared authoring toolkit",
   "type": "module",
   "workspaces": [
     "packages/*",

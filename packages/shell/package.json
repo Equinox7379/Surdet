@@ -1,6 +1,7 @@
 {
   "name": "@surdet/shell",
   "version": "0.1.0",
+  "license": "MIT",
   "description": "Surdet Electron shell: main process, window, packaging",
   "type": "module",
   "main": "./dist/main.js",

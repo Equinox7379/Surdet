@@ -1,6 +1,7 @@
 {
   "name": "@surdet/renderer",
   "version": "0.1.0",
+  "license": "MIT",
   "description": "Surdet renderer: PixiJS stage for portraits, backgrounds, text, transitions, particles",
   "type": "module",
   "main": "./dist/index.js",

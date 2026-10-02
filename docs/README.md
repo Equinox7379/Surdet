@@ -11,6 +11,7 @@
 | 核对剧本语法和实际支持能力 | [DSL 规范](dsl-spec.md)、[能力矩阵](capability-matrix.md) |
 | 理解模块、公共边界和运行链 | [架构说明](architecture.md) |
 | 核对未实现能力和验证边界 | [当前限制](known-limitations.md) |
+| 核对引擎许可与作品素材范围 | [MIT 许可证](../LICENSE)、[第三方与素材说明](../THIRD_PARTY_NOTICES.md) |
 | 人类与 Agent 在同一项目接力 | [接力与草稿保护](human-agent-relay-wave-7.md) |
 | 迁移已有运行消费方 | [Renderer 迁移](renderer-v2-migration.md)、[Player Shell 迁移](player-shell-migration.md) |
 
