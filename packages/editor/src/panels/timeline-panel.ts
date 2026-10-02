@@ -214,7 +214,7 @@ function commit(
   const next = cloneTimeline(active.definition);
   mutator(next);
   normalizeTiming(next);
-  const nextText = stringifyTimeline(next, active.entry.eol);
+  const nextText = (active.entry.text.startsWith('\uFEFF') ? '\uFEFF' : '') + stringifyTimeline(next, active.entry.eol);
   const checked = parseTimelineText(nextText);
   if (checked.issues.length > 0) {
     setStatus(`未修改时间轴：${checked.issues[0]}`, false, 6000);
@@ -1093,7 +1093,7 @@ export function renderTimelinePanel(container: HTMLElement | null): void {
     const reset = h('button', undefined, '重置为可编辑模板');
     reset.onclick = () => {
       pushTimelineSnapshot(active.entry.id, active.entry.text, state.currentTimelineCue);
-      active.entry.text = stringifyTimeline(createTimeline(active.entry.id), active.entry.eol);
+      active.entry.text = (active.entry.text.startsWith('\uFEFF') ? '\uFEFF' : '') + stringifyTimeline(createTimeline(active.entry.id), active.entry.eol);
       active.entry.dirty = true;
       state.currentTimelineCue = null;
       renderTimelinePanel(rootContainer);

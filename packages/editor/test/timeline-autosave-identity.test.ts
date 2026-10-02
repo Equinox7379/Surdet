@@ -26,6 +26,17 @@ function entry(overrides: Partial<TimelineAutosaveDocument> = {}): TimelineAutos
 }
 
 describe('inspectTimelineAutosaveIdentity（时间轴三元身份投影）', () => {
+  it.each(['JSON', 'JsOn'])('保留已支持的 .%s 文件及其 Authoring canonical ID', (extension) => {
+    // Authoring currently retains a non-lowercase extension in the ID.
+    const id = `intro.${extension}`;
+    const source = entry({ id, file: `nested/intro.${extension}`, text: JSON.stringify({ id, version: 1, durationMs: 100, tracks: [] }) });
+    const before = { ...source };
+    expect(inspectTimelineAutosaveIdentity(source)).toMatchObject({ fileId: id, definitionId: id, canonical: true });
+    const normalized = normalizeTimelineAutosaveDocument(source, id, source.file);
+    expect(normalized).toMatchObject({ ok: true, entry: { id, file: source.file } });
+    expect(source).toEqual(before);
+  });
+
   it('从 canonical nested path、外层 id 和内部 id 得出 canonical 身份', () => {
     const source = entry();
     const before = { ...source };

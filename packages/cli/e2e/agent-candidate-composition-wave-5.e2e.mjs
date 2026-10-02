@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { AUTHORING_CAPABILITY_REGISTRY, AUTHORING_CONTRACT_VERSION } from '@surdet/authoring';
 
 const MODES = new Set(['preflight', 'diagnostic', 'formal', 'acceptance-prep']);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -361,8 +362,14 @@ async function runPreflightLeg({ label, fixture, dataDir, versionNegotiation }) 
     resultOf(await callTool(port, 'surdet_session_describe'), `${label} session.describe`);
     resultOf(await callTool(port, 'surdet_project_inspect'), `${label} project.inspect`);
     const described = resultOf(await callTool(port, 'surdet_capabilities_describe'), `${label} capabilities.describe`);
-    assert(described.capabilities?.length === 26, `${label} expected 26 registry capabilities, got ${described.capabilities?.length}`);
-    assert(described.contractVersion === '2.0.0', `${label} authoring contract was ${described.contractVersion}`);
+    assert(described.capabilities?.length === AUTHORING_CAPABILITY_REGISTRY.length,
+      `${label} expected ${AUTHORING_CAPABILITY_REGISTRY.length} registry capabilities, got ${described.capabilities?.length}`);
+    const advertised = new Map(described.capabilities.map(capability => [capability.id, capability]));
+    assert(advertised.size === AUTHORING_CAPABILITY_REGISTRY.length, `${label} duplicate capability ids`);
+    for (const capability of AUTHORING_CAPABILITY_REGISTRY) {
+      assert(advertised.get(capability.id)?.minimumPolicy === capability.minimumPolicy, `${label} capability metadata mismatch: ${capability.id}`);
+    }
+    assert(described.contractVersion === AUTHORING_CONTRACT_VERSION, `${label} authoring contract was ${described.contractVersion}`);
     if (label === 'legacy/2025') {
       assert(protocolEra === 'legacy', `${label} protocol era was ${protocolEra}`);
       assert(negotiated === '2025-11-25', `${label} protocol version was ${negotiated}`);
@@ -376,7 +383,7 @@ async function runPreflightLeg({ label, fixture, dataDir, versionNegotiation }) 
   assert(errors.protocol.length === 0, `${label} protocol errors: ${errors.protocol.join('; ')}`);
   assert(errors.stderrUnexpected.length === 0, `${label} unexpected stderr: ${errors.stderrUnexpected.join('; ')}`);
   assert(errors.childCleanupFailures.length === 0, `${label} cleanup errors: ${errors.childCleanupFailures.join('; ')}`);
-  return { label, protocolEra, negotiatedProtocolVersion: negotiated, capabilities: 26,
+  return { label, protocolEra, negotiatedProtocolVersion: negotiated, capabilities: AUTHORING_CAPABILITY_REGISTRY.length,
     stdoutProtocolPurity: close.stdoutProtocolPurity, childCleanup: true };
 }
 
@@ -399,7 +406,7 @@ async function runPreflight() {
     assert(starterBefore.sha256 === starterAfter.sha256, 'original Starter changed during preflight');
     console.log(JSON.stringify({
       status: 'PASSED', mode: 'preflight', launcher: 'packages/cli/dist/agent-port/main.js',
-      cwd: repoRoot, contractVersion: '2.0.0', nativeCapabilities: 26,
+      cwd: repoRoot, contractVersion: AUTHORING_CONTRACT_VERSION, nativeCapabilities: AUTHORING_CAPABILITY_REGISTRY.length,
       modern, legacy, starterUnchanged: true, childCleanup: true,
     }));
   } finally {

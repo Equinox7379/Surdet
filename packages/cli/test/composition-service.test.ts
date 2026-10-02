@@ -16,6 +16,13 @@ import { openAgentPortSession, type AgentPortSession } from '../src/agent-port/s
 // Candidate sealing/replay uses real durable journals, not an in-memory fixture.
 vi.setConfig({ testTimeout: 30_000 });
 const temporaryRoots: string[] = [];
+const originalAgentDataDir = process.env['SURDET_AGENT_DATA_DIR'];
+
+afterEach(() => {
+  if (originalAgentDataDir === undefined) delete process.env['SURDET_AGENT_DATA_DIR'];
+  else process.env['SURDET_AGENT_DATA_DIR'] = originalAgentDataDir;
+  for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
 
 const realHasher: TextHasher = {
   sha256: async (text) => crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex'),
@@ -750,11 +757,6 @@ describe('CompositionService compare/plan/dry-run', () => {
     for (const objectRef of ['character:rin', 'config:characters', 'scene:start']) {
       expect(planned.plan.dryRun.finalObjectFingerprints[objectRef]).toBe((await fingerprintWorkingObject(expectedFiles, objectRef, realHasher)).fingerprint);
     }
-  });
-
-  afterEach(() => {
-    delete process.env['SURDET_AGENT_DATA_DIR'];
-    for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   });
 
   it('uses the canonical project root for the snapshot lease and contends with Authoring on one physical lock', async () => {

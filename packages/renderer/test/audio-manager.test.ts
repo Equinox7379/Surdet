@@ -214,7 +214,7 @@ describe('AudioManager', () => {
     am.playBgm('a.mp3'); // 350ms 内切回 a（复用同一 Howl 实例）
     mockStop.mockClear();
     vi.runAllTimers();
-    // b 的淡出停止合法执行 1 次；a 的旧定时器因代际守卫跳过（无守卫时会多停一次，
+    // b 的淡出停止合法执行 1 次；a 的旧定时器因当前实例守卫跳过（无守卫时会多停一次，
     // 误杀重新启播的当前 BGM a，且 #bgmKey 仍为 a 导致后续 playBgm('a') 提前返回、永久静音）
     expect(mockStop).toHaveBeenCalledTimes(1);
   });
@@ -225,6 +225,63 @@ describe('AudioManager', () => {
     const afterFirst = mockPlay.mock.calls.length;
     am.playBgm('a.mp3'); // 同 key → 提前 return
     expect(mockPlay).toHaveBeenCalledTimes(afterFirst);
+  });
+
+  it.each(['bgm', 'ambience'] as const)('%s stops every obsolete track after A→B→C within one fade', channel => {
+    vi.useFakeTimers();
+    const am = new AudioManager();
+    const play = (src: string | null) => channel === 'bgm' ? am.playBgm(src) : am.playAmbience(src);
+    play('a.wav'); play('b.wav'); play('c.wav');
+    mockInstances.forEach(instance => instance.stop.mockClear());
+    vi.runAllTimers();
+    expect(mockInstances[0]!.stop).toHaveBeenCalledOnce();
+    expect(mockInstances[1]!.stop).toHaveBeenCalledOnce();
+    expect(mockInstances[2]!.stop).not.toHaveBeenCalled();
+    am.dispose();
+  });
+
+  it.each(['bgm', 'ambience'] as const)('%s stops both obsolete tracks after A→B→silence within one fade', channel => {
+    vi.useFakeTimers();
+    const am = new AudioManager();
+    const play = (src: string | null) => channel === 'bgm' ? am.playBgm(src) : am.playAmbience(src);
+    play('a.wav'); play('b.wav'); play(null);
+    mockInstances.forEach(instance => instance.stop.mockClear());
+    vi.runAllTimers();
+    expect(mockInstances[0]!.stop).toHaveBeenCalledOnce();
+    expect(mockInstances[1]!.stop).toHaveBeenCalledOnce();
+    am.dispose();
+  });
+
+  it.each(['bgm', 'ambience'] as const)('%s keeps a reused current track alive through A→B→A fades', channel => {
+    vi.useFakeTimers();
+    const am = new AudioManager();
+    const play = (src: string) => channel === 'bgm' ? am.playBgm(src) : am.playAmbience(src);
+    play('a.wav'); play('b.wav'); play('a.wav');
+    mockInstances.forEach(instance => instance.stop.mockClear());
+    vi.runAllTimers();
+    expect(mockInstances[0]!.stop).not.toHaveBeenCalled();
+    expect(mockInstances[1]!.stop).toHaveBeenCalledOnce();
+    am.dispose();
+  });
+
+  it.each(['bgm', 'ambience'] as const)('%s gives a reused track its full new fade after A→B→A→C', channel => {
+    vi.useFakeTimers();
+    const am = new AudioManager();
+    const play = (src: string, duration = 350) => channel === 'bgm' ? am.playBgm(src) : am.playAmbience(src, duration);
+    try {
+      play('a.wav'); play('b.wav');
+      vi.advanceTimersByTime(50);
+      play('a.wav');
+      vi.advanceTimersByTime(50);
+      play('c.wav', 1000);
+      mockInstances.forEach(instance => instance.stop.mockClear());
+      vi.advanceTimersByTime(250);
+      expect(mockInstances[0]!.stop).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(channel === 'bgm' ? 100 : 750);
+      expect(mockInstances[0]!.stop).toHaveBeenCalledOnce();
+      expect(mockInstances[1]!.stop).toHaveBeenCalledOnce();
+      expect(mockInstances[2]!.stop).not.toHaveBeenCalled();
+    } finally { am.dispose(); }
   });
 
   it('Gallery 预览对当前正在播放的同一 BGM 也会重新播放', () => {
@@ -269,7 +326,7 @@ describe('AudioManager', () => {
     am.playBgm('a.mp3'); // 窗口内重新启播 a
     mockStop.mockClear();
     vi.runAllTimers();
-    // 旧定时器被 stopAll 的代际推进作废：不应有任何额外 stop 误停新 BGM
+    // 旧定时器被 stopAll 的会话推进作废：不应有任何额外 stop 误停新 BGM
     expect(mockStop).not.toHaveBeenCalled();
   });
 

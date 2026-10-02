@@ -79,6 +79,18 @@ describe('edgePoint（连线边界点修剪）', () => {
 });
 
 describe('addRequiresToRow / removeRequiresFromRow（拖拽连线的行模型层）', () => {
+  it.each(['[', '{bad', '"not-array"', '["kept",2]'])('preserves unfinished or invalid dependency drafts when adding a connection: %s', (requires) => {
+    const row = { id: 'target', requires };
+    expect(addRequiresToRow(row, 'source')).toBe(false);
+    expect(row.requires).toBe(requires);
+  });
+
+  it('preserves an invalid mixed dependency draft when deleting a connection', () => {
+    const row = { id: 'target', requires: '["source",2]' };
+    expect(removeRequiresFromRow(row, 'source')).toBe(false);
+    expect(row.requires).toBe('["source",2]');
+  });
+
   it('追加写回 JSON 数组；重复/空白不重复加（返回 false）', () => {
     const row = { id: 'b', requires: '' };
     expect(addRequiresToRow(row, 'a')).toBe(true);

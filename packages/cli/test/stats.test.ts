@@ -14,6 +14,23 @@ function makeProject(): string {
 }
 
 describe('statsCommand', () => {
+  it.each(['', '\r\n  ', 'null', '[]', '42', '"text"'])('rejects a present invalid configuration root (%j)', async text => {
+    const dir = makeProject();
+    const file = path.join(dir, 'game.config.json');
+    fs.writeFileSync(file, text);
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      expect(await statsCommand(dir, { json: true })).toBe(1);
+      expect(stdout).not.toHaveBeenCalled();
+      expect(stderr.mock.calls.map(([value]) => String(value)).join('')).toContain('game.config.json');
+      expect(fs.readFileSync(file, 'utf8')).toBe(text);
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
   it('writes parseable JSON with deterministic project metrics', async () => {
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const code = await statsCommand(makeProject(), { json: true });

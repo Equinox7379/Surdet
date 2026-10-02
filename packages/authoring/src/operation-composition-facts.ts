@@ -5,6 +5,7 @@ import { stableStringify } from './change-session.js';
 import { parseProjectConfigDocument } from './config-document.js';
 import { readGalleryDocument, GALLERY_PATH } from './gallery-operations.js';
 import { resolveUniqueScenarioPath, sceneIdFromScenarioPath } from './scenario-identity.js';
+import { resolveUniqueTimelinePath } from './timeline-identity.js';
 import {
   analyzeCharacterCompositionReferences,
   analyzeSceneCompositionReferences,
@@ -109,11 +110,12 @@ export async function buildTimelineOperationCompositionDraft(input: {
   const rawReferences = analyzeTimelineCompositionReferences({
     timelineId: input.timelineId, path: input.path ?? `content/timelines/${input.timelineId}.json`, definition: input.afterDefinition,
     lookup: id => {
-      const files = Object.entries(input.workingFiles ?? {}).filter(([path]) => path.startsWith('content/timelines/') && path.replace(/\.json$/i, '').split('/').at(-1) === id);
-      if (files.length !== 1) return undefined;
-      const definition = JSON.parse(files[0]![1].replace(/^\uFEFF/, ''));
+      const files = input.workingFiles ?? {};
+      const path = resolveUniqueTimelinePath(files, id);
+      if (path === undefined) return undefined;
+      const definition = JSON.parse(files[path]!.replace(/^\uFEFF/, ''));
       dependencies.set(id, definition);
-      return { path: files[0]![0], definition };
+      return { path, definition };
     },
   });
   return {

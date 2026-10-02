@@ -309,14 +309,47 @@ describe('lintProject', () => {
     expect(r.issues.some((i) => i.code === 'VAR_DECL')).toBe(true);
   });
 
-  it('variables 空表发 EMPTY_VARIABLES 警告且不校验变量', () => {
+  it('variables 空表发 EMPTY_VARIABLES 警告并拒绝未声明变量', () => {
     const dir = makeProject({
       'game.config.json': JSON.stringify({ variables: {} }),
       'content/scenario/a.gal': `@set ghost = 1\n`,
     });
     const r = lintProject(dir);
-    expect(r.ok).toBe(true);
+    expect(r.ok).toBe(false);
+    expect(r.issues.some((i) => i.code === 'V001')).toBe(true);
     expect(r.issues.some((i) => i.code === 'EMPTY_VARIABLES' && i.severity === 'warning')).toBe(true);
+  });
+
+  it.each(['null', '[]', '42', '"invalid-root"'])('rejects a non-object game root through structured CONFIG diagnostics (%s)', text => {
+    const dir = makeProject({ 'game.config.json': text, 'content/scenario/start.gal': '@scene start\n@end\n' });
+    const result = lintProject(dir);
+    expect(result.ok).toBe(false);
+    expect(result.issues.filter(issue => issue.code === 'CONFIG')).toHaveLength(1);
+    expect(result.issues.find(issue => issue.code === 'CONFIG')?.file).toContain('game.config.json');
+    expect(fs.readFileSync(path.join(dir, 'game.config.json'), 'utf8')).toBe(text);
+  });
+
+  it('checks config expressions and growth writes with an empty declaration table while retaining combat locals', () => {
+    const dir = makeProject({
+      'game.config.json': '{"entryScene":"start","variables":{}}',
+      'content/scenario/start.gal': '@scene start\n@end\n',
+      'content/config/events.json': '{"events":[{"when":"ghost > 0"}]}',
+      'content/config/growth.json': '{"profiles":[{"characterId":"lynn","statGrowth":{"ghost":1}}]}',
+      'content/config/combat.json': '{"damage":{"base":"atk - def + power"}}',
+    });
+    const issues = lintProject(dir).issues.filter(issue => issue.code === 'V002');
+    expect(issues).toHaveLength(2);
+    expect(issues.every(issue => issue.text.includes('ghost'))).toBe(true);
+  });
+
+  it.each(['null', '[]', '42'])('rejects invalid object config roots while accepting the achievements array (%s)', text => {
+    const dir = makeProject({
+      'game.config.json': '{"variables":{}}', 'content/scenario/start.gal': '@scene start\n@end\n',
+      'content/config/events.json': text, 'content/config/achievements.json': '[]',
+    });
+    const issues = lintProject(dir).issues.filter(issue => issue.code === 'CONFIG');
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.file).toContain('events.json');
   });
 
   it('customInstructions 声明后未知指令不再告警', () => {

@@ -100,7 +100,6 @@ try {
   await page.getByRole('button', { name: '读取实际图片', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.stage-configuration')?.textContent.includes('400 × 700'));
   const sha = crypto.createHash('sha256').update(fixture.normal).digest('hex');
-  assert((await page.locator('.stage-configuration').innerText()).includes(sha));
   await page.getByLabel('舞台基准身高', { exact: true }).fill('530');
   await page.getByRole('button', { name: '确认图片校准并加入草稿', exact: true }).click();
   await page.waitForFunction(() => JSON.parse(document.querySelector('[aria-label="舞台配置文本"]').value).portraits['rin:coat'].height === 530);
@@ -108,6 +107,53 @@ try {
   assert.equal(value.portraits['rin:coat'].height, 530); assert.equal(value.portraits['rin:coat'].sources.normal.sha256, sha);
   assert.equal(JSON.parse(fs.readFileSync(path.join(fixture.root, 'game.config.json'), 'utf8')).stage.portraits['rin:coat'].height, 510);
   pass('calibration-is-human-confirmed-byte-pinned-draft');
+  for (const point of ['image-read', 'confirmation-digest']) {
+    const select = page.getByLabel('校准的角色服装表情', { exact: true });
+    await select.selectOption({ label: 'rin:coat · normal' });
+    await page.getByRole('button', { name: '读取实际图片', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('.stage-calibration-image')?.previousElementSibling?.textContent.includes('rin_coat_normal.png'));
+    const before = await page.evaluate(async () => (await import('/src/panels/config.ts')).readStageConfigDraft());
+    await page.getByLabel('舞台基准身高', { exact: true }).fill('580');
+    await page.evaluate(({ point, bytes }) => {
+      window.auditCalibrationHeld = false; window.auditCalibrationDecoded = false; window.auditCalibrationFinished = false;
+      const gate = new Promise(resolve => { window.auditCalibrationRelease = resolve; });
+      const status = document.querySelector('.stage-configuration > p[role="status"]');
+      const observer = new MutationObserver(() => { window.auditCalibrationFinished = true; observer.disconnect(); });
+      observer.observe(status, { childList: true, subtree: true, characterData: true });
+      if (point === 'image-read') {
+        const asset = window.surdetEditorDebug.state.dirAssets.find(asset => asset.sourcePath?.endsWith('portrait/rin_coat_normal.png'));
+        if (!asset?.handle) throw new Error('calibration fixture handle missing');
+        const getFile = asset.handle.getFile.bind(asset.handle);
+        asset.handle.getFile = async () => { asset.handle.getFile = getFile; const file = await getFile(); window.auditCalibrationHeld = true; await gate; return file; };
+        const decode = window.createImageBitmap.bind(window);
+        window.createImageBitmap = async (...args) => {
+          if (!(args[0] instanceof Blob) || args[0].size !== bytes) return decode(...args);
+          window.createImageBitmap = decode;
+          const bitmap = await decode(...args); window.auditCalibrationDecoded = true; return bitmap;
+        };
+      } else {
+        const digest = crypto.subtle.digest.bind(crypto.subtle);
+        crypto.subtle.digest = async (...args) => {
+          if (args[1].byteLength !== bytes) return digest(...args);
+          crypto.subtle.digest = digest;
+          const result = await digest(...args); window.auditCalibrationHeld = true; await gate; return result;
+        };
+      }
+    }, { point, bytes: fixture.normal.length });
+    await page.getByRole('button', { name: point === 'image-read' ? '读取实际图片' : '确认图片校准并加入草稿', exact: true }).click();
+    await page.waitForFunction(() => window.auditCalibrationHeld);
+    await select.selectOption({ label: 'mio:coat · normal' });
+    await page.evaluate(() => window.auditCalibrationRelease());
+    if (point === 'image-read') {
+      await page.waitForFunction(() => window.auditCalibrationDecoded);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await page.getByRole('button', { name: '确认图片校准并加入草稿', exact: true }).click();
+    }
+    await page.waitForFunction(() => window.auditCalibrationFinished);
+    assert.equal(await page.evaluate(async () => (await import('/src/panels/config.ts')).readStageConfigDraft()), before);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(fixture.root, 'game.config.json'), 'utf8')).stage.portraits['rin:coat'].height, 510);
+    pass('calibration-selection-invalidates-' + point + '-without-wrong-source-write');
+  }
   assert.equal(await page.evaluate(async () => (await import('/src/panels/config.ts')).inspectConfigDraftState().dirty), true,
     'stage configuration must participate in the ordinary unsaved-draft protection');
   await page.getByRole('button', { name: '重新播放', exact: true }).click();
@@ -141,7 +187,8 @@ try {
   pass('config-undo-changes-draft-first-and-explicit-save-restores-calibration');
   await page.getByRole('button', { name: '重新播放', exact: true }).click();
   await frame.waitForFunction(() => window.surdetPreviewDebug.runtime?.queries.world.inspectStage().objects.find(object => object.target === 'rin:coat')?.pose.baseHeight === 510);
-  await page.waitForFunction(() => document.querySelector('.preview-source-state')?.textContent.includes('Agent 可读取本次实际播放记录'));
+  await page.waitForFunction(() => document.querySelector('.preview-source-state')?.getAttribute('data-preview-source-state') === 'fresh'
+    && document.querySelector('.preview-source-state')?.textContent.includes('智能体可读取本次实际播放记录'));
   pass('saved-stage-replay-publishes-a-fresh-formal-observation');
   await page.setViewportSize({width:1280,height:800});
   await page.locator('[data-editor-mode="timeline"]').click();

@@ -55,13 +55,9 @@ export async function loadProjectSnapshot(storage: ProjectStorage, hasher: TextH
   const { revision, files: canonicalFiles } = await loadProjectContentSnapshot(storage, hasher);
   const configFile = canonicalFiles.find((file) => file.path === 'game.config.json') ?? null;
   const growthFile = canonicalFiles.find((file) => file.path === 'content/config/growth.json') ?? null;
-  let config: Record<string, unknown> = {};
-  if (configFile !== null && configFile.text.trim().length > 0) {
-    config = parseProjectConfigDocument(configFile.text);
-  }
-  const growthConfig = growthFile === null || growthFile.text.trim().length === 0
-    ? null
-    : JSON.parse(growthFile.text) as GrowthConfig;
+  const config = configFile === null ? {} : parseProjectConfigDocument(configFile.text);
+  const growthConfig = growthFile === null ? null
+    : parseProjectConfigDocument(growthFile.text, growthFile.path) as unknown as GrowthConfig;
   const customInstructions = Array.isArray(config['customInstructions'])
     ? config['customInstructions'].filter((value): value is string => typeof value === 'string')
     : [];

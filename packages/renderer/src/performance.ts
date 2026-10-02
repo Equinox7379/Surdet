@@ -59,7 +59,7 @@ export class RenderPerformanceMonitor {
     };
     this.#samples.push(sample);
     if (this.#samples.length > this.budget.sampleWindowSize) this.#samples.shift();
-    return sample;
+    return { ...sample };
   }
 
   snapshot(): RenderPerformanceSnapshot {
@@ -75,7 +75,7 @@ export class RenderPerformanceMonitor {
       maxUpdateMs: this.#samples.reduce((max, sample) => Math.max(max, sample.updateMs), 0),
       withinBudget: slowFrames <= this.budget.maxSlowFrames,
       budget: { ...this.budget },
-      samples: this.#samples.slice(),
+      samples: this.#samples.map(sample => ({ ...sample })),
     };
   }
 

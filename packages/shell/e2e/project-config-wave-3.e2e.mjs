@@ -74,7 +74,9 @@ let advanceMethod = null;
 let previewProbe = null;
 
 const resourceCleanup = {
+  browserCreated: false,
   browserClosed: false,
+  previewChildStarted: false,
   previewChildExitObserved: false,
   previewChildCloseObserved: false,
   previewServerReleased: false,
@@ -245,6 +247,7 @@ function success(label, response) {
   assert(response.status === 0, `${label} exit=${response.status}：${JSON.stringify(response.body)}`);
   assert(response.body?.ok === true, `${label} 未返回 ok=true：${JSON.stringify(response.body)}`);
   assert(response.stderr === '', `${label} 默认 stderr 不为空：${response.stderr}`);
+  workingRevision = response.body.workingRevision ?? workingRevision;
   return response.body;
 }
 
@@ -257,15 +260,6 @@ async function step(label, action) {
     firstFailedNode ??= label;
     throw new Error(`[${label}] ${errorText(error)}`);
   }
-}
-
-function fingerprint(raw) {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < raw.length; index++) {
-    hash ^= raw.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
 function portIsFree(port) {
@@ -289,6 +283,7 @@ async function assertPortFree(port, label) {
 }
 
 function createOwnedServerState(child, stdout = '', stderr = '') {
+  resourceCleanup.previewChildStarted = true;
   const state = { child, pid: child.pid ?? null, stdout, stderr, exitObserved: false, closeObserved: false };
   child.once('exit', () => { state.exitObserved = true; });
   child.once('close', () => { state.closeObserved = true; });
@@ -413,12 +408,12 @@ async function cleanupOwnedResources() {
 async function verifyResourceCleanup() {
   resourceCleanup.previewPortFree = await portIsFree(previewPort);
   resourceCleanup.preflightPortFree = await portIsFree(preflightPort);
-  assert(resourceCleanup.browserClosed, '资源清理后 Playwright browser 仍未确认断开');
+  if (resourceCleanup.browserCreated) assert(resourceCleanup.browserClosed, '资源清理后 Playwright browser 仍未确认断开');
   assert(resourceCleanup.previewServerReleased, '资源清理后 preview server 未释放');
   assert(resourceCleanup.previewPortFree, `资源清理后 preview 端口 ${previewPort} 仍被占用`);
   assert(resourceCleanup.preflightPortFree, `资源清理后 preflight 端口 ${preflightPort} 仍被占用`);
-  assert(resourceCleanup.previewChildExitObserved, '资源清理后 preview child 未确认 exit');
-  assert(resourceCleanup.previewChildCloseObserved, '资源清理后 preview child 未确认 close');
+  if (resourceCleanup.previewChildStarted) assert(resourceCleanup.previewChildExitObserved, '资源清理后 preview child 未确认 exit');
+  if (resourceCleanup.previewChildStarted) assert(resourceCleanup.previewChildCloseObserved, '资源清理后 preview child 未确认 close');
 }
 
 async function readPreviewMessages(page) {
@@ -596,6 +591,7 @@ async function runPreflight() {
   const preflightParentUrl = `http://127.0.0.1:${preflightPort}/__surdet-preflight-parent.html`;
   const server = await startPreviewServer(preflightPort);
   previewBrowser = await chromium.launch({ headless: true });
+  resourceCleanup.browserCreated = true;
   const page = await previewBrowser.newPage({ viewport: { width: 1280, height: 720 } });
   previewPage = page;
   previewPageClosing = false;
@@ -611,7 +607,7 @@ async function runPreflight() {
 
   const capabilities = success('capabilities.describe', runCli(['capabilities', 'describe']));
   for (const capability of ['character.ensure', 'character.remove', 'project.entry-scene.set']) {
-    assert(capabilities.result.capabilities.includes(capability), `capabilities 缺少 ${capability}`);
+    assert(capabilities.result.capabilities.some((definition) => definition.id === capability), `capabilities 缺少 ${capability}`);
   }
   const starterAssets = success('project.assets', runCli(['project', 'assets', '--project', starterRoot]));
   const lynnAvatar = starterAssets.result.avatars.find((entry) => entry.key === 'lynn');
@@ -641,7 +637,7 @@ async function run() {
   await step('capabilities.describe', async () => {
     const capabilities = success('capabilities.describe', runCli(['capabilities', 'describe']));
     for (const capability of ['character.ensure', 'character.remove', 'project.entry-scene.set']) {
-      assert(capabilities.result.capabilities.includes(capability), `capabilities 缺少 ${capability}`);
+      assert(capabilities.result.capabilities.some((definition) => definition.id === capability), `capabilities 缺少 ${capability}`);
     }
   });
 
@@ -654,7 +650,9 @@ async function run() {
     const assets = success('project.assets', runCli(['project', 'assets', '--project', fixtureRoot]));
     const lynnAvatar = assets.result.avatars.find((entry) => entry.key === 'lynn');
     assert(lynnAvatar?.resolved === true, `lynn avatar 未 resolved：${JSON.stringify(lynnAvatar)}`);
-    assert(JSON.stringify(assets.result) === JSON.stringify(inspect.result.assets), 'project.assets 与 project.inspect.assets 逐字段不一致');
+    const { view, ...assetCatalog } = assets.result;
+    assert(view === inspect.result.view, '两个素材读取入口的项目视图不一致');
+    assert(JSON.stringify(assetCatalog) === JSON.stringify(inspect.result.assets), 'project.assets 与 project.inspect.assets 目录逐字段不一致');
   });
 
   const begun = await step('change.begin', async () => {
@@ -704,18 +702,24 @@ async function run() {
     // nova 台词插入到 lynn 行之后、@end 之前，保证 start 启动先见 lynn 开场、推进一次到 nova 台词。
     // （曾用 @scene 行作锚点会把 nova 插到 start 之前，start 启动永远看不到它；
     //   曾用 @label start 行作锚点会把 nova 变成第一句，推进断言时序反转。）
-    const anchorRef = `scene:${TARGET_SCENE_ID}/instruction:3@${projectRevision.slice(0, 8)}-${fingerprint('lynn：开场。')}`;
+    const scene = success('object.inspect(agent_probe)', runCli(['object', 'inspect', '--project', fixtureRoot,
+      '--ref', `scene:${TARGET_SCENE_ID}`, '--change', changeId])).result;
+    const children = scene.childRefs.map((ref) => success('object.inspect(scene child)', runCli([
+      'object', 'inspect', '--project', fixtureRoot, '--ref', ref, '--change', changeId,
+    ])).result);
+    const anchor = children.find((object) => object.kind === 'text' && object.source?.raw === 'lynn：开场。');
+    assert(anchor, '未发现当前工作稿的开场台词锚点');
+    const anchorRef = anchor.objectRef;
     const input = writeInput('scene-patch-nova.json', {
       operationId: 'stage6-wave3-scene-patch-nova',
       sceneId: TARGET_SCENE_ID,
       patch: {
         kind: 'insertAfter',
         anchor: anchorRef,
-        expectedFingerprint: fingerprint('lynn：开场。'),
-        // speaker 必须用显示名（NOVA_NAME）：渲染层 dialogue-layer 的 speakerProfiles 按 name 索引，
-        // 用 id（nova）会查不到 profile 导致 activeSpeakerId 恒为 null（validation 接受 id 或 name，
-        // 但渲染层只认 name；与 Starter 台词一律用中文显示名一致）。
-        blocks: [{ kind: 'text', speaker: NOVA_NAME, value: NOVA_LINE }],
+        expectedFingerprint: anchor.fingerprint,
+        // Use the stable role ID; current DialogueLayer resolves both IDs and
+        // unambiguous authored names to the configured display name.
+        blocks: [{ kind: 'text', speaker: NOVA_ID, value: NOVA_LINE }],
       },
     });
     success('scene.patch', runCli(['scene', 'patch', '--change', changeId, '--input', input]));
@@ -759,7 +763,7 @@ async function run() {
   });
 
   await step('runtime.run-from.agent_probe.start', async () => {
-    const input = writeInput('run-from.json', { sceneId: TARGET_SCENE_ID, label: TARGET_LABEL });
+    const input = writeInput('run-from.json', { sceneId: TARGET_SCENE_ID, label: TARGET_LABEL, choices: [], seed: 603 });
     const body = success('runtime.run-from', runCli(['runtime', 'run-from', '--change', changeId, '--input', input]));
     assert(body.result.sceneId === TARGET_SCENE_ID, `run-from sceneId 不是 ${TARGET_SCENE_ID}`);
     assert(body.result.status === 'passed', 'run-from 未通过');
@@ -789,6 +793,7 @@ async function run() {
   const previewUrl = `http://127.0.0.1:${previewPort}/preview.html`;
   const parentUrl = `http://127.0.0.1:${previewPort}/__surdet-stage6-wave3-parent.html`;
   previewBrowser = await chromium.launch({ headless: true });
+  resourceCleanup.browserCreated = true;
   const page = await previewBrowser.newPage({ viewport: { width: 1280, height: 720 } });
   previewPage = page;
   previewPageClosing = false;
@@ -897,7 +902,7 @@ async function run() {
     }
     const projection = await previewFrame.evaluate(() => window.surdetPreviewDebug?.runtime?.queries?.diagnostics?.projectionSnapshot?.() ?? null);
     assert(projection?.dialogue?.dialogText === NOVA_LINE, `投影台词不是 nova 台词：${JSON.stringify(projection?.dialogue?.dialogText)}`);
-    // world.activeSpeakerId 是 @show 舞台角色（本场景无 @show 恒为 null）；说话人看 dialogue.activeSpeakerId
+    // Check the actual dialogue identity even when the scene has no portrait.
     assert(projection?.dialogue?.activeSpeakerId === NOVA_ID, `投影 speaker 不是 nova：${JSON.stringify(projection?.dialogue?.activeSpeakerId)}`);
     dialogueProjection = {
       dialogText: projection?.dialogue?.dialogText ?? null,

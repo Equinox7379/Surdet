@@ -962,8 +962,9 @@
 }
 
 .timeline-autosave-conflict-actions button.primary:hover:not(:disabled) {
-  border-color: var(--surdet-shell-chrome-bg);
-  background: var(--surdet-shell-chrome-bg);
+  border-color: var(--surdet-action-primary);
+  background: var(--surdet-action-primary);
+  filter: brightness(.92);
 }
 
 .timeline-autosave-conflict-actions button:disabled {

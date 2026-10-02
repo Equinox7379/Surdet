@@ -34,11 +34,21 @@ function getProfileStore(): FileProfileStore {
   return profileStore;
 }
 
-/** IPC sender 校验：仅接受本地 file:// 帧（打包后 asar 亦为 file://），拒绝外部/网络内容注入。 */
+function isGameEntryUrl(location: string): boolean {
+  try {
+    const parsed = new URL(location);
+    return parsed.protocol === 'file:'
+      && path.relative(gamePaths().entry, url.fileURLToPath(parsed)) === '';
+  } catch {
+    return false;
+  }
+}
+
+/** IPC 只属于当前作品入口的主帧；本地其他文件同样不是受信任的游戏页面。 */
 function assertTrustedSender(event: IpcMainEvent | IpcMainInvokeEvent): void {
   const frameUrl = event.senderFrame?.url ?? '';
-  if (!frameUrl.startsWith('file://')) {
-    throw new Error(`拒绝来自非本地帧的存档请求：${frameUrl}`);
+  if (event.senderFrame !== event.sender.mainFrame || !isGameEntryUrl(frameUrl)) {
+    throw new Error(`拒绝来自非游戏入口主帧的 IPC 请求：${frameUrl}`);
   }
 }
 
@@ -301,7 +311,7 @@ function createWindow(): void {
   // 导航加固：游戏内容是本地静态页面，绝不应导航到外部地址。
   // 外部链接交给系统浏览器打开，防止游戏窗口被劫持成攻击面（如钓鱼页复用存档 IPC）。
   win.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith('file://')) {
+    if (!isGameEntryUrl(url)) {
       event.preventDefault();
       if (url.startsWith('https://') || url.startsWith('http://')) void shell.openExternal(url);
     }

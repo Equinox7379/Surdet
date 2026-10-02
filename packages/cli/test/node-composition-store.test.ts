@@ -111,6 +111,19 @@ describe('NodeCompositionStore', () => {
     await expect(store.readCandidate(sealed.ref)).rejects.toMatchObject({ code: 'CAPSULE_IDENTITY_MISMATCH' });
     fs.writeFileSync(payloadPath, original);
     expect((await store.readCandidate(sealed.ref)).composition.eligibility).toBe('ready');
+    const identityPath = path.join(path.dirname(payloadPath), 'identity.json');
+    const originalIdentity = fs.readFileSync(identityPath);
+    try {
+      for (const malformed of ['null', '[]', '42', '"broken"', '{}', '{"path":42}']) {
+        fs.writeFileSync(identityPath, malformed);
+        try {
+          await expect(store.readCandidate(sealed.ref)).rejects.toMatchObject({ code: 'CAPSULE_IDENTITY_MISMATCH' });
+          expect(fs.readFileSync(identityPath, 'utf8')).toBe(malformed);
+          expect(fs.readFileSync(payloadPath)).toEqual(original);
+        } finally { fs.writeFileSync(identityPath, originalIdentity); }
+      }
+      expect((await store.readCandidate(sealed.ref)).composition.eligibility).toBe('ready');
+    } finally { await sealed.session.close(); }
   });
 
   it('projects semantic impacts and file content only for exact fresh sealed revisions', async () => {
@@ -182,6 +195,19 @@ describe('NodeCompositionStore', () => {
     const mutated = { ...(plan as unknown as Record<string, unknown>), expectedProjectRevision: 'rev-2' } as never;
     await expect(store.writePlan(mutated)).rejects.toMatchObject({ code: 'COMPOSITION_PLAN_INVALID' });
     expect(fs.readFileSync(path.join(planDirectory, 'payload.json'), 'utf8')).toContain('rev-1');
+    const identityPath = path.join(planDirectory, 'identity.json');
+    const originalIdentity = fs.readFileSync(identityPath);
+    const originalPayload = fs.readFileSync(path.join(planDirectory, 'payload.json'));
+    for (const malformed of ['null', '[]', '42', '"broken"', '{}', '{"path":42}']) {
+      fs.writeFileSync(identityPath, malformed);
+      try {
+        await expect(store.readPlan((plan as unknown as { planId: string }).planId, firstIdentity.sha256))
+          .rejects.toMatchObject({ code: 'CAPSULE_IDENTITY_MISMATCH' });
+        expect(fs.readFileSync(identityPath, 'utf8')).toBe(malformed);
+        expect(fs.readFileSync(path.join(planDirectory, 'payload.json'))).toEqual(originalPayload);
+      } finally { fs.writeFileSync(identityPath, originalIdentity); }
+    }
+    expect((await store.readPlan((plan as unknown as { planId: string }).planId, firstIdentity.sha256)).plan).toEqual(plan);
   });
 
   it('keeps sealed candidate payloads stable while the source change keeps mutating', async () => {

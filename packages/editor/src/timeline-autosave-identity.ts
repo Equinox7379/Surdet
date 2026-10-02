@@ -40,7 +40,7 @@ function parseTimelineRecord(text: string): ParsedTimelineRecord {
 
 function normalizedRelativeFile(file: string): string | null {
   const normalized = file.replace(/\\/g, '/');
-  if (normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized) || !normalized.endsWith('.json')) return null;
+  if (normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized) || !normalized.toLowerCase().endsWith('.json')) return null;
   const parts = normalized.split('/');
   if (parts.some((part) => part.length === 0 || part === '.' || part === '..')) return null;
   return normalized;

@@ -173,6 +173,7 @@ const {
   readThemeConfigDraft, editThemeConfigDraft, saveThemeConfigDraftUnlocked, previewThemeConfigText,
   editTextCsvDraft, readTextCsvDraft,
   restoreConfigSourceDraft,
+  addTerminologyVariant,
 } = await import('../src/panels/config.js');
 const { commitStageConfiguration, commitThemeConfiguration } = await import('../src/authoring-project-storage.js');
 const { commitTextCatalogPatch, loadEditorProjectSnapshot, createEditorProjectStorage } = await import('../src/authoring-project-storage.js');
@@ -1001,6 +1002,146 @@ describe('configuration draft state', () => {
     expect(byAttribute(reentered, 'aria-label', '变量名，第 1 行').value).toBe('trust.reentered');
     expect(inspectConfigDraftState()).toEqual({ dirty: true, dirtySections: ['variables'] });
     expect(configHistoryDepth()).toEqual(before);
+  });
+
+  it('preserves an unfinished variants draft and saved terminology when the audit action adds a variant', async () => {
+    const root = await renderFixture();
+    state.projectLoading = false;
+    let diskText = JSON.stringify(state.configFiles.terminology);
+    const original = diskText;
+    const write = vi.fn(async (value: unknown) => { diskText = String(value); });
+    state.handles.terminology = {
+      createWritable: async () => ({ write, close: async () => {} }),
+    } as unknown as FileSystemFileHandle;
+    const variants = byAttribute(root, 'aria-label', '变体列表，第 1 行');
+    variants.value = '[';
+    variants.oninput?.();
+    const before = configHistoryDepth();
+
+    await addTerminologyVariant('规范词', '新变体');
+
+    expect(diskText).toBe(original);
+    expect(write).not.toHaveBeenCalled();
+    expect(state.configFiles.terminology).toEqual({ terms: [{ canonical: '规范词', variants: ['变体'] }] });
+    renderConfig(root as unknown as HTMLElement);
+    expect(byAttribute(root, 'aria-label', '变体列表，第 1 行').value).toBe('[');
+    expect(inspectConfigDraftState().dirtySections).toEqual(['terminology']);
+    expect(configHistoryDepth()).toEqual(before);
+  });
+
+  it.each([
+    { draft: '["变体"]', expected: ['变体', '新变体'] },
+    { draft: '', expected: ['新变体'] },
+  ])('adds an audit variant to a supported terminology draft $draft', async ({ draft, expected }) => {
+    const root = await renderFixture();
+    state.projectLoading = false;
+    let diskText = JSON.stringify(state.configFiles.terminology);
+    state.handles.terminology = {
+      createWritable: async () => ({ write: async (value: unknown) => { diskText = String(value); }, close: async () => {} }),
+    } as unknown as FileSystemFileHandle;
+    const variants = byAttribute(root, 'aria-label', '变体列表，第 1 行');
+    variants.value = draft;
+    variants.oninput?.();
+
+    await addTerminologyVariant('规范词', '新变体');
+
+    expect(JSON.parse(diskText).terms).toEqual([{ canonical: '规范词', variants: expected }]);
+    expect(inspectConfigDraftState().dirty).toBe(false);
+  });
+
+  it.each([
+    { mode: 'root', keys: ['arrival'], saved: 1 },
+    { mode: 'nested', keys: ['chapters/arrival'], saved: 1 },
+    { mode: 'missing', keys: [], saved: 0 },
+    { mode: 'ambiguous', keys: ['chapters/arrival', 'other/arrival'], saved: 0 },
+  ])('resolves a $mode gallery replay target by its runtime scene identity', async ({ keys, saved }) => {
+    const root = await renderFixture();
+    const previousScenes = new Map(state.scenes);
+    const text = '@label replay\n凛：回想正文。\n@end\n';
+    const originalGallery = JSON.stringify({ cgs: [], music: [], texts: [{ id: 'memory', name: '回想', scene: 'arrival', label: 'replay' }] });
+    let diskText = originalGallery;
+    try {
+      state.scenes.clear();
+      for (const key of keys) state.scenes.set(key, {
+        id: 'arrival', file: `${key}.gal`, text, eol: '\n', dirty: false,
+        handle: { getFile: async () => new File([text], 'arrival.gal') } as unknown as FileSystemFileHandle,
+      });
+      state.configFiles.gallery = JSON.parse(originalGallery);
+      resetConfigSession();
+      renderConfig(root as unknown as HTMLElement);
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      state.handles.gallery = {
+        createWritable: async () => ({ write: async (value: unknown) => { diskText = String(value); }, close: async () => {} }),
+      } as unknown as FileSystemFileHandle;
+      const gallery = descendants(root).find(element => element.dataset.configSection === 'gallery')!;
+      const name = byAttribute(gallery, 'aria-label', '名称，第 1 行');
+      name.value = '修订回想';
+      name.oninput?.();
+
+      await expect(saveDirtyConfigSections()).resolves.toEqual({ saved, failures: saved ? 0 : 1, remainingDirty: !saved });
+      if (saved) expect(JSON.parse(diskText).texts[0]).toEqual({ id: 'memory', name: '修订回想', scene: 'arrival', label: 'replay' });
+      else expect(diskText).toBe(originalGallery);
+    } finally {
+      state.scenes.clear();
+      for (const [key, value] of previousScenes) state.scenes.set(key, value);
+    }
+  });
+
+  it.each([false, true])('does not create an empty missing root config when saving characters (new draft: %s)', async (newDraft) => {
+    const root = await renderFixture('');
+    state.projectLoading = false;
+    state.reviewPreviewReadOnly = false;
+    let created = false;
+    const create = vi.fn(async (_name: string, options?: FileSystemGetFileOptions) => {
+      if (!options?.create) throw new DOMException('missing root config', 'NotFoundError');
+      created = true;
+      return { getFile: async () => new File([''], 'game.config.json'), createWritable: async () => ({ write: async () => {}, close: async () => {} }) };
+    });
+    state.dirHandle = { getFileHandle: create } as unknown as FileSystemDirectoryHandle;
+    if (newDraft) {
+      byAttribute(root, 'aria-label', '新角色标识').value = 'rin';
+      byAttribute(root, 'aria-label', '新角色显示名称').value = '凛';
+      byText(root, '添加角色').click();
+      await expect(saveDirtyConfigSections()).resolves.toEqual({ saved: 0, failures: 1, remainingDirty: true });
+      expect(inspectConfigDraftState().dirtySections).toEqual(['characters']);
+    } else {
+      byText(root, '保存角色表').click();
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+    }
+    expect(created).toBe(false);
+    expect(state.handles.gameConfig).toBeNull();
+    expect(state.gameConfigText).toBe('');
+  });
+
+  it.each(['typing', 'new-file', 'unchanged'])('settles a selected translation file against the current working draft (%s)', async mode => {
+    const root = await renderFixture();
+    const imported = 'key,source,translation\r\nhello,原文,旧文件译文\r\n';
+    const file = new File([imported], 'delayed.csv');
+    const csv = byAttribute(root, 'aria-label', '译稿表格');
+    const prior = '先前未保存的工作稿';
+    csv.value = prior; csv.oninput?.();
+    const read = file.arrayBuffer.bind(file);
+    let release!: () => void;
+    let started!: () => void;
+    const reading = new Promise<void>(resolve => { started = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    file.arrayBuffer = async () => { const bytes = await read(); started(); await gate; return bytes; };
+    const upload = byAttribute(root, 'aria-label', '选择译稿表格');
+    upload.files = [file];
+    upload.onchange?.();
+    await reading;
+    const latest = '尚未完成的更新输入';
+    if (mode === 'typing') { csv.value = latest; csv.oninput?.(); }
+    if (mode === 'new-file') upload.files = [new File(['新文件'], 'new.csv')];
+    const before = configHistoryDepth();
+    release();
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+
+    const expected = mode === 'unchanged' ? imported : mode === 'typing' ? latest : prior;
+    expect(readTextCsvDraft()).toBe(expected);
+    expect(csv.value).toBe(expected.replace(/\r\n/g, '\n'));
+    if (mode !== 'unchanged') expect(configHistoryDepth()).toEqual(before);
+    expect(inspectConfigDraftState().dirtySections).toEqual(['texts']);
   });
 
   it('clears loaded baselines at the project session boundary', async () => {

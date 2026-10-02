@@ -276,15 +276,15 @@ export const v4WorkbenchCases: BrowserCase[] = [
     const scene = fixture(before); resetConfigSession();
     const caller = { ...scene, id: 'other', file: 'chapter/other.GAL', text: '@scene other\n@label opening\n@call start.opening\n旁白：start.opening 不应替换。\n@end\n' };
     state.scenes.set('chapter/other', caller);
-    state.configFiles.gallery = { texts: [{ id: 'memory', scene: 'start', label: 'opening', note: 'opening' }], custom: 'keep' };
+    state.configFiles.gallery = { texts: [{ id: 'memory', name: '开场回想', scene: 'start', label: 'opening', note: 'opening' }], custom: 'keep' };
     histories.set('start', { past: [before.replace('只是正文', '先前正文')], future: [before.replace('只是正文', '后来正文')], lastPushAt: 0 });
     histories.set('chapter/other', { past: [caller.text], future: [], lastPushAt: 0 });
     bindLabelEditingHooks({ prepareConfig: prepareConfigLabelRename, onEdited: () => {} });
     const prompt = window.prompt; window.prompt = () => '抵达';
     try { clickText('#main', '改名并更新引用'); await nextTask(); } finally { window.prompt = prompt; }
-    assert(scene.text === before.replace('@label opening', '@label 抵达'), 'definition/prose/BOM/CRLF changed incorrectly');
+    assert(scene.text === before.replace('@label opening', '@label 抵达'), `definition/prose/BOM/CRLF changed incorrectly: ${JSON.stringify({ text: scene.text, status: control('#status').textContent, lock: state.projectWriteLock })}`);
     assert(caller.text.includes('@call start.抵达') && caller.text.includes('@label opening') && caller.text.includes('旁白：start.opening 不应替换。'), 'cross-scene targets/prose were not distinguished');
-    assert(JSON.stringify(state.configFiles.gallery) === JSON.stringify({ texts: [{ id: 'memory', scene: 'start', label: '抵达', note: 'opening' }], custom: 'keep' }), 'gallery identity or unknown fields changed');
+    assert(JSON.stringify(state.configFiles.gallery) === JSON.stringify({ texts: [{ id: 'memory', name: '开场回想', scene: 'start', label: '抵达', note: 'opening' }], custom: 'keep' }), 'gallery identity or unknown fields changed');
     assert(state.pendingSceneConfigRenames[0]?.labelScene === 'start', 'config relationship was not staged');
     undo(); assert(scene.text.includes('@label 抵达') && scene.text.includes('先前正文'), 'undo restored obsolete identity');
     redo(); assert(scene.text.includes('@label 抵达'), 'redo restored obsolete identity');
@@ -296,7 +296,7 @@ export const v4WorkbenchCases: BrowserCase[] = [
     const caller = { ...scene, id: 'other', file: 'other.gal', text: '@scene other\n@call start.entry\n@end\n' }; state.scenes.set('other', caller);
     deleteLine(1); await nextTask();
     assert(scene.text === before && control('#status').textContent?.includes('仍有引用'), 'used label was deleted');
-    state.scenes.delete('other'); state.configFiles.gallery = { texts: [{ id: 'm', scene: 'start', label: 'entry' }] };
+    state.scenes.delete('other'); state.configFiles.gallery = { texts: [{ id: 'm', name: '入口回想', scene: 'start', label: 'entry' }] };
     deleteLine(1); await nextTask(); assert(scene.text === before && histories.size === 0, 'gallery reference was ignored');
     state.configFiles.gallery = { texts: [] }; deleteLine(1); await nextTask();
     assert(!scene.text.includes('@label') && histories.get('start')?.past.length === 1, 'unused label was not an ordinary edit');
@@ -361,9 +361,15 @@ export const v4WorkbenchCases: BrowserCase[] = [
   { name: 'import uses fatal UTF-8 decoding and ignores late file reads after dialog/project replacement', run: async () => {
     fixture(); state.configReadErrors = {};
     openScriptImport(control('#sidebar'), () => {});
-    const upload = control<HTMLInputElement>('[aria-label="选择 UTF-8 文件"]');
+    // 与 field() 的可见标签一致（451e065 中文化后为“选择文本或表格文件”）。
+    const upload = control<HTMLInputElement>('[aria-label="选择文本或表格文件"]');
     Object.defineProperty(upload, 'files', { configurable: true, value: [new File([new Uint8Array([0xff, 0xfe, 0x00])], 'bad.txt')] });
-    upload.dispatchEvent(new Event('change')); await nextTask();
+    upload.dispatchEvent(new Event('change'));
+    // File.arrayBuffer completes on the browser file task queue, not necessarily
+    // before the next zero-delay timer. Observe the actual failed-read result.
+    const readDeadline = performance.now() + 2000;
+    while (!control('.script-import-dialog [role="alert"]').textContent?.includes('文件读取失败')
+      && performance.now() < readDeadline) await nextTask();
     assert(control('.script-import-dialog [role="alert"]').textContent?.includes('文件读取失败') && state.scenes.size === 1, 'invalid UTF-8 became a partial import');
     let finish!: (value: ArrayBuffer) => void;
     const pending = new Promise<ArrayBuffer>(resolve => { finish = resolve; });

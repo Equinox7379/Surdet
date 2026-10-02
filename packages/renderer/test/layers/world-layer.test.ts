@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Container, Sprite, Texture, TextureSource } from 'pixi.js';
+import { isJsonSafeValue } from '@surdet/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
 import { WorldLayer, type WorldPresentationSnapshot } from '../../src/layers/world/world-layer.js';
+import { createStageGeometryPolicy } from '../../src/stage-geometry.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -19,7 +21,7 @@ interface WorldRuntime {
   readonly requests: { count: number };
 }
 
-function makeRuntime(): WorldRuntime {
+function makeRuntime(stageGeometry?: ReturnType<typeof createStageGeometryPolicy>): WorldRuntime {
   const root = new Container();
   const lifecycle = new RenderLifecycle();
   const assets = new RenderAssetRegistry({ lifecycle });
@@ -29,6 +31,7 @@ function makeRuntime(): WorldRuntime {
     height: 720,
     assets,
     lifecycle,
+    stageGeometry,
     requestFrame: () => { requests.count += 1; },
     captureThumbnail: () => 'thumbnail',
   });
@@ -90,6 +93,35 @@ function snapshot(runtime: WorldRuntime): WorldPresentationSnapshot {
 }
 
 describe('WorldLayer direct presentation contract', () => {
+  it.each([
+    { name: 'legacy frames', metadata: {} },
+    { name: 'owned v1 frames', metadata: { runId: 1, definitionVersion: 1 as const, trackIndex: 0, cueIndex: 0 } },
+    { name: 'owned v2 frames', metadata: { runId: 1, definitionVersion: 2 as const, trackIndex: 0, cueIndex: 0 } },
+  ])('keeps expression changes JSON-safe and restorable for $name', async ({ metadata }) => {
+    const runtime = makeRuntime(createStageGeometryPolicy());
+    try {
+      await runtime.assets.registerPortrait('lynn', 'coat', 'normal', Texture.EMPTY);
+      await runtime.assets.registerPortrait('lynn', 'coat', 'happy', Texture.WHITE);
+      runtime.layer.applyTimelineFrame({ ...metadata, track: 'portrait', target: 'lynn:coat',
+        cue: { atMs: 0, durationMs: 0, easing: 'linear', action: 'show', expression: 'normal', position: 'right' },
+        started: true, final: true, progress: 1, elapsedMs: 0 });
+      runtime.layer.applyTimelineFrame({ ...metadata, track: 'portrait', target: 'lynn:coat',
+        cue: { atMs: 100, durationMs: 250, easing: 'linear', action: 'expression', expression: 'happy' },
+        started: true, final: false, progress: 0, elapsedMs: 100 });
+      const changed = snapshot(runtime);
+      expect(changed.portraits[0]?.view.expression).toBe('happy');
+      expect(isJsonSafeValue(changed)).toBe(true);
+      const saved = JSON.parse(JSON.stringify(changed)) as WorldPresentationSnapshot;
+      expect(saved).toEqual(changed);
+      runtime.layer.clearPresentation();
+      runtime.layer.restorePresentation(saved);
+      expect(snapshot(runtime)).toEqual(changed);
+      runtime.layer.update(300);
+      expect(isJsonSafeValue(snapshot(runtime))).toBe(true);
+      expect(snapshot(runtime).portraits[0]?.view.expression).toBe('happy');
+    } finally { disposeRuntime(runtime); }
+  });
+
   it('keeps tall portraits proportional and the head in frame through timeline show and focus changes', async () => {
     const runtime = makeRuntime();
     const texture = new Texture({ source: new TextureSource({ width: 1024, height: 1536 }) });
@@ -394,6 +426,31 @@ describe('WorldLayer direct presentation contract', () => {
     } finally {
       disposeRuntime(runtime);
     }
+  });
+
+  it.each(['constructor', '__proto__', 'toString'])('rejects inherited particle preset %s before changing the saved world', async (particleKind) => {
+    const runtime = makeRuntime();
+    try {
+      await registerWorldAssets(runtime.assets);
+      runtime.layer.setBackground('hall');
+      runtime.layer.startParticles('snow');
+      const before = snapshot(runtime);
+      expect(() => runtime.layer.restorePresentation({ ...before, backgroundKey: 'night', particleKind }))
+        .toThrowError(expect.objectContaining({ code: 'PRESENTATION_SNAPSHOT_INVALID' }));
+      expect(snapshot(runtime)).toEqual(before);
+    } finally { disposeRuntime(runtime); }
+  });
+
+  it.each(['constructor', '__proto__', 'toString'])('treats inherited %s as an unknown direct particle preset', (particleKind) => {
+    const runtime = makeRuntime();
+    try {
+      runtime.layer.startParticles('snow');
+      runtime.layer.startParticles('not-a-preset');
+      const unknown = snapshot(runtime);
+      runtime.layer.startParticles(particleKind);
+      expect(snapshot(runtime)).toEqual(unknown);
+      expect(runtime.layer.particleContainer.children).toHaveLength(0);
+    } finally { disposeRuntime(runtime); }
   });
 
   it('restores the saved speaker instead of retaining the later scene speaker', async () => {

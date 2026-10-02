@@ -6,6 +6,20 @@ function scene(id: string, source: string) {
 }
 
 describe('computeProjectStats', () => {
+  it('retains legal prototype-shaped scene names in per-scene output and JSON', () => {
+    const stats = computeProjectStats({ scenes: [scene('__proto__', '旁白：合法。'), scene('constructor', '另一场景。')], entryScene: '__proto__', sourceTextByScene: {} });
+    expect(Object.hasOwn(stats.perScene, '__proto__')).toBe(true);
+    expect(stats.perScene['__proto__']).toMatchObject({ totalTextLines: 1, totalCharacters: 3 });
+    expect(Object.keys(JSON.parse(JSON.stringify(stats)).perScene)).toEqual(['__proto__', 'constructor']);
+    expect(stats.reachableScenes).toEqual(['__proto__']);
+  });
+
+  it('does not turn a local goto label into an edge to a same-named scene', () => {
+    const start = scene('start', '@goto phantom\n@label phantom\n当前。\n@call called\n@end');
+    const stats = computeProjectStats({ scenes: [start, scene('phantom', '孤立。'), scene('called', '@return')], entryScene: 'start', sourceTextByScene: {} });
+    expect(stats.reachableScenes).toEqual(['called', 'start']);
+    expect(stats.unreachableScenes).toEqual(['phantom']);
+  });
   it('includes configured system entry scenes and their successors in reachability', () => {
     const scenes = [scene('start', '开始'), scene('event', '@jump end'), scene('end', '结束'), scene('unused', '孤立')];
     const stats = computeProjectStats({ scenes, entryScene: 'start', sourceTextByScene: {}, additionalSceneRoots: ['event'] });

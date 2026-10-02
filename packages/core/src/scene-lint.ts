@@ -4,6 +4,7 @@
  */
 import { IMPLEMENTED_INSTRUCTIONS } from './dsl/compiler.js';
 import { parseExpr, collectVars } from './dsl/expr-parser.js';
+import { STAGE_POSE_MODIFIERS } from './stage.js';
 import type { ExprAst } from './dsl/expr-ast.js';
 import { collectInterpolatedVars } from './runtime/interpreter.js';
 import { VariableStore } from './state/variable-store.js';
@@ -270,7 +271,7 @@ export function validateSceneVariables(
   issues: LintIssue[],
   hasConfig: boolean,
 ): void {
-  if (!hasConfig || variables.size === 0) return;
+  if (!hasConfig) return;
 
   const at = (file: string, line: number, col: number) => ({ file, line, col });
 
@@ -369,7 +370,7 @@ export function validateSceneVariables(
 const VARIABLE_INSTRUCTIONS = new Set(['inc', 'dec', 'toggle', 'flag', 'unflag', 'add_item', 'remove_item', 'random']);
 
 /** @show 已被渲染层消费的修饰符白名单（其余修饰符静默丢弃，lint 给 W003 提醒） */
-const SHOW_CONSUMED_MODIFIERS = new Set(['pos', 'left', 'right', 'center']);
+const SHOW_CONSUMED_MODIFIERS = new Set<string>([...STAGE_POSE_MODIFIERS, 'left', 'right', 'center', 'instance']);
 
 /**
  * system 指令（@battle/@calendar/@affection/@event/@shop/@item）：修饰符原样经解释器
@@ -380,7 +381,8 @@ const SYSTEM_INSTRUCTIONS = new Set(['battle', 'calendar', 'affection', 'event',
 
 /**
  * 修饰符未消费检查（W003）：与引擎"避免静默无操作"（W002）哲学一致。
- *  - @show：仅 pos/left/right/center 被渲染层消费；effect/zoom/transition 等会静默丢弃 → 提醒。
+ *  - @show：舞台姿态/instance 与旧位置修饰符被消费；effect/zoom/transition 等会静默丢弃 → 提醒。
+ *  - @pose/@layer/@stage：共享舞台语法严格验证修饰符，合法参数被消费。
  *  - 其余核心指令：渲染层/解释器不消费任何修饰符，带修饰符即静默丢弃 → 提醒。
  *  - system 指令：修饰符交付宿主消费 → 跳过。
  *  - 自定义指令（customInstructions）：契约由作者负责 → 跳过（不在 IMPLEMENTED 集）。
@@ -397,7 +399,7 @@ export function checkConsumedModifiers(
         issues.push({
           severity: 'warning',
           code: 'W003',
-          text: `${at}: @show 修饰符 '@${key}' 未被渲染层消费（支持 @pos/@left/@right/@center）`,
+          text: `${at}: @show 修饰符 '@${key}' 未被渲染层消费（支持舞台姿态、@instance 和位置修饰符，见舞台 DSL）`,
           file: instr.file,
           line: instr.line,
           col: instr.col,
@@ -407,6 +409,7 @@ export function checkConsumedModifiers(
     return;
   }
   // system 指令修饰符交付宿主；自定义指令不在 IMPLEMENTED 集 → 两者都跳过
+  if (instr.name === 'pose' || instr.name === 'layer' || instr.name === 'stage') return;
   if (SYSTEM_INSTRUCTIONS.has(instr.name) || !IMPLEMENTED_INSTRUCTIONS.has(instr.name)) return;
   for (const key of instr.modifiers.keys()) {
     issues.push({

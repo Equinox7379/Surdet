@@ -171,8 +171,11 @@ export function renderTextCatalogSection(options: {
   const upload = h('input'); upload.type = 'file'; upload.accept = '.csv,text/csv'; upload.setAttribute('aria-label', '选择译稿表格');
   upload.onchange = () => run(async () => {
     const file = upload.files?.[0]; if (!file) return;
+    const previous = options.readCsv();
     const value = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await file.arrayBuffer());
-    if (current()) { csv.value = value; options.editCsv(value); preview = undefined; differences.replaceChildren(); status.textContent = '表格已读取，尚未修改项目；请预览导入差异。'; }
+    if (!current()) return;
+    if (options.readCsv() !== previous || upload.files?.[0] !== file) throw new Error('读取期间工作稿或选择的文件已改变，未替换编辑内容；请重新选择表格。');
+    csv.value = value; options.editCsv(value); preview = undefined; differences.replaceChildren(); status.textContent = '表格已读取，尚未修改项目；请预览导入差异。';
   });
   const header = h('header', 'config-ledger-header'), copy = h('div', 'config-section-copy');
   copy.append(h('h1', 'config-section-heading', '文本与译稿'), h('p', 'config-section-description', '管理正文、选项、人物显示名、界面文字和词条的译稿。固定文本键不随行号改变；播放语言在游戏设置中切换。'));

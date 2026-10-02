@@ -257,6 +257,10 @@ async function launchSession(caseId) {
       await this.clickTarget(`system:${mode}`);
       await this.waitOverlay('save-load');
       await this.clickTarget(slotTarget);
+      if (mode === 'save') {
+        const overwrite = page.getByRole('button', { name: '覆盖存档', exact: true });
+        if (await overwrite.isVisible()) await overwrite.press('Enter');
+      }
       await this.waitFor(`${mode} 完成`, () => {
         const d = window.__surdetDebug;
         return d?.uiSession?.base === 'game'
@@ -445,7 +449,7 @@ async function caseB(session) {
   const settingsPosition = positionKey((await session.snapshot()).position);
   await session.press('Space');
   if (positionKey((await session.snapshot()).position) !== settingsPosition) throw new Error('settings 内 Space 推进了剧情');
-  await session.clickTarget('settings:close');
+  if ((await session.snapshot()).activeOverlay === 'settings') await session.clickTarget('settings:close');
   await session.waitOverlay('system-menu');
   const returnedToSystemMenu = await session.snapshot();
   if (returnedToSystemMenu.uiSession?.overlay !== 'system-menu') throw new Error('settings 关闭未恢复 system-menu 返回上下文');
@@ -502,7 +506,16 @@ async function caseC(session) {
   await session.prepareTitle();
   await session.clickTarget('title:new');
   await session.waitGame();
-  const seed = await session.advanceByKeyboard();
+  // The opening fade is not a capturable presentation boundary. Seed several
+  // stable text boundaries before asserting an available rollback.
+  let seed;
+  for (let index = 0; index < 3; index += 1) {
+    await session.waitFor('回退种子正文与表现稳定', () => window.__surdetDebug?.rendererStatus !== 'typing'
+      && window.__surdetDebug?.canCaptureRollbackCheckpoint === true);
+    seed = await session.advanceByKeyboard();
+  }
+  await session.waitFor('回退输入前正文与表现稳定', () => window.__surdetDebug?.rendererStatus !== 'typing'
+    && window.__surdetDebug?.canCaptureRollbackCheckpoint === true);
   const availableTarget = positionKey(seed.after.position);
   await session.clickTarget('rail:rollback');
   await session.waitFor('可用回退完成', (expected) => {

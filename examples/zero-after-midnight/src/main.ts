@@ -80,7 +80,9 @@ import { ResolvedAudio } from '../../shared/resolved-audio.js';
 import { createSettingsStorage } from '../../shared/settings-storage.js';
 import { createBrowserSaveStorage, gameStoragePrefix } from '../../shared/player/browser-save-storage.js';
 import { listPlayerSaveSlots } from '../../shared/player/save-slot-list.js';
+import { createStarterOwnerTeardown } from '../../shared/player/owner-teardown.js';
 import { createConfiguredFontJobs, resolveBundledFontUrl } from '../../shared/font-jobs.js';
+import { readClearRecord, type GlobalClearRecord } from '../../shared/player/clear-record.js';
 import { installSceneHotReload } from '../../shared/scene-hmr.js';
 import { sceneFiles } from './scene-hmr-boundary.js';
 import type { PlayerOverlay, PlayerShellController } from '@surdet/host';
@@ -230,13 +232,16 @@ async function main(): Promise<void> {
 
   // 总线 + 解释器 + 渲染器（全家桶状态经 SystemHooks 随存档往返；成长系统引擎内聚，构造注入）
   const bus = new EventBus<CoreEventMap>();
-  const interp = new Interpreter(store, bus, registry, undefined, undefined, createSystemHooks([
+  const systemHooks = createSystemHooks([
     { id: 'calendar', snapshot: () => calendar.snapshot(), validate: (value) => calendar.validateSnapshot(value), restore: (value) => { calendar.validateSnapshot(value); calendar.restore(value); } },
     { id: 'combat', snapshot: () => combat.snapshot(), validate: (value) => combat.validateSnapshot(value), restore: (value) => { combat.validateSnapshot(value); combat.restore(value); } },
     { id: 'affection', snapshot: () => affection.snapshot(), validate: (value) => affection.validateSnapshot(value), restore: (value) => { affection.validateSnapshot(value); affection.restore(value); } },
     { id: 'achievements', snapshot: () => achievements.snapshot(), validate: (value) => achievements.validateSnapshot(value), restore: (value) => { achievements.validateSnapshot(value); achievements.restore(value); } },
     { id: 'eventScheduler', snapshot: () => scheduler.snapshot(), validate: (value) => scheduler.validateSnapshot(value), restore: (value) => { scheduler.validateSnapshot(value); scheduler.restore(value); } },
-  ]), undefined, growth);
+  ]);
+  const initialSystems = systemHooks.snapshot!();
+  const initialGrowth = growth.snapshot();
+  const interp = new Interpreter(store, bus, registry, undefined, undefined, systemHooks, undefined, growth);
   const audioManager = new AudioManager();
   /** 音频素材地址映射（loadAssets 填充：素材键 → Blob/文件 URL） */
   const audioUrls = new Map<string, string>();
@@ -283,7 +288,8 @@ async function main(): Promise<void> {
   });
   appEl.appendChild(runtime.canvas);
   runtime.resize();
-  window.addEventListener('resize', () => runtime.resize());
+  let gameResourcesDisposed = false;
+  window.addEventListener('resize', () => { if (!gameResourcesDisposed) runtime.resize(); });
   const renderer = runtime.controller;
   const commands = runtime.commands;
   const queries = runtime.queries;
@@ -397,12 +403,7 @@ async function main(): Promise<void> {
       return freezeDebug(targets);
     }
     if (menuOverlay?.type === 'save-load') {
-      for (let index = 0; index < (menuSnapshot?.saveLoadSlotCount ?? 0); index++) {
-        const column = index % 2;
-        const row = Math.floor(index / 2);
-        add(`save-load:slot-${index + 1}`, 150 + column * 502, 180 + row * 120, 480, 104);
-      }
-      add('save-load:close', 1160, 62, 70, 70);
+      for (const item of menuSnapshot?.saveLoadTargets ?? []) add(`save-load:${item.id}`, item.x, item.y, item.width, item.height);
       return freezeDebug(targets);
     }
     if (projection.dialogue?.backlogVisible) {
@@ -417,8 +418,7 @@ async function main(): Promise<void> {
       return freezeDebug(targets);
     }
     if (debugCommandRailVisible()) {
-      ['auto', 'skip', 'backlog', 'qsave', 'qload', 'rollback', 'settings', 'hide', 'menu']
-        .forEach((id, index) => add(`rail:${id}`, 812 + index * 48, 658, 44, 46));
+      for (const item of projection.dialogue?.commandRailTargets ?? []) add(`rail:${item.id}`, item.x, item.y, item.width, item.height);
     }
     return freezeDebug(targets);
   }
@@ -657,6 +657,7 @@ async function main(): Promise<void> {
       const snap = turnResumeSnap;
       turnResumeSnap = null;
       setTimeout(() => {
+        if (gameResourcesDisposed) return;
         try {
           interp.loadSnapshot(snap);
         } catch (err) {
@@ -670,6 +671,7 @@ async function main(): Promise<void> {
     endingTransitionActive = true;
     menu.showEnding('THE END');
     window.setTimeout(() => {
+      if (gameResourcesDisposed) return;
       showTitleScreen();
       endingTransitionActive = false;
     }, 2200);
@@ -700,6 +702,7 @@ async function main(): Promise<void> {
     config: gameConfig,
     fontBlobUrls,
     label: 'zero',
+    isActive: () => !gameResourcesDisposed,
     onError: message => dialogue.showBanner(message, 'tip'),
     resolveFontUrl,
     assets,
@@ -710,6 +713,7 @@ async function main(): Promise<void> {
     const desktopAsset = window.surdetAsset;
     const webFiles = import.meta.glob('../content/assets/**/*', { query: '?url', import: 'default', eager: true });
     const files = desktopAsset ? await desktopAsset.list() : Object.keys(webFiles).map(p => p.replace('../content/assets/', ''));
+    if (gameResourcesDisposed) return;
     const portraitBindings = resolveProjectPortraits(gameConfig, files.map(rel => `content/assets/${rel}`));
     assertUniquePortraitBindings(portraitBindings);
     for (const binding of portraitBindings) {
@@ -765,7 +769,7 @@ async function main(): Promise<void> {
     const loadAndRegister = async (rel: string, url: string, revoke?: () => void, retain?: () => void): Promise<void> => {
       try {
         const retained = await register(rel, url);
-        if (retained) retain?.();
+        if (retained && !gameResourcesDisposed) retain?.();
         else revoke?.();
       } catch (error) {
         revoke?.();
@@ -800,10 +804,12 @@ async function main(): Promise<void> {
       }
     }
     const finalProgress = await new AssetLoadQueue(4).run(jobs, (progress) => {
+      if (gameResourcesDisposed) return;
       lastLoadingProgress = { ...progress };
       loading.showLoading(progress);
     });
     lastLoadingProgress = { ...finalProgress };
+    if (gameResourcesDisposed) return;
     // All source URLs are now retained; never wait for sibling jobs inside the bounded queue.
     for (const binding of portraitBindings) if (binding.visual) {
       await assets.registerPortraitVisual(binding.role, binding.outfit, binding.expression, binding.visual, visualSources);
@@ -839,37 +845,42 @@ async function main(): Promise<void> {
   }
 
   // ===== 周目继承（兰斯式全局通关记录：@clear 事件 → 跨周目持久化；新周目开局应用继承） =====
-  /** 全局通关记录（跨存档/跨周目；Electron 与浏览器的 localStorage 均持久化到各自 userData） */
-  interface GlobalClearRecord {
-    endings: string[];
-    /** 累计通关周目数（每次游戏会话计 1；同周目多结局不重复计数） */
-    playthroughs: number;
-    /** 最近一次 @clear 时刻的变量全量快照（继承计算源） */
-    variables: Record<string, unknown>;
-    clearedAt: number;
-  }
   const CLEAR_KEY = window.surdetProfile ? 'surdet:clearRecord' : `${browserPrefix}clearRecord`;
   const profileStorage = new LocalStorageProfileStorage(localStorage, `${browserPrefix}profile:`);
+  let clearRecordWriteBlocked = false;
+  let clearRecordNotice: HTMLElement | undefined;
+  function clearRecordReadFailed(error: unknown): void {
+    clearRecordWriteBlocked = true;
+    console.warn('[zero] 通关记录读取失败，保留原记录：', error);
+    if (gameResourcesDisposed) return;
+    clearRecordNotice ??= document.createElement('div');
+    clearRecordNotice.setAttribute('role', 'alert');
+    clearRecordNotice.style.cssText = 'position:fixed;z-index:10000;bottom:16px;left:50%;transform:translateX(-50%);max-width:85vw;padding:12px 20px;background:#fff8ed;color:#573c2f;border-radius:8px;font:16px/1.6 sans-serif';
+    clearRecordNotice.textContent = '通关记录读取失败，原记录已保留。本次不保存周目继承，剧情存档仍可使用；请检查存储后重开游戏。';
+    document.body.append(clearRecordNotice);
+  }
   async function loadLegacyClearRecord(): Promise<GlobalClearRecord | null> {
     try {
       const raw = localStorage.getItem(CLEAR_KEY);
-      return raw ? (JSON.parse(raw) as GlobalClearRecord) : null;
-    } catch {
+      return raw === null ? null : readClearRecord(JSON.parse(raw), store, ngp);
+    } catch (error) {
+      clearRecordReadFailed(error);
       return null;
     }
   }
   async function loadClearRecord(): Promise<GlobalClearRecord | null> {
     try {
       const value = window.surdetProfile
-        ? await window.surdetProfile.read('clear-record')
-        : await profileStorage.read<GlobalClearRecord>('clear-record');
-      if (value !== null) return value as GlobalClearRecord;
+        ? await window.surdetProfile.read('clear-record', { strict: true })
+        : await profileStorage.read('clear-record', { strict: true });
+      if (value !== null) return readClearRecord(value, store, ngp);
     } catch (err) {
-      console.warn('[zero] Profile 通关记录读取失败，尝试兼容记录：', err);
+      clearRecordReadFailed(err);
     }
     return loadLegacyClearRecord();
   }
   async function saveClearRecord(rec: GlobalClearRecord): Promise<void> {
+    if (clearRecordWriteBlocked) return;
     try {
       if (window.surdetProfile) await window.surdetProfile.write('clear-record', rec);
       else await profileStorage.write('clear-record', rec);
@@ -891,6 +902,7 @@ async function main(): Promise<void> {
 
   // @clear：写入全局通关记录（结局收集 + 变量快照 + 周目计数）
   bus.on('clear', (p) => {
+    if (clearRecordWriteBlocked) return;
     const rec = clearRecord ?? { endings: [], playthroughs: 0, variables: {}, clearedAt: 0 };
     const freshEnding = !rec.endings.includes(p.ending);
     if (freshEnding) rec.endings.push(p.ending);
@@ -899,7 +911,7 @@ async function main(): Promise<void> {
       rec.playthroughs += 1;
     }
     // 继承源始终取最近一次 @clear 的变量值（同周目后续结局覆盖前值，语义 = 最新通关状态）
-    rec.variables = store.snapshot() as Record<string, unknown>;
+    rec.variables = store.snapshot();
     rec.clearedAt = Date.now();
     clearRecord = rec;
     void saveClearRecord(rec);
@@ -1014,7 +1026,7 @@ async function main(): Promise<void> {
         playerShell!.commands.consumePointer();
         galleryMusicCallbackCount += 1;
         const source = src ?? id;
-        const resolvedSource = audioUrls.get(source) ?? null;
+        const resolvedSource = audioUrls.get(`bgm:${source}`) ?? null;
         lastGalleryMusicRequest = {
           id,
           source,
@@ -1064,6 +1076,7 @@ async function main(): Promise<void> {
 
   /** 标题菜单选择（E2E 探针 titleSelect 与画面点击共用同一入口；自我迭代②） */
   async function titleSelect(id: string): Promise<void> {
+    if (gameResourcesDisposed) return;
     playerShell!.commands.consumePointer();
     switch (id) {
       case 'new': {
@@ -1072,17 +1085,20 @@ async function main(): Promise<void> {
         menu.hideTitle();
         playerShell!.commands.reset('game');
         store.reset();
+        interp.gallery.restore({ cgs: [], music: [], texts: [] });
+        interp.clearTracker.restore(undefined);
+        systemHooks.restore!(structuredClone(initialSystems));
+        growth.restore(structuredClone(initialGrowth));
         clearCountedThisSession = false; // 新周目会话开始，周目计数重新可用
         // 周目继承：存在全局通关记录时，按 ngp.json 继承项把通关值应用到新周目初始表
         const rec = await loadClearRecord();
+        if (gameResourcesDisposed) return;
         if (rec) {
           const inherited = ngp.computeInheritFrom(
             store.snapshot(),
             rec.variables as Record<string, VarValue>,
           );
-          for (const [name, value] of Object.entries(inherited)) {
-            if (store.has(name) && store.get(name) !== value) store.set(name, value);
-          }
+          store.restore(inherited, { allowReadonly: true });
           console.info(`[zero] 新周目开局（第 ${rec.playthroughs + 1} 周目，继承 ${ngp.inheritEntries().length} 项）`);
         }
         sessionStart = Date.now(); // 新周目重新计游戏时长
@@ -1124,17 +1140,20 @@ async function main(): Promise<void> {
     mode: 'save' | 'load',
     source: 'title' | 'game' | 'system-menu' = uiSnapshot().base,
   ): Promise<void> {
+    if (gameResourcesDisposed) return;
     if (source === 'title') leaveTitleForOverlay();
     let slots: SaveSlotView[];
     try {
       slots = await listPlayerSaveSlots(saves, browserSave, SLOT_IDS, mode);
     } catch (err) {
+      if (gameResourcesDisposed) return;
       if (source === 'title') showTitleScreen();
       else refreshCommandRail();
       console.error('[zero] 存档列表读取失败:', err);
       dialogue.showBanner('存档列表读取失败，请重试。', 'tip');
       return;
     }
+    if (gameResourcesDisposed) return;
     activeSaveLoad = { mode, slots };
     playerShell!.commands.open({ slot: 'save-load', source, mode });
   }
@@ -1151,6 +1170,7 @@ async function main(): Promise<void> {
   }
 
   async function selectSaveLoad(mode: 'save' | 'load', slotId: string): Promise<boolean> {
+    if (gameResourcesDisposed) return false;
     playerShell!.commands.consumePointer();
     if (mode === 'load') {
       const slot = activeSaveLoad?.slots.find((candidate) => candidate.id === slotId);
@@ -1169,6 +1189,7 @@ async function main(): Promise<void> {
       playerShell!.commands.beginOperation('saving');
       try {
         await saves.save(slotId, enrichSnapshot(snap));
+        if (gameResourcesDisposed) return false;
         playerShell!.commands.completeOperation({
           base: origin.base,
           overlay: 'none',
@@ -1180,6 +1201,7 @@ async function main(): Promise<void> {
         refreshCommandRail();
         return true;
       } catch (err) {
+        if (gameResourcesDisposed) return false;
         playerShell!.commands.failOperation(err);
         console.error('[zero] 存档失败:', err);
         return false;
@@ -1189,10 +1211,12 @@ async function main(): Promise<void> {
     playerShell!.commands.beginOperation('loading');
     try {
       const snap = await saves.load(slotId);
+      if (gameResourcesDisposed) return false;
       completeLoadedSnapshot(snap);
       console.info('[zero] 已读档', slotId);
       return true;
     } catch (err) {
+      if (gameResourcesDisposed) return false;
       playerShell!.commands.failOperation(err);
       console.error('[zero] 读档失败:', err);
       return false;
@@ -1200,6 +1224,7 @@ async function main(): Promise<void> {
   }
 
   async function restoreSaveLoad(slotId: string): Promise<boolean> {
+    if (gameResourcesDisposed) return false;
     playerShell!.commands.consumePointer();
     const slot = activeSaveLoad?.slots.find((candidate) => candidate.id === slotId);
     if (!slot || !slot.backupAvailable) {
@@ -1209,11 +1234,14 @@ async function main(): Promise<void> {
     playerShell!.commands.beginOperation('loading');
     try {
       await saves.restoreBackup(slotId);
+      if (gameResourcesDisposed) return false;
       const snap = await saves.load(slotId);
+      if (gameResourcesDisposed) return false;
       completeLoadedSnapshot(snap);
       console.info('[zero] 已恢复备份并读档', slotId);
       return true;
     } catch (err) {
+      if (gameResourcesDisposed) return false;
       playerShell!.commands.failOperation(err);
       console.error('[zero] 备份恢复失败:', err);
       return false;
@@ -1291,6 +1319,7 @@ async function main(): Promise<void> {
   let quickSaveInFlight: Promise<boolean> | null = null;
 
   function quickSave(): Promise<boolean> {
+    if (gameResourcesDisposed) return Promise.resolve(false);
     // 快速读档必须等待当前 IPC 写入完成，避免连续 F5/F9 读到旧槽位。
     if (quickSaveInFlight || isUiBusy()) return quickSaveInFlight ?? Promise.resolve(false);
     const snap = interp.saveSnapshot();
@@ -1303,6 +1332,7 @@ async function main(): Promise<void> {
     try {
       task = saves.save(QUICK_SLOT, enrichSnapshot({ ...snap, kind: 'quick' })).then(
         () => {
+          if (gameResourcesDisposed) return false;
           playerShell!.commands.completeOperation({
             base: origin.base,
             overlay: origin.overlay,
@@ -1315,6 +1345,7 @@ async function main(): Promise<void> {
           return true;
         },
         (err) => {
+          if (gameResourcesDisposed) return false;
           playerShell!.commands.failOperation(err);
           if (railWasVisible) dialogue.restoreCommandRail();
           console.error('[zero] 快速存档失败：', err);
@@ -1335,19 +1366,22 @@ async function main(): Promise<void> {
   }
 
   async function quickLoad(): Promise<boolean> {
+    if (gameResourcesDisposed) return false;
     if (quickSaveInFlight) await quickSaveInFlight;
-    if (isUiBusy() || uiSnapshot().base !== 'game' || uiSnapshot().overlay !== 'none') return false;
+    if (gameResourcesDisposed || isUiBusy() || uiSnapshot().base !== 'game' || uiSnapshot().overlay !== 'none') return false;
     try {
       if (!await saves.has(QUICK_SLOT)) return false;
     } catch (err) {
       console.error('[zero] 快速读档槽位读取失败：', err);
       return false;
     }
+    if (gameResourcesDisposed || isUiBusy() || uiSnapshot().base !== 'game' || uiSnapshot().overlay !== 'none') return false;
     const railWasVisible = debugProjection().dialogue?.commandRailVisible === true;
     playerShell!.commands.beginOperation('loading');
     if (railWasVisible) dialogue.hideCommandRail();
     try {
       const snap = await saves.load(QUICK_SLOT);
+      if (gameResourcesDisposed) return false;
       clearRollback();
       interp.loadSnapshot(snap);
       sessionStart = Date.now() - Math.max(0, snap.meta.playTimeSec ?? 0) * 1000;
@@ -1358,6 +1392,7 @@ async function main(): Promise<void> {
       refreshCommandRail();
       return true;
     } catch (err) {
+      if (gameResourcesDisposed) return false;
       playerShell!.commands.failOperation(err);
       if (railWasVisible) dialogue.restoreCommandRail();
       console.error('[zero] 快速读档失败：', err);
@@ -1496,20 +1531,20 @@ async function main(): Promise<void> {
   });
   gamepad.start();
 
-  let gameResourcesDisposed = false;
+  const gameResourcesOwner = createStarterOwnerTeardown({
+    host,
+    runtime: { dispose: () => { try { presentationConnection.disconnect(); } finally { runtime.dispose(); } } },
+    audioManager,
+    gamepad,
+    assetBlobUrls,
+    fontBlobUrls,
+    revokeObjectUrl: url => URL.revokeObjectURL(url),
+  });
   function disposeGameResources(): void {
     if (gameResourcesDisposed) return;
     gameResourcesDisposed = true;
-    // Runtime disposal owns the renderer asset registry. Keep this boundary
-    // synchronous and never issue an assets command after an external dispose.
-    gamepad.stop();
-    audioManager.dispose();
-    presentationConnection.disconnect();
-    runtime.dispose();
-    for (const url of assetBlobUrls) URL.revokeObjectURL(url);
-    assetBlobUrls.clear();
-    for (const url of fontBlobUrls) URL.revokeObjectURL(url);
-    fontBlobUrls.clear();
+    clearRecordNotice?.remove();
+    gameResourcesOwner.dispose();
   }
   window.addEventListener('beforeunload', disposeGameResources);
 
@@ -1523,6 +1558,7 @@ async function main(): Promise<void> {
   };
   bus.on('stateReset', () => { releaseCtrlTempSkip(); });
   window.addEventListener('keydown', (e) => {
+    if (gameResourcesDisposed) return;
     if (e.key !== 'Control') return;
     if (isTitleScreen()) { ctrlTempSkip = false; return; }
     if (e.repeat) return;
@@ -1536,11 +1572,13 @@ async function main(): Promise<void> {
     refreshCommandRail();
   });
   window.addEventListener('keyup', (e) => {
+    if (gameResourcesDisposed) return;
     if (e.key !== 'Control') return;
     if (isTitleScreen()) { ctrlTempSkip = false; return; }
     releaseCtrlTempSkip();
   });
   window.addEventListener('blur', () => {
+    if (gameResourcesDisposed) return;
     if (isTitleScreen()) { ctrlTempSkip = false; return; }
     releaseCtrlTempSkip();
   });
@@ -1587,6 +1625,7 @@ async function main(): Promise<void> {
   // 键位：Space/Enter 推进 · 方向键/数字键 选择 · Ctrl 临时快进 · X 全部跳过
   //       F5/F9 存读档 · A 自动 · S 快进 · L 文字记录 · H 隐藏界面 · G 鉴赏 · O 设置 · Esc 菜单 · [ ] 文本速度
   window.addEventListener('keydown', (e) => {
+    if (gameResourcesDisposed) return;
     if (isTitleScreen()) return;
     if (isOverlay('backlog')) {
       if (e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'KeyF') {
@@ -1724,12 +1763,14 @@ async function main(): Promise<void> {
 
   // 错误上报（渲染层崩溃可见化；桌面环境同步落日志文件）
   window.addEventListener('error', (e) => {
+    if (gameResourcesDisposed) return;
     lastRendererError = serializeDebugError(e.error ?? e.message);
     showFatal(e.message || String(e.error));
     void window.surdetApp?.log('error', e.message || String(e.error));
     void window.surdetApp?.reportError('renderer-error', e.message || String(e.error));
   });
   window.addEventListener('unhandledrejection', (e) => {
+    if (gameResourcesDisposed) return;
     const message = e.reason instanceof Error ? e.reason.message : String(e.reason);
     lastRendererError = serializeDebugError(e.reason ?? message);
     showFatal(message);
@@ -1737,7 +1778,14 @@ async function main(): Promise<void> {
   });
 
   // 启动：加载素材 → 标题画面（不再直进剧情）
-  await loadAssets();
+  try { await loadAssets(); }
+  catch (error) {
+    const cancelled = gameResourcesDisposed;
+    disposeGameResources();
+    if (!cancelled) throw error;
+    return;
+  }
+  if (gameResourcesDisposed) return;
   dialogue.showCommandRail([], onCommandRailSelect);
   refreshCommandRail();
   showTitleScreen();

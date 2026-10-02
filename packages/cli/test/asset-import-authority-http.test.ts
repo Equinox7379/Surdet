@@ -561,6 +561,82 @@ describe('project asset import authority HTTP boundary', () => {
     expect(wrongBindingScope.response.status).toBe(403);
   });
 
+  it.each([
+    ['invalid lead byte', [0xff]],
+    ['overlong encoding', [0xe0, 0x80, 0xaf]],
+    ['truncated multibyte character', [0xf0, 0x9f]],
+    ['UTF-16 byte marker', [0xff, 0xfe]],
+  ])('rejects %s in a JSON request before passing replaced source text to the authority', async (_name, bytes) => {
+    const fixture = await harness();
+    const body = Buffer.concat([Buffer.from('{"browserSessionId":"browser-'), Buffer.from(bytes), Buffer.from('"}')]);
+    const rejected = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/binding/challenges`, {
+      method: 'POST', headers: headers(fixture.origin), body,
+    });
+    expect(rejected.response.status).toBe(400);
+    expect(rejected.body).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } });
+    expect(fixture.target.calls.some(([name]) => name === 'challenge')).toBe(false);
+  });
+
+  it('preserves real UTF-8 Chinese, emoji and intentionally encoded replacement characters', async () => {
+    const fixture = await harness();
+    const browserSessionId = 'browser-中文🙂�';
+    const accepted = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/binding/challenges`, {
+      method: 'POST', headers: headers(fixture.origin), body: Buffer.from(JSON.stringify({ browserSessionId })),
+    });
+    expect(accepted.response.status).toBe(200);
+    expect(fixture.target.calls).toContainEqual(['challenge', browserSessionId]);
+  });
+
+  it('keeps the existing JSON request BOM rejection', async () => {
+    const fixture = await harness();
+    const rejected = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/binding/challenges`, {
+      method: 'POST', headers: headers(fixture.origin), body: Buffer.from('\uFEFF{"browserSessionId":"browser-1"}'),
+    });
+    expect(rejected.response.status).toBe(400);
+    expect(fixture.target.calls.some(([name]) => name === 'challenge')).toBe(false);
+  });
+
+  it('rejects invalid UTF-8 in a real guarded JSON publication without replacing the saved source', async () => {
+    const fixture = await bindingHarness();
+    await mkdir(path.join(fixture.projectRoot, 'content/scenario'), { recursive: true });
+    await writeFile(path.join(fixture.projectRoot, 'game.config.json'), '{"entryScene":"start","variables":{}}');
+    const file = path.join(fixture.projectRoot, 'content/scenario/start.gal');
+    const original = '@scene start\n旁白：原稿必须保留。\n@end\n';
+    await writeFile(file, original);
+    const workspace = new EditorWorkspaceAuthority(await realpath(fixture.projectRoot), {
+      leaseManager: new NodeLocalLeaseManager(path.join(path.dirname(fixture.projectRoot), 'coordination')),
+    });
+    fixture.target.workspace = workspace;
+    const browserSessionId = 'utf8-publication-browser';
+    const token = await bindProject(fixture, browserSessionId);
+    const baseline = (await workspace.snapshot()).diskBaseline;
+    const state = { workspaceSessionId: itemId, browserSessionId, workspaceGeneration: 1, availability: 'busy' as const,
+      dirtyScopes: [], busyReasons: ['saving' as const], blockedReasons: [] };
+    try {
+      const heartbeat = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/workspace/heartbeat`, {
+        method: 'POST', headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: token }),
+        body: JSON.stringify({ ...state, workspaceGeneration: 0, availability: 'clean', busyReasons: [] }),
+      });
+      expect(heartbeat.response.status, JSON.stringify(heartbeat.body)).toBe(200);
+      const begun = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/workspace/begin`, {
+        method: 'POST', headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: token }),
+        body: JSON.stringify({ ...state, purpose: 'save-all', expectedProjectRevision: baseline.projectRevision,
+          expectedCoordinationRevision: baseline.coordinationRevision }),
+      });
+      expect(begun.response.status, JSON.stringify(begun.body)).toBe(200);
+      const body = JSON.stringify({ ...state, writeLeaseId: begun.body.data.writeLeaseId, path: 'content/scenario/start.gal',
+        expectedSha256: baseline.files.find(entry => entry.path === 'content/scenario/start.gal')!.sha256,
+        text: '@scene start\n旁白：BYTE_FAULT\n@end\n' });
+      const offset = body.indexOf('BYTE_FAULT');
+      const invalid = Buffer.concat([Buffer.from(body.slice(0, offset)), Buffer.from([0xff]), Buffer.from(body.slice(offset + 'BYTE_FAULT'.length))]);
+      const published = await request(fixture.origin, `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/workspace/publish`, {
+        method: 'POST', headers: headers(fixture.origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: token }), body: invalid,
+      });
+      expect({ status: published.response.status, text: await readFile(file, 'utf8') }).toEqual({ status: 400, text: original });
+      expect(published.body.error.code).toBe('INVALID_REQUEST');
+    } finally { await workspace.close(); }
+  });
+
   it('rejects a previous binding token after the same browser session rebinds', async () => {
     const fixture = await bindingHarness();
     const browserSessionId = 'browser-binding-rotation';

@@ -732,7 +732,7 @@ async function readJsonBody(request: IncomingMessage, maxBytes: number, timeoutM
       cleanup();
       try {
         if (raw) { resolve(Buffer.concat(chunks)); return; }
-        const text = Buffer.concat(chunks).toString('utf8');
+        const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks));
         if (text.length === 0) throw new AssetImportAuthorityError('INVALID_REQUEST', '请求正文不能为空');
         resolve(JSON.parse(text));
       } catch (error) {

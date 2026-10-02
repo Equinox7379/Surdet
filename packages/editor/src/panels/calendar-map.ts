@@ -5,7 +5,7 @@
  * 从节点右侧连接点拖到另一节点添加 requires、点击连线删除 requires。
  * 纯函数（clamp/宽度/坐标解析/重叠/边界点/requires 增删）可单测；DOM 部分仅依赖行模型（RowMap）。
  */
-import { h } from '../state.js';
+import { h, setStatus } from '../state.js';
 import type { RowMap } from '../config-edit.js';
 
 /** 画布逻辑尺寸（viewBox；渲染时等比拉伸） */
@@ -42,9 +42,22 @@ export function readRequires(row: RowMap): string[] {
   }
 }
 
-/** 行模型追加 requires（已存在/自身引用不重复加；返回是否变更） */
+/** 连线编辑不能把尚未写完或类型不正确的工作稿当空列表覆盖。 */
+function editableRequires(row: RowMap): string[] | null {
+  const text = String(row.requires ?? '').trim();
+  if (text === '') return [];
+  try {
+    const value: unknown = JSON.parse(text);
+    return Array.isArray(value) && value.every((item): item is string => typeof item === 'string') ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 行模型追加 requires（已存在/空白不重复加；返回是否变更） */
 export function addRequiresToRow(row: RowMap, reqId: string): boolean {
-  const list = readRequires(row);
+  const list = editableRequires(row);
+  if (list === null) return false;
   if (reqId.trim().length === 0 || list.includes(reqId)) return false;
   list.push(reqId);
   row.requires = JSON.stringify(list);
@@ -53,7 +66,8 @@ export function addRequiresToRow(row: RowMap, reqId: string): boolean {
 
 /** 行模型移除 requires（不存在返回 false） */
 export function removeRequiresFromRow(row: RowMap, reqId: string): boolean {
-  const list = readRequires(row);
+  const list = editableRequires(row);
+  if (list === null) return false;
   const idx = list.indexOf(reqId);
   if (idx < 0) return false;
   list.splice(idx, 1);
@@ -192,8 +206,13 @@ export function renderCalendarMap(
         const targetRow = rowOf.get(id);
         if (!targetRow) return;
         if (!readRequires(targetRow).includes(req)) return; // 无变更不拍快照
+        const next = { ...targetRow };
+        if (!removeRequiresFromRow(next, req)) {
+          setStatus('前置节点工作稿尚未完成，请先补齐字符串数组，再修改连线', false, 5000);
+          return;
+        }
         opts?.onBeforeEdit?.(); // 变更前拍快照：Ctrl+Z 可恢复被删的前置（审阅轮 Minor 1 修复）
-        removeRequiresFromRow(targetRow, req);
+        targetRow.requires = next.requires!;
         onMoved();
       });
       svg.appendChild(hit);
@@ -303,8 +322,13 @@ export function renderCalendarMap(
           if (Math.abs(p.x - geom.x) <= geom.w / 2 && Math.abs(p.y - geom.y) <= NODE_H / 2) {
             const targetRow = rowOf.get(geom.id);
             if (targetRow && !readRequires(targetRow).includes(id) && id.trim().length > 0) {
+              const next = { ...targetRow };
+              if (!addRequiresToRow(next, id)) {
+                setStatus('前置节点工作稿尚未完成，请先补齐字符串数组，再修改连线', false, 5000);
+                return;
+              }
               opts?.onBeforeEdit?.(); // 变更前拍快照：Ctrl+Z 可撤销新增的前置（审阅轮 Minor 1 修复）
-              addRequiresToRow(targetRow, id);
+              targetRow.requires = next.requires!;
               onMoved();
             }
             return;

@@ -58,6 +58,13 @@ describe('computeProjectStats', () => {
     expect(s.estMinutes).toBe(0);
     expect(s.perScene).toEqual([]);
   });
+
+  it('keeps prototype-shaped scene names in the shared statistics projection', () => {
+    const stats = computeProjectStats([{ id: '__proto__', text: '凛：合法。\n@choice\n  继续\n  返回' }]);
+    expect(stats.dialogueLines).toBe(1);
+    expect(stats.choices).toBe(2);
+    expect(stats.perScene).toEqual([{ id: '__proto__', chars: 3, dialogueLines: 1, choices: 2 }]);
+  });
 });
 
 describe('listLabels（预览"从标签播放"目标）', () => {

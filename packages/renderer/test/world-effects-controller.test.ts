@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Container } from 'pixi.js';
+import { Container, Graphics } from 'pixi.js';
 import { WorldEffectsController } from '../src/world-effects-controller.js';
 
 function makeController() {
@@ -45,5 +45,22 @@ describe('WorldEffectsController', () => {
     second.controller.update(10);
     second.controller.reset();
     expect(second.world.mask).toBeFalsy();
+  });
+
+  it.each(['active', 'completed', 'reset'] as const)('destroys the private circle mask and context after %s on controller teardown', (phase) => {
+    const f = makeController();
+    f.controller.transition('circle', 100);
+    f.controller.update(50);
+    const mask = f.world.mask as Graphics;
+    const context = mask.context;
+    if (phase === 'completed') f.controller.update(50);
+    if (phase === 'reset') f.controller.reset();
+    expect(mask.destroyed).toBe(false);
+    f.controller.destroy();
+    expect(f.world.mask).toBeFalsy();
+    expect(f.screen.children).toHaveLength(0);
+    expect(mask.destroyed).toBe(true);
+    expect(context.destroyed).toBe(true);
+    expect(() => f.controller.destroy()).not.toThrow();
   });
 });

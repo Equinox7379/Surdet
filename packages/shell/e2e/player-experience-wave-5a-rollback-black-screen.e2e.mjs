@@ -361,6 +361,7 @@ async function launchSession(sessionId, mode) {
           && debug?.activeOverlay === null
           && debug?.rendererStatus !== 'typing'
           && debug?.status === 'awaiting-advance'
+          && debug?.canCaptureRollbackCheckpoint === true
           && (key === null || keyNow === key);
       }, expectedKey, 20000);
     },
@@ -538,6 +539,10 @@ async function runSession(sessionId, mode, cycleCount) {
     await session.clickTarget('title:new', 'title:new');
     await session.waitFor('正式 Zero 游戏入口', () => window.__surdetDebug?.uiSession?.base === 'game'
       && window.__surdetDebug?.position !== null, undefined, 30000);
+    // The opening text was emitted during a fade and is intentionally absent
+    // from rollback history. Seed one real capturable text boundary first.
+    await session.waitDialogueStable('opening fade completed');
+    session.historySeed = await session.advanceOne('capturable history seed');
     const cycles = [];
     for (let cycle = 0; cycle < cycleCount; cycle += 1) {
       const checkpoints = [];
@@ -606,6 +611,7 @@ async function runSession(sessionId, mode, cycleCount) {
       ok: true,
       userData: session.userData,
       identity: session.identity,
+      historySeed: session.historySeed ?? null,
       cycles,
       attempts: session.attempts,
       screenshots: session.screenshots,

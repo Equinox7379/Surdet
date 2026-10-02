@@ -79,6 +79,19 @@ describe('surdet audit：内容审计', () => {
     expect(findings.some((f) => f.code === 'NO_EXIT' && f.text.includes('s2'))).toBe(true);
   });
 
+  it.each([
+    ['正文中的指令文字', '旁白：画面文字含@end但没有结束指令。', true],
+    ['注释中的示例', '// @end 是说明\n旁白：仍然是无出口片段。', true],
+    ['真实返回', '旁白：片段结束。\n@return', false],
+    ['真实显式结束', '旁白：片段结束。\n@end', false],
+    ['真实选项内结束', '@choice\n  完成 -> @end', false],
+  ] as const)('NO_EXIT 核对语义出口而不是源码子串：%s', (_name, source, expected) => {
+    const main = '@scene main\n@call fragment\n@end';
+    const compiled = new Map([['main', compile('main', main)], ['fragment', compile('fragment', source)]]);
+    const findings = auditBranches(compiled, 'main', new Map([['main', main], ['fragment', source]]));
+    expect(findings.some(finding => finding.code === 'NO_EXIT' && finding.file === 'fragment.gal')).toBe(expected);
+  });
+
   it('auditStats 节奏统计', () => {
     const compiled = new Map([['s1', compile('s1', '凛：你好。\n主角：你好。\n@choice\n  走 -> @goto a\n@label a\n@end')]]);
     const { stats, totals } = auditStats(compiled);

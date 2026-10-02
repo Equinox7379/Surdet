@@ -388,7 +388,10 @@ describe('Menu backup restore projection contract', () => {
         { id: '1', empty: false, readError: '存档损坏', backupAvailable: true },
         { id: '2', empty: false, label: '健康主档', backupError: '备份损坏' },
       ] }, onSelect, vi.fn(), { onRestore });
-      findParentWithText(runtime.root, '存档损坏').emit('pointerdown', pointerEvent);
+      const damagedCard = findParentWithText(runtime.root, '存档损坏');
+      expect(damagedCard.accessibleHint).toContain('存档损坏');
+      expect(damagedCard.accessibleHint).not.toContain('空槽位');
+      damagedCard.emit('pointerdown', pointerEvent);
       expect(onSelect).not.toHaveBeenCalled();
       findTextDeep(runtime.root, '恢复备份并读取').emit('pointerdown', pointerEvent);
       expect(onRestore).not.toHaveBeenCalled();

@@ -148,27 +148,32 @@ function idbTransactionDone(transaction: IDBTransaction): Promise<void> {
 export async function resolveAutosaveProjectIdentity(
   handle: FileSystemDirectoryHandle | null,
 ): Promise<string | null> {
-  if (!handle || typeof indexedDB === 'undefined' || typeof crypto.randomUUID !== 'function') return null;
+  if (!handle || typeof indexedDB === 'undefined' || typeof crypto.randomUUID !== 'function'
+    || typeof navigator === 'undefined' || !navigator.locks) return null;
 
-  let database: IDBDatabase | null = null;
   try {
-    database = await openAutosaveProjectRegistry();
-    const read = database.transaction('project-handles', 'readonly').objectStore('project-handles');
-    const records = await idbRequest(read.getAll()) as AutosaveProjectHandleRecord[];
-    const existingId = await matchingAutosaveProjectIdentity(handle, records);
-    if (existingId) return existingId;
+    // 同源多页面可能同时首次打开同一目录，身份检查与登记必须共享同一锁。
+    return await navigator.locks.request('surdet-editor:autosave-project-identity', async () => {
+      const database = await openAutosaveProjectRegistry();
+      try {
+        const read = database.transaction('project-handles', 'readonly').objectStore('project-handles');
+        const records = await idbRequest(read.getAll()) as AutosaveProjectHandleRecord[];
+        const existingId = await matchingAutosaveProjectIdentity(handle, records);
+        if (existingId) return existingId;
 
-    const id = crypto.randomUUID();
-    const transaction = database.transaction('project-handles', 'readwrite');
-    const completed = idbTransactionDone(transaction);
-    await idbRequest(transaction.objectStore('project-handles').put({ id, handle }));
-    await completed;
-    return id;
+        const id = crypto.randomUUID();
+        const transaction = database.transaction('project-handles', 'readwrite');
+        const completed = idbTransactionDone(transaction);
+        await idbRequest(transaction.objectStore('project-handles').put({ id, handle }));
+        await completed;
+        return id;
+      } finally {
+        database.close();
+      }
+    });
   } catch {
     // 无法证明物理目录身份时禁用该项目的 autosave，绝不按名称或内容猜测。
     return null;
-  } finally {
-    database?.close();
   }
 }
 

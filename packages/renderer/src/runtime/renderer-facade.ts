@@ -372,8 +372,8 @@ export class RendererFacade {
       stopParticles: () => this.#callWorld('stopParticles', this.#worldPort?.stopParticles, this.#stage.stopParticles),
       applyTimelineFrame: (event) => this.#callWorld('applyTimelineFrame', this.#worldPort?.applyTimelineFrame, this.#stage.applyTimelineFrame, event),
       setPortraitFocus: (characterId) => this.#callWorld('setPortraitFocus', this.#worldPort?.setPortraitFocus, this.#stage.setPortraitFocus, characterId),
-      setPortraitSpeaking: (speaking) => { if (this.#worldPort) this.#worldPort.setPortraitSpeaking?.(speaking); else this.#stage.setPortraitSpeaking?.(speaking); },
-      setPortraitSkipping: (skipping) => { if (this.#worldPort) this.#worldPort.setPortraitSkipping?.(skipping); else this.#stage.setPortraitSkipping?.(skipping); },
+      setPortraitSpeaking: (speaking) => { this.#ensureActive('world', 'setPortraitSpeaking'); if (this.#worldPort) this.#worldPort.setPortraitSpeaking?.(speaking); else this.#stage.setPortraitSpeaking?.(speaking); },
+      setPortraitSkipping: (skipping) => { this.#ensureActive('world', 'setPortraitSkipping'); if (this.#worldPort) this.#worldPort.setPortraitSkipping?.(skipping); else this.#stage.setPortraitSkipping?.(skipping); },
     };
 
     const dialogue: DialogueCommands = {

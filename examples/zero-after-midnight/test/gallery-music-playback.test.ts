@@ -32,7 +32,9 @@ describe('Gallery music playback wiring', () => {
     expect(inner.playBgm).toHaveBeenCalledWith('blob:music', undefined);
     expect(inner.playAmbience).toHaveBeenCalledWith('blob:rain', 125);
     expect(inner.playSe).toHaveBeenCalledWith('blob:bell');
-    expect(inner.playVoice).toHaveBeenCalledWith('blob:voice');
+    expect(inner.playVoice).toHaveBeenCalledWith('blob:voice', undefined);
+    audio.playVoice('same', { replay: true });
+    expect(inner.playVoice).toHaveBeenLastCalledWith('blob:voice', { replay: true });
     expect(audio.snapshotPlayback()).toEqual({ bgm: 'same', ambience: 'same' });
     audio.restorePlayback({ bgm: 'same', ambience: 'same' });
     expect(inner.restorePlayback).toHaveBeenCalledWith({ bgm: 'blob:music', ambience: 'blob:rain' });
@@ -40,6 +42,6 @@ describe('Gallery music playback wiring', () => {
     expect(inner.playBgm).toHaveBeenLastCalledWith(null, undefined);
     expect(inner.playAmbience).toHaveBeenLastCalledWith(null, 0);
     audio.playVoice('https://example.invalid/voice.wav');
-    expect(inner.playVoice).toHaveBeenLastCalledWith('https://example.invalid/voice.wav');
+    expect(inner.playVoice).toHaveBeenLastCalledWith('https://example.invalid/voice.wav', undefined);
   });
 });

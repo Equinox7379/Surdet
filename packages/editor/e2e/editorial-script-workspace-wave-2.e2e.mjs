@@ -226,6 +226,7 @@ async function run() {
   const serverStderr = [];
   const starterBefore = hashProjectTree(starterRoot);
   const browserFiles = fileMapForDirectory(starterRoot);
+  const expectedProjectName = JSON.parse(fs.readFileSync(path.join(starterRoot, 'game.config.json'), 'utf8')).title;
   const injectedBefore = browserFileMapTreeIdentity(browserFiles);
   let browser = null;
   let page = null;
@@ -280,7 +281,7 @@ async function run() {
       timelineCount: window.surdetEditorDebug?.state?.timelines?.length ?? null,
       assetCount: window.surdetEditorDebug?.state?.dirAssets?.length ?? null,
     }));
-    assert(opened.projectName === 'starter', `project bar did not show Starter: ${opened.projectName}`);
+    assert(opened.projectName === expectedProjectName, `project bar did not show configured title: ${opened.projectName}`);
     assert(opened.sceneCount === 7, `expected 7 real Starter scenes, got ${opened.sceneCount}`);
     assert(opened.timelineCount === 1, `expected 1 real Starter timeline, got ${opened.timelineCount}`);
     assert(opened.assetCount >= 6, `expected real Starter assets, got ${opened.assetCount}`);

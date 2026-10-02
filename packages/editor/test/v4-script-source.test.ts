@@ -9,6 +9,7 @@ import {
 } from '../src/v4/script-source.js';
 
 const branch = '@scene test\r\n@choice\r\n  继续 -> @goto again\r\n  离开 -> @goto end\r\n@label again\r\n岚:你好\r\n@label end\r\n@end';
+const separatedBranch = '@scene test\r\n@choice\r\n// 第一项说明\r\n\r\n  继续 -> @goto again\r\n\t// 第二项说明\r\n\r\n  离开 -> @goto end\r\n@label again\r\n岚:你好\r\n@label end\r\n@end';
 describe('V4 source adapters use shared rows and preserve B01', () => {
   it('changes an expression parameter without dropping position or an extra argument', () => {
     expect(setInstructionArgument('  @show  lynn:uniform\tnormal  extra @ right  ', 1, 'despair'))
@@ -73,6 +74,38 @@ describe('V4 source adapters use shared rows and preserve B01', () => {
   });
   it('moves the group without detaching options', () => {
     expect(moveStep(branch, 2, 1).text).toContain('@label again\r\n@choice\r\n  继续');
+  });
+  it('groups Core-supported choices across their intervening comments and blank rows', () => {
+    const program = compileScene(separatedBranch, 'test.gal', 'test');
+    expect(program.instructions.find(instruction => instruction.op === 'choice')).toMatchObject({ options: [{ label: '继续' }, { label: '离开' }] });
+    const rows = parseScript(separatedBranch);
+    for (const index of [1, 2, 3, 4, 5, 6, 7]) expect(stepAt(rows, index)).toEqual({ start: 1, end: 7 });
+    expect(scriptSteps(rows)).toHaveLength(scriptSteps(parseScript(branch)).length);
+  });
+  it('deletes the complete supported choice rather than leaving detached options', () => {
+    expect(deleteStep(separatedBranch, 4).text).toBe('@scene test\r\n@label again\r\n岚:你好\r\n@label end\r\n@end');
+  });
+  it('duplicates the complete supported choice rather than a single detached option', () => {
+    const duplicated = compileScene(duplicateStep(separatedBranch, 4).text, 'test.gal', 'test');
+    const choices = duplicated.instructions.filter(instruction => instruction.op === 'choice');
+    expect(choices).toHaveLength(2);
+    for (const choice of choices) expect(choice.options.map(option => option.label)).toEqual(['继续', '离开']);
+  });
+  it('keeps separators following the final option outside the choice step, including unfinished choices', () => {
+    const source = '@choice\n  继续 -> @goto again\n\n// 下一段说明\n@label again\n@end';
+    const rows = parseScript(source);
+    expect(stepAt(rows, 0)).toEqual({ start: 0, end: 1 });
+    expect(stepAt(rows, 2)).toEqual({ start: 2, end: 2 });
+    expect(stepAt(rows, 3)).toEqual({ start: 3, end: 3 });
+    expect(deleteStep(source, 1).text).toBe('\n// 下一段说明\n@label again\n@end');
+    expect(scriptSteps(parseScript('@choice\n\n// 继续输入\n'))).toEqual([{ start: 0, end: 0 }, { start: 1, end: 1 }, { start: 2, end: 2 }]);
+  });
+  it.each(['button', 'pointer'] as const)('moves all supported choice rows through %s ordering', mode => {
+    const edited = mode === 'button' ? moveStep(separatedBranch, 7, 1) : moveStepBefore(separatedBranch, 4, 9);
+    const choiceSource = separatedBranch.slice(separatedBranch.indexOf('@choice'), separatedBranch.indexOf('@label again'));
+    expect(edited.text).toContain(choiceSource);
+    const program = compileScene(edited.text, 'test.gal', 'test');
+    expect(program.instructions.find(instruction => instruction.op === 'choice')).toMatchObject({ options: [{ label: '继续' }, { label: '离开' }] });
   });
   it('preserves the file terminal newline after moving its last row', () => {
     expect(moveStep('a\r\nb', 1, -1).text).toBe('b\r\na');

@@ -745,7 +745,7 @@ export class WorldLayer implements WorldProjectionPort {
     }
     this.#invalidatePreparation();
     this.#requestFrame();
-    const { animation: _animation, ...liveView } = view;
+    const { animation: _animation, pose: _pose, frame: _frame, ...liveView } = view;
     this.#portraitViews.set(key, { ...liveView, ...(view.pose ? { pose: { ...view.pose } } : {}), ...(view.frame ? { frame: { ...view.frame } } : {}) });
     const width = Math.min(this.#w * 0.48, this.#h * 1.28 * texture.width / Math.max(1, texture.height));
     const height = (texture.height / Math.max(1, texture.width)) * width;
@@ -913,7 +913,7 @@ export class WorldLayer implements WorldProjectionPort {
     if (this.#disposed || !this.#presentation.particleEnabled) return;
     if (this.#particleKind === kind) return;
     this.stopParticles();
-    const preset = PARTICLE_PRESETS[kind];
+    const preset = Object.hasOwn(PARTICLE_PRESETS, kind) ? PARTICLE_PRESETS[kind] : undefined;
     if (!preset) return;
     this.#particleKind = kind;
     const count = Math.min(this.#quality.settings.maxParticles, Math.max(1, Math.round(preset.count * this.#quality.settings.particleScale)));
@@ -1330,7 +1330,7 @@ export class WorldLayer implements WorldProjectionPort {
     return { ...view, ...(view.pose ? { pose: { ...view.pose } } : {}), ...(view.frame ? { frame: { ...view.frame } } : {}), ...(animation ? { animation } : {}) };
   }
 
-  #destroyPortrait(sprite: PortraitDisplay): void { this.#portraitPlayers.delete(sprite); sprite.destroy({ children: true }); }
+  #destroyPortrait(sprite: PortraitDisplay): void { this.#portraitPlayers.delete(sprite); sprite.destroy({ children: true, context: true }); }
 
   #portraitTint(view: PortraitView | undefined): number {
     // Focus dims the drawing, not its opacity: the scenery must not show through a person.
@@ -1467,7 +1467,7 @@ export class WorldLayer implements WorldProjectionPort {
   #registerDisplay(key: string, display: Container | Graphics): void {
     this.#lifecycle.register('world', 'display', key, () => {
       if (display.parent) display.parent.removeChild(display as Container);
-      display.destroy({ children: true });
+      display.destroy({ children: true, context: true });
     });
   }
 
@@ -1600,7 +1600,7 @@ export class WorldLayer implements WorldProjectionPort {
     if (typeof raw.tint !== 'object' || raw.tint === null || Array.isArray(raw.tint)) throw invalidSnapshot('tint is invalid');
     const tint = raw.tint as Record<string, unknown>;
     if (!finiteNumber(tint.color) || tint.color < 0 || tint.color > 0xffffff || !Number.isInteger(tint.color) || !finiteNumber(tint.alpha) || tint.alpha < 0 || tint.alpha > 1) throw invalidSnapshot('tint is outside bounds');
-    if (!(raw.particleKind === null || (typeof raw.particleKind === 'string' && raw.particleKind in PARTICLE_PRESETS))) throw invalidSnapshot('particleKind is invalid');
+    if (!(raw.particleKind === null || (typeof raw.particleKind === 'string' && Object.hasOwn(PARTICLE_PRESETS, raw.particleKind)))) throw invalidSnapshot('particleKind is invalid');
     const layers: StageLayerDefinition[] = [];
     if (extended) {
       if (!Array.isArray(raw.layers) || raw.layers.length > 64) throw invalidSnapshot('Stage layers are invalid');

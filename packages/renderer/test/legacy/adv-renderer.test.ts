@@ -1103,9 +1103,10 @@ describe('AdvRenderer C1：stateReset 作废等待计时与视频回调（审计
   it('stateReset 作废等待计时：之后 update 不再触发 onWaitEnd', () => {
     let ends = 0;
     const { r, bus } = make(() => { ends++; });
-    bus.emit('wait', { ms: 60000 });
+    // @wait 使用墙钟；让它已到期，避免仅增大帧 delta 造成假绿。
+    bus.emit('wait', { ms: 0 });
     bus.emit('stateReset', { reason: 'load' });
-    r.update(999999);
+    r.update(1);
     expect(ends).toBe(0); // 修复前：deadline 残留 → 触发 finishWait 状态失配崩溃
   });
 

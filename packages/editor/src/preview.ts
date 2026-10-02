@@ -280,7 +280,24 @@ class PreviewAudio implements AudioHandle {
   playBgm(src: string | null, options?: Parameters<AudioHandle['playBgm']>[1]): void { this.#inner.playBgm(src === null ? null : this.#resolve('bgm', src), options); }
   playAmbience(src: string | null, fadeMs?: number): void { this.#inner.playAmbience(src === null ? null : this.#resolve('ambience', src), fadeMs); }
   playSe(src: string): void { this.#inner.playSe(this.#resolve('se', src)); }
-  playVoice(src: string): void { this.#inner.playVoice(this.#resolve('voice', src)); }
+  playVoice(src: string, options?: Parameters<AudioHandle['playVoice']>[1]): void { this.#inner.playVoice(this.#resolve('voice', src), options); }
+  stopVoice(): void { this.#inner.stopVoice(); }
+  setVoicePaused(paused: boolean): void { this.#inner.setVoicePaused(paused); }
+  snapshotPlayback() {
+    const snapshot = this.#inner.snapshotPlayback();
+    const keyFor = (kind: 'bgm' | 'ambience', source: string | null): string | null => {
+      if (source === null) return null;
+      for (const [key, url] of this.#urls) {
+        if (key.startsWith(`${kind}:`) && url === source) return key.slice(kind.length + 1);
+      }
+      return source;
+    };
+    return { bgm: keyFor('bgm', snapshot.bgm), ambience: keyFor('ambience', snapshot.ambience) };
+  }
+  restorePlayback(snapshot: Parameters<AudioManager['restorePlayback']>[0]): void {
+    this.playBgm(snapshot.bgm);
+    this.playAmbience(snapshot.ambience, 0);
+  }
   stopAll(): void { this.#inner.stopAll(); }
   setMasterVolume(v: number): void { this.#inner.setMasterVolume(v); }
   getMasterVolume(): number { return this.#inner.getMasterVolume(); }
@@ -1226,6 +1243,7 @@ async function load(p: LoadPayload): Promise<void> {
 let loadQueue = Promise.resolve();
 
 window.addEventListener('message', (e: MessageEvent) => {
+  if (e.source !== window.parent || e.origin !== location.origin) return;
   const d = e.data as { type?: string; payload?: LoadPayload; fast?: boolean } | null;
   if (!d || typeof d.type !== 'string') return;
   if (d.type === 'surdet-preview-debug-command' && e.source === window.parent && e.origin === location.origin && activePreviewTrace && interp && runtime) {

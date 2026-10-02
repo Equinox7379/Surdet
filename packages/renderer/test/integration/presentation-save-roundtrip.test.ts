@@ -144,6 +144,56 @@ function nvlEntries(harness: Harness): { speaker: string | null; text: string }[
 }
 
 describe('Renderer presentation save/load integration', () => {
+  it.each(['choice', 'wait'] as const)('restores the displayed ADV line without replaying it at a saved %s', kind => {
+    const harness = makeHarness();
+    let displayed = { speaker: null as string | null, value: '' };
+    harness.stage.showText = (speaker: string | null, value: string) => { displayed = { speaker, value }; };
+    harness.stage.beginText = (speaker: string | null) => { displayed = { speaker, value: '' }; };
+    harness.stage.clearText = () => { displayed = { speaker: null, value: '' }; };
+    try {
+      const pause = kind === 'choice' ? '@choice\n  海港 -> @end\n  车站 -> @end' : '@wait 100000\n下一行。';
+      harness.registry.register(compileScene(`凛：雨停后去哪里？\n${pause}\n@end`, 'adv.gal', 'adv'));
+      let textEvents = 0;
+      harness.bus.on('text', () => { textEvents++; });
+      harness.interpreter.start('adv');
+      harness.controller.update(10_000);
+      const before = { ...displayed };
+      harness.interpreter.advance();
+      const saved = JSON.parse(JSON.stringify(harness.interpreter.saveSnapshot())) as never;
+      harness.controller.resetSession();
+      expect(displayed.value).toBe('');
+      harness.interpreter.loadSnapshot(saved);
+      expect(displayed).toEqual(before);
+      expect(before).toEqual({ speaker: '凛', value: '雨停后去哪里？' });
+      expect(textEvents).toBe(1);
+      expect(harness.interpreter.status).toBe(kind === 'choice' ? 'awaiting-choice' : 'awaiting-timer');
+    } finally { harness.dispose(); }
+  });
+
+  it('rejects malformed saved ADV text before changing the live presentation', () => {
+    const harness = makeHarness();
+    try {
+      harness.registry.register(compileScene('凛：选择前。\n@choice\n  继续 -> @end\n@end', 'adv.gal', 'adv'));
+      harness.interpreter.start('adv');
+      harness.controller.update(10_000);
+      harness.interpreter.advance();
+      const saved = JSON.parse(JSON.stringify(harness.interpreter.saveSnapshot()));
+      for (const advText of [null, [], { speaker: 42, text: '坏身份' }, { speaker: null }, { text: '缺身份' }]) {
+        const invalid = structuredClone(saved);
+        invalid.presentation.payload.dialogue.advText = advText;
+        const { meta: _beforeMeta, ...before } = harness.interpreter.saveSnapshot()!;
+        expect(() => harness.interpreter.loadSnapshot(invalid)).toThrow(/ADV text/);
+        const { meta: _afterMeta, ...after } = harness.interpreter.saveSnapshot()!;
+        expect(after).toEqual(before);
+        expect(harness.interpreter.status).toBe('awaiting-choice');
+      }
+      const old = structuredClone(saved);
+      delete old.presentation.payload.dialogue.advText;
+      expect(() => harness.interpreter.loadSnapshot(old)).not.toThrow();
+      expect(harness.interpreter.status).toBe('awaiting-choice');
+    } finally { harness.dispose(); }
+  });
+
   it('restores saved music and ambience through the presentation hook and rejects invalid audio before mutation', () => {
     let playback: { bgm: string | null; ambience: string | null } = { bgm: 'rain', ambience: 'street' };
     const audio: AudioHandle = {

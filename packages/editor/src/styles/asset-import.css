@@ -344,8 +344,9 @@
 }
 
 .asset-import-primary:hover:not(:disabled) {
-  background: var(--surdet-shell-chrome-bg);
-  border-color: var(--surdet-shell-chrome-bg);
+  background: var(--surdet-action-primary);
+  border-color: var(--surdet-action-primary);
+  filter: brightness(.92);
 }
 
 .asset-import-file-select:focus-visible,

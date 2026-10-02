@@ -930,7 +930,9 @@ export class Interpreter {
               this.#emitRuntimeTrace('control-flow', instr, {
                 controlFlow: {
                   from,
-                  to: `label:${this.#scene.sceneId}.${instr.target}`,
+                  to: instr.target === ''
+                    ? this.#runtimeNode(this.#scene.sceneId, instr.gotoIndex)
+                    : `label:${this.#scene.sceneId}.${instr.target}`,
                 },
               });
               this.#pc = instr.gotoIndex;

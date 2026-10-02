@@ -62,7 +62,7 @@ function rawReviewedPreviewEvidenceFixture() {
         projectionVersion: 4,
         dialogText: 'Alpha route A.',
         activeSpeakerId: 'lynn',
-        speakerText: '「凛」',
+        speakerText: '凛',
         panelVisible: true,
       },
     },
@@ -95,7 +95,7 @@ function rawReviewedPreviewEvidenceFixture() {
           projectionVersion: 2,
           dialogText: '',
           activeSpeakerId: 'lynn',
-          speakerText: '「凛」',
+          speakerText: '凛',
           panelVisible: true,
         },
       },
@@ -399,7 +399,7 @@ test('Wave 6 runner proves canvas dialogue through one strict semantic projectio
   assert.match(resultFlow, /rendererStatus\s*===\s*['"]awaiting['"]/);
   assert.match(resultFlow, /dialogText\s*===\s*['"]Alpha route A\.['"]/);
   assert.match(resultFlow, /activeSpeakerId\s*===\s*['"]lynn['"]/);
-  assert.match(resultFlow, /speakerText\s*===\s*['"]「凛」['"]/);
+  assert.match(resultFlow, /speakerText\s*===\s*['"]凛['"]/);
   assert.match(resultFlow, /panelVisible\s*===\s*true/);
   assert.match(resultFlow, /dialogText\s*!==\s*['"]Alpha route C\.['"]/);
   assert.match(resultFlow, /canvasBox\.width\s*>\s*0/);
@@ -573,7 +573,7 @@ test('Wave 6 runner proves the persisted result approval after closing and reope
     receiptMarker: {
       present: true,
       kind: 'approval',
-      text: `已批准 回执 ID：approval-reopened 回执 fingerprint：${'b'.repeat(64)} 原决定：decision-1 原选择：unit-a`,
+      text: `已批准 回执标识：approval-reopened 回执指纹：${'b'.repeat(64)} 原决定：decision-1 原选择：unit-a`,
       approvalId: 'approval-reopened',
       approvalFingerprint: 'b'.repeat(64),
     },

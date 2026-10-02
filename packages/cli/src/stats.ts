@@ -1,13 +1,14 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { compileScene, computeProjectStats, type CompiledScene } from '@surdet/core';
+import { parseProjectConfigDocument } from '@surdet/authoring';
 import { findGalFiles, sceneIdFromFile } from './scenario-loader.js';
 import { collectConfigSceneRoots } from './lint.js';
 
 function readConfig(projectDir: string): { entryScene: string; customInstructions: string[] } {
   const file = path.join(projectDir, 'game.config.json');
   if (!fs.existsSync(file)) return { entryScene: '', customInstructions: [] };
-  const raw = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) as Record<string, unknown>;
+  const raw = parseProjectConfigDocument(fs.readFileSync(file, 'utf8'), file);
   const custom = raw.customInstructions;
   return {
     entryScene: typeof raw.entryScene === 'string' ? raw.entryScene : '',
@@ -22,7 +23,7 @@ export async function statsCommand(projectDir: string, options: { json?: boolean
     if (files.length === 0) throw new Error('未找到 content/scenario 下的 .gal 场景');
     const config = readConfig(projectDir);
     const scenes: CompiledScene[] = [];
-    const sourceTextByScene: Record<string, string> = {};
+    const sourceTextByScene = Object.create(null) as Record<string, string>;
     for (const file of files) {
       const sceneId = sceneIdFromFile(file);
       const source = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');

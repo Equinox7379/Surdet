@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { parseExpr, ExprParseError } from '../src/dsl/expr-parser.js';
-import { evalExprBoolean, evalExprString } from '../src/runtime/expr-eval.js';
+import { parseExpr, ExprParseError, collectVars, MAX_EXPR_NESTING } from '../src/dsl/expr-parser.js';
+import { evalExpr, evalExprBoolean, evalExprString } from '../src/runtime/expr-eval.js';
 import { VariableStore } from '../src/state/variable-store.js';
 import type { VarDeclaration } from '../src/state/types.js';
 
@@ -66,6 +66,21 @@ describe('ExprParser', () => {
     // 常规一元运算仍正常
     expect(parseExpr('!!true')).toMatchObject({ kind: 'unary', op: '!' });
     expect(evalExprString('--5', env())).toBe(5);
+  });
+
+  it('bounds flat binary AST depth before variable collection or evaluation can overflow', () => {
+    const accepted = parseExpr(Array(MAX_EXPR_NESTING + 1).fill('lynn.trust').join('+'));
+    expect(collectVars(accepted)).toEqual(['lynn.trust']);
+    expect(evalExpr(accepted, env())).toBe((MAX_EXPR_NESTING + 1) * 3);
+    for (const size of [MAX_EXPR_NESTING + 2, 12_000]) {
+      expect(() => parseExpr(Array(size).fill('1').join('+'))).toThrow(ExprParseError);
+    }
+  });
+
+  it('counts unary and binary nodes together while retaining the legal boundary', () => {
+    const expression = (terms: number) => '!'.repeat(100) + '(' + Array(terms).fill('true').join('||') + ')';
+    expect(evalExprBoolean(expression(101), env())).toBe(true);
+    expect(() => parseExpr(expression(102))).toThrow(ExprParseError);
   });
 
   it('字符串转义', () => {

@@ -797,6 +797,7 @@ async function run() {
 
   const starterBefore = hashProjectTree(starterRoot);
   const { files: fixtureFiles, fixtureAugmentations } = augmentStarterFixture();
+  const expectedProjectName = JSON.parse(mapFileText(fixtureFiles, 'game.config.json')).title;
   const injectedBefore = browserFileMapTreeIdentity(fixtureFiles);
   const milestones = [];
   const preflightChecks = [];
@@ -874,7 +875,7 @@ async function run() {
       preflightPass('editor-title-confirmed', { title: await firstPage.title() });
     } else {
       opened = await openFixture(firstPage);
-      assert(opened.projectName === 'starter', `project bar did not show starter: ${opened.projectName}`);
+      assert(opened.projectName === expectedProjectName, `project bar did not show configured title: ${opened.projectName}`);
       assert(opened.sceneCount === 7, `expected seven Starter scenes, got ${opened.sceneCount}`);
       assert(opened.timelineCount === 3, `expected three current harbor timeline fixtures, got ${opened.timelineCount}`);
       assert(opened.assetCount >= 6, `expected real Starter assets, got ${opened.assetCount}`);
@@ -1445,7 +1446,7 @@ async function run() {
       pass('fresh-context-injected-from-saved-tree', { saved: injectedAfterSave, injected: secondInitialIdentity });
 
       const reopened = await openFixture(secondPage);
-      assert(reopened.projectName === 'starter', 'fresh context did not reopen Starter fixture');
+      assert(reopened.projectName === expectedProjectName, 'fresh context did not reopen the configured Starter fixture');
       await enterTimelineDesk(secondPage);
       await selectTimeline(secondPage, editedTimelineId);
       const reopenedState = await stateSnapshot(secondPage);

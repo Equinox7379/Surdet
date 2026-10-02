@@ -53,7 +53,7 @@ declare global {
     };
     surdetSettings?: { read(): Promise<unknown>; write(data: unknown): Promise<void> };
     surdetProfile?: {
-      read(key: string): Promise<unknown | null>;
+      read(key: string, options?: { strict?: boolean }): Promise<unknown | null>;
       write(key: string, value: unknown): Promise<void>;
       delete(key: string): Promise<void>;
     };

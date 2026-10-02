@@ -143,6 +143,26 @@ function bystander(): VerifiedCompositionCandidate {
 }
 
 describe('Wave 5 candidate comparison', () => {
+  it('rejects a repeated sealed candidate before building duplicate comparison units', async () => {
+    const first = readyCandidate('a', [operation(0, 'create-a', 'scene.create', 'scene:alpha', [production('scene:alpha', 'create', 'alpha')])]);
+    const second = bystander();
+    const before = structuredClone(first);
+    await expect(compare([first, structuredClone(first)])).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    await expect(compare([first, second, structuredClone(first)])).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    expect(first).toEqual(before);
+    expect((await compare([first, second])).status).toBe('composable');
+  });
+
+  it('allows distinct sealed versions from the same source change', async () => {
+    const first = readyCandidate('a', [operation(0, 'create-a', 'scene.create', 'scene:alpha', [production('scene:alpha', 'create', 'alpha')])]);
+    const second = readyCandidate('a', [operation(0, 'create-b', 'scene.create', 'scene:beta', [production('scene:beta', 'create', 'beta')])], {
+      candidateId: 'cand-a-new-seal', ref: { ...ref('a'), capsuleId: 'cap_a_new', artifactSha256: 'new-seal-sha' },
+    });
+    const result = await compare([first, second]);
+    expect(result.status).toBe('composable');
+    expect(new Set(result.units.map(unit => unit.unitId)).size).toBe(2);
+  });
+
   it('does not deduplicate equal primary characters with different migrated scene results', async () => {
     const result = await compare(['a', 'b'].map((id) => readyCandidate(id, [operation(0, id, 'character.ensure', 'character:rin', [
       production('character:rin', 'update', 'same-character'), production('config:characters', 'update', 'same-table'), production('scene:start', 'update', `scene-${id}`),

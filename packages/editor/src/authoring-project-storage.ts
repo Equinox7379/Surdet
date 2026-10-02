@@ -57,7 +57,8 @@ export function createEditorProjectStorage(source = state): EditorProjectStorage
   const files = (): Map<string, string> => {
     assertConfigSourcesReadable(undefined, source);
     const result = new Map<string, string>();
-    result.set('game.config.json', workingGameConfigText(source));
+    const gameConfigText = workingGameConfigText(source);
+    if (gameConfigText !== '' || source.handles.gameConfig !== null) result.set('game.config.json', gameConfigText);
     for (const scene of source.scenes.values()) result.set(scenarioPath(scene), scene.text);
     for (const timeline of source.timelines) result.set(timelinePath(timeline), timeline.text);
     for (const [name, value] of Object.entries(source.configFiles)) {

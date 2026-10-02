@@ -873,6 +873,13 @@ const candidateRefsSchema: JsonSchema = {
   maxItems: 8,
 };
 
+// Illustrative identities only: callers must copy both sealed references from
+// their actual delivery capsules before invoking a composition capability.
+const candidateRefsExample = [
+  { changeId: 'copy-change-id-a', capsuleId: 'copy-capsule-id-a', artifactSha256: 'a'.repeat(64) },
+  { changeId: 'copy-change-id-b', capsuleId: 'copy-capsule-id-b', artifactSha256: 'b'.repeat(64) },
+];
+
 const conflictResolutionSchema = strictObject({
   conflictId: stringSchema,
   resolution: { enum: ['choose-unit', 'exclude-all', 'regenerate-candidate'] },
@@ -971,7 +978,7 @@ const definitions = {
   historyCheckpoint: {
     inputSchema: strictObject({ operationId: importUuidSchema, label: { type: 'string', minLength: 1, maxLength: 200 }, expectedContentRevision: importShaSchema }, ['operationId', 'label', 'expectedContentRevision']),
     outputSchema: historySummarySchema,
-    example: { input: { operationId: '123e4567-e89b-42d3-a456-426614174000', label: '第一章定稿', expectedContentRevision: '...' }, expectedResultShape: { checkpointId: '...', fingerprint: '...' } },
+    example: { input: { operationId: '123e4567-e89b-42d3-a456-426614174000', label: '第一章定稿', expectedContentRevision: 'a'.repeat(64) }, expectedResultShape: { checkpointId: '...', fingerprint: '...' } },
   },
   historyCompare: {
     inputSchema: strictObject({ checkpointId: importUuidSchema, expectedFingerprint: importShaSchema, path: stringSchema, view: readViewSchema }, ['checkpointId']),
@@ -983,7 +990,7 @@ const definitions = {
       expectedContentRevision: importShaSchema, expectedWorkingRevision: { type: 'integer', minimum: 0 }, paths: { ...stringArraySchema, minItems: 1, uniqueItems: true } },
     ['operationId', 'checkpointId', 'expectedFingerprint', 'expectedContentRevision', 'expectedWorkingRevision', 'paths']),
     outputSchema: strictObject({ checkpointId: importUuidSchema, paths: stringArraySchema }, ['checkpointId', 'paths']),
-    example: { input: { operationId: 'restore-1', checkpointId: '123e4567-e89b-42d3-a456-426614174000', expectedFingerprint: '...', expectedContentRevision: '...', expectedWorkingRevision: 0, paths: ['content/scenario/main.gal'] }, expectedResultShape: { checkpointId: '...', paths: ['content/scenario/main.gal'] } },
+    example: { input: { operationId: 'restore-1', checkpointId: '123e4567-e89b-42d3-a456-426614174000', expectedFingerprint: 'a'.repeat(64), expectedContentRevision: 'b'.repeat(64), expectedWorkingRevision: 0, paths: ['content/scenario/main.gal'] }, expectedResultShape: { checkpointId: '...', paths: ['content/scenario/main.gal'] } },
   },
   assetRelocationReplace: {
     inputSchema: strictObject({ operationId: relocationIdentitySchema, targetPath: stringSchema,
@@ -1150,7 +1157,7 @@ const definitions = {
       evidenceMatrix: arrayOf(jsonObjectSchema),
       comparisonFingerprint: stringSchema,
     }, ['comparisonVersion', 'projectIdentity', 'expectedProjectRevision', 'status', 'candidates', 'units', 'dependencyEdges', 'conflicts', 'identicalGroups', 'evidenceMatrix', 'comparisonFingerprint']),
-    example: { input: {}, expectedResultShape: { comparisonVersion: '1.0.0', projectIdentity: '...', expectedProjectRevision: 'rev_...', status: 'composable', candidates: [], units: [], dependencyEdges: [], conflicts: [], identicalGroups: [], evidenceMatrix: [], comparisonFingerprint: '...' } },
+    example: { input: { candidateRefs: candidateRefsExample }, expectedResultShape: { comparisonVersion: '1.0.0', projectIdentity: '...', expectedProjectRevision: 'rev_...', status: 'composable', candidates: [], units: [], dependencyEdges: [], conflicts: [], identicalGroups: [], evidenceMatrix: [], comparisonFingerprint: '...' } },
   },
   compositionPlan: {
     inputSchema: {
@@ -1176,7 +1183,7 @@ const definitions = {
       artifactSha256: stringSchema,
       dryRunStatus: { enum: ['passed', 'failed'] },
     }, ['planId', 'planFingerprint', 'artifactSha256', 'dryRunStatus']),
-    example: { input: {}, expectedResultShape: { planId: 'pln_...', planFingerprint: '...', artifactSha256: '...', dryRunStatus: 'passed' } },
+    example: { input: { candidateRefs: candidateRefsExample, comparisonFingerprint: 'copy-current-comparison-fingerprint', selectedUnitIds: ['copy-selected-unit-id'] }, expectedResultShape: { planId: 'pln_...', planFingerprint: '...', artifactSha256: '...', dryRunStatus: 'passed' } },
   },
   compositionInspect: {
     inputSchema: strictObject({
@@ -1186,7 +1193,7 @@ const definitions = {
     outputSchema: strictObject({
       plan: jsonObjectSchema,
     }, ['plan']),
-    example: { input: {}, expectedResultShape: { plan: {} } },
+    example: { input: { planId: 'copy-plan-id', artifactSha256: 'a'.repeat(64) }, expectedResultShape: { plan: {} } },
   },
   compositionExecute: {
     inputSchema: strictObject({
@@ -1200,7 +1207,7 @@ const definitions = {
       nextOperationIndex: integerSchema,
       operationCount: integerSchema,
     }, ['integrationChangeId', 'status', 'nextOperationIndex', 'operationCount']),
-    example: { input: {}, expectedResultShape: { integrationChangeId: 'chg_...', status: 'READY', nextOperationIndex: 3, operationCount: 3 } },
+    example: { input: { planId: 'copy-plan-id', artifactSha256: 'a'.repeat(64), executeOperationId: 'integration-replay-1' }, expectedResultShape: { integrationChangeId: 'chg_...', status: 'READY', nextOperationIndex: 3, operationCount: 3 } },
   },
   describe: {
     inputSchema: strictObject({
@@ -1464,7 +1471,7 @@ const definitions = {
       }, ['request']),
     }, ['candidateRefs']),
     outputSchema: preparedReviewResultSchema,
-    example: { input: { candidateRefs: [] }, expectedResultShape: { reviewId: 'review_comparison_...', projection: {}, identity: {} } },
+    example: { input: { candidateRefs: candidateRefsExample }, expectedResultShape: { reviewId: 'review_comparison_...', projection: {}, identity: {} } },
   },
   reviewInspectDecision: {
     inputSchema: strictObject({ reviewId: stringSchema, decisionId: stringSchema }, ['reviewId']),
@@ -1478,7 +1485,7 @@ const definitions = {
       changeId: stringSchema,
     }, ['planId', 'artifactSha256', 'changeId']),
     outputSchema: preparedReviewResultSchema,
-    example: { input: { planId: 'pln_...', artifactSha256: '...', changeId: 'chg_...' }, expectedResultShape: { reviewId: 'review_result_...', projection: {}, identity: {} } },
+    example: { input: { planId: 'copy-plan-id', artifactSha256: 'a'.repeat(64), changeId: 'copy-integration-change-id' }, expectedResultShape: { reviewId: 'review_result_...', projection: {}, identity: {} } },
   },
   reviewInspectApproval: {
     inputSchema: strictObject({ resultReviewId: stringSchema, approvalId: stringSchema }, ['resultReviewId']),

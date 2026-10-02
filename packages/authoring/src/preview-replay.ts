@@ -30,7 +30,15 @@ export async function buildPreviewReplaySources(scenes: readonly { id: string; t
     const structure = parseSceneStructure(scene.text, `${scene.id}.gal`, scene.id);
     const points = new Map<number, PreviewReplayPoint>();
     const labels = lines.flatMap((line, index) => line.kind === 'label' ? [{ line: index + 1, name: line.name }] : []);
-    const anchorAt = (line: number) => labels.filter(label => label.line < line).at(-1)?.name ?? null;
+    const anchorAt = (line: number): string | null => {
+      let start = 0, end = labels.length;
+      while (start < end) {
+        const middle = Math.floor((start + end) / 2);
+        if (labels[middle]!.line < line) start = middle + 1;
+        else end = middle;
+      }
+      return labels[start - 1]?.name ?? null;
+    };
     for (const [index, line] of lines.entries()) {
       if (line.kind !== 'text') continue;
       points.set(index + 1, { source: { sceneId: scene.id, kind: 'text', anchor: anchorAt(index + 1), fingerprint: await hasher.sha256(line.raw.trim()) }, unique: true });
@@ -46,7 +54,13 @@ export async function buildPreviewReplaySources(scenes: readonly { id: string; t
         fingerprint: await hasher.sha256(lines[option.span.startLine - 1]!.raw.trim()) })));
       points.set(choice.span.startLine, { source, unique: true, options });
     }
-    for (const point of points.values()) point.unique = [...points.values()].filter(other => samePreviewReplaySource(point.source, other.source)).length === 1;
+    const identity = (source: PreviewReplaySource): string => JSON.stringify([source.sceneId, source.kind, source.anchor, source.fingerprint]);
+    const counts = new Map<string, number>();
+    for (const point of points.values()) {
+      const key = identity(point.source);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    for (const point of points.values()) point.unique = counts.get(identity(point.source)) === 1;
     result.set(scene.id, points);
   }
   return result;

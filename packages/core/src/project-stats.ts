@@ -41,7 +41,7 @@ export function computeProjectStats(input: ProjectStatsInput): ProjectStats {
   const scenes = [...input.scenes].sort((a, b) => a.sceneId.localeCompare(b.sceneId));
   const speakerLines = new Map<string, number>();
   const referencedAssets = new Map<string, Set<string>>();
-  const perScene: ProjectStats['perScene'] = {};
+  const perScene = Object.create(null) as ProjectStats['perScene'];
   const edges = new Map<string, Set<string>>();
   const sceneIds = new Set(scenes.map((scene) => scene.sceneId));
   let totalTextLines = 0;
@@ -71,7 +71,7 @@ export function computeProjectStats(input: ProjectStatsInput): ProjectStats {
         choiceCount++;
         sceneChoices++;
         sceneChoiceOptions += instr.options.length;
-      } else if (instr.op === 'jump' || instr.op === 'call') {
+      } else if ((instr.op === 'jump' && instr.kind === 'jump') || instr.op === 'call') {
         const target = targetScene(instr.target);
         if (target) targets.add(target);
       } else if (instr.op === 'instr') {

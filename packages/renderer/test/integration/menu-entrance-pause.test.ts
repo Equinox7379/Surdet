@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Container } from 'pixi.js';
+import { Container, Text as PText, type FederatedPointerEvent } from 'pixi.js';
 import { PresentationController } from '../../src/runtime/presentation-controller.js';
 import { createPresentationPorts } from '../../src/runtime/presentation-ports.js';
 import { MenuLayer } from '../../src/layers/menu/menu-layer.js';
@@ -32,6 +32,33 @@ class FakeApp {
 
 /** 暂停缺陷的公共层复现与回归：真实 MenuLayer 入场 + 真实调度合同。 */
 describe('paused presentation keeps the menu entrance alive', () => {
+  it('projects only the current save page and suppresses background targets under overwrite confirmation', () => {
+    const lifecycle = new RenderLifecycle();
+    const assets = new RenderAssetRegistry({ lifecycle });
+    const root = new Container();
+    const layer = new MenuLayer({ uiLayer: root, width: 1280, height: 720, assets, lifecycle });
+    const slots = Array.from({ length: 8 }, (_, index) => ({ id: String(index + 1), empty: false, label: '场景' }));
+    try {
+      layer.showSaveLoad({ mode: 'load', slots }, vi.fn(), vi.fn());
+      const first = layer.debugSnapshot().saveLoadTargets;
+      expect(first.filter(target => target.id.startsWith('slot-')).map(target => target.id))
+        .toEqual(['slot-1', 'slot-2', 'slot-3', 'slot-4', 'slot-5', 'slot-6']);
+      const page = root.children.find(child => child.visible) as Container;
+      const next = page.children.find(child => child instanceof PText && child.text === '下一页')!;
+      next.emit('pointerdown', {} as FederatedPointerEvent);
+      expect(layer.debugSnapshot().saveLoadTargets.filter(target => target.id.startsWith('slot-')).map(target => target.id))
+        .toEqual(['slot-7', 'slot-8']);
+      layer.hideSaveLoad();
+      expect(layer.debugSnapshot().saveLoadTargets).toEqual([]);
+      layer.showSaveLoad({ mode: 'save', slots }, vi.fn(), vi.fn());
+      const visible = root.children.find(child => child.visible) as Container;
+      const card = visible.children.find(child => child instanceof Container
+        && child.children.some(text => text instanceof PText && text.text === '07'))!;
+      card.emit('pointerdown', {} as FederatedPointerEvent);
+      expect(layer.debugSnapshot().saveLoadTargets).toEqual([]);
+    } finally { layer.dispose(); assets.dispose(); lifecycle.dispose(); }
+  });
+
   it('runs the system-menu entrance through the scheduler while paused, then sleeps and resumes the world once', () => {
     const lifecycle = new RenderLifecycle();
     const assets = new RenderAssetRegistry({ lifecycle });

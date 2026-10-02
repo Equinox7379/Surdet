@@ -322,6 +322,54 @@ async function fileExists(file: string): Promise<boolean> {
   }
 }
 
+/** Verify historical terminal evidence without requiring its released paths to remain unchanged. */
+export async function verifyAssetRelocationTerminalRecord(
+  record: AssetRelocationStoredOperation | null,
+  textHasher: TextHasher,
+): Promise<{ journalVersion: number; terminalFingerprint: string }> {
+  if (record === null || !TERMINAL.has(record.journal.status)) {
+    throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理尚未达到可验证终态');
+  }
+  if (record.journal.status === 'COMMITTED') {
+    if (record.receipt === null
+      || record.journal.binaryItems.some((item) => item.state !== 'TARGET'
+        || item.backupIdentity === null || item.targetIdentity === null)
+      || record.journal.textStates.some((state) => state !== 'REPLACED')
+      || record.journal.textResultIdentities.some((identity) => identity === null)) {
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理成功终态记录不完整');
+    }
+    for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
+      const item = record.journal.binaryItems[index]!;
+      const receiptMove = record.receipt.moves[index];
+      if (receiptMove === undefined
+        || !sameFileIdentity(receiptMove.targetIdentity, item.targetIdentity!)) {
+        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `素材整理成功终态记录身份不一致：${item.targetPath}`);
+      }
+    }
+  } else if (record.journal.status === 'ROLLED_BACK' || record.journal.status === 'CANCELLED') {
+    if (record.receipt !== null || record.undoReceipt !== null
+      || (record.journal.status === 'ROLLED_BACK'
+        && record.journal.binaryItems.some((item) => item.state !== 'ROLLED_BACK'))
+      || (record.journal.status === 'CANCELLED'
+        && record.journal.binaryItems.some((item) => item.state !== 'SOURCE'))) {
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理回退终态记录不完整');
+    }
+  } else {
+    if (record.receipt === null || record.undoReceipt === null
+      || record.journal.binaryItems.some((item) => item.state !== 'UNDONE')
+      || record.journal.textStates.some((state) => state !== 'UNDONE')) {
+      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理撤销终态记录不完整');
+    }
+  }
+  const terminalFingerprint = await textHasher.sha256(stableStringify({
+    status: record.journal.status,
+    journalVersion: record.journal.journalVersion,
+    receipt: record.receipt,
+    undoReceipt: record.undoReceipt,
+  }));
+  return { journalVersion: record.journal.journalVersion, terminalFingerprint };
+}
+
 export class ProjectAssetRelocationAuthority {
   private readonly textHasher: TextHasher;
   private readonly assertLeaseHeld: () => void | Promise<void>;
@@ -1394,48 +1442,7 @@ export class ProjectAssetRelocationAuthority {
   private async verifyTerminalResolution(
     operationId: string,
   ): Promise<{ journalVersion: number; terminalFingerprint: string }> {
-    const record = await this.store.read(operationId);
-    if (record === null || !TERMINAL.has(record.journal.status)) {
-      throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理尚未达到可验证终态');
-    }
-    if (record.journal.status === 'COMMITTED') {
-      if (record.receipt === null
-        || record.journal.binaryItems.some((item) => item.state !== 'TARGET'
-          || item.backupIdentity === null || item.targetIdentity === null)
-        || record.journal.textStates.some((state) => state !== 'REPLACED')
-        || record.journal.textResultIdentities.some((identity) => identity === null)) {
-        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理成功终态记录不完整');
-      }
-      for (let index = 0; index < record.journal.binaryItems.length; index += 1) {
-        const item = record.journal.binaryItems[index]!;
-        const receiptMove = record.receipt.moves[index];
-        if (receiptMove === undefined
-          || !sameFileIdentity(receiptMove.targetIdentity, item.targetIdentity!)) {
-          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `素材整理成功终态记录身份不一致：${item.targetPath}`);
-        }
-      }
-    } else if (record.journal.status === 'ROLLED_BACK' || record.journal.status === 'CANCELLED') {
-      if (record.receipt !== null || record.undoReceipt !== null
-        || (record.journal.status === 'ROLLED_BACK'
-          && record.journal.binaryItems.some((item) => item.state !== 'ROLLED_BACK'))
-        || (record.journal.status === 'CANCELLED'
-          && record.journal.binaryItems.some((item) => item.state !== 'SOURCE'))) {
-        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理回退终态记录不完整');
-      }
-    } else {
-      if (record.receipt === null || record.undoReceipt === null
-        || record.journal.binaryItems.some((item) => item.state !== 'UNDONE')
-        || record.journal.textStates.some((state) => state !== 'UNDONE')) {
-        throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', '素材整理撤销终态记录不完整');
-      }
-    }
-    const terminalFingerprint = await this.textHasher.sha256(stableStringify({
-      status: record.journal.status,
-      journalVersion: record.journal.journalVersion,
-      receipt: record.receipt,
-      undoReceipt: record.undoReceipt,
-    }));
-    return { journalVersion: record.journal.journalVersion, terminalFingerprint };
+    return verifyAssetRelocationTerminalRecord(await this.store.read(operationId), this.textHasher);
   }
 
   private async finishCommit(recordInput: AssetRelocationStoredOperation): Promise<AssetRelocationStoredOperation> {

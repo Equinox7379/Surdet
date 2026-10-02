@@ -88,18 +88,18 @@ function normalizeInput(input: HumanWorkspaceHeartbeatInput): Omit<HumanWorkspac
   const dirtyScopes = [...new Set(input.dirtyScopes ?? [])].sort();
   const busyReasons = [...new Set(input.busyReasons ?? [])].sort();
   const blockedReasons = [...new Set(input.blockedReasons ?? [])].sort();
-  if (!UUID.test(input.workspaceSessionId)) throw stateError('workspaceSessionId 格式无效');
-  if (!SAFE_BROWSER_SESSION.test(input.browserSessionId)) throw stateError('browserSessionId 格式无效');
+  if (typeof input.workspaceSessionId !== 'string' || !UUID.test(input.workspaceSessionId)) throw stateError('workspaceSessionId 格式无效');
+  if (typeof input.browserSessionId !== 'string' || !SAFE_BROWSER_SESSION.test(input.browserSessionId)) throw stateError('browserSessionId 格式无效');
   if (!Number.isSafeInteger(input.workspaceGeneration) || input.workspaceGeneration < 0) {
     throw stateError('workspaceGeneration 格式无效');
   }
   if (!['clean', 'dirty', 'busy', 'blocked'].includes(input.availability)) {
     throw stateError('workspace availability 无效');
   }
-  if (input.loadedProjectRevision !== undefined && !SHA256.test(input.loadedProjectRevision)) {
+  if (input.loadedProjectRevision !== undefined && (typeof input.loadedProjectRevision !== 'string' || !SHA256.test(input.loadedProjectRevision))) {
     throw stateError('loadedProjectRevision 格式无效');
   }
-  if (input.loadedCoordinationRevision !== undefined && !SHA256.test(input.loadedCoordinationRevision)) {
+  if (input.loadedCoordinationRevision !== undefined && (typeof input.loadedCoordinationRevision !== 'string' || !SHA256.test(input.loadedCoordinationRevision))) {
     throw stateError('loadedCoordinationRevision 格式无效');
   }
   if (!validStringUnion(dirtyScopes, HUMAN_WORKSPACE_DIRTY_SCOPES)
@@ -143,18 +143,22 @@ function validateStoredRecord(
     throw stateError('human workspace record 不是对象');
   }
   const record = value as Partial<HumanWorkspaceRecord>;
+  if (typeof record.projectRootIdentity !== 'string'
+    || !Array.isArray(record.dirtyScopes) || !Array.isArray(record.busyReasons) || !Array.isArray(record.blockedReasons)) {
+    throw stateError('human workspace record 路径或状态列表格式无效');
+  }
   const normalized = normalizeInput({
-    workspaceSessionId: String(record.workspaceSessionId ?? ''),
-    browserSessionId: String(record.browserSessionId ?? ''),
-    workspaceGeneration: Number(record.workspaceGeneration),
+    workspaceSessionId: record.workspaceSessionId as string,
+    browserSessionId: record.browserSessionId as string,
+    workspaceGeneration: record.workspaceGeneration as number,
     availability: record.availability as HumanWorkspaceReportedAvailability,
     ...(record.loadedProjectRevision === undefined ? {} : { loadedProjectRevision: record.loadedProjectRevision }),
     ...(record.loadedCoordinationRevision === undefined ? {} : {
       loadedCoordinationRevision: record.loadedCoordinationRevision,
     }),
-    dirtyScopes: Array.isArray(record.dirtyScopes) ? record.dirtyScopes as HumanWorkspaceDirtyScope[] : [],
-    busyReasons: Array.isArray(record.busyReasons) ? record.busyReasons as HumanWorkspaceBusyReason[] : [],
-    blockedReasons: Array.isArray(record.blockedReasons) ? record.blockedReasons as HumanWorkspaceBlockedReason[] : [],
+    dirtyScopes: record.dirtyScopes,
+    busyReasons: record.busyReasons,
+    blockedReasons: record.blockedReasons,
   });
   if (record.formatVersion !== 1
     || record.workspaceContractVersion !== HUMAN_WORKSPACE_CONTRACT_VERSION

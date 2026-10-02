@@ -100,6 +100,11 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
   #baseLayer: Container;
   #baseHandlers: { onExec: (cmdId: string) => void; onClose: () => void } | null = null;
   #baseCommandCount = 0;
+  #baseScrollOffset = 0;
+  #baseScrollContent: Container | null = null;
+  #baseScrollHeight = 0;
+  #baseViewportTop = 0;
+  #baseViewportHeight = 0;
   #activeVideo: HTMLVideoElement | null = null;
 
   constructor(options: SystemPanelLayerOptions) {
@@ -568,8 +573,20 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
       style: { fontFamily: this.#assets.fontFamily('ui'), fontSize: this.#theme.typography.uiSize, fill: 0xffd77a } satisfies TextStyleOptions,
     }), { fill: null })).position.set(this.#w - 340, 44);
     const width = Math.min(1060, this.#w - 120);
+    const scrollContent = new Container();
+    this.#baseScrollContent = scrollContent;
+    this.#baseViewportTop = 104;
+    this.#baseViewportHeight = Math.max(80, this.#h - this.#baseViewportTop - 116);
+    const mask = bindThemeGraphicsProjection(
+      new Graphics().rect(56, this.#baseViewportTop, width + 8, this.#baseViewportHeight).fill(0xffffff),
+      [null],
+    );
+    mask.eventMode = 'none';
+    layer.addChild(scrollContent, mask);
+    scrollContent.mask = mask;
     const rows = view.commands.map((cmd) => {
       const row = new Container();
+      let rowHeight = 58;
       const background = bindThemeGraphicsProjection(new Graphics(), [cmd.enabled ? 'surfaceStrong' : 'panel']);
       row.addChild(background);
       const nameWidth = Math.max(220, width - 420);
@@ -592,19 +609,20 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
         x: -10,
         y: -8,
         enabled: cmd.enabled,
+        reveal: () => this.#revealBase(row, rowHeight),
       });
       const buttonBorder = this.#controlBorder(btn, 140, 44, -10, -8);
       if (cmd.enabled) {
         btn.cursor = 'pointer';
         this.#listen('base', btn, 'pointerdown', () => this.#baseHandlers?.onExec(cmd.id));
       }
-      layer.addChild(row);
-      return { row, background, name, reasonText, info, btn, buttonBorder, enabled: cmd.enabled };
+      scrollContent.addChild(row);
+      return { row, background, name, reasonText, info, btn, buttonBorder, enabled: cmd.enabled, setHeight: (height: number): void => { rowHeight = height; } };
     });
     const message = view.message && view.message.length > 0
       ? this.#text(view.message, width, 'text')
       : null;
-    if (message) layer.addChild(message);
+    if (message) scrollContent.addChild(message);
     const close = this.#text('◀ 返回地图', 180, 'textMuted');
     layer.addChild(close);
     bindPlayerControl(close, { label: '返回地图', width: 180, height: 44, x: -12, y: -10 });
@@ -613,11 +631,12 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#listen('base', close, 'pointerdown', () => this.#closeBaseCommands());
 
     const layout = (): void => {
-      let y = 120;
-      for (const { row, background, name, reasonText, info, btn, buttonBorder, enabled } of rows) {
+      let y = 0;
+      for (const { row, background, name, reasonText, info, btn, buttonBorder, enabled, setHeight } of rows) {
         const nameHeight = this.#textHeight(name);
         const reasonHeight = reasonText ? this.#textHeight(reasonText) : 0;
         const rowHeight = Math.max(58, nameHeight + reasonHeight + (reasonText ? 34 : 28));
+        setHeight(rowHeight);
         row.position.set(60, y);
         background.clear().roundRect(0, 0, width, rowHeight, this.#theme.radius.md)
           .fill({ color: enabled ? this.#theme.colors.surfaceStrong : this.#theme.colors.panel, alpha: this.#theme.opacity.surface });
@@ -628,13 +647,15 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
         buttonBorder.position.copyFrom(btn.position);
         y += rowHeight + this.#theme.spacing.sm;
       }
-      if (message) message.position.set(60, Math.max(y + 8, this.#h - 132 - this.#textHeight(message)));
+      if (message) message.position.set(60, y + 8);
+      this.#baseScrollHeight = message ? y + 8 + this.#textHeight(message) : y;
+      this.#scrollBase(0);
       close.position.set(this.#w - 220, this.#h - 74);
       closeBorder.position.copyFrom(close.position);
     };
     this.#panelLayouts.set('base', layout);
     layout();
-    markPlayerModal(layer, { close: () => this.#closeBaseCommands() });
+    markPlayerModal(layer, { close: () => this.#closeBaseCommands(), scroll: (delta) => this.#scrollBase(delta) });
     layer.visible = true;
   }
 
@@ -858,7 +879,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
   #registerDisplay(key: string, layer: Container): void {
     this.#lifecycle.register('system', 'display', key, () => {
       if (layer.parent) layer.parent.removeChild(layer);
-      layer.destroy({ children: true });
+      layer.destroy({ children: true, context: true });
     });
   }
 
@@ -879,13 +900,20 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
       this.#lifecycle.release('system', 'listener', key);
     }
     this.#panelLayouts.delete(panel);
-    layer.removeChildren().forEach((child) => child.destroy({ children: true }));
+    layer.removeChildren().forEach((child) => child.destroy({ children: true, context: true }));
     if (panel === 'shop') {
       this.#shopScrollContent = null;
       this.#shopScrollOffset = 0;
       this.#shopScrollHeight = 0;
       this.#shopViewportTop = 0;
       this.#shopViewportHeight = 0;
+    }
+    if (panel === 'base') {
+      this.#baseScrollContent = null;
+      this.#baseScrollOffset = 0;
+      this.#baseScrollHeight = 0;
+      this.#baseViewportTop = 0;
+      this.#baseViewportHeight = 0;
     }
   }
 
@@ -908,6 +936,22 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
   #hidePanel(panel: PanelName, layer: Container): void {
     layer.visible = false;
     this.#clearPanel(panel, layer);
+  }
+
+  #scrollBase(delta: number): void {
+    if (!this.#baseScrollContent) return;
+    const maxOffset = Math.max(0, this.#baseScrollHeight - this.#baseViewportHeight);
+    this.#baseScrollOffset = Math.max(0, Math.min(maxOffset, this.#baseScrollOffset + delta));
+    this.#baseScrollContent.y = this.#baseViewportTop - this.#baseScrollOffset;
+    this.#requestFrame();
+  }
+
+  #revealBase(target: Container, height: number): void {
+    const bottom = target.y + height;
+    if (target.y < this.#baseScrollOffset) this.#scrollBase(target.y - this.#baseScrollOffset);
+    else if (bottom > this.#baseScrollOffset + this.#baseViewportHeight) {
+      this.#scrollBase(Math.min(target.y, bottom - this.#baseViewportHeight) - this.#baseScrollOffset);
+    }
   }
 
   #cancelVideo(): void {

@@ -651,8 +651,8 @@ export async function readTimelineDir(
   for await (const ent of entries) {
     if (ent.kind === 'directory') {
       await readTimelineDir(ent, prefix + ent.name + '/', target);
-    } else if (ent.kind === 'file' && ent.name.endsWith('.json')) {
-      const text = await (await ent.getFile()).text();
+    } else if (ent.kind === 'file' && ent.name.toLowerCase().endsWith('.json')) {
+      const text = await readProjectSourceText(ent);
       target.push({
         id: ent.name.replace(/\.json$/, ''),
         file: prefix + ent.name,

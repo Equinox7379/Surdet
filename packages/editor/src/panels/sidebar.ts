@@ -3,10 +3,11 @@
  */
 import { state, h, setStatus, type SceneEntry } from '../state.js';
 import { isSceneFilePathReserved, runProjectWriteOperation } from '../project-io.js';
-import { renderAssetsPanel } from './assets.js';
+import { hideAssetPreview, renderAssetsPanel } from './assets.js';
 import { openScriptImport } from './script-import.js';
 
 export function renderSidebar(): void {
+  hideAssetPreview();
   const sidebar = document.getElementById('sidebar');
   if (!sidebar) return;
   sidebar.innerHTML = '';

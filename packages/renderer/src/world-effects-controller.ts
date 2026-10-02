@@ -173,6 +173,12 @@ class CircleTransition extends TimedTransition {
     this.#clearMask();
   }
 
+  destroy(): void {
+    this.#clearMask();
+    this.#mask?.destroy();
+    this.#mask = null;
+  }
+
   #clearMask(): void {
     this.#world.mask = null;
     if (this.#mask?.parent) this.#mask.parent.removeChild(this.#mask);
@@ -185,6 +191,7 @@ class CircleTransition extends TimedTransition {
  */
 export class WorldEffectsController {
   readonly registry = new TransitionRegistry();
+  readonly #circle: CircleTransition;
   #world: Container;
   #getBasePosition: () => { x: number; y: number };
   #setWorldPosition: (x: number, y: number) => void;
@@ -203,7 +210,8 @@ export class WorldEffectsController {
     this.registry.register(new FadeTransition(options.world, timed));
     this.registry.register(new SlideTransition('slide-left', -1, { ...options, ...timed }));
     this.registry.register(new SlideTransition('slide-right', 1, { ...options, ...timed }));
-    this.registry.register(new CircleTransition(options.world, options.screen, options.width, options.height, timed));
+    this.#circle = new CircleTransition(options.world, options.screen, options.width, options.height, timed);
+    this.registry.register(this.#circle);
   }
 
   transition(name: string, durationMs = 600): boolean {
@@ -248,6 +256,7 @@ export class WorldEffectsController {
 
   destroy(): void {
     this.reset();
+    this.#circle.destroy();
   }
 
   get needsUpdate(): boolean {

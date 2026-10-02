@@ -17,6 +17,23 @@ describe('renderer runtime diagnostics', () => {
     expect(snapshot.maxUpdateMs).toBe(6);
   });
 
+  it('does not expose the recorded sample through the record return value', () => {
+    const monitor = new RenderPerformanceMonitor({ updateBudgetMs: 4 });
+    const sample = monitor.record(16, 5);
+    sample.deltaMs = 0; sample.updateMs = 0; sample.slow = false;
+    expect(monitor.snapshot()).toMatchObject({ averageDeltaMs: 16, averageUpdateMs: 5, slowFrames: 1,
+      samples: [{ deltaMs: 16, updateMs: 5, slow: true }] });
+  });
+
+  it('does not let edits to an exported snapshot rewrite past measurements', () => {
+    const monitor = new RenderPerformanceMonitor({ updateBudgetMs: 4 });
+    monitor.record(16, 5);
+    const snapshot = monitor.snapshot();
+    snapshot.samples[0]!.deltaMs = 0; snapshot.samples[0]!.updateMs = 0; snapshot.samples[0]!.slow = false;
+    expect(monitor.snapshot()).toMatchObject({ averageDeltaMs: 16, averageUpdateMs: 5, slowFrames: 1,
+      samples: [{ deltaMs: 16, updateMs: 5, slow: true }] });
+  });
+
   it('quality settings are deterministic and notify changes', () => {
     expect(getRenderQualitySettings('low').postProcess).toBe(false);
     const controller = new RenderQualityController('high');

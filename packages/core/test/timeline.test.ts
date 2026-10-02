@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TimelineRegistry, TimelineValidationError, validateTimeline } from '../src/timeline.js';
+import { TimelineRegistry, TimelineValidationError, validateTimeline, resolveTimelineDefinition, type TimelineDefinition } from '../src/timeline.js';
 
 const valid = {
   version: 1,
@@ -63,6 +63,33 @@ describe('timeline validation', () => {
 });
 
 describe('TimelineRegistry', () => {
+  it.each([1, 2] as const)('does not accept authored runtime cue provenance in version %s', version => {
+    const input = { ...valid, version, resolvedCueSources: [[{ kind: 'timeline' as const, timelineId: 'forged', trackIndex: 99, cueIndex: 88 }]] };
+    const before = JSON.stringify(input);
+    const registry = new TimelineRegistry();
+    expect(registry.register(input).resolvedCueSources).toBeUndefined();
+    const resolved = registry.get('intro')!;
+    const direct = resolveTimelineDefinition(input as TimelineDefinition, () => undefined);
+    if (version === 1) {
+      expect(resolved.resolvedCueSources).toBeUndefined();
+      expect(direct.resolvedCueSources).toBeUndefined();
+    } else {
+      expect(resolved.resolvedCueSources?.[0]?.[0]).toEqual({ kind: 'timeline', timelineId: 'intro', trackIndex: 0, cueIndex: 0 });
+      expect(direct.resolvedCueSources).toEqual(resolved.resolvedCueSources);
+    }
+    expect(JSON.stringify(input)).toBe(before);
+  });
+
+  it('retains generated child coordinates and clip instances after stripping authored provenance', () => {
+    const registry = new TimelineRegistry();
+    registry.register(valid);
+    registry.register({ version: 2, id: 'composed', durationMs: 1800, tracks: [], clips: [{ timelineId: 'intro', atMs: 0, repeat: 2 }],
+      resolvedCueSources: [[{ kind: 'timeline', timelineId: 'forged', trackIndex: 99, cueIndex: 88 }]] });
+    expect(registry.get('composed')!.resolvedCueSources?.map(track => track[0])).toEqual([
+      ...[0, 1].flatMap(iteration => [0, 1].map(trackIndex => ({ kind: 'timeline', timelineId: 'intro', trackIndex, cueIndex: 0,
+        instances: [{ timelineId: 'composed', clipIndex: 0, iteration }] }))),
+    ]);
+  });
   it('clones definitions on registration and lookup', () => {
     const registry = new TimelineRegistry();
     const registered = registry.register(valid);

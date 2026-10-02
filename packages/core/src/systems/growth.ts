@@ -56,6 +56,9 @@ export interface GrowthResult {
   passedLevels: number[];
 }
 
+/** A single synchronous grant cannot build an unbounded event/level list. */
+const MAX_LEVELS_PER_GAIN = 10_000;
+
 /**
  * 成长系统：经验累积 → 阈值判定 → 连升多级 → 属性增量写回变量仓库。
  *
@@ -123,14 +126,20 @@ export class GrowthSystem {
     const profile = this.#profile(characterId);
     if (!Number.isFinite(amount)) throw new Error(`GrowthSystem: 经验增量非法（${amount}）`);
     let level = this.levelOf(characterId);
-    let xp = Math.max(0, this.experienceOf(characterId) + amount); // 负增量兜底不为负
+    if (!Number.isSafeInteger(level) || level < 1) throw new Error('GrowthSystem: 当前等级必须是正安全整数');
+    const totalXp = this.experienceOf(characterId) + amount;
+    if (!Number.isFinite(totalXp)) throw new Error('GrowthSystem: 经验总量必须是有限数值');
+    let xp = Math.max(0, totalXp); // 负增量兜底不为负
     const passed: number[] = [];
 
     while (xp > 0) {
       if (profile.maxLevel !== undefined && level >= profile.maxLevel) break;
       const need = this.expForLevel(level + 1);
+      if (!Number.isFinite(need)) throw new Error('GrowthSystem: 升级所需经验必须是有限数值');
       if (need <= 0) break; // 曲线封顶
       if (xp < need) break;
+      if (passed.length >= MAX_LEVELS_PER_GAIN) throw new Error(`GrowthSystem: 单次经验增量超过 ${MAX_LEVELS_PER_GAIN} 级，请拆分增量或设置 maxLevel`);
+      if (!Number.isSafeInteger(level + 1)) throw new Error('GrowthSystem: 升级结果超出安全整数范围');
       xp -= need;
       level += 1;
       passed.push(level);

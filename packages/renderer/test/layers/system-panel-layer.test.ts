@@ -429,6 +429,32 @@ describe('SystemPanelLayer direct contract', () => {
     }
   });
 
+  it('keeps a long base command list masked and reveals a focused last command inside the canvas', () => {
+    const runtime = makeRuntime();
+    const onExecute = vi.fn();
+    try {
+      runtime.layer.showBaseCommands({
+        ...baseView(), commands: Array.from({ length: 24 }, (_, index) => ({
+          id: `command-${index}`, name: `需要完整显示的据点指令 ${index}`, apCost: 1, enabled: true,
+        })),
+      }, onExecute, vi.fn());
+      const row = findParentWithText(runtime.root, '需要完整显示的据点指令 23');
+      const list = row.parent!;
+      expect(list.mask).toBeInstanceOf(Graphics);
+      expect((list.mask as Graphics).eventMode).toBe('none');
+      const before = list.y;
+      const execute = row.children.find(child => child instanceof PText && child.text === '执行')!;
+      execute.emit('mouseover', {} as FederatedPointerEvent);
+      expect(list.y).toBeLessThan(before);
+      expect(row.y + list.y).toBeGreaterThanOrEqual(104);
+      expect(row.y + list.y + row.height).toBeLessThanOrEqual(604);
+      execute.emit('pointerdown', pointerEvent);
+      expect(onExecute).toHaveBeenCalledWith('command-23');
+      findText(runtime.root, '◀ 返回地图').emit('pointerdown', pointerEvent);
+      expect(runtime.layer.system()).toEqual({ type: 'none' });
+    } finally { disposeRuntime(runtime); }
+  });
+
   it('handles video end, error, skip, hide, late events, and callback exceptions transactionally', () => {
     const videos: FakeVideo[] = [];
     vi.stubGlobal('document', makeVideoDocument(videos));

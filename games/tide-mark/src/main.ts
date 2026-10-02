@@ -5,7 +5,7 @@ import gamePackage from '../package.json';
 import { sceneFiles } from './scene-hmr-boundary.js';
 
 const assetFiles = Object.fromEntries(Object.entries(import.meta.glob<string>(
-  '../content/assets/**/*.{png,jpg,jpeg,webp,gif,avif,svg,mp3,ogg,wav,m4a,flac}',
+  '../content/assets/**/*',
   { query: '?url', import: 'default', eager: true },
 )).map(([path, url]) => [path.replace('../content/assets/', ''), url]));
 
@@ -15,7 +15,10 @@ void startPlayer({
   sceneFiles,
   assetFiles,
   fontFiles: import.meta.glob<string>('../content/assets/fonts/*.{woff2,woff,ttf,otf}', { query: '?url', import: 'default', eager: true }),
-  timelineFiles: import.meta.glob('../content/timelines/**/*.json', { eager: true, import: 'default' }),
+  timelineFiles: {
+    ...import.meta.glob('../content/timelines/**/*.json', { eager: true, import: 'default' }),
+    ...import.meta.glob(['../content/timelines/**/*.[jJ][sS][oO][nN]', '!../content/timelines/**/*.json'], { query: '?raw', eager: true, import: 'default' }),
+  },
   gallery: (Object.values(import.meta.glob('../content/config/gallery.json', { eager: true, import: 'default' }))[0]
     ?? { cgs: [], music: [] }) as NonNullable<PlayerProject['gallery']>,
   subtitle: '一封晚到三年的信',

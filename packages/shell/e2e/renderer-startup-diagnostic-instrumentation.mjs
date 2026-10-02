@@ -154,9 +154,11 @@ export function transformRendererStartupSource(source) {
   if (typeof source !== 'string') throw new Error('插桩源代码必须是字符串');
   if (source.includes(sourceMarker)) throw new Error('统一启动诊断探针已经存在，拒绝重复插桩');
   const normalized = source.replace(/\r\n/g, '\n');
-  const mainAnchor = normalized.includes('export async function startPlayer(project: PlayerProject): Promise<void> {')
-    ? 'export async function startPlayer(project: PlayerProject): Promise<void> {\n'
-    : 'async function main(): Promise<void> {\n';
+  const mainAnchor = [
+    'export async function startPlayer(project: PlayerProject, signal?: AbortSignal): Promise<void> {\n',
+    'export async function startPlayer(project: PlayerProject): Promise<void> {\n',
+    'async function main(): Promise<void> {\n',
+  ].find(anchor => normalized.includes(anchor)) ?? 'async function main(): Promise<void> {\n';
   let transformed = replaceUnique(normalized, mainAnchor, `${mainAnchor}${startupPrelude()}\n`, 'main');
   const modernRuntimeStart = '  const runtime = await createRendererRuntime({';
   if (countOccurrences(transformed, modernRuntimeStart) === 1) {

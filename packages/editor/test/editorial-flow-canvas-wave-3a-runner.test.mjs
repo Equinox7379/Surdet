@@ -131,10 +131,10 @@ describe('Wave 3A browser runner contract', () => {
     expect(source).not.toContain('const unprojectableRawEdgeCount = flowFacts.statusEdgeCount - revealedRouteCount');
     expect(source).toContain('technicalMap.unprojectableExplanation');
     expect(source).toContain('technicalMap.unprojectableExplanationVisible');
-    expect(source).toContain("'另有 13 条连接因端点缺失未显示'");
-    expect(source).toContain('const unprojectableRawEdgeCount = Number(unprojectableMatch[1])');
+    expect(source).toContain("!technicalMap.unprojectableExplanation.includes('另有')");
+    expect(source).toContain('const unprojectableRawEdgeCount = 0;');
     expect(source).toContain('const projectableNarrativeRouteCount = flowFacts.statusEdgeCount - unprojectableRawEdgeCount');
-    expect(source).toContain('expected 13 raw Starter connections with missing endpoints');
+    expect(source).toContain('valid Starter contains a reported missing flow target');
     expect(source).toContain("mode switch did not retain keyboard focus on view-focus");
     expect(source).toContain("'flow-global-overview'");
     expect(source).toContain("'flow-technical-connections'");

@@ -165,6 +165,36 @@ describe('project asset import authority operations', () => {
     expect(created.status).toBe('UPLOADING');
   });
 
+  it('allows target reuse after an interrupted undo has actually recovered and resolved its barrier', async () => {
+    const { authority, paths, projectRoot } = await fixture();
+    const importFile = async (instance: ProjectAssetImportAuthority, content: string) => {
+      const operationId = crypto.randomUUID(), itemId = crypto.randomUUID();
+      await instance.createOperation({ operationId, items: [{ itemId, sourceName: 'recovered-reuse.png', declaredBytes: content.length }] });
+      await instance.uploadItem(operationId, itemId, Readable.from(Buffer.from(content)));
+      const planned = await instance.plan(operationId, { targets: [{ itemId, kind: 'background', fileName: 'recovered-reuse.png' }] });
+      await instance.seal(operationId, { planFingerprint: planned.plan.planFingerprint });
+      return { operationId, itemId, ...await instance.commit(operationId, { planFingerprint: planned.plan.planFingerprint }) };
+    };
+    const first = await importFile(authority, 'first');
+    const interrupted = reopenedAuthority(paths, (point) => {
+      if (point === 'after_undo_quarantine_verify_before_undo_receipt') throw new Error('stop during undo');
+    });
+    await expect(interrupted.undo(first.operationId, first.receipt)).rejects.toBeInstanceOf(AssetImportInjectedTermination);
+    const recovered = reopenedAuthority(paths);
+    expect((await recovered.recover(first.operationId, { action: 'resume' })).detail.operation.status).toBe('UNDONE');
+    expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(false);
+    const second = await importFile(recovered, 'second');
+    const reopened = reopenedAuthority(paths);
+    expect((await reopened.query(first.operationId)).operation.status).toBe('UNDONE');
+    expect((await reopened.query(second.operationId)).operation.status).toBe('COMMITTED');
+    expect(await readFile(path.join(projectRoot, 'content/assets/bg/recovered-reuse.png'), 'utf8')).toBe('second');
+    expect(await readFile(path.join(projectRoot, '.surdet/asset-import', first.operationId, 'undo', `${first.itemId}.bin`), 'utf8')).toBe('first');
+    expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(false);
+    await expect(reopened.createOperation({ operationId: crypto.randomUUID(), items: [{
+      itemId: crypto.randomUUID(), sourceName: 'after-reuse.png', declaredBytes: 1,
+    }] })).resolves.toMatchObject({ status: 'UPLOADING' });
+  }, 30_000);
+
   it('rejects binary license bytes at the shared Editor authority without publishing or entering recovery', async () => {
     const { authority, paths, projectRoot } = await fixture();
     const operationId = crypto.randomUUID(), itemId = crypto.randomUUID();

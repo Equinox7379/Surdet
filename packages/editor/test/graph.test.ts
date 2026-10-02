@@ -3,8 +3,8 @@
  * 宿主入口节点、流单元顺序流。
  */
 import { describe, expect, it } from 'vitest';
-import { compileScene } from '@surdet/core';
-import type { CompiledScene } from '@surdet/core';
+import { compileScene, EventBus, Interpreter, SceneRegistry, VariableStore } from '@surdet/core';
+import type { CompiledScene, CoreEventMap } from '@surdet/core';
 import { buildFlowGraph, sceneNodeId, labelNodeId, hostNodeId } from '../src/graph/build.js';
 
 function compile(id: string, src: string): CompiledScene {
@@ -18,6 +18,54 @@ function scenesOf(entries: [string, string][]): Map<string, CompiledScene> {
 }
 
 describe('buildFlowGraph（标签级流程图数据模型）', () => {
+  it.each([true, false])('does not invent an empty label for internal if/else control flow (labelled destination=%s)', (labelled) => {
+    const compiled = compile('ch1', '@if x > 1\n凛：条件满足。\n@else\n凛：条件不满足。\n@endif\n'
+      + (labelled ? '@label after\n' : '') + '凛：条件合并。\n@end\n');
+    const graph = buildFlowGraph(new Map([['ch1', compiled]]));
+    expect(graph.edges.filter((edge) => !graph.nodes.some((node) => node.id === edge.to))).toEqual([]);
+    expect(graph.edges.filter((edge) => edge.kind === 'goto')).toEqual(labelled
+      ? [{ from: sceneNodeId('ch1'), to: labelNodeId('ch1', 'after'), kind: 'goto' }]
+      : [{ from: sceneNodeId('ch1'), to: sceneNodeId('ch1'), kind: 'goto' }]);
+    const missing = buildFlowGraph(scenesOf([['real', '@jump missing\n']]));
+    expect(missing.edges).toContainEqual({ from: sceneNodeId('real'), to: sceneNodeId('missing'), kind: 'jump' });
+  });
+
+  it.each([true, false])('keeps a real effect-only choice and its continuation in the target flow unit (labelled=%s)', (labelled) => {
+    const compiled = compile('ch1', '@choice\n  继续 -> @mod x +1\n'
+      + (labelled ? '@label after\n' : '') + '凛：合并。\n@end\n');
+    const graph = buildFlowGraph(new Map([['ch1', compiled]]));
+    const to = labelled ? labelNodeId('ch1', 'after') : sceneNodeId('ch1');
+    expect(graph.edges.filter((edge) => !graph.nodes.some((node) => node.id === edge.to))).toEqual([]);
+    expect(graph.edges.filter((edge) => edge.kind === 'choice')).toEqual([
+      { from: sceneNodeId('ch1'), to, kind: 'choice', label: '继续' },
+    ]);
+    expect(graph.edges.filter((edge) => edge.kind === 'goto')).toEqual([
+      { from: sceneNodeId('ch1'), to, kind: 'goto' },
+    ]);
+  });
+
+  it.each([0, 2])('labels a conditional skip with the actual false condition for x=%d', (x) => {
+    const compiled = compile('ch1', '@if x > 1\n凛：条件满足。\n@endif\n@label after\n凛：条件合并。\n@end\n');
+    const graph = buildFlowGraph(new Map([['ch1', compiled]]));
+    const conditionalEdges = graph.edges.filter((edge) => edge.kind === 'if');
+    const store = new VariableStore([{ name: 'x', type: 'number', initial: x }]);
+    const bus = new EventBus<CoreEventMap>();
+    const registry = new SceneRegistry();
+    registry.register(compiled);
+    const interpreter = new Interpreter(store, bus, registry);
+    const text: string[] = [];
+    const conditions: boolean[] = [];
+    bus.on('text', (event) => text.push(event.value));
+    bus.on('runtimeTrace', (event) => { if (event.condition) conditions.push(event.condition.result); });
+    interpreter.start('ch1');
+    expect(conditions).toEqual([x > 1]);
+    expect(text).toEqual([x > 1 ? '条件满足。' : '条件合并。']);
+    expect(conditionalEdges).toEqual([{
+      from: sceneNodeId('ch1'), to: labelNodeId('ch1', 'after'), kind: 'if', label: '不满足（x > 1）',
+    }]);
+    expect(store.snapshot()).toEqual({ x });
+  });
+
   it('每个场景产出场景入口节点 + 各 label 节点，相邻流单元有顺序流边', () => {
     const g = buildFlowGraph(scenesOf([
       ['ch1', '凛：开场。\n@label a\n凛：甲。\n@label b\n凛：乙。\n'],
@@ -70,8 +118,9 @@ describe('buildFlowGraph（标签级流程图数据模型）', () => {
     ]));
     // @if 为假跳过 then 块 → condJump 指向 endif 之后；若编译器将目标定位到 label after 则画边
     const ifEdges = g.edges.filter((e) => e.kind === 'if');
+    expect(ifEdges).toHaveLength(1);
     for (const e of ifEdges) {
-      expect(e.label).toMatch(/^if /);
+      expect(e.label).toBe('不满足（x > 1）');
       expect(e.to).toBe(labelNodeId('ch1', 'after'));
     }
   });

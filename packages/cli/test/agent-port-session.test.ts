@@ -1,13 +1,16 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AuthoringOperationError } from '@surdet/authoring';
+import { AuthoringOperationError, getCapabilityDefinition } from '@surdet/authoring';
 import { parseAgentPortArgs } from '../src/agent-port/args.js';
 import { allowedCapabilitiesForPolicy } from '../src/agent-port/policy.js';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
 import { generateDeliveryCapsule } from '../src/agent-port/delivery-capsule.js';
 import { PreviewContentService } from '../src/authoring/preview-content-service.js';
+import { ProjectAssetRelocationAuthority, AssetRelocationInjectedTermination } from '../src/asset-import-authority/asset-relocation-authority.js';
+import { openAssetImportAuthorityPaths } from '../src/asset-import-authority/filesystem.js';
 import {
   openAgentPortSession,
   type AgentPortSession,
@@ -87,6 +90,68 @@ describe('Surdet Agent Port session and policy contract', () => {
     delete process.env['SURDET_AGENT_DATA_DIR'];
     for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   });
+
+  it.each(['resume', 'rollback'] as const)('describes a truly resolved relocation barrier after %s and still blocks corrupt evidence', async action => {
+    const root = makeProject(`relocation-description-${action}`);
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-relocation-description-'));
+    temporaryRoots.push(data);
+    process.env['SURDET_AGENT_DATA_DIR'] = data;
+    const assetData = path.join(data, 'asset-records');
+    const canonicalRoot = fs.realpathSync(root);
+    fs.mkdirSync(path.join(root, 'content/assets/bg'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'content/assets/bg/old.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>');
+    const session = await openAgentPortSession({ projectRoot: root, policy: 'apply', assetImportDataRoot: assetData });
+    const invoke = async (capability: Parameters<typeof session.invoke>[0], input: Record<string, unknown>) => {
+      const response = await session.invoke(capability, input);
+      expect(response, JSON.stringify(response)).toMatchObject({ ok: true });
+      if (!response.ok) throw new Error(response.error.message);
+      return response.result as any;
+    };
+    const operationId = crypto.randomUUID();
+    const faultPort = ProjectAssetRelocationAuthority.prototype as unknown as { fault(point: string): Promise<void> };
+    const original = faultPort.fault;
+    let stopped = false;
+    const injected = vi.spyOn(faultPort, 'fault').mockImplementation(async function (this: ProjectAssetRelocationAuthority, point) {
+      if (this.paths.projectRoot === canonicalRoot && point === 'after_target_link_before_journal' && !stopped) {
+        stopped = true;
+        throw new AssetRelocationInjectedTermination('after_target_link_before_journal');
+      }
+      return original.call(this, point);
+    });
+    try {
+      const plan = await invoke('asset.relocation.plan', { operationId, moves: [{ sourcePath: 'content/assets/bg/old.svg', targetPath: 'content/assets/bg/new.svg' }] });
+      const request = { operationId, planFingerprint: plan.plan.planFingerprint };
+      expect(await session.invoke('asset.relocation.commit', request)).toMatchObject({ ok: false, error: { code: 'IMPORT_IO_FAILED' } });
+      expect(stopped).toBe(true);
+      expect((await invoke('asset.relocation.inspect', { operationId })).operation.status).toBe('PUBLISHING');
+      expect((await session.describe()).manualRecoveryRequired).toBe(true);
+      const result = await invoke('asset.relocation.recover', { ...request, action });
+      expect(result.operation.status).toBe(action === 'resume' ? 'COMMITTED' : 'ROLLED_BACK');
+      const before = projectBytes(root);
+      const description = await session.describe();
+      expect(description.manualRecoveryRequired).toBe(false);
+      expect(description.recoveryDisposition).toBe('NO_ACTION');
+      expect(description.capabilities.find(capability => capability.id === 'asset.relocation.plan')?.availability).toBe('available');
+      const paths = await openAssetImportAuthorityPaths({ projectRoot: root, dataRoot: assetData });
+      const resolution = path.join(paths.projectNamespace, 'recovery-resolutions', fs.readdirSync(path.join(paths.projectNamespace, 'recovery-resolutions'))[0]!);
+      const resolutionBytes = fs.readFileSync(resolution, 'utf8');
+      fs.writeFileSync(resolution, JSON.stringify({ ...JSON.parse(resolutionBytes), incidentSha256: '0'.repeat(64) }));
+      expect((await session.describe()).manualRecoveryRequired).toBe(true);
+      fs.writeFileSync(resolution, resolutionBytes);
+      const recordFile = path.join(paths.projectNamespace, 'relocations', operationId, 'record.json');
+      const recordBytes = fs.readFileSync(recordFile, 'utf8');
+      const invalidTerminal = JSON.parse(recordBytes);
+      invalidTerminal.journal.binaryState = action === 'resume' ? 'BACKUP' : 'TARGET';
+      invalidTerminal.journal.binaryItems[0].state = invalidTerminal.journal.binaryState;
+      const invalidBytes = JSON.stringify(invalidTerminal);
+      fs.writeFileSync(recordFile, invalidBytes);
+      expect((await session.describe()).manualRecoveryRequired).toBe(true);
+      expect(fs.readFileSync(recordFile, 'utf8')).toBe(invalidBytes);
+      fs.writeFileSync(recordFile, recordBytes);
+      expect((await session.describe()).manualRecoveryRequired).toBe(false);
+      expect(projectBytes(root)).toEqual(before);
+    } finally { injected.mockRestore(); await session.close(); }
+  }, 30_000);
 
   it('requires explicit project and immutable policy', () => {
     expectCode(() => parseAgentPortArgs([]), 'INVALID_REQUEST');
@@ -221,6 +286,35 @@ describe('Surdet Agent Port session and policy contract', () => {
     expect(projectBytes(root)).toEqual(beforeProject);
     expect(dataBytes(data)).toEqual(beforeData);
     await session.close();
+  });
+
+  it.each(['observe', 'stage', 'apply'] as const)('reports config/text mutations consistently before a change exists (%s)', async policy => {
+    const root = makeProject(`config-state-${policy}`);
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-config-state-'));
+    temporaryRoots.push(data);
+    const before = projectBytes(root);
+    const session = await open(root, data, policy);
+    const capabilities = ['project.stage-config.patch', 'project.theme-config.patch', 'project.ui.patch', 'project.texts.patch'] as const;
+    try {
+      const description = await session.describe();
+      for (const capability of capabilities) {
+        expect(description.capabilities.find(item => item.id === capability)?.availability)
+          .toBe(policy === 'observe' ? 'policy-blocked' : 'state-blocked');
+        expectFailure(await session.invoke(capability, getCapabilityDefinition(capability).minimalExample.input),
+          policy === 'observe' ? 'POLICY_BLOCKED' : 'SESSION_STATE_INVALID');
+      }
+      expect(session.activeChangeId).toBeUndefined();
+      expect(projectBytes(root)).toEqual(before);
+      if (policy !== 'observe') {
+        expect((await session.invoke('change.begin', { compositionMode: 'direct' })).ok).toBe(true);
+        const active = await session.describe();
+        for (const capability of capabilities) {
+          expect(active.capabilities.find(item => item.id === capability)?.availability).toBe('available');
+        }
+        expect((await session.invoke('change.rollback', {})).ok).toBe(true);
+        expect(projectBytes(root)).toEqual(before);
+      }
+    } finally { await session.close(); }
   });
 
   it('reports the integration commit gate before freshness gates', async () => {
@@ -372,6 +466,74 @@ describe('Surdet Agent Port session and policy contract', () => {
     ]);
     expect(projectBytes(root)).toEqual(beforeProject);
     await session.close();
+  });
+
+  it.each(['null', '[]', '42', '"broken"'])('preserves the corrupted-record failure when the invocation ledger cannot read %s', async (malformed) => {
+    const root = makeProject('corrupt-record-root');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-port-data-'));
+    temporaryRoots.push(data);
+    const beforeProject = projectBytes(root);
+    const session = await open(root, data, 'stage');
+    try {
+      expect((await session.invoke('change.begin', {})).ok).toBe(true);
+      const changeId = session.activeChangeId!;
+      const opened = (await NodeChangeStore.openByChangeId(changeId))!;
+      const file = path.join(opened.store.projectDirectory, changeId, 'records', `${String(opened.record.recordVersion).padStart(10, '0')}.json`);
+      fs.writeFileSync(file, malformed);
+      const beforeData = dataBytes(data);
+      const failed = await session.invoke('change.diff', {});
+      expectFailure(failed, 'CHANGE_STORE_CORRUPT');
+      if (failed.ok) throw new Error('expected corrupt record failure');
+      expect(failed.error.retryDisposition).toBe('manual-recovery');
+      expect(failed.error.details).toMatchObject({ invocationLedgerFailure: { code: 'INVOCATION_LEDGER_WRITE_FAILED', message: expect.any(String) } });
+      expect(dataBytes(data)).toEqual(beforeData);
+      expect(projectBytes(root)).toEqual(beforeProject);
+      await expect(open(root, data, 'stage', changeId)).rejects.toMatchObject({ code: 'CHANGE_STORE_CORRUPT' });
+    } finally { await session.close(); }
+  });
+
+  it.each([null, 42, undefined])('rejects corrupted projectRootIdentity %j before path normalization', async (projectRootIdentity) => {
+    const root = makeProject('corrupt-record-identity');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-port-data-'));
+    temporaryRoots.push(data);
+    const session = await open(root, data, 'stage');
+    const beforeProject = projectBytes(root);
+    try {
+      expect((await session.invoke('change.begin', {})).ok).toBe(true);
+      const changeId = session.activeChangeId!;
+      const opened = (await NodeChangeStore.openByChangeId(changeId))!;
+      const file = path.join(opened.store.projectDirectory, changeId, 'records', `${String(opened.record.recordVersion).padStart(10, '0')}.json`);
+      const malformed = JSON.stringify({ ...opened.record, projectRootIdentity });
+      fs.writeFileSync(file, malformed);
+      const beforeData = dataBytes(data);
+      const failed = await session.invoke('change.diff', {});
+      expectFailure(failed, 'CHANGE_STORE_CORRUPT');
+      if (failed.ok) throw new Error('expected corrupt identity failure');
+      expect(failed.error.retryDisposition).toBe('manual-recovery');
+      expect(dataBytes(data)).toEqual(beforeData);
+      expect(projectBytes(root)).toEqual(beforeProject);
+    } finally { await session.close(); }
+  });
+
+  it('retains a failed operation and discloses its secondary invocation-ledger failure', async () => {
+    const root = makeProject('failed-operation-ledger');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-agent-port-data-'));
+    temporaryRoots.push(data);
+    const beforeProject = projectBytes(root);
+    const session = await open(root, data, 'stage');
+    expect((await session.invoke('change.begin', {})).ok).toBe(true);
+    const opened = (await NodeChangeStore.openByChangeId(session.activeChangeId!))!;
+    const beforeRecord = opened.record;
+    const writeInvocation = vi.spyOn(NodeChangeStore.prototype, 'writeInvocation')
+      .mockImplementationOnce(async () => { throw new Error('simulated failed-call ledger failure'); });
+    try {
+      const failed = await session.invoke('scene.create', { operationId: 'conflicting-scene', sceneId: 'start' });
+      expectFailure(failed, 'OBJECT_PRECONDITION_FAILED');
+      if (failed.ok) throw new Error('expected existing scene failure');
+      expect(failed.error.details).toMatchObject({ invocationLedgerFailure: { code: 'INVOCATION_LEDGER_WRITE_FAILED', message: 'simulated failed-call ledger failure' } });
+      expect((await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record).toEqual(beforeRecord);
+      expect(projectBytes(root)).toEqual(beforeProject);
+    } finally { writeInvocation.mockRestore(); await session.close(); }
   });
 
   it('reports invocation-ledger failure truthfully and retries an idempotent operation without a second mutation', async () => {

@@ -1438,6 +1438,23 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     });
   });
 
+  it.each([
+    { file: 'intro.json', id: 'intro', bom: false },
+    { file: 'intro.json', id: 'intro', bom: true },
+    { file: 'upper.JSON', id: 'upper.JSON', bom: false },
+    { file: 'upper.JSON', id: 'upper.JSON', bom: true },
+    { file: 'mixed.JsOn', id: 'mixed.JsOn', bom: false },
+    { file: 'mixed.JsOn', id: 'mixed.JsOn', bom: true },
+  ])('读取已支持的时间轴身份并保留源字节：$file / BOM=$bom', async ({ file, id, bom }) => {
+    const text = (bom ? '\uFEFF' : '') + timelineText(id, '\r\n');
+    const handle = fileHandle(null, log, file, text);
+    const directory = directoryHandle('timelines', {}, { [file]: handle, 'notes.txt': fileHandle(null, log, 'notes.txt', '不要导入') });
+    const entries: TimelineEntry[] = [];
+    await readTimelineDir(directory, '', entries);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ id, file, text, eol: '\r\n', dirty: false, handle, persistedSha256: await sceneTextSha256(text) });
+  });
+
   it('读取并编辑时间轴时分别保留 CRLF 与 LF 文档身份', async () => {
     const crlfWrites: string[] = [];
     const lfWrites: string[] = [];

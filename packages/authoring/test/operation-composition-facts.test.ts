@@ -75,6 +75,27 @@ async function insert(change: ChangeSession, operationId: string, sceneId: strin
 }
 
 describe('candidate operation-time facts', () => {
+  it.each(['JSON', 'JsOn'])('retains canonical .%s dependency facts for V2 create and patch', async (extension) => {
+    const timelineId = `intro.${extension}`;
+    const timelinePath = `content/timelines/chapter/intro.${extension}`;
+    const definition = { version: 1, id: timelineId, durationMs: 100,
+      tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'fade', alpha: 1 }] }] };
+    const source = JSON.stringify(definition);
+    const change = await candidate([], {}, { [timelinePath]: source });
+    const created = await applyTimelineCreate(change, { operationId: 'outer-create', timelineId: 'outer', definition: {
+      version: 2, id: 'outer', durationMs: 100, tracks: [], clips: [{ timelineId, atMs: 0 }],
+    } }, hasher);
+    await applyTimelinePatch(change, { operationId: 'outer-patch', timelineId: 'outer',
+      patch: { kind: 'setDuration', durationMs: 200, expectedFingerprint: created.fingerprint } }, hasher);
+    const expectedFingerprint = await timelineFingerprint(definition, hasher);
+    for (const operationId of ['outer-create', 'outer-patch']) {
+      expect(facts(change, operationId).requiredObjects).toContainEqual({ objectRef: `timeline:${timelineId}`, source: 'base' });
+      expect(facts(change, operationId).replayStatePreconditions).toContainEqual({ objectRef: `timeline:${timelineId}`, expectedFingerprint });
+      expect(facts(change, operationId).replayStateRequirements).toContainEqual({ objectRef: `timeline:${timelineId}`, source: 'base', expectedFingerprint });
+    }
+    expect(change.record.workingFiles[timelinePath]).toBe(source);
+    expect(inspectCandidateCompositionReadiness(change.record).status).toBe('ready');
+  });
   it('requires dossier definitions and records the metadata dependency before candidate persistence', async () => {
     const missing = await candidate(), before = structuredClone(missing.record);
     const input = { operationId: 'intro', sceneId: 'B', blocks: [{ kind: 'instruction' as const, name: 'unlock_profile', args: ['"intro"'] }] };

@@ -45,9 +45,24 @@ export function createBrowserSaveStorage(storage: Storage, prefix: string): Brow
     },
     write: (slot, data) => {
       const key = `${savePrefix}${slot}`;
+      const serialized = JSON.stringify(data);
       const current = storage.getItem(key);
-      if (current !== null) storage.setItem(`${key}.bak`, current);
-      storage.setItem(key, JSON.stringify(data));
+      const backupKey = `${key}.bak`;
+      const backup = current === null ? null : storage.getItem(backupKey);
+      if (current !== null) storage.setItem(backupKey, current);
+      try {
+        storage.setItem(key, serialized);
+      } catch (error) {
+        if (current !== null) {
+          try {
+            if (backup === null) storage.removeItem(backupKey);
+            else storage.setItem(backupKey, backup);
+          } catch (restoreError) {
+            throw new AggregateError([error, restoreError], '存档写入失败，且无法还原原备份');
+          }
+        }
+        throw error;
+      }
     },
     delete: (slot) => {
       const key = `${savePrefix}${slot}`;
