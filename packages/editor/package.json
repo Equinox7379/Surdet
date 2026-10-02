@@ -9,8 +9,12 @@
     "dev": "vite",
     "dev:project": "node scripts/dev-project.mjs",
     "build": "vite build",
+    "desktop:build": "node scripts/build-desktop.mjs",
+    "desktop": "electron desktop-dist",
+    "desktop:pack": "npm run desktop:build && electron-builder --win --dir --config desktop/electron-builder.json",
+    "desktop:test": "node e2e/desktop.e2e.mjs",
     "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p desktop/tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {

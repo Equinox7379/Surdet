@@ -1,0 +1,10 @@
+{
+  "appId": "com.surdet.editor",
+  "productName": "Surdet Editor",
+  "directories": { "app": "desktop-dist", "output": "release/editor" },
+  "files": ["**/*", "!**/*.map"],
+  "electronVersion": "43.2.0",
+  "electronDist": "../../node_modules/electron/dist",
+  "npmRebuild": false,
+  "win": { "target": [{ "target": "dir", "arch": ["x64"] }], "signAndEditExecutable": false }
+}

@@ -31,7 +31,16 @@ npm run build
 npm run dev -w surdet-starter
 ```
 
-启动可视化编辑器：
+启动独立 Windows 编辑器（首次先完成上面的工作区构建）：
+
+```powershell
+npm run desktop:build -w surdet-editor
+npm run desktop -w surdet-editor
+```
+
+本地可运行目录可用 `npm run desktop:pack -w surdet-editor` 生成，位于 `packages/editor/release/editor/win-unpacked/`。保留整个目录，双击其中的 `Surdet Editor.exe`；使用者不需要另装 Node、启动服务或打开浏览器。应用中选择游戏项目即可编辑、保存和试玩；打开其他项目使用独立窗口，同一项目重复打开会回到已有窗口。关闭有未保存修改的窗口会询问，正在保存或恢复时不能强行关闭。重启会重新打开上次的项目，并沿用现有剧本/时间轴自动备份恢复机制（不承诺所有配置草稿都有自动备份）。
+
+这是桌面首个可用版本，沿用当前界面；未签名、未作为正式安装包发行。前端重新设计另行进行。已有浏览器开发入口继续保留：
 
 ```powershell
 npm run dev -w surdet-editor

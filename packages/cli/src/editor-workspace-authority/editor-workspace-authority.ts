@@ -142,6 +142,7 @@ export class EditorWorkspaceAuthority {
   private readonly noticeStore: ProjectMutationNoticeStore;
   private readonly maxWriteMs: number;
   private readonly activeWrites = new Map<string, ActiveWrite>();
+  private readonly sessions = new Map<string, string>();
   private readonly now: () => number;
   private readonly previews: PreviewObservationService;
 
@@ -213,7 +214,9 @@ export class EditorWorkspaceAuthority {
   }
 
   async heartbeat(input: EditorWorkspaceStateInput) {
-    return this.workspaceStore.heartbeat(this.projectRootIdentity, input);
+    const result = await this.workspaceStore.heartbeat(this.projectRootIdentity, input);
+    this.sessions.set(input.workspaceSessionId, input.browserSessionId);
+    return result;
   }
 
   async snapshot(): Promise<EditorWorkspaceSnapshot> {
@@ -232,7 +235,7 @@ export class EditorWorkspaceAuthority {
 
   async publishPreview(input: EditorWorkspaceStateInput, preview: PreviewPublishInput) {
     await this.requireSession(input);
-    await this.workspaceStore.heartbeat(this.projectRootIdentity, input);
+    await this.heartbeat(input);
     const lease = preview.action === 'invalidate' ? null
       : await this.leaseManager.acquire({ scope: 'project', resourceId: this.projectRootIdentity });
     try { return await this.previews.publish(this.projectRootIdentity, input.workspaceSessionId, input.browserSessionId, preview); }
@@ -241,13 +244,13 @@ export class EditorWorkspaceAuthority {
 
   async previewSources(input: EditorWorkspaceStateInput) {
     await this.requireSession(input);
-    await this.workspaceStore.heartbeat(this.projectRootIdentity, input);
+    await this.heartbeat(input);
     return { sources: await new PreviewContentService(this.leaseManager.dataRoot).list(this.projectRootIdentity) };
   }
 
   async previewContent(input: EditorWorkspaceStateInput, target: PreviewContentTarget) {
     await this.requireSession(input);
-    await this.workspaceStore.heartbeat(this.projectRootIdentity, input);
+    await this.heartbeat(input);
     const resolved = await new PreviewContentService(this.leaseManager.dataRoot).resolve(this.projectRootIdentity, target);
     if (resolved.content.projectRevision !== input.loadedProjectRevision || resolved.content.coordinationRevision !== input.loadedCoordinationRevision) {
       throw new AuthoringOperationError('PREVIEW_OBSERVATION_STALE', '当前绑定工作区尚未加载所选内容的来源基线');
@@ -314,7 +317,7 @@ export class EditorWorkspaceAuthority {
       }
 
       const writeLeaseId = crypto.randomUUID();
-      await this.workspaceStore.heartbeat(this.projectRootIdentity, {
+      await this.heartbeat({
         ...input,
         availability: 'busy',
         loadedProjectRevision: diskBaseline.projectRevision,
@@ -361,7 +364,7 @@ export class EditorWorkspaceAuthority {
     await this.leaseManager.assertOwned(active.lease);
     clearTimeout(active.timer);
     active.timer = this.armExpiry(active);
-    await this.workspaceStore.heartbeat(this.projectRootIdentity, {
+    await this.heartbeat({
       ...input,
       availability: 'busy',
       loadedProjectRevision: active.before.projectRevision,
@@ -466,14 +469,14 @@ export class EditorWorkspaceAuthority {
           };
         }
       }
-      await this.workspaceStore.heartbeat(this.projectRootIdentity, {
+      await this.heartbeat({
         ...input,
         loadedProjectRevision: diskBaseline.projectRevision,
         loadedCoordinationRevision: diskBaseline.coordinationRevision,
       });
       return { diskBaseline, changedPaths: paths, mutationNotice };
     } catch (error) {
-      await this.workspaceStore.heartbeat(this.projectRootIdentity, {
+      await this.heartbeat({
         ...input,
         availability: 'blocked',
         blockedReasons: ['write-settlement-failed'],
@@ -502,12 +505,19 @@ export class EditorWorkspaceAuthority {
       workspaceSessionId,
       browserSessionId,
     );
+    this.sessions.delete(workspaceSessionId);
   }
 
   async close(): Promise<void> {
     const writes = [...this.activeWrites.values()];
     for (const active of writes) {
       await this.expireWrite(active.workspaceSessionId, active.writeLeaseId);
+    }
+    // A stopped service cannot keep a live Editor owner. Do not revoke sessions
+    // from other authority instances bound to the same physical project.
+    for (const [workspaceSessionId, browserSessionId] of this.sessions) {
+      await this.workspaceStore.revoke(this.projectRootIdentity, workspaceSessionId, browserSessionId);
+      this.sessions.delete(workspaceSessionId);
     }
   }
 
@@ -552,7 +562,7 @@ export class EditorWorkspaceAuthority {
       workspaceSessionId,
     ).catch(() => null);
     if (current !== null) {
-      await this.workspaceStore.heartbeat(this.projectRootIdentity, {
+      await this.heartbeat({
         workspaceSessionId,
         browserSessionId: active.browserSessionId,
         workspaceGeneration: Math.max(

@@ -12,6 +12,7 @@ import {
 } from './timeline-autosave-identity.js';
 import { sceneReferenceConfigPaths, isValidLabelName, validateLabelRenameBatch } from '@surdet/authoring';
 import { isValidSceneId } from '@surdet/core';
+import { desktopProjectIdentity } from './desktop.js';
 
 export const AUTOSAVE_KEY = 'surdet-editor:autosave';
 /** 快照周期（30 秒：崩溃最多丢半分钟编辑，写入成本可忽略） */
@@ -148,6 +149,7 @@ function idbTransactionDone(transaction: IDBTransaction): Promise<void> {
 export async function resolveAutosaveProjectIdentity(
   handle: FileSystemDirectoryHandle | null,
 ): Promise<string | null> {
+  if (handle) { const identity = desktopProjectIdentity(handle); if (identity) return identity; }
   if (!handle || typeof indexedDB === 'undefined' || typeof crypto.randomUUID !== 'function'
     || typeof navigator === 'undefined' || !navigator.locks) return null;
 

@@ -29,6 +29,26 @@ afterEach(async () => {
 });
 
 describe('bound Editor write settlement', () => {
+  it('normal service shutdown releases only its own workspace sessions so reopening can save immediately', async () => {
+    const { project, dataRoot } = await fixture();
+    const manager = new NodeLocalLeaseManager(dataRoot);
+    const first = new EditorWorkspaceAuthority(project, { leaseManager: manager });
+    const other = new EditorWorkspaceAuthority(project, { leaseManager: manager });
+    authorities.push(first, other);
+    const state = { ...identity, workspaceGeneration: 1, availability: 'dirty' as const, dirtyScopes: ['scene' as const] };
+    await first.heartbeat(state);
+    await other.heartbeat({ ...state, workspaceSessionId: 'b09f537a-aa25-4e5f-9d64-901cb62fd8c1', browserSessionId: 'other-editor' });
+    await first.close();
+    expect((await other.snapshot()).humanWorkspace.activeSessions).toBe(1);
+    await other.close();
+    const reopened = new EditorWorkspaceAuthority(project, { leaseManager: manager });
+    authorities.push(reopened);
+    const next = { ...state, workspaceSessionId: 'c09f537a-aa25-4e5f-9d64-901cb62fd8c1', browserSessionId: 'reopened-editor' };
+    await reopened.heartbeat(next);
+    const { diskBaseline } = await reopened.snapshot();
+    const begun = await reopened.beginWrite({ ...next, purpose: 'save-all', expectedProjectRevision: diskBaseline.projectRevision, expectedCoordinationRevision: diskBaseline.coordinationRevision });
+    expect(begun.writeLeaseId).toBeTruthy();
+  });
   it.each(['modified', 'deleted', 'created'] as const)('preserves a target %s externally while its Editor text is staged', async change => {
     const { project, dataRoot } = await fixture();
     const authority = new EditorWorkspaceAuthority(project, { leaseManager: new NodeLocalLeaseManager(dataRoot) });
