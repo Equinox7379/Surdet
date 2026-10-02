@@ -2,6 +2,7 @@
   "name": "surdet-editor",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "description": "Surdet 可视化剧本编辑器：场景块编辑 + 实时校验 + 项目读写",
   "type": "module",
   "scripts": {

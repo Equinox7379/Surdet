@@ -1,6 +1,7 @@
 {
   "name": "@surdet/player",
   "version": "0.1.0",
+  "license": "MIT",
   "description": "Surdet shared Player for independent game projects",
   "type": "module",
   "main": "./dist/player/player.js",

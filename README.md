@@ -2,6 +2,8 @@
 
 Surdet 是一个数据驱动的桌面 Galgame 引擎，也是一套面向外部电脑 Agent 的可验证创作工具链。
 
+Surdet is a data-driven visual novel engine with a shared authoring toolkit for people and external AI agents. It provides a visual editor, a player runtime, and permission-scoped CLI/MCP tools without requiring a built-in AI model. Windows is the current supported validation target.
+
 它的目标不是在引擎里内置某个 AI 模型，而是让人类、CLI、编辑器和不同能力层级的桌面 Agent 共享同一套 authoring 合同：同样的对象、校验、模拟、运行证据、差异和事务边界。Agent 可以发现能力、在隔离 change 中创作并交付胶囊；真正写入项目仍由项目所有者授权。
 
 ## 核心能力
@@ -15,6 +17,8 @@ Surdet 是一个数据驱动的桌面 Galgame 引擎，也是一套面向外部�
 ## 快速开始
 
 需要 Node.js 24 或更高版本，与根目录 `package.json` 的要求一致。
+
+当前主要验证 Windows 上的编辑器、桌面游戏和 Chrome/Edge 浏览器路径，不承诺其他操作系统已经验收。
 
 ```powershell
 npm install
@@ -162,3 +166,9 @@ npm run verify:editor-save-load
 - `@random` 使用解释器的随机源；带 `seed` 的模拟与显式路径运行可复用该种子。实际播放器、外部系统和自定义回调是否可重放，仍应按各自接线验证。
 - 性能 baseline 是特定历史环境的资格化证据，不代表任意设备上的通用性能承诺。
 - 发布、部署和远端 push 都是独立授权门，不由测试通过自动触发。
+
+## 许可证与开源准备
+
+Surdet 自有引擎源码及技术文档采用 [MIT 许可证](LICENSE)。第三方依赖和作品的剧情、图片、音频、视频、字体等分别遵循自己的授权，不自动适用引擎许可；详见[第三方与素材说明](THIRD_PARTY_NOTICES.md)。使用引擎不要求作者将自己的游戏一并开源。
+
+目前处于开源准备阶段，正式公开安排在前端优化完成之后；不把开发中的演示素材、既有测试通过或本机可运行等同于正式发行完成。

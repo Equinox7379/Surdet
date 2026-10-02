@@ -1,6 +1,7 @@
 {
   "name": "@surdet/cli",
   "version": "0.1.0",
+  "license": "MIT",
   "description": "Surdet CLI: create, lint, build and pack galgame projects",
   "type": "module",
   "bin": {
@@ -9,7 +10,8 @@
   },
   "files": [
     "dist",
-    "templates"
+    "templates",
+    "NOTICE.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

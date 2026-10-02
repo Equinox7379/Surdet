@@ -19,3 +19,15 @@ packages/shell/.pack-stage/
 /shot*.png
 /packages/shell/e2e/artifacts/
 /packages/cli/e2e/artifacts/
+
+# Owner-local notes and projects; keep them on disk, outside the engine source release.
+/USER.md
+/SESSION-HANDOFF.md
+/.learnings/
+/.dsh/
+/%SystemDrive%/
+/docs/handoff-*.md
+/docs/SURDET-ART-DIRECTION-UPDATE-BRIEF-2026-08-09.md
+/docs/SURDET-ART-DIRECTOR-HANDOFF-2026-08-09.md
+/games/homeward/
+/games/last-echo/

@@ -1,6 +1,7 @@
 {
   "name": "@surdet/authoring",
   "version": "0.1.0",
+  "license": "MIT",
   "description": "Surdet shared authoring kernel: project objects, isolated changes and causal evidence",
   "type": "module",
   "main": "./dist/index.js",

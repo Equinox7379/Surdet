@@ -1,6 +1,7 @@
 {
   "name": "@surdet/core",
   "version": "0.1.0",
+  "license": "MIT",
   "description": "Surdet engine kernel: DSL compiler, runtime, state, save, combat, calendar - zero dependency, headless",
   "type": "module",
   "main": "./dist/index.js",
