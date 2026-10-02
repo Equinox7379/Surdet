@@ -17,6 +17,18 @@ const hasher: TextHasher = {
   sha256: async (text) => createHash('sha256').update(text, 'utf8').digest('hex'),
 };
 
+it('keeps companion PDF licenses read-only in single and batch relocation', async () => {
+  const sourcePath = 'content/assets/fonts/MiSans-LICENSE.pdf';
+  const targetPath = 'content/assets/fonts/Other-LICENSE.pdf';
+  const options = { files: { 'game.config.json': '{}' }, assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath };
+  const single = await planProjectAssetRelocation(await makeInput(options), hasher);
+  const batch = await planProjectAssetRelocationBatch(await makeBatchInput({ ...options, items: [{ itemId: 'license', sourcePath, targetPath }] }), hasher);
+  for (const result of [single, batch]) {
+    expect(result.plan.blockers.some(blocker => blocker.code === 'ASSET_RELOCATION_UNSUPPORTED_KIND')).toBe(true);
+    expect(result.textChanges).toEqual([]);
+  }
+});
+
 it('renames theme skins and title logo as image references without changing prose', async () => {
   const sourcePath = 'content/assets/bg/paper.png', targetPath = 'content/assets/bg/new-paper.png';
   const config = { player: { titleLogo: 'paper' }, theme: { dialogSkin: 'paper', buttonSkin: 'paper' } };

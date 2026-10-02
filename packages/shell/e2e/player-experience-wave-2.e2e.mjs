@@ -17,6 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import * as url from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { closePlayerSession } from './player-session-cleanup.mjs';
 
 const scriptDir = path.dirname(url.fileURLToPath(import.meta.url));
 const shellDir = path.resolve(scriptDir, '..');
@@ -112,8 +113,8 @@ async function launchSession(caseId) {
     requestFailures: [],
     unhandledRejections: [],
     unexpectedWindowClosed: false,
+    intentionalClose: false,
   };
-  let closing = false;
   page.on('console', (message) => {
     if (message.type() !== 'error') return;
     const text = message.text();
@@ -125,7 +126,7 @@ async function launchSession(caseId) {
     events.requestFailures.push(`${request.url()} ${request.failure()?.errorText ?? ''}`.trim());
   });
   page.on('close', () => {
-    if (!closing) events.unexpectedWindowClosed = true;
+    if (!events.intentionalClose) events.unexpectedWindowClosed = true;
   });
 
   const session = {
@@ -331,39 +332,39 @@ async function launchSession(caseId) {
     },
   };
 
-  await page.evaluate(() => {
-    window.addEventListener('unhandledrejection', (event) => {
-      const reason = event.reason instanceof Error ? event.reason.stack ?? event.reason.message : String(event.reason);
-      console.error(`[e2e-unhandledrejection] ${reason}`);
+  try {
+    await page.evaluate(() => {
+      window.addEventListener('unhandledrejection', (event) => {
+        const reason = event.reason instanceof Error ? event.reason.stack ?? event.reason.message : String(event.reason);
+        console.error(`[e2e-unhandledrejection] ${reason}`);
+      });
     });
-  });
-  await session.waitFor('正式游戏调试语义接口', () => window.__surdetDebug?.uiSession !== undefined, undefined, 30000);
-  await session.waitFor('正式游戏素材完成', () => {
-    const progress = window.__surdetDebug?.assetLoading;
-    return progress?.done === true && progress.total > 0 && progress.completed === progress.total && progress.failed === 0;
-  }, undefined, 120000);
-  const title = await page.title();
-  if (!title.includes('零点之后')) throw new Error(`Electron 未加载《零点之后》：${title}`);
-  await session.waitTitle();
-  return session;
-}
-
-async function closeSession(session) {
-  session.events.intentionalClose = true;
-  if (!session.app) return;
-  await session.app.close().catch((error) => console.error(`Electron close failed: ${errorText(error)}`));
+    await session.waitFor('正式游戏调试语义接口', () => window.__surdetDebug?.uiSession !== undefined, undefined, 30000);
+    await session.waitFor('正式游戏素材完成', () => {
+      const progress = window.__surdetDebug?.assetLoading;
+      return progress?.done === true && progress.total > 0 && progress.completed === progress.total && progress.failed === 0;
+    }, undefined, 120000);
+    const title = await page.title();
+    if (!title.includes('零点之后')) throw new Error(`Electron 未加载《零点之后》：${title}`);
+    await session.waitTitle();
+    return session;
+  } catch (error) {
+    const failures = await closePlayerSession(app, events);
+    throw new Error([errorText(error), ...failures].join('\n'), { cause: error });
+  }
 }
 
 async function runCase(caseId, label, action) {
   const startedAt = Date.now();
   let session = null;
+  let result;
   try {
     session = await launchSession(caseId);
     const before = await session.snapshot();
     const details = await action(session);
     await session.assertNoRuntimeError(label);
     const after = await session.snapshot();
-    return {
+    result = {
       id: caseId,
       name: label,
       ok: true,
@@ -371,14 +372,12 @@ async function runCase(caseId, label, action) {
       userData: session.userData,
       before,
       after,
-      events: cloneJson(session.events),
       dialogueFrameEvidence: cloneJson(session.dialogueFrameEvidence),
       details: cloneJson(details),
     };
   } catch (error) {
     const after = session ? await session.snapshot().catch(() => null) : null;
-    const events = session ? cloneJson(session.events) : null;
-    return {
+    result = {
       id: caseId,
       name: label,
       ok: false,
@@ -386,12 +385,20 @@ async function runCase(caseId, label, action) {
       userData: session?.userData ?? null,
       error: errorText(error),
       after,
-      events,
       dialogueFrameEvidence: cloneJson(session?.dialogueFrameEvidence ?? []),
     };
   } finally {
-    if (session) await closeSession(session);
+    if (session) {
+      const failures = await closePlayerSession(session.app, session.events);
+      if (failures.length > 0) {
+        result.ok = false;
+        result.error = [result.error, ...failures].filter(Boolean).join('\n');
+      }
+      result.events = cloneJson(session.events);
+    }
   }
+  result.durationMs = Date.now() - startedAt;
+  return result;
 }
 
 async function caseA(session) {

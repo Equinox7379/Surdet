@@ -212,6 +212,8 @@ describe('NodeCompositionStore', () => {
 
   it('keeps sealed candidate payloads stable while the source change keeps mutating', async () => {
     const fixture = await setupFixture('mutate');
+    const scenePath = path.join(fixture.projectRoot, 'content', 'scenario', 'start.gal');
+    const sourceBefore = fs.readFileSync(scenePath);
     const sealed = await makeSealedCandidate({
       dataDir: fixture.dataDir, projectRoot: fixture.projectRoot, name: 'c',
       run: async (session) => {
@@ -226,10 +228,14 @@ describe('NodeCompositionStore', () => {
     const afterEdit = await store.readCandidate(sealed.ref);
     expect(afterEdit).toEqual(before);
     // ROLLBACK 之后 capsule 依旧可按 identity 读取。
-    expect((await sealed.session.invoke('change.rollback', {})).ok === true || (await sealed.session.invoke('change.rollback', {})).ok === false).toBe(true);
+    const rollback = await sealed.session.invoke('change.rollback', {});
+    expect(rollback.ok).toBe(true);
+    const reopened = await NodeChangeStore.openByChangeId(sealed.ref.changeId, fixture.dataDir);
+    expect(reopened?.record).toMatchObject({ status: 'ROLLED_BACK' });
     const afterRollback = await store.readCandidate(sealed.ref);
     expect(afterRollback).toEqual(before);
-    void sha256;
+    expect(fs.readFileSync(scenePath)).toEqual(sourceBefore);
+    expect(fs.readdirSync(path.dirname(scenePath))).toEqual(['start.gal']);
     await sealed.session.close();
   });
 });

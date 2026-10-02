@@ -623,6 +623,31 @@ describe('Editor 素材导入 authority client', () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it('keeps safe transport cause categories without exposing tokens, paths or native messages', async () => {
+    const secret = `http://localhost/private?token=${AUTHORITY_TOKEN} E:/private/game`;
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new TypeError(secret, {
+      cause: Object.assign(new Error(secret), { code: 'ECONNREFUSED' }),
+    }));
+    const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);
+    const error = await client.status().catch(error => error);
+    expect(error).toMatchObject({ code: 'AUTHORITY_UNAVAILABLE', retryDisposition: 'same-request',
+      cause: { phase: 'send-request', name: 'TypeError', code: 'ECONNREFUSED' } });
+    expect(JSON.stringify(error)).not.toContain(secret);
+    expect(error.message).not.toContain(AUTHORITY_TOKEN);
+    expect(error.stack).not.toContain(secret);
+  });
+
+  it('distinguishes response-body failure and never copies arbitrary exception metadata', async () => {
+    const secret = new Error('private response');
+    secret.name = AUTHORITY_TOKEN;
+    const response = new Response();
+    vi.spyOn(response, 'text').mockRejectedValue(secret);
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response);
+    const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);
+    await expect(client.status()).rejects.toMatchObject({ code: 'AUTHORITY_UNAVAILABLE',
+      cause: { phase: 'read-response', name: 'UnknownError' } });
+  });
+
   it('uses the exact closed JSON envelope and reads the challenge through the supplied project handle', async () => {
     const { fetcher, root } = makeBindingFetcher();
     const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);

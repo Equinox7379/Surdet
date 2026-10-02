@@ -83,6 +83,13 @@ function inputFor(
 }
 
 describe('project asset import planner', () => {
+  it('does not extend text-license import to bundled or arbitrary PDF documents', async () => {
+    const targets = ['MiSans-LICENSE.pdf', 'manual.pdf'].map((name, index) => target(`pdf-${index}`, 'license', name));
+    const result = await buildProjectAssetImportPlan(inputFor(targets.map(entry => staged(entry.itemId)), targets), hasher);
+    expect(result.status).toBe('blocked');
+    for (const item of result.items) expect(item.issues).toContain('IMPORT_FORMAT_UNSUPPORTED');
+  });
+
   it('maps every asset kind to its canonical directory and normalizes NFC names', async () => {
     const targets = kinds.map((kind, index) => target(`item-${index}`, kind, fileNames[kind]));
     const result = await buildProjectAssetImportPlan(

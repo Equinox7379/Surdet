@@ -134,7 +134,7 @@ function hasLoneSurrogate(text: string): boolean {
     const code = text.charCodeAt(i);
     if (code >= 0xd800 && code <= 0xdbff) {
       const next = text.charCodeAt(i + 1);
-      if (next < 0xdc00 || next > 0xdfff) return true;
+      if (i + 1 >= text.length || next < 0xdc00 || next > 0xdfff) return true;
       i++;
     } else if (code >= 0xdc00 && code <= 0xdfff) {
       return true;
@@ -144,6 +144,10 @@ function hasLoneSurrogate(text: string): boolean {
 }
 
 describe('wrapCjk Unicode 与边界输入安全', () => {
+  it('代理项检查能识别末尾半字符，并接受成对字符和正常文字簇', () => {
+    for (const value of ['甲\ud800', '\udc00乙', '\ud800甲']) expect(hasLoneSurrogate(value)).toBe(true);
+    for (const value of ['甲😀乙', '𠮷', 'e\u0301', '']) expect(hasLoneSurrogate(value)).toBe(false);
+  });
   it('emoji 正好位于换行边界时不拆 surrogate，且无损往返', () => {
     const text = '甲甲甲😀乙丙';
     const lines = wrapCjk(text, 4);

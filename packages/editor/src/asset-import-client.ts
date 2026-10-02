@@ -408,8 +408,9 @@ export class AssetImportClientError extends Error {
     message: string,
     readonly retryDisposition: AssetImportRetryDisposition = 'never',
     readonly details?: { operationId?: string; itemId?: string; field?: string },
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = 'AssetImportClientError';
   }
 }
@@ -1333,6 +1334,7 @@ export function createAssetImportAuthorityClient(
     }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let phase = 'send-request';
     try {
       const response = await fetcher!(`${config.endpoint}${suffix}`, {
         method: 'POST',
@@ -1342,6 +1344,7 @@ export function createAssetImportAuthorityClient(
         credentials: 'same-origin',
         signal: controller.signal,
       });
+      phase = 'read-response';
       const envelope = parseJson(await response.text());
       if (!response.ok) {
         const error = parseErrorEnvelope(envelope, auth.operationKind);
@@ -1351,7 +1354,16 @@ export function createAssetImportAuthorityClient(
       return parser(parseSuccessEnvelope(envelope));
     } catch (error) {
       if (error instanceof AssetImportClientError) throw error;
-      throw unavailable();
+      // Retain diagnostic categories only: native messages/stacks may contain
+      // local paths, URLs or authorization tokens and must not escape here.
+      const name = error instanceof Error && ['Error', 'TypeError', 'AbortError', 'TimeoutError'].includes(error.name)
+        ? error.name : 'UnknownError';
+      const underlying = error instanceof Error ? error.cause ?? error : null;
+      const code = isRecord(underlying) ? underlying['code'] : undefined;
+      const safeCode = typeof code === 'string' && ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND',
+        'EHOSTUNREACH', 'EPIPE', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET'].includes(code) ? code : undefined;
+      throw new AssetImportClientError('AUTHORITY_UNAVAILABLE', ERROR_MESSAGES.AUTHORITY_UNAVAILABLE!, 'same-request', undefined,
+        { cause: { phase, name, ...(safeCode === undefined ? {} : { code: safeCode }) } });
     } finally {
       clearTimeout(timer);
     }

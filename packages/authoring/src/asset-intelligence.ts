@@ -101,6 +101,12 @@ function stemOf(path: string): string {
   return dot <= 0 ? name : name.slice(0, dot);
 }
 
+// Existing companion documents are catalogued, not imported or relocated.
+// Keep the text-only import and relocation contracts separate from PDF display.
+function isCompanionLicensePdf(fileName: string): boolean {
+  return /(?:^|[-_ ])(?:LICENSE|LICENCE|COPYING|NOTICE|OFL)(?:[-_ ][^.]+)?\.pdf$/i.test(fileName);
+}
+
 export function describeProjectAssetPath(input: string): ProjectAssetPathDescriptor | null {
   // POSIX may enumerate a literal backslash in a file/directory name. Keep
   // that physical spelling for the invalid-name diagnostic, never alias it.
@@ -112,7 +118,7 @@ export function describeProjectAssetPath(input: string): ProjectAssetPathDescrip
   const fileName = segments.at(-1) ?? '';
   const directory = segments.length > 1 ? segments[0]!.toLowerCase() : '';
   const directoryKind = DIRECTORY_KINDS[directory] ?? 'other';
-  const kind = directoryKind === 'font' && isProjectLicenseFileName(fileName) ? 'license' : directoryKind;
+  const kind = directoryKind === 'font' && (isProjectLicenseFileName(fileName) || isCompanionLicensePdf(fileName)) ? 'license' : directoryKind;
   const format = extensionOf(fileName);
   const stem = stemOf(fileName);
   if (kind !== 'portrait') {
@@ -557,8 +563,10 @@ export function buildProjectAssetIntelligence(
         [],
       ));
     }
-    if (!isProjectAssetFormatSupported(entry.kind, entry.format)
-      || entry.kind === 'license' && !isProjectLicenseFileName(entry.fact.path.split('/').at(-1)!)) {
+    const fileName = entry.fact.path.split('/').at(-1)!;
+    const companionPdf = entry.kind === 'license' && isCompanionLicensePdf(fileName);
+    if (!companionPdf && (!isProjectAssetFormatSupported(entry.kind, entry.format)
+      || entry.kind === 'license' && !isProjectLicenseFileName(fileName))) {
       item.issues.push('ASSET_FORMAT_UNSUPPORTED');
       issues.push(createIssue(
         'ASSET_FORMAT_UNSUPPORTED',

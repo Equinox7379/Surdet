@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import * as url from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { closePlayerSession } from './player-session-cleanup.mjs';
 
 const scriptDir = path.dirname(url.fileURLToPath(import.meta.url));
 const shellDir = path.resolve(scriptDir, '..');
@@ -269,6 +270,7 @@ try {
   failures.push(errorText(error));
   console.error(errorText(error));
 } finally {
+  failures.push(...await closePlayerSession(app, events));
   const evidence = {
     schemaVersion: 1,
     status: failures.length === 0 ? 'PASSED' : 'FAILED',
@@ -290,7 +292,6 @@ try {
   console.log(`EVIDENCE_PATH=${evidencePath}`);
   console.log(`EVIDENCE_BYTES=${fs.statSync(evidencePath).size}`);
   console.log(`EVIDENCE_SHA256=${sha256File(evidencePath)}`);
-  await app.close();
 }
 
 process.exit(failures.length === 0 ? 0 : 1);

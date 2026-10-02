@@ -30,6 +30,37 @@ function make() {
 }
 
 describe('Pass 8 active dialogue presentation', () => {
+  it('hides choice and NVL descendants together, preserving them for restore and resetting visibility for a new session', () => {
+    const r = make();
+    const visiblyMounted = (node: Container): boolean => {
+      for (let current: Container | null = node; current; current = current.parent) if (!current.visible) return false;
+      return true;
+    };
+    try {
+      r.layer.setNvlMode(true);
+      r.layer.appendNvlText(null, '隐藏时保留的全屏正文');
+      r.layer.showChoices([{ index: 7, label: '不能暗中选择' }]);
+      r.layer.update(1000);
+      const nvl = r.layer.nvlLines[0]!;
+      const choice = r.texts().find(text => text.text === '不能暗中选择')!;
+      expect(visiblyMounted(nvl)).toBe(true);
+      expect(visiblyMounted(choice)).toBe(true);
+      r.layer.hideInterface(true);
+      expect(visiblyMounted(nvl)).toBe(false);
+      expect(visiblyMounted(choice)).toBe(false);
+      expect(r.layer.debugSnapshot().visibleChoiceCount).toBe(0);
+      r.layer.hideInterface(false);
+      expect(visiblyMounted(nvl)).toBe(true);
+      expect(visiblyMounted(choice)).toBe(true);
+      expect(r.layer.nvlLines[0]).toBe(nvl);
+      expect(r.layer.debugSnapshot().panelVisible).toBe(false);
+      r.layer.hideInterface(true);
+      r.layer.reset();
+      r.layer.showText(null, '新会话可见');
+      expect(visiblyMounted(r.texts().find(text => text.text === '新会话可见')!)).toBe(true);
+    } finally { r.dispose(); }
+  });
+
   it('centers short and long speaker names inside the nameplate', () => {
     const r = make();
     try {

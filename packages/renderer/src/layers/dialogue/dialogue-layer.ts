@@ -414,7 +414,7 @@ export class DialogueLayer implements DialogueProjectionPort {
         width: view.holder.width,
         height: view.holder.height,
       })),
-      visibleChoiceCount: this.#choiceViews.filter((view) => view.holder.visible && view.holder.alpha > 0).length,
+      visibleChoiceCount: this.#interfaceHidden ? 0 : this.#choiceViews.filter((view) => view.holder.visible && view.holder.alpha > 0).length,
       rubyBaseCount: this.#rubyBasePool.filter((text) => text.visible).length,
       rubyTextCount: this.#rubyTextPool.filter((text) => text.visible).length,
       backlogVisible: this.#backlogLayer.visible,
@@ -464,7 +464,7 @@ export class DialogueLayer implements DialogueProjectionPort {
         : Math.max(0, ...textNodes.map(text => text.y + text.height * (1 - text.anchor.y)));
       if (height > this.#dialogBottom() - this.#dialogTop - 118 + 1) scroll('dialogue', this.#lastShownDialog);
     }
-    if (this.#choiceLayer.renderable && this.#choiceViews.length) {
+    if (!this.#interfaceHidden && this.#choiceLayer.renderable && this.#choiceViews.length) {
       this.#choiceViews.forEach((view, index) => inspect(view.label.text, `choice:${index}`, view.label.width, view.width - 80));
       const total = this.#choiceViews.reduce((height, view) => height + view.height + 12, -12);
       if (total > this.#choiceBottom - 24) scroll('choices', this.#choiceViews.map(view => view.label.text).join('\n'));
@@ -923,10 +923,14 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   hideInterface(hidden: boolean): void {
     this.#interfaceHidden = hidden;
-    this.#dialogPanel.visible = !hidden;
-    this.#speakerText.visible = !hidden;
-    this.#dialogText.visible = !hidden;
-    this.#dialogRubyLayer.visible = !hidden;
+    // Hide the shared root as well: choices and NVL must stop drawing and
+    // receiving control input while the canvas is reserved for restoring UI.
+    this.#dialogueRoot.visible = !hidden;
+    const showAdv = !hidden && !this.#nvlActive;
+    this.#dialogPanel.visible = showAdv;
+    this.#speakerText.visible = showAdv;
+    this.#dialogText.visible = showAdv;
+    this.#dialogRubyLayer.visible = showAdv;
     this.#continueIndicator.visible = !hidden && !this.#nvlActive && this.#continueAwaiting;
     this.#commandRail.visible = !hidden && !this.#commandRailSuppressed && this.#commandRailItems.length > 0;
     this.#drawSpeakerPlate();
@@ -1130,6 +1134,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#continueIndicator.visible = false;
     this.#continuePhase = 0;
     this.#interfaceHidden = false;
+    this.#dialogueRoot.visible = true;
     this.#commandRailSuppressed = false;
     this.#commandRail.visible = this.#commandRailItems.length > 0;
     this.#commandRail.alpha = this.#customUiToolbar ? 0 : 1;
