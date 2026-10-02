@@ -30,6 +30,30 @@ function make() {
 }
 
 describe('Pass 8 active dialogue presentation', () => {
+  it('keeps NVL reading behind choices and the command rail, with Backlog above all dialogue content', () => {
+    const r = make();
+    try {
+      const contentRoot = r.root.children[0]!;
+      const directLayer = (node: Container): Container => {
+        while (node.parent && node.parent !== contentRoot) node = node.parent;
+        return node;
+      };
+      r.layer.setNvlMode(true); r.layer.appendNvlText(null, '全屏正文');
+      r.layer.showChoices([{ index: 0, label: '鼠标选项' }]);
+      r.layer.showCommandRail([{ id: 'menu', label: '菜单控件' }], () => {});
+      const reading = directLayer(r.layer.nvlLines[0]!);
+      const choices = directLayer(r.texts().find(text => text.text === '鼠标选项')!);
+      const controls = directLayer(r.texts().find(text => text.text === '菜单控件')!);
+      expect(contentRoot.getChildIndex(choices)).toBeGreaterThan(contentRoot.getChildIndex(reading));
+      expect(contentRoot.getChildIndex(controls)).toBeGreaterThan(contentRoot.getChildIndex(reading));
+      expect(reading.eventMode).toBe('static'); // Reading still owns its wheel input.
+      r.layer.showBacklog([{ speaker: null, text: '文字记录' }]);
+      expect(r.layer.debugSnapshot().backlogAboveDialogueText).toBe(true);
+      r.layer.hideInterface(true);
+      expect(contentRoot.visible).toBe(false);
+      expect(r.layer.debugSnapshot().backlogVisible).toBe(true);
+    } finally { r.dispose(); }
+  });
   it('hides choice and NVL descendants together, preserving them for restore and resetting visibility for a new session', () => {
     const r = make();
     const visiblyMounted = (node: Container): boolean => {
@@ -160,7 +184,7 @@ describe('Pass 8 active dialogue presentation', () => {
       const bounds = r.layer.debugSnapshot().choiceBounds;
       expect(bounds[0]!.width).toBeCloseTo(bounds[1]!.width, 1);
       expect(bounds.every((bound) => bound.width <= 900 && bound.x >= 40)).toBe(true);
-      const choice = r.root.children[0]!.children[5]!.children[0]!;
+      const choice = r.texts().find(text => text.text === '短选项')!.parent!;
       expect(choice.hitArea).toBeTruthy();
       choice.emit('pointerdown', {} as FederatedPointerEvent);
       choice.emit('pointerdown', {} as FederatedPointerEvent);
