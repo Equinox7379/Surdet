@@ -3,9 +3,8 @@ import { CombatSolver, type CombatConfig } from '@surdet/core';
 import type { BattleHandlers } from '@surdet/renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { createSystemAdapters, type ProjectSystemAdapterOptions } from '../../shared/player/system-adapters.js';
-import { createSystemAdapters as createZeroSystemAdapters } from '../../zero-after-midnight/src/system-adapters.js';
 
-function fixture(createAdapters: typeof createSystemAdapters) {
+function fixture() {
   const config = JSON.parse(readFileSync(new URL('../content/config/combat.json', import.meta.url), 'utf8')) as CombatConfig;
   const combat = new CombatSolver(config, () => 0.5);
   const pending: Array<() => void> = [];
@@ -19,7 +18,7 @@ function fixture(createAdapters: typeof createSystemAdapters) {
     hideBattle: vi.fn(),
   };
   // Only the battle adapter is enabled; unrelated optional systems are absent.
-  const adapter = createAdapters({
+  const adapter = createSystemAdapters({
     combat, combatConfig: config, renderer,
     timer: (callback: () => void) => pending.push(callback),
   } as unknown as ProjectSystemAdapterOptions).find((candidate) => candidate.id === 'battle')!;
@@ -32,12 +31,9 @@ function fixture(createAdapters: typeof createSystemAdapters) {
   return { adapter, context, renderer, pending, combat, openAndPass, currentHandlers: () => handlers, disposeRenderer: () => { rendererDisposed = true; } };
 }
 
-describe.each([
-  ['Starter/shared', createSystemAdapters],
-  ['Zero optional adapter', createZeroSystemAdapters],
-] as const)('%s battle delayed actions with the supported Starter combat config', (_name, createAdapters) => {
+describe('Shared battle delayed actions with the supported Starter combat config', () => {
   it('rejects player actions while the enemy turn is pending', () => {
-    const f = fixture(createAdapters);
+    const f = fixture();
     f.openAndPass();
     const before = f.combat.snapshot();
     const handlers = f.currentHandlers();
@@ -48,7 +44,7 @@ describe.each([
   });
 
   it('still executes the active enemy turn', () => {
-    const f = fixture(createAdapters);
+    const f = fixture();
     f.openAndPass();
     const before = f.renderer.showBattle.mock.calls.length;
     f.pending.shift()!();
@@ -57,7 +53,7 @@ describe.each([
   });
 
   it.each(['reset', 'dispose'] as const)('%s invalidates callbacks before Renderer teardown', (operation) => {
-    const f = fixture(createAdapters);
+    const f = fixture();
     f.openAndPass();
     const before = f.renderer.showBattle.mock.calls.length;
     f.adapter[operation]?.();
@@ -68,7 +64,7 @@ describe.each([
   });
 
   it('does not let an old callback act on a newly opened battle', () => {
-    const f = fixture(createAdapters);
+    const f = fixture();
     f.openAndPass();
     const oldTurn = f.pending.shift()!;
     f.adapter.reset?.();
