@@ -115,6 +115,30 @@ it('discovers companion licenses in fonts and licenses folders without calling t
   expect(result.summary).toMatchObject({ unusedCount: 0, duplicateCount: 0, unsupportedCount: 0, byKind: { license: { files: 4 } } });
 });
 
+it('recognizes named companion PDF licenses without treating arbitrary PDFs as licenses or fonts as documents', async () => {
+  const snapshot = await snapshotFor({ 'game.config.json': '{}' });
+  const licenses = ['fonts/MiSans-LICENSE.pdf', 'fonts/vendor/OFL-font.PDF', 'licenses/NOTICE.pdf'];
+  const fonts = ['fonts/MiSans-Regular.otf', 'fonts/regular.TTF'];
+  const unsupported = ['fonts/manual.pdf', 'fonts/licensefont.pdf', 'fonts/LICENSE.bin'];
+  const result = buildProjectAssetIntelligence(snapshot,
+    [...licenses, ...fonts, ...unsupported].map(path => ({ path: `content/assets/${path}`, bytes: 12 })));
+  for (const path of licenses) {
+    expect(asset(result, `content/assets/${path}`)).toMatchObject({ kind: 'license', format: 'pdf', issues: [] });
+  }
+  for (const path of fonts) {
+    const item = asset(result, `content/assets/${path}`);
+    expect(item.kind).toBe('font');
+    expect(item.issues).not.toContain('ASSET_FORMAT_UNSUPPORTED');
+  }
+  for (const path of unsupported) {
+    const item = asset(result, `content/assets/${path}`);
+    expect(item.kind).toBe('font');
+    expect(item.issues).toContain('ASSET_FORMAT_UNSUPPORTED');
+  }
+  expect(result.summary.byKind.license.files).toBe(3);
+  expect(result.summary.byKind.font.files).toBe(5);
+});
+
 it('locates each audio timeline cue by its channel, without calling timeline-only media unused', async () => {
   const timeline = { version: 1, id: 'sound', durationMs: 20, tracks: [{ kind: 'audio', cues:
     ['bgm', 'se', 'voice'].map(action => ({ atMs: 0, durationMs: 0, easing: 'linear', action, key: '同名 声音' })) }] };

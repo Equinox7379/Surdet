@@ -148,7 +148,7 @@ try {
     await saveSlot(); await activate(page, '覆盖存档'); await waitOverlay(page, 'none');
     await page.keyboard.press('Escape'); await waitOverlay(page, 'system-menu');
     await activate(page, '读档'); await waitOverlay(page, 'save-load');
-    await activate(page, '恢复槽位 1 的备份并读取');
+    await activate(page, '恢复槽位 1的备份并读取');
     await activate(page, '恢复并读取'); await waitOverlay(page, 'none');
     assert.deepEqual((await state(page)).position, original);
     assert.deepEqual(errors, []);
@@ -168,12 +168,16 @@ try {
     await page.waitForFunction(() => window.__surdetDebug.uiSession.operation === 'idle');
     assert(errors.some(error => error.includes('自动存档失败')));
     assert.deepEqual(unhandled, []);
+    const beforeHidden = await state(page);
     await page.evaluate(() => document.activeElement?.blur());
     await page.keyboard.press('h');
     assert.equal((await state(page)).ui.interfaceHidden, true);
     assert.equal(await page.evaluate(() => window.__surdetDebug.commandRailVisible), false);
     await page.mouse.click(700, 500);
     await page.waitForFunction(() => window.__surdetDebug.uiSession.interfaceHidden === false);
+    const restored = await state(page);
+    assert.deepEqual(restored.position, beforeHidden.position, 'restoring the interface must not select the covered choice');
+    assert.deepEqual(restored.dialogue.choiceLabels, beforeHidden.dialogue.choiceLabels);
     await page.screenshot({ path: path.join(output, 'interface-restored.png') });
   });
   await run('incompatible-save-recovery', async (page, errors) => {

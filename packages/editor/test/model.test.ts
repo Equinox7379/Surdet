@@ -24,7 +24,7 @@ describe('model 解析/序列化', () => {
 
   it('纯数字前缀不当作说话人（与引擎一致，避免 12:30 误判）', () => {
     const t = parseLine('12：30 钟声响起', '');
-    if (t.kind === 'text') expect(t.speaker).toBe('');
+    expect(t).toMatchObject({ kind: 'text', speaker: '', value: '12：30 钟声响起' });
   });
 
   it('splitInstr 引号感知拆分 + rebuild', () => {

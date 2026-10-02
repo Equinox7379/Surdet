@@ -353,6 +353,7 @@ function relocationDirectoriesForKind(
 
 function relocationEntryIssue(item: ProjectAssetItem, hooks: AssetCenterHooks, operation: 'move' | 'replace' = 'move'): string | null {
   if (!item.physical || !item.sourcePath) return '只有项目中真实存在的素材文件可以整理。';
+  if (item.kind === 'license' && item.format === 'pdf') return '随附的 PDF 许可资料应原样保留，暂不支持在此移动或改名。';
   if (!RELOCATION_KINDS.has(item.kind)) return '这种资源尚未接入安全整理。';
   if (item.issues.includes('ASSET_NAME_INVALID') || item.issues.includes('ASSET_FORMAT_UNSUPPORTED')) return '请先修正素材的名称或格式，再进行整理。';
   if (operation === 'move' && item.issues.includes('ASSET_KEY_DUPLICATE')) return '这个素材键对应多个文件，暂时无法安全移动或改名；仍可按完整路径替换文件内容。';
