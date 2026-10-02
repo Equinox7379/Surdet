@@ -163,7 +163,7 @@ content/timelines/intro_arrival.json
 | `@scene` | ✅ | 声明性指令：仅用于与文件名推导的场景 ID 做一致性校验（lint SCENE_ID），运行时解释器不消费、无效果 |
 | `@end` | ✅ | 场景结束（可省略，引擎自动追加） |
 | `@clear` | ✅ | 周目通关记录：`@clear [结局ID]`（缺省结局标识 = 当前场景 ID）。解释器记录 ClearTracker + 广播 `clear` 事件（`{ ending, fresh }`），宿主接全局通关记录与 NGP 继承；结局收集随存档持久化 |
-| `@exp` | ✅ | 角色成长：`@exp 角色ID 经验值`。解释器驱动 GrowthSystem（宿主注入配置）：累积经验→判升级（可连升多级）→升级属性增量写回变量仓库→广播 `growth` 事件（含 passedLevels 供 levelEvents 跳转）；等级/经验随存档持久化 |
+| `@exp` | ✅ | 角色成长：`@exp 角色ID 经验值`。解释器驱动 GrowthSystem（宿主注入配置）：累积经验→判升级（可连升多级）→升级属性增量写回变量仓库→广播 `growth` 事件（含 passedLevels 供 levelEvents 跳转）；等级/经验随存档持久化。单次最多连升 10,000 级；超过时拒绝整次增量，可拆分增量或配置 maxLevel。经验总量/升级阈值必须有限，等级必须在安全整数范围；失败保留原属性、等级和经验 |
 | `@achievement` | ✅ | 成就事件触发：`@achievement unlock 成就ID`。发 `system` 事件由宿主 AchievementSystem 处理（when 条件成就由宿主调 check() 批量判定；幂等，重复解锁 fresh=false） |
 
 ### 存档点（已实现）
@@ -342,4 +342,4 @@ node packages/cli/dist/index.js lint <projectDir>
 | CONFIG | game.config.json / content/config/*.json 缺失或解析失败 |
 | CONFIG_EXPR | content/config/*.json 内 DSL 表达式语法错误 |
 | NO_CONFIG | 未找到 game.config.json（警告，不阻断） |
-| EMPTY_VARIABLES | variables 表为空，变量校验被跳过（警告） |
+| EMPTY_VARIABLES | variables 表为空（警告）；剧本和配置中的变量引用仍须声明 |

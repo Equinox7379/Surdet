@@ -105,7 +105,7 @@
 .v4-authoring #editor .block.v4-current .v4-dialogue-input { color: var(--surdet-text-primary); }
 .v4-authoring #editor .block:focus-visible { outline: 1px solid var(--surdet-text-secondary); outline-offset: -1px; }
 .v4-authoring #editor .block .bar { border: 0; display: flex; flex-direction: row; align-items: center; gap: 9px; min-height: 0; height:0; margin: 0; padding: 0; background: transparent; }
-.v4-authoring .continuity-line-number { position: absolute; top: 13px; left: 2px; color: var(--v4-muted); font: 10px/1.6 var(--surdet-font-mono); }
+.v4-authoring .continuity-line-number { position: absolute; top: 13px; left: 2px; color: var(--v4-muted); font: 10px/1.6 var(--surdet-font-mono); pointer-events: none; }
 .v4-authoring .block-text .continuity-line-number { top: 18px; }
 .v4-authoring #editor .badge { display: none; }
 .v4-authoring #editor .current-segment { display: none; }
@@ -338,6 +338,10 @@
   .v4-authoring .v4-script-dock { grid-column: 3; grid-row: 2; }
   .v4-authoring[data-mobile-panel=outline] .authoring-manuscript-column { display: none; }
   #config-view.v4-config .config-table-scroll.v4-object-workspace { grid-template-columns: 145px minmax(0,1fr); gap: 18px; }
+}
+@media (max-width: 800px) {
+  #asset-center-view.v4-asset-center .asset-center-shell { grid-template-columns: minmax(0,1fr); }
+  #asset-center-view.v4-asset-center .asset-center-rail { align-self: start; }
 }
 @media (max-width: 700px) {
   .authoring-workbench.v4-authoring { display: flex; flex-direction: column; padding: 0; overflow: hidden; }

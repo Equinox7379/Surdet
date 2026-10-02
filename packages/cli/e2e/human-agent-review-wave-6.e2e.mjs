@@ -8,6 +8,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { AUTHORING_CAPABILITY_REGISTRY, AUTHORING_CONTRACT_VERSION } from '@surdet/authoring';
 import { chromium } from 'playwright';
 import { prepareAcceptance } from './agent-candidate-composition-wave-5.e2e.mjs';
 
@@ -96,7 +97,7 @@ export function isReviewedPreviewEvidenceSatisfied(rawEvidence) {
     && finalDialogue?.dialogText === 'Alpha route A.'
     && finalDialogue?.dialogText !== 'Alpha route C.'
     && finalDialogue?.activeSpeakerId === 'lynn'
-    && finalDialogue?.speakerText === '「凛」'
+    && finalDialogue?.speakerText === '凛'
     && finalDialogue?.panelVisible === true
     && Number.isInteger(projectionVersions?.before)
     && Number.isInteger(projectionVersions?.after)
@@ -114,7 +115,7 @@ export function isReviewedPreviewEvidenceSatisfied(rawEvidence) {
     && 'Alpha route A.'.startsWith(afterText)
     && afterText !== 'Alpha route C.'
     && dialogueAfter?.activeSpeakerId === 'lynn'
-    && dialogueAfter?.speakerText === '「凛」'
+    && dialogueAfter?.speakerText === '凛'
     && dialogueAfter?.panelVisible === true
     && Number.isFinite(canvasBox?.width) && canvasBox.width > 0
     && Number.isFinite(canvasBox?.height) && canvasBox.height > 0
@@ -164,9 +165,9 @@ export function isResultReceiptReopenEvidenceSatisfied(evidence) {
     && marker?.approvalFingerprint === expected.approvalFingerprint
     && typeof markerText === 'string'
     && markerText.includes('已批准')
-    && markerText.includes('回执 ID')
+    && markerText.includes('回执标识')
     && markerText.includes(expected.approvalId)
-    && markerText.includes('回执 fingerprint')
+    && markerText.includes('回执指纹')
     && markerText.includes(expected.approvalFingerprint)
     && markerText.includes('原决定')
     && markerText.includes(expected.decisionId)
@@ -1267,7 +1268,7 @@ async function runEditorResult(harness, page, resultRoot, resultReview, projectR
       return debug?.rendererStatus === 'awaiting'
         && projection?.dialogue?.dialogText === 'Alpha route A.'
         && projection?.dialogue?.activeSpeakerId === 'lynn'
-        && projection?.dialogue?.speakerText === '「凛」'
+        && projection?.dialogue?.speakerText === '凛'
         && projection?.dialogue?.panelVisible === true
         && projection?.dialogue?.dialogText !== 'Alpha route C.';
     }, undefined, { timeout: 30000 });
@@ -1278,7 +1279,7 @@ async function runEditorResult(harness, page, resultRoot, resultReview, projectR
     assert(previewState.rendererStatus === 'awaiting', `Alpha preview rendererStatus is not awaiting: ${previewState.rendererStatus}`);
     assert(previewState.projection?.dialogue?.dialogText === 'Alpha route A.', 'Alpha preview projection did not render reviewed A dialogue');
     assert(previewState.projection?.dialogue?.activeSpeakerId === 'lynn', 'Alpha preview projection speaker is not lynn');
-    assert(previewState.projection?.dialogue?.speakerText === '「凛」', 'Alpha preview projection did not render the localized speaker name');
+    assert(previewState.projection?.dialogue?.speakerText === '凛', 'Alpha preview projection did not render the localized speaker name');
     assert(previewState.projection?.dialogue?.panelVisible === true, 'Alpha preview dialogue panel is not visible');
     assert(previewState.projection?.dialogue?.dialogText !== 'Alpha route C.', 'Alpha preview projection rendered excluded C dialogue');
 
@@ -1955,8 +1956,14 @@ async function runPreflight() {
       resultOf(await callTool(port, 'surdet_project_inspect'), `${label} project.inspect`);
       assert(names.includes('surdet_review_prepare_comparison') && names.includes('surdet_review_inspect_approval'), `${label} review tools missing`);
       assert(!names.includes('surdet_change_begin') && !names.includes('surdet_change_commit') && !names.includes('surdet_delivery_capsule'), `${label} observe policy exposed mutation/capsule`);
-      assert(described.capabilities.length === 30, `${label} expected 30 capabilities, got ${described.capabilities.length}`);
-      assert(described.contractVersion === '2.3.0', `${label} contract was ${described.contractVersion}`);
+      assert(described.capabilities.length === AUTHORING_CAPABILITY_REGISTRY.length,
+        `${label} expected ${AUTHORING_CAPABILITY_REGISTRY.length} capabilities, got ${described.capabilities.length}`);
+      const advertised = new Map(described.capabilities.map(capability => [capability.id, capability]));
+      assert(advertised.size === AUTHORING_CAPABILITY_REGISTRY.length, `${label} duplicate capability ids`);
+      for (const capability of AUTHORING_CAPABILITY_REGISTRY) {
+        assert(advertised.get(capability.id)?.minimumPolicy === capability.minimumPolicy, `${label} capability metadata mismatch: ${capability.id}`);
+      }
+      assert(described.contractVersion === AUTHORING_CONTRACT_VERSION, `${label} contract was ${described.contractVersion}`);
       const era = port.client.getProtocolEra();
       const negotiated = port.client.getNegotiatedProtocolVersion?.();
       if (label === 'legacy') {

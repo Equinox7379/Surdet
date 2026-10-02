@@ -78,7 +78,7 @@ export const LINT_CODE_HINTS: Record<string, string> = {
   /* ---- 警告（W） ---- */
   W001: '未知指令：若是拼写错误请改正；若是自定义指令，在 game.config.json 的 customInstructions 数组声明以消音。',
   W002: '该指令已声明但尚未实现（当前无任何效果）：不要依赖其行为，或改用已实现的等价指令。',
-  W003: '指令修饰符未被引擎消费（会被静默丢弃）：@show 仅支持 @pos/@left/@right/@center；大系统指令修饰符为宿主参数通道除外。',
+  W003: '指令修饰符未被引擎消费（会被静默丢弃）：@show 支持舞台姿态、@instance 和位置修饰符；大系统指令修饰符为宿主参数通道除外。',
   W004: '选项文本带说话人冒号前缀：疑似把缩进的对话行误写进了 @choice 选项区——choice 后的正文行绝不能缩进。',
   W005: '@choice 全部选项都带 [if:...] 条件：运行时可能全部不满足而静默跳过选择，建议保留一个无条件兜底选项。',
   W006: '标签从未被任何 @goto/@loop/@switch/@jump/@call 引用：疑似残留，删除或补上引用。',
@@ -92,7 +92,7 @@ export const LINT_CODE_HINTS: Record<string, string> = {
   CONFIG: 'game.config.json 或 content/config/*.json 缺失/解析失败：检查 JSON 语法（多余逗号/缺引号最常见）。',
   CONFIG_EXPR: 'content/config/*.json 内 DSL 表达式语法错误：按 dsl-spec "表达式语言" 修正该表达式。',
   NO_CONFIG: '未找到 game.config.json：创建它并声明 variables（否则变量校验被跳过）。',
-  EMPTY_VARIABLES: 'variables 表为空：变量校验被跳过；剧本用到的变量都应在 variables 表声明。',
+  EMPTY_VARIABLES: 'variables 表为空；剧本和配置用到的变量都应在 variables 表声明。',
 
   /* ---- 内容审计（audit） ---- */
   BRANCH_THIN: '空心分支：分支内无实质剧情推进（无文本/无状态变化），补充内容或删除该分支。',

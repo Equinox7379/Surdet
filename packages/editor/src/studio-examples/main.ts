@@ -357,7 +357,7 @@ function selectLine(index: number): void {
 document.addEventListener('click', (event) => {
   const button = (event.target as Element).closest<HTMLElement>('button, [data-line]');
   if (!button) return;
-  if (button.dataset.layout && button.dataset.layout in layouts) { setLayout(button.dataset.layout as Layout); return; }
+  if (button.dataset.layout && Object.hasOwn(layouts, button.dataset.layout)) { setLayout(button.dataset.layout as Layout); return; }
   if (button.dataset.scene) {
     if (!flushDraft()) return;
     current = button.dataset.scene;
@@ -384,11 +384,13 @@ document.addEventListener('click', (event) => {
     case 'apply-source': pendingSource = true; flushDraft(); break;
     case 'apply-text': case 'apply-background': case 'apply-portrait': case 'apply-wait': pendingProperty = true; flushDraft(); break;
     case 'undo': {
+      if (!flushDraft()) break;
       const previous = undo.pop();
       if (previous) { scenes = JSON.parse(previous) as ExampleScene[]; markEdited(); refresh(); toast('已撤销一次示例编辑。'); }
       break;
     }
     case 'reset':
+      if (!flushDraft()) break;
       undo.push(JSON.stringify(scenes));
       scenes = initialScenes.map((entry) => ({ ...entry }));
       selected = 4;
@@ -411,7 +413,7 @@ document.addEventListener('keydown', (event) => {
 });
 window.addEventListener('beforeunload', (event) => { if (dirty()) { event.preventDefault(); event.returnValue = ''; } });
 const requested = new URL(location.href).searchParams.get('layout');
-setLayout(requested && requested in layouts ? requested as Layout : 'studio');
+setLayout(requested && Object.hasOwn(layouts, requested) ? requested as Layout : 'studio');
 refresh();
 validate();
 pendingRun = true;

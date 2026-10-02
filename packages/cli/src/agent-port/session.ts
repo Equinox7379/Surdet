@@ -41,6 +41,8 @@ import type { AgentPortOptions } from './args.js';
 import { authorizeImageSources, type AuthorizedImageSource } from '../authoring/agent-image-import-service.js';
 import { openAssetImportAuthorityPaths } from '../asset-import-authority/filesystem.js';
 import { AssetImportRecordStore } from '../asset-import-authority/record-store.js';
+import { AssetRelocationStore } from '../asset-import-authority/asset-relocation-store.js';
+import { verifyAssetRelocationTerminalRecord } from '../asset-import-authority/asset-relocation-authority.js';
 
 export interface SessionCapability {
   id: AuthoringCapabilityId;
@@ -139,6 +141,10 @@ const ACTIVE_CHANGE_CAPABILITIES = new Set<AuthoringCapabilityId>([
   'gallery.term.patch',
   'project.entry-scene.set',
   'project.player-config.patch',
+  'project.stage-config.patch',
+  'project.theme-config.patch',
+  'project.ui.patch',
+  'project.texts.patch',
   'runtime.run-from',
   'runtime.read-trace',
   'change.diff',
@@ -483,6 +489,23 @@ export class AgentPortSession {
       });
     };
 
+    const invocationLedgerFailure = (
+      currentEnvelope: AuthoringEnvelope<unknown>, error: unknown, changeId: string,
+    ): AuthoringEnvelope<unknown> => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!currentEnvelope.ok) {
+        return { ...currentEnvelope, error: { ...currentEnvelope.error, details: {
+          ...currentEnvelope.error.details,
+          invocationLedgerFailure: { code: 'INVOCATION_LEDGER_WRITE_FAILED', message },
+        } } };
+      }
+      return this.failure(capability, new AuthoringOperationError(
+        'INVOCATION_LEDGER_WRITE_FAILED', `调用事实记录写入失败：${message}`,
+        { operationMayHaveSucceeded: true, invocationResult: currentEnvelope,
+          ...(operationId === undefined ? {} : { operationId }), changeId },
+      ));
+    };
+
     try {
       const beforeOpened = beforeChangeId === undefined
         ? undefined
@@ -502,16 +525,7 @@ export class AgentPortSession {
             await writeInvocationFact(leasedStore, beforeChangeId, envelope!, leaseBeforeRecord);
             invocationRecorded = true;
           } catch (error) {
-            envelope = this.failure(capability, new AuthoringOperationError(
-              'INVOCATION_LEDGER_WRITE_FAILED',
-              `调用事实记录写入失败：${error instanceof Error ? error.message : String(error)}`,
-              {
-                operationMayHaveSucceeded: envelope!.ok,
-                invocationResult: envelope,
-                ...(operationId === undefined ? {} : { operationId }),
-                changeId: beforeChangeId,
-              },
-            ));
+            envelope = invocationLedgerFailure(envelope!, error, beforeChangeId);
             invocationRecorded = true;
           }
         });
@@ -536,16 +550,7 @@ export class AgentPortSession {
           await writeInvocationFact(invocationStore, changeId, envelope!);
         });
       } catch (error) {
-        return this.failure(capability, new AuthoringOperationError(
-          'INVOCATION_LEDGER_WRITE_FAILED',
-          `调用事实记录写入失败：${error instanceof Error ? error.message : String(error)}`,
-          {
-            operationMayHaveSucceeded: envelope.ok,
-            invocationResult: envelope,
-            ...(operationId === undefined ? {} : { operationId }),
-            changeId,
-          },
-        ));
+        return invocationLedgerFailure(envelope, error, changeId);
       }
     }
     return envelope;
@@ -560,9 +565,14 @@ export class AgentPortSession {
 
   async describe(): Promise<SessionDescription> {
     const { summary: humanWorkspace } = await this.humanWorkspaceStore.inspect(this.projectRoot);
-    const assetRecoveryRequired = await new AssetImportRecordStore(
-      await openAssetImportAuthorityPaths({ projectRoot: this.projectRoot, dataRoot: this.assetImportDataRoot }),
-    ).hasUnresolvedBarrier();
+    const assetPaths = await openAssetImportAuthorityPaths({ projectRoot: this.projectRoot, dataRoot: this.assetImportDataRoot });
+    const assetRecords = new AssetImportRecordStore(assetPaths);
+    const relocations = new AssetRelocationStore(assetPaths);
+    assetRecords.registerRelocationTerminalVerifier(async operationId => verifyAssetRelocationTerminalRecord(
+      await relocations.read(operationId),
+      { sha256: async text => crypto.createHash('sha256').update(text, 'utf8').digest('hex') },
+    ));
+    const assetRecoveryRequired = await assetRecords.hasUnresolvedBarrier();
     // A notice is only a hint. Its loss cannot hide workspace state or prevent re-inspection.
     const projectMutation = await this.mutationNoticeStore.readLatest(this.projectRoot).catch(() => null);
     const opened = await this.activeOpenedChange();

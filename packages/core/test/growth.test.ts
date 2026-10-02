@@ -153,6 +153,36 @@ describe('GrowthSystem gainExp 原子提交', () => {
     expect(growth.snapshot()).toEqual(beforeGrowth);
   }
 
+  it.each([1e308, 1e10])('rejects unbounded synchronous level grants without touching live state (%s)', amount => {
+    const { store, growth } = makeGrowth({ curve: { base: 1, linear: 0 } });
+    expectNoStateMutation(store, growth, () => growth.gainExp('lynn', amount));
+  });
+
+  it('keeps the legal per-grant boundary and finite maxLevel behavior', () => {
+    const { growth } = makeGrowth({ curve: { base: 1, linear: 0 }, profiles: [{ characterId: 'lynn' }] });
+    expect(growth.gainExp('lynn', 10_000)).toMatchObject({ levelAfter: 10_001, levelsGained: 10_000 });
+    expect(growth.experienceOf('lynn')).toBe(0);
+    const bounded = makeGrowth({ curve: { base: 1, linear: 0 }, profiles: [{ characterId: 'lynn', maxLevel: 10 }] }).growth;
+    expect(bounded.gainExp('lynn', 1e308)).toMatchObject({ levelAfter: 10, levelsGained: 9 });
+    expect(bounded.experienceOf('lynn')).toBe(1e308);
+  });
+
+  it('rejects accumulated experience overflow instead of storing Infinity', () => {
+    const { store, growth } = makeGrowth({ profiles: [{ characterId: 'lynn', maxLevel: 1 }] });
+    growth.gainExp('lynn', 1e308);
+    expectNoStateMutation(store, growth, () => growth.gainExp('lynn', 1e308));
+  });
+
+  it('rejects unsafe next levels and non-finite curve thresholds before committing', () => {
+    for (const options of [
+      { curve: { base: 1 }, profiles: [{ characterId: 'lynn', initialLevel: Number.MAX_SAFE_INTEGER }] },
+      { curve: { base: NaN }, profiles: [{ characterId: 'lynn' }] },
+    ]) {
+      const { store, growth } = makeGrowth(options);
+      expectNoStateMutation(store, growth, () => growth.gainExp('lynn', 10));
+    }
+  });
+
   it('未声明的后续 statGrowth 目标不会留下前一个属性的部分写入', () => {
     const store = new VariableStore(decls);
     const growth = new GrowthSystem(
@@ -269,6 +299,15 @@ describe('@exp 指令（解释器集成）', () => {
     const interp = new Interpreter(store, bus, registry, undefined, undefined, {}, undefined, growth);
     return { store, bus, registry, interp, growth };
   }
+
+  it('reports an excessive public @exp grant with source location and no partial growth', () => {
+    const { interp, registry, growth, store } = makeInterpWithGrowth();
+    const before = growth.snapshot(), variables = store.snapshot();
+    registry.register(compileScene('@exp lynn 1e308', 'large-exp.gal', 'large_exp'));
+    expect(() => interp.start('large_exp')).toThrow(/large-exp.gal:1/);
+    expect(growth.snapshot()).toEqual(before);
+    expect(store.snapshot()).toEqual(variables);
+  });
 
   it('@exp 角色 经验：驱动升级并广播 growth 事件', () => {
     const { store, bus, registry, interp } = makeInterpWithGrowth();

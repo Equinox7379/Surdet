@@ -64,7 +64,7 @@ import { renderSidebar, bindSidebarHooks } from './panels/sidebar.js';
 import { refreshEditorObjectRefs, refreshManuscriptFacts, renderEditor } from './panels/editor.js';
 import { bindIssueNavigation, invalidatePendingValidation, scheduleValidate, runValidate, renderIssues } from './panels/issues.js';
 import { bindRightNavigation, refreshCurrentSceneContext, renderRightExtras, updateCausalPanel } from './panels/right.js';
-import { bindAssetsPanelHooks } from './panels/assets.js';
+import { bindAssetsPanelHooks, hideAssetPreview } from './panels/assets.js';
 import { disposeAssetCenterPreview, renderAssetCenter } from './panels/asset-center.js';
 import { disposeAssetCenterThumbnails } from './panels/asset-center-thumbnails.js';
 import {
@@ -1936,6 +1936,7 @@ function renderAll(): void {
 /** 主区：标签页（块编辑 / 流程图 / 时间轴 / 配置 / 预览 / 统计 / 审计）+ 对应内容 */
 function renderMainArea(): void {
   disposeAuthoringWorkbench();
+  hideAssetPreview();
   disposeStoryCheckPanel();
   const main = document.getElementById('main');
   if (!main) return;

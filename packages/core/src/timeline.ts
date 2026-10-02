@@ -237,6 +237,7 @@ export class TimelineRegistry implements TimelineCatalog {
     const diagnostics = validateTimeline(value);
     if (diagnostics.length > 0) throw new TimelineValidationError(diagnostics);
     const definition = cloneDefinition(value as TimelineDefinition);
+    delete definition.resolvedCueSources;
     if (this.#definitions.has(definition.id)) {
       throw new TimelineValidationError([{ code: 'TL010', message: `duplicate timeline id '${definition.id}'`, path: '$.id' }]);
     }
@@ -308,7 +309,11 @@ function validateClips(value: unknown, version: 1 | 2, diagnostics: TimelineDiag
 
 /** Resolve a bounded acyclic reference graph. Every host uses this registry path. */
 export function resolveTimelineDefinition(definition: TimelineDefinition, lookup: (id: string) => TimelineDefinition | undefined): TimelineDefinition {
-  if (definition.version === 1 && definition.clips === undefined) return cloneDefinition(definition);
+  if (definition.version === 1 && definition.clips === undefined) {
+    const resolved = cloneDefinition(definition);
+    delete resolved.resolvedCueSources;
+    return resolved;
+  }
   let cueCount = 0, expansionCount = 0;
   const origins = new WeakMap<TimelineTrack, Extract<import('./stage.js').StageSource, { kind: 'timeline' }>[]>();
   const expand = (value: TimelineDefinition, stack: readonly string[]): TimelineTrack[] => {

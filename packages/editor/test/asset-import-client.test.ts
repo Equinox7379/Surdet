@@ -560,6 +560,35 @@ afterEach(() => {
 });
 
 describe('Editor 素材导入 authority client', () => {
+  it('retains a valid blocked native plan for a target name with a control character', async () => {
+    const fileName = '\tbad.png';
+    const { fetcher, root } = makeBindingFetcher();
+    const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);
+    await bindClient(client, root);
+    await client.createOperation({ operationId: OPERATION_ID, items: [{ itemId: ITEM_ID, sourceName: '风景.png', declaredBytes: 5 }] });
+    const value = plan();
+    const blocked = { ...value, status: 'blocked', issues: ['IMPORT_NAME_INVALID'],
+      items: [{ ...value.items[0], fileName, targetPath: `content/assets/bg/${fileName}`, issues: ['IMPORT_NAME_INVALID'] }] };
+    fetcher.mockResolvedValueOnce(success({ operationId: OPERATION_ID, status: 'STAGED', plan: blocked }));
+
+    await expect(client.plan(OPERATION_ID, { targets: [{ itemId: ITEM_ID, kind: 'background', fileName }] }))
+      .resolves.toMatchObject({ status: 'STAGED', plan: blocked });
+  });
+
+  it.each(['ready', 'blocked-without-name-issue'])('rejects an unsafe name echo in a %s response', async mode => {
+    const { fetcher, root } = makeBindingFetcher();
+    const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);
+    await bindClient(client, root);
+    await client.createOperation({ operationId: OPERATION_ID, items: [{ itemId: ITEM_ID, sourceName: '风景.png', declaredBytes: 5 }] });
+    const value = plan();
+    const unsafe = { ...value, status: mode === 'ready' ? 'ready' : 'blocked',
+      items: [{ ...value.items[0], fileName: '\tbad.png', targetPath: 'content/assets/bg/\tbad.png' }] };
+    fetcher.mockResolvedValueOnce(success({ operationId: OPERATION_ID, status: mode === 'ready' ? 'READY' : 'STAGED', plan: unsafe }));
+
+    await expect(client.plan(OPERATION_ID, { targets: [{ itemId: ITEM_ID, kind: 'background', fileName: '风景.png' }] }))
+      .rejects.toMatchObject({ code: 'AUTHORITY_INVALID_RESPONSE' });
+  });
+
   it('uses binding-scoped workspace requests without disclosing tokens in JSON and reads the notice sequence', async () => {
     const { fetcher, root } = makeBindingFetcher();
     const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);

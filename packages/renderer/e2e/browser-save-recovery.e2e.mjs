@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import net from 'node:net';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,13 +8,26 @@ import { createServer } from 'vite';
 import { chromium } from 'playwright';
 import { activate, advanceToChoice, canvasTexts, state, waitTitle, waitOverlay } from './player-browser-helpers.mjs';
 
+/** Vite 把 server.port=0 当缺省值并回退 5173；显式取一个空闲端口，
+ *  避免落在 Windows 保留端口段（如 Hyper-V 排除区间）时以 EACCES 直接失败。 */
+async function freeEphemeralPort() {
+  return await new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address();
+      probe.close(() => resolve(address.port));
+    });
+  });
+}
+
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const output = await fs.mkdtemp(path.join(os.tmpdir(), 'surdet-browser-save-recovery-'));
 const browser = await chromium.launch({ headless: true });
 try {
   for (const [directory, gameId] of [['starter', 'surdet-starter'], ['zero-after-midnight', 'zero-after-midnight']]) {
     const root = path.join(repo, 'examples', directory);
-    const server = await createServer({ root, configFile: path.join(root, 'vite.config.ts'), logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
+    const server = await createServer({ root, configFile: path.join(root, 'vite.config.ts'), logLevel: 'error', server: { host: '127.0.0.1', port: await freeEphemeralPort() } });
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await context.newPage();
     page.setDefaultTimeout(15000);
@@ -38,7 +52,7 @@ try {
       await activate(page, '读取存档'); await waitOverlay(page, 'save-load');
       await page.getByRole('button', { name: /^读取槽位 1：/ }).waitFor();
       assert.equal(await page.getByRole('button', { name: /^读取槽位 1：/ }).count(), 1);
-      assert.equal(await page.getByRole('button', { name: '恢复槽位 1 的备份并读取', exact: true }).count(), 0);
+      assert.equal(await page.getByRole('button', { name: '恢复槽位 1的备份并读取', exact: true }).count(), 0);
       assert((await canvasTexts(page)).some(text => text.includes('备份损坏')));
       const healthy = await page.getByRole('button', { name: /^读取槽位 2：/ }).getAttribute('aria-label');
       await activate(page, healthy); await waitOverlay(page, 'none');
@@ -55,25 +69,25 @@ try {
       }, { prefix, original });
       await page.reload(); await waitTitle(page);
       await activate(page, '读取存档'); await waitOverlay(page, 'save-load');
-      await page.getByRole('button', { name: '恢复槽位 1 的备份并读取', exact: true }).waitFor();
+      await page.getByRole('button', { name: '恢复槽位 1的备份并读取', exact: true }).waitFor();
       assert.equal(await page.getByRole('button', { name: /^读取槽位 [13]：/ }).count(), 0);
       assert.equal(await page.getByRole('button', { name: /^读取槽位 2：/ }).count(), 1);
-      assert.equal(await page.getByRole('button', { name: '恢复槽位 3 的备份并读取', exact: true }).count(), 0);
+      assert.equal(await page.getByRole('button', { name: '恢复槽位 3的备份并读取', exact: true }).count(), 0);
       const texts = await canvasTexts(page);
       assert(texts.some(text => text.includes('存档损坏')));
       assert(texts.some(text => text.includes('备份损坏')));
       await page.screenshot({ path: path.join(output, `${directory}-damaged-slots.png`) });
-      await activate(page, '恢复槽位 1 的备份并读取');
+      await activate(page, '恢复槽位 1的备份并读取');
       await activate(page, '取消');
       assert.equal(await page.evaluate(prefix => localStorage.getItem(`${prefix}1`), prefix), '{broken-main');
-      await activate(page, '恢复槽位 1 的备份并读取');
+      await activate(page, '恢复槽位 1的备份并读取');
       await activate(page, '恢复并读取'); await waitOverlay(page, 'none');
       assert.deepEqual((await state(page)).position, original.position);
       await page.keyboard.press('Escape'); await waitOverlay(page, 'system-menu');
       await activate(page, '读档'); await waitOverlay(page, 'save-load');
       await page.getByRole('button', { name: /^读取槽位 1：/ }).waitFor();
       assert.equal(await page.getByRole('button', { name: /^读取槽位 1：/ }).count(), 1);
-      await activate(page, '恢复槽位 4 的备份并读取');
+      await activate(page, '恢复槽位 4的备份并读取');
       await activate(page, '恢复并读取'); await waitOverlay(page, 'none');
       assert.deepEqual((await state(page)).position, original.position);
       await page.keyboard.press('Escape'); await waitOverlay(page, 'system-menu');

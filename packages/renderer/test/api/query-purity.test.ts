@@ -94,6 +94,19 @@ function pureInternals(): RendererRuntimeInternals & { observableSnapshot(): unk
 }
 
 describe('Renderer v2 query purity', () => {
+  it('isolates public performance samples from later host edits', async () => {
+    const internals = pureInternals();
+    internals.monitor!.record(16, 5);
+    const runtime = await createRendererRuntimeFromInternals(internals);
+    try {
+      const sample = runtime.queries.diagnostics.performanceSnapshot()!.samples[0]!;
+      sample.deltaMs = 0; sample.updateMs = 999; sample.slow = true;
+      expect(runtime.queries.diagnostics.performanceSnapshot()).toMatchObject({
+        averageDeltaMs: 16, averageUpdateMs: 5, slowFrames: 0, samples: [{ deltaMs: 16, updateMs: 5, slow: false }],
+      });
+    } finally { runtime.dispose(); }
+  });
+
   it('diagnostic, presentation, visual, and preference queries do not mutate state', async () => {
     const internals = pureInternals();
     const runtime = await createRendererRuntimeFromInternals(internals);

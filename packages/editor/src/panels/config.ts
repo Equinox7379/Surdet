@@ -211,6 +211,7 @@ let uiSourceBaseline: string | undefined;
 let textCsvDraft = '';
 let textBindingsDraft: TextBindingDraft[] = [];
 let configSessionRevision = 0;
+let uiShareImportSequence = 0;
 let configSessionLoaded = false;
 const configBaselines: Partial<Record<ConfigSectionId, string>> = {};
 let restoredConfigSources: Partial<Record<ConfigSourceName, { text: string; beforeText: string | null }>> = {};
@@ -1317,15 +1318,11 @@ async function saveCharactersUnlocked(): Promise<boolean> {
   for (const row of submittedRows) {
     if (row.visualsText !== undefined) parseCharacterVisualsDraft(row.id, row.visualsText);
   }
-  let handle = state.handles.gameConfig;
-  if (!handle && state.dirHandle) {
-    try {
-      handle = await state.dirHandle.getFileHandle('game.config.json', { create: true });
-      state.handles.gameConfig = handle;
-    } catch { /* 创建失败走下方提示 */ }
-  }
+  const handle = state.handles.gameConfig;
   if (!handle) {
-    setStatus('角色表无法保存：未连接游戏目录（演示项目不落盘）', false, 6000);
+    setStatus(state.dirHandle
+      ? '角色表无法保存：游戏目录缺少 game.config.json，请先补齐项目配置'
+      : '角色表无法保存：未连接游戏目录（演示项目不落盘）', false, 6000);
     return false;
   }
   try {
@@ -1791,7 +1788,9 @@ async function validateReplayTargets(json: Record<string, unknown>, preview = fa
     readGalleryDossiers(json, { characters: (sourceConfig.characters ?? {}) as Record<string, unknown>, terms: parseTerminology(terminology).map(term => term.canonical) });
   }
   for (const entry of readGalleryReplayEntries(json)) {
-    const target = state.scenes.get(entry.scene);
+    const matches = [...state.scenes.values()].filter(scene => scene.id === entry.scene);
+    if (matches.length > 1) throw new Error(`回想场景对应多个文件：${entry.scene}`);
+    const target = matches[0];
     if (!target) throw new Error(`回想场景不存在：${entry.scene}`);
     if (!preview && !target.handle) throw new Error(`请先保存回想场景：${entry.scene}`);
     const text = preview ? target.text : await readProjectSourceText(target.handle!);
@@ -1817,9 +1816,12 @@ export async function addTerminologyVariant(canonical: string, variant: string):
       let list: string[] = [];
       if (row) {
         try {
-          const value: unknown = JSON.parse(String(row.variants ?? '[]'));
-          if (Array.isArray(value)) list = value.filter((item): item is string => typeof item === 'string');
-        } catch { list = []; }
+          const value: unknown = JSON.parse(String(row.variants ?? '').trim() || '[]');
+          if (!Array.isArray(value) || !value.every((item): item is string => typeof item === 'string')) {
+            throw new Error('变体列表必须是文字数组');
+          }
+          list = value;
+        } catch { throw new Error(`规范词 '${canonical}' 的变体列表不是有效的文字数组，请先完成编辑`); }
         if (list.includes(variant)) {
           setStatus(`变体 '${variant}' 已在规范词 '${canonical}' 的名词条目中`, true, 4000);
           return;
@@ -1951,11 +1953,14 @@ function renderUiSection(): HTMLElement {
     importShare: async (file, target) => {
       assertProjectWriteUnlocked();
       if (state.reviewWorkspace || state.reviewPreviewReadOnly || state.projectLoading) throw new Error('当前项目不可导入界面');
-      const root = state.dirHandle, revision = configSessionRevision;
-      const config = parseProjectConfigDocument(previewUiConfigText(previewThemeConfigText(state.gameConfigText)));
+      const root = state.dirHandle, revision = configSessionRevision, sequence = ++uiShareImportSequence;
+      const sourceText = previewUiConfigText(previewThemeConfigText(state.gameConfigText));
+      const config = parseProjectConfigDocument(sourceText);
       const share = readUiShare(await file.text(), config);
       const missing = await missingUiShareAssets(share, shareAssets());
-      if (root !== state.dirHandle || revision !== configSessionRevision) throw new Error('导入期间项目或草稿已变化，请重试');
+      if (sequence !== uiShareImportSequence) throw new Error('已选择另一个共享文件，本次导入已取消');
+      if (root !== state.dirHandle || revision !== configSessionRevision
+        || sourceText !== previewUiConfigText(previewThemeConfigText(state.gameConfigText))) throw new Error('导入期间项目或草稿已变化，请重试');
       assertProjectWriteUnlocked();
       if (state.reviewWorkspace || state.reviewPreviewReadOnly || state.projectLoading) throw new Error('当前项目不可导入界面');
       if (missing.length) {

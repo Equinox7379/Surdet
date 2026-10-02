@@ -15,12 +15,12 @@ const hasher: TextHasher = { sha256: async (text) => digest(text) };
 
 function fixtureStorage(
   order: 'normal' | 'reverse' = 'normal',
-  growthText = JSON.stringify({ curve: { base: 10 }, profiles: [] }),
-  configText = '{"entryScene":"prologue","variables":{}}',
+  growthText: string | null = JSON.stringify({ curve: { base: 10 }, profiles: [] }),
+  configText: string | null = '{"entryScene":"prologue","variables":{}}',
 ): ProjectStorage {
   const contents: Record<string, string> = {
-    'game.config.json': configText,
-    'content/config/growth.json': growthText,
+    ...(configText === null ? {} : { 'game.config.json': configText }),
+    ...(growthText === null ? {} : { 'content/config/growth.json': growthText }),
     'content/scenario/prologue.gal': '@scene prologue\n凛：一样\n凛：一样\n@end',
     'content/scenario/other.gal': '@scene other\n凛：另一场\n@end',
     'content/timelines/intro.json': '{"tracks":[]}',
@@ -41,6 +41,31 @@ function fixtureStorage(
 }
 
 describe('project snapshot', () => {
+  it.each(['', '\r\n  ', 'null', '[]', '42', '"text"'])('rejects a present invalid root configuration (%j)', async text => {
+    await expect(loadProjectSnapshot(fixtureStorage('normal', null, text), hasher))
+      .rejects.toMatchObject({ code: 'PROJECT_INVALID', message: expect.stringContaining('game.config.json') });
+    await expect(loadProjectSnapshot(fixtureStorage('normal', text), hasher))
+      .rejects.toMatchObject({ code: 'PROJECT_INVALID', message: expect.stringContaining('content/config/growth.json') });
+  });
+
+  it('keeps genuinely absent optional configuration absent', async () => {
+    const snapshot = await loadProjectSnapshot(fixtureStorage('normal', null, null), hasher);
+    expect(snapshot.configFile).toBeNull();
+    expect(snapshot.config).toEqual({});
+    expect(snapshot.growthFile).toBeNull();
+    expect(snapshot.growthConfig).toBeNull();
+    expect(snapshot.scenes).toHaveLength(2);
+  });
+
+  it('reads valid BOM configuration without changing its source text', async () => {
+    const growth = '\uFEFF{"curve":{"base":10},"profiles":[]}';
+    const config = '\uFEFF{"entryScene":"prologue","variables":{}}';
+    const snapshot = await loadProjectSnapshot(fixtureStorage('normal', growth, config), hasher);
+    expect(snapshot.configFile?.text).toBe(config);
+    expect(snapshot.growthFile?.text).toBe(growth);
+    expect(snapshot.growthConfig).toEqual({ curve: { base: 10 }, profiles: [] });
+    expect(snapshot.entryScene).toBe('prologue');
+  });
   it('keeps project revision independent from file enumeration order', async () => {
     const normal = await loadProjectSnapshot(fixtureStorage('normal'), hasher);
     const reverse = await loadProjectSnapshot(fixtureStorage('reverse'), hasher);

@@ -178,6 +178,7 @@ try {
   validateWorker.onerror = () => {
     validateWorker?.terminate();
     validateWorker = null; // 构造/加载失败：同步回退
+    runValidate();
   };
 } catch {
   validateWorker = null;

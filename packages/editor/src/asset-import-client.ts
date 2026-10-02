@@ -1010,8 +1010,9 @@ function parsePlan(value: unknown): ProjectAssetImportPlan {
     || !Number.isSafeInteger(value.totalBytes)
     || (value.totalBytes as number) < 0) throw invalidResponse();
   for (const item of value.items) {
-    if (!isRecord(item)
-      || !hasExactKeys(item, ['bytes', 'fileName', 'issues', 'itemId', 'kind', 'sha256', 'sourceName', 'targetPath'])
+    if (!isRecord(item)) throw invalidResponse();
+    const blockedName = value.status === 'blocked' && Array.isArray(item.issues) && item.issues.includes('IMPORT_NAME_INVALID');
+    if (!hasExactKeys(item, ['bytes', 'fileName', 'issues', 'itemId', 'kind', 'sha256', 'sourceName', 'targetPath'])
       || !isUuid(item.itemId)
       || !isSafeText(item.sourceName)
       || !Number.isSafeInteger(item.bytes)
@@ -1019,10 +1020,11 @@ function parsePlan(value: unknown): ProjectAssetImportPlan {
       || !isSha256(item.sha256)
       || typeof item.kind !== 'string'
       || !ASSET_KINDS.has(item.kind)
-      || !isSafeText(item.fileName)
+      || typeof item.fileName !== 'string' || item.fileName.length === 0 || item.fileName.length > 512
+      || (!blockedName && CONTROL_CHARACTER.test(item.fileName))
       || typeof item.targetPath !== 'string'
       || item.targetPath.length > 1_024
-      || CONTROL_CHARACTER.test(item.targetPath)
+      || (!blockedName && CONTROL_CHARACTER.test(item.targetPath))
       || !Array.isArray(item.issues)
       || !item.issues.every((issue) => typeof issue === 'string' && PLAN_ISSUES.has(issue))) throw invalidResponse();
   }

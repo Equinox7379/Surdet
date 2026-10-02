@@ -213,7 +213,7 @@ function median(sorted: readonly number[]): number {
     : sorted[middle]!;
 }
 
-/** Linear-interpolated nearest-rank equivalent; unlike v2, n=20 is not max(). */
+/** Linearly interpolated percentile at (n - 1) * quantile; v2 uses discrete nearest rank. */
 function percentile(sorted: readonly number[], quantile: number): number {
   const position = (sorted.length - 1) * quantile;
   const lower = Math.floor(position);

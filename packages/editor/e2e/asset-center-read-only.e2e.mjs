@@ -222,10 +222,15 @@ function buildFixture() {
     files.find((file) => file.path === 'content/assets/portrait/lynn_uniform_normal.svg')?.bytes ?? '',
     'base64',
   );
+  const titleLogo = Buffer.from(
+    files.find((file) => file.path === 'content/assets/bg/title_logo.png')?.bytes ?? '',
+    'base64',
+  );
   const additions = [
     { path: 'content/assets/bg/asset-center-harbor.svg', bytes: svgBytes('harbor', '#355d70'), purpose: 'referenced-image' },
     { path: 'content/assets/bg/unknown-format.xyz', bytes: Buffer.from('not a recognized media format\n', 'utf8'), purpose: 'unsupported-format' },
-    { path: 'content/assets/portrait/alternate/lynn_uniform_normal.svg', bytes: normalPortrait, purpose: 'duplicate-semantic-key' },
+    { path: 'content/assets/portrait/alternate/lynn_uniform_normal.svg', bytes: normalPortrait, purpose: 'alternate-portrait-file' },
+    { path: 'content/assets/bg/alternate/title_logo.png', bytes: titleLogo, purpose: 'duplicate-semantic-key' },
     { path: 'content/assets/portrait/bad-portrait.svg', bytes: svgBytes('invalid', '#70434f'), purpose: 'invalid-portrait-name' },
     { path: 'content/assets/avatar/unused.svg', bytes: svgBytes('unused', '#6b5a38'), purpose: 'unused-image' },
     { path: 'content/assets/bgm/theme.wav', bytes: wavBytes(), purpose: 'referenced-audio-valid' },
@@ -261,6 +266,7 @@ function buildFixture() {
 
   return {
     files,
+    projectName: JSON.parse(fixtureText(files, 'game.config.json')).title || 'starter',
     fixtureAugmentations: additions.map((addition) => ({
       path: addition.path,
       purpose: addition.purpose,
@@ -402,7 +408,7 @@ async function takeScreenshot(page, artifactDirectory, name, screenshots) {
   screenshots.push(readFileIdentity(file));
 }
 
-async function openFixture(page, expectedPhysicalCount) {
+async function openFixture(page, expectedPhysicalCount, expectedProjectName) {
   await page.locator('[data-action="open-project"]').waitFor({ state: 'visible' });
   await page.locator('[data-action="open-project"]').click();
   await page.waitForFunction((expected) => (
@@ -416,7 +422,7 @@ async function openFixture(page, expectedPhysicalCount) {
     assetCount: window.surdetEditorDebug?.state?.dirAssets?.length ?? null,
     assetState: window.surdetEditorDebug?.state?.assetIntelligenceState ?? null,
   }));
-  assert(opened.projectName === 'starter', `project bar did not show Starter: ${opened.projectName}`);
+  assert(opened.projectName === expectedProjectName, `project bar name mismatch: ${opened.projectName} != ${expectedProjectName}`);
   assert(opened.assetState === 'ready', `asset intelligence did not settle: ${opened.assetState}`);
   return opened;
 }
@@ -589,7 +595,7 @@ async function run() {
     await page.addInitScript(fakeFileSystemInit, { rootName: 'starter', files: fixture.files });
     await page.goto(`${baseUrl}/index.html`, { waitUntil: 'networkidle' });
 
-    const opened = await openFixture(page, expectedPhysicalCount);
+    const opened = await openFixture(page, expectedPhysicalCount, fixture.projectName);
     pass('fixture-opened-through-picker', {
       ...opened,
       fixtureTreeBefore,
@@ -654,6 +660,7 @@ async function run() {
     });
 
     const search = page.locator('[data-asset-filter="search"]');
+    const originalFacetCounts = await page.locator('.asset-center-filter-count').allTextContents();
     await search.fill('asset-center-harbor');
     await waitForRows(page, 1);
     assert(
@@ -670,15 +677,26 @@ async function run() {
     assert(Number(filteredData.visibleCount) === 1, `stable visible count mismatch: ${filteredData.visibleCount}`);
     assert(filteredCounts['kind:background'] === 1, `filtered background facet mismatch: ${filteredCounts['kind:background']}`);
     assert(filteredCounts['kind:voice'] === 0, `filtered voice facet mismatch: ${filteredCounts['kind:voice']}`);
+    assert(filteredCounts['status:referenced'] === 1 && filteredCounts['status:unused'] === 0,
+      `filtered status facets mismatch: ${JSON.stringify(filteredCounts)}`);
+    assert(await search.evaluate((element) => document.activeElement === element), 'search update lost input focus');
     assert(filteredSummaryText.includes(`当前显示 1 项，共 ${projectionCounts.total} 项`), `visible search summary drifted: ${filteredSummaryText}`);
+    await search.fill('no-matching-asset-audit');
+    await waitForRows(page, 0);
+    const emptyFacetCounts = await page.locator('.asset-center-filter-count').allTextContents();
+    assert(emptyFacetCounts.every((count) => count === '0'), `empty search facets mismatch: ${emptyFacetCounts}`);
     await search.fill('');
     await waitForRows(page, projectionCounts.total);
+    assert(JSON.stringify(await page.locator('.asset-center-filter-count').allTextContents()) === JSON.stringify(originalFacetCounts),
+      'clearing search did not restore original facet counts');
     pass('search-filter-consistent', {
       searched: 'asset-center-harbor',
       matchedRows: 1,
       clearedRows: projectionCounts.total,
       filteredData,
       filteredCounts,
+      emptyFacetCounts,
+      originalFacetCounts,
       filteredSummaryText: filteredSummaryText.trim(),
     });
 
@@ -698,8 +716,7 @@ async function run() {
     const keyboardId = 'file:content/assets/bg/asset-center-harbor.svg';
     const keyboardRow = page.locator(`${ASSET_ROW_SELECTOR}[data-asset-id="${keyboardId}"]`);
     await keyboardRow.waitFor({ state: 'visible' });
-    await keyboardRow.focus();
-    await page.keyboard.press('Enter');
+    await keyboardRow.press('Enter');
     await page.waitForFunction((expected) => document.querySelector('.asset-center-inspector')?.getAttribute('data-asset-id') === expected, keyboardId);
     await page.waitForFunction((expected) => document.activeElement?.getAttribute('data-asset-id') === expected, keyboardId);
     assert(await keyboardRow.getAttribute('aria-selected') === 'true', 'Enter did not retain keyboard-selected asset');

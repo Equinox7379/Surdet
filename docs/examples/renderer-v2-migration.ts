@@ -1,6 +1,7 @@
 import type { CoreEventMap, EventBus, Interpreter } from '@surdet/core';
 import { AdvRenderer, AudioManager, PixiStage, createRendererRuntime } from '@surdet/renderer';
 import type { AudioHandle } from '@surdet/renderer';
+import { connectInterpreterPresentation } from '@surdet/host';
 
 /** Complete legacy example kept for the one-version compatibility window. */
 export async function startLegacyRenderer(
@@ -21,7 +22,7 @@ export async function startLegacyRenderer(
   return { stage, renderer };
 }
 
-/** Complete v2 example used by games, editor previews, and generated templates. */
+/** Minimal v2 host example sharing the production Presentation connection. */
 export async function startV2Renderer(
   hostElement: HTMLElement,
   interpreter: Interpreter,
@@ -36,11 +37,9 @@ export async function startV2Renderer(
   hostElement.appendChild(runtime.canvas);
   runtime.resize();
   const unsubscribe = runtime.controller.connect(bus);
-  interpreter.setPresentationHooks({
-    snapshot: () => runtime.queries.presentation.snapshot(),
-    restore: (snapshot) => runtime.commands.presentation.restore(snapshot),
-  });
+  const presentationConnection = connectInterpreterPresentation({ interpreter, renderer: runtime });
   return () => {
+    presentationConnection.disconnect();
     unsubscribe();
     runtime.dispose();
     audio.dispose();

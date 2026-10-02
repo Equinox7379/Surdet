@@ -111,7 +111,11 @@ function validateHead(value: unknown, changeId: string, file: string): RecordHea
 }
 
 function validateRecord(record: ChangeRecord, changeId: string, rootIdentity: string, file: string, head: RecordHead): void {
-  if (record.formatVersion !== 2 || !Number.isInteger(record.recordVersion) || record.recordVersion < 0) {
+  if (typeof record !== 'object' || record === null || Array.isArray(record)) {
+    throw corrupt(`record 不是对象：${file}`, { path: file, changeId });
+  }
+  if (record.formatVersion !== 2 || !Number.isInteger(record.recordVersion) || record.recordVersion < 0
+    || typeof record.projectRootIdentity !== 'string') {
     throw corrupt(`record 格式无效：${file}`, { path: file, changeId });
   }
   if (record.changeId !== changeId || record.recordVersion !== head.recordVersion
@@ -736,6 +740,10 @@ export class NodeChangeStore implements ChangeRepository {
     const sidecar = await readJsonRecord<ArtifactIdentity>(path.join(capsuleDirectory, 'identity.json'));
     if (sidecar === null) {
       throw new AuthoringOperationError('CAPSULE_IDENTITY_MISMATCH', `delivery capsule 缺少 identity sidecar：${changeId}/${capsuleId}`);
+    }
+    if (typeof sidecar.value !== 'object' || sidecar.value === null || Array.isArray(sidecar.value)
+      || typeof sidecar.value.path !== 'string') {
+      throw new AuthoringOperationError('CAPSULE_IDENTITY_MISMATCH', `delivery capsule identity sidecar 格式无效：${changeId}/${capsuleId}`);
     }
     const sameWindowsPath = (left: string, right: string): boolean => (
       process.platform === 'win32'

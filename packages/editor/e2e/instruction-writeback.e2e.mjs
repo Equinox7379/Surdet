@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import http from 'node:http';
 import { build } from 'vite';
 import { chromium } from 'playwright';
 
@@ -26,13 +27,18 @@ const outputs = Array.isArray(result) ? result : [result];
 const chunks = outputs.flatMap((output) => 'output' in output ? output.output : [])
   .filter((output) => output.type === 'chunk' && output.isEntry);
 if (chunks.length !== 1) throw new Error('Expected one in-memory browser entry chunk');
-let browser;
+let browser, server;
 try {
+  server = http.createServer((_request, response) => {
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    response.end('<!doctype html><meta charset="utf-8"><title>Instruction writeback regression</title><body></body>');
+  });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   const errors = [];
-  page.on('pageerror', (error) => errors.push(error.message));
-  await page.setContent('<!doctype html><meta charset="utf-8"><title>Instruction writeback regression</title><body></body>');
+  page.on('pageerror', (error) => { errors.push(error.message); console.error(error.stack ?? error.message); });
+  await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.addScriptTag({ content: chunks[0].code });
   const results = await page.evaluate(() => window.SurdetInstructionWriteback.instructionWritebackCases.map((testCase) => {
     try { testCase.run(); return { name: testCase.name, ok: true }; }
@@ -43,7 +49,11 @@ try {
   if (failures.length || errors.length) throw new Error(`${failures.length} case failures; browser errors: ${errors.join('; ')}`);
 
   // One actual browser input path in addition to the source/DOM event cases.
-  await page.evaluate(() => window.SurdetInstructionWriteback.instructionWritebackCases[0].run());
+  await page.evaluate(() => {
+    const fixture = window.SurdetInstructionWriteback.instructionWritebackCases.find(testCase => testCase.name === 'B01 keeps the modifier when editing the expression field');
+    if (!fixture) throw new Error('Missing show instruction fixture');
+    fixture.run();
+  });
   const controls = page.locator('#editor .fields input');
   await controls.nth(0).fill('lynn:night');
   await controls.nth(1).fill('happy');
@@ -54,4 +64,5 @@ try {
   console.log(`Instruction writeback: ${results.length}/${results.length} cases and browser input/focus passed (in-memory project).`);
 } finally {
   await browser?.close();
+  if (server?.listening) await new Promise(resolve => server.close(resolve));
 }

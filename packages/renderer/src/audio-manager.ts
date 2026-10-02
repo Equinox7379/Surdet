@@ -37,10 +37,6 @@ export class AudioManager implements AudioHandle {
   #bgmKey: string | null = null;
   #ambience: Howl | null = null;
   #ambienceKey: string | null = null;
-  /** 切歌代际计数：延时停止旧曲的定时器仅在代际未再变化时执行，
-   *  防止 A→B→A 快速切换时旧定时器误停重新启播的同名 BGM（导致永久静音）。 */
-  #bgmEpoch = 0;
-  #ambienceEpoch = 0;
   #voice: Howl | null = null;
   #voiceId: number | undefined;
   #voicePending = false;
@@ -57,6 +53,7 @@ export class AudioManager implements AudioHandle {
   #sourcePaths = new Map<string, string>();
   #errorListeners = new Set<(error: RendererError) => void>();
   #session = 0;
+  #fadeOwners = new WeakMap<Howl, object>();
   #bgmErrors: AudioBgmDiagnosticError[] = [];
   #bgmPlayCount = 0;
 
@@ -100,15 +97,15 @@ export class AudioManager implements AudioHandle {
     const prev = this.#bgm;
     this.#bgm = null;
     this.#bgmKey = src;
-    // 旧 BGM：淡出后停止（howler fade 无同步完成回调，用 setTimeout 兜底停止；
-    // 期间新旧两轨短暂重叠即交叉淡入淡出效果）。淡出中切回同 key 属极端场景，不做防护。
+    // 每个实例只接受最新一次淡出的停止回调，避免复用后被旧计时器提前截断。
     if (prev) {
       if (typeof (prev as { fade?: unknown }).fade === 'function') {
-        const epoch = ++this.#bgmEpoch;
+        const session = this.#session;
+        const fadeOwner = {};
+        this.#fadeOwners.set(prev, fadeOwner);
         prev.fade(prev.volume(), 0, BGM_FADE_MS);
         setTimeout(() => {
-          // 期间又切过歌（代际已变）则跳过：旧实例可能已被复用为当前 BGM
-          if (epoch === this.#bgmEpoch) prev.stop();
+          if (session === this.#session && this.#fadeOwners.get(prev) === fadeOwner && prev !== this.#bgm) prev.stop();
         }, BGM_FADE_MS);
       } else {
         prev.stop();
@@ -116,6 +113,7 @@ export class AudioManager implements AudioHandle {
     }
     if (src === null) return;
     const h = this.#get(src, { loop: true, channel: 'bgm' });
+    this.#fadeOwners.delete(h);
     this.#bgm = h;
     // 先停止该 src 的所有现存播放再开始 BGM：同一 src 可能先前作为 SE 播放过，
     // 直接 h.play() 会与旧实例重叠（howler 同 Howl 多次 play 创建多个 sound）。
@@ -139,19 +137,21 @@ export class AudioManager implements AudioHandle {
     this.#evict('se');
   }
 
-  /** 环境音循环播放；切换时只保留一个当前声道，并以代际保护延迟停止旧实例。 */
+  /** 环境音循环播放；淡出完成后停止旧实例，保护当前正在复用的实例。 */
   playAmbience(src: string | null, fadeMs = BGM_FADE_MS): void {
     if (src === this.#ambienceKey && (src === null || this.#ambience !== null)) return;
     const prev = this.#ambience;
     this.#ambience = null;
     this.#ambienceKey = src;
     if (prev) {
-      const epoch = ++this.#ambienceEpoch;
+      const session = this.#session;
       const duration = Math.max(0, Number.isFinite(fadeMs) ? fadeMs : BGM_FADE_MS);
       if (typeof (prev as { fade?: unknown }).fade === 'function' && duration > 0) {
+        const fadeOwner = {};
+        this.#fadeOwners.set(prev, fadeOwner);
         prev.fade(prev.volume(), 0, duration);
         setTimeout(() => {
-          if (epoch === this.#ambienceEpoch) prev.stop();
+          if (session === this.#session && this.#fadeOwners.get(prev) === fadeOwner && prev !== this.#ambience) prev.stop();
         }, duration);
       } else {
         prev.stop();
@@ -159,6 +159,7 @@ export class AudioManager implements AudioHandle {
     }
     if (src === null) return;
     const h = this.#get(src, { loop: true, channel: 'ambience' });
+    this.#fadeOwners.delete(h);
     this.#ambience = h;
     h.stop();
     const target = this.#ambienceVolume;
@@ -225,10 +226,7 @@ export class AudioManager implements AudioHandle {
   stopAll(): void {
     this.#session++;
     Howler.stop(); // howler 全局：停止所有 Howl 的全部播放实例
-    // 推进代际：使尚在等待的旧 BGM 淡出延时停止定时器全部作废。
-    // 否则 stopAll 后立即 playBgm，淡出窗口（350ms）内的旧定时器会误停新启播的 BGM → 静音。
-    this.#bgmEpoch++;
-    this.#ambienceEpoch++;
+    // 会话已推进，尚在等待的旧淡出定时器不再操作停止后重新播放的实例。
     this.#bgm = null;
     this.#bgmKey = null;
     this.#bgmErrors = [];

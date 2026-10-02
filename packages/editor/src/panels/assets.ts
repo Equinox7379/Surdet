@@ -38,7 +38,7 @@ export function bindAssetsPanelHooks(opts: { onInserted: () => void; onOpenCente
   onOpenCenterHook = opts.onOpenCenter ?? (() => {});
 }
 
-function hidePreview(): void {
+export function hideAssetPreview(): void {
   previewEl?.remove();
   previewEl = null;
   if (previewUrl) {
@@ -48,7 +48,7 @@ function hidePreview(): void {
 }
 
 function showPreview(entry: SidebarAssetEntry, x: number, y: number): void {
-  hidePreview();
+  hideAssetPreview();
   const dir = state.dirAssets.find((d) => d.sourcePath === entry.sourcePath && d.isImage && d.handle);
   const box = h('div', 'asset-preview');
   box.style.left = `${Math.min(x + 14, window.innerWidth - 260)}px`;
@@ -188,16 +188,19 @@ export function renderAssetsPanel(container: HTMLElement): void {
       cpBtn.setAttribute('data-action', 'copy-asset-key');
       cpBtn.title = '复制素材键';
       cpBtn.onclick = () => {
-        void navigator.clipboard?.writeText(entry.key);
-        setStatus(`已复制 ${entry.key}`, true, 2500);
+        if (!navigator.clipboard) { setStatus('此环境无法自动复制，可手动选择素材键', false, 5000); return; }
+        void navigator.clipboard.writeText(entry.key).then(
+          () => setStatus(`已复制 ${entry.key}`, true, 2500),
+          () => setStatus('复制未完成，可手动选择素材键', false, 5000),
+        );
       };
       ops.append(insBtn, cpBtn);
       row.appendChild(ops);
-      // 图片预览（仅目录来源条目绑定 hover；列表重建时旧浮层由 hidePreview 清理）
+      // 图片预览（仅目录来源条目绑定 hover；侧栏重建与模式切换时由所有者清理）
       const previewable = entry.kind === 'bg' || entry.kind === 'portrait' || entry.kind === 'cg';
       if (previewable) {
         row.addEventListener('mouseenter', (e) => showPreview(entry, e.clientX, e.clientY));
-        row.addEventListener('mouseleave', hidePreview);
+        row.addEventListener('mouseleave', hideAssetPreview);
       }
       group.appendChild(row);
     }

@@ -113,7 +113,7 @@ export class LoadingLayer {
   destroy(): void {
     if (this.#destroyed) return;
     this.container.parent?.removeChild(this.container);
-    this.container.destroy({ children: true });
+    this.container.destroy({ children: true, context: true });
     this.#destroyed = true;
   }
 }

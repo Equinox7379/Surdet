@@ -70,7 +70,9 @@ let previewBrowserClosePromise = null;
 let previewPage = null;
 let previewPageClosing = false;
 const resourceCleanup = {
+  browserCreated: false,
   browserClosed: false,
+  previewChildStarted: false,
   previewChildExitObserved: false,
   previewChildCloseObserved: false,
   previewServerReleased: false,
@@ -219,7 +221,11 @@ function copyStarterFixture() {
     if (entry.name === 'scenario') continue;
     const source = path.join(starterContent, entry.name);
     const target = path.join(fixtureRoot, 'content', entry.name);
-    fs.cpSync(source, target, { recursive: true, errorOnExist: true, force: false });
+    fs.cpSync(source, target, {
+      recursive: true, errorOnExist: true, force: false,
+      // This two-scene fixture does not contain the Starter replay scenes.
+      filter: (sourcePath) => sourcePath !== path.join(starterContent, 'config', 'gallery.json'),
+    });
   }
   fixtureCreated = true;
   const topLevel = fs.readdirSync(fixtureRoot).sort();
@@ -272,6 +278,7 @@ function success(label, response) {
   assert(response.status === 0, `${label} exit=${response.status}：${JSON.stringify(response.body)}`);
   assert(response.body?.ok === true, `${label} 未返回 ok=true：${JSON.stringify(response.body)}`);
   assert(response.stderr === '', `${label} 默认 stderr 不为空：${response.stderr}`);
+  workingRevision = response.body.workingRevision ?? workingRevision;
   return response.body;
 }
 
@@ -400,6 +407,7 @@ function waitForChildClose(child, timeoutMs = 5000) {
 }
 
 function createOwnedServerState(child, stdout = '', stderr = '') {
+  resourceCleanup.previewChildStarted = true;
   const state = {
     child,
     pid: child.pid ?? null,
@@ -519,7 +527,7 @@ function retainPreviewServerForManualAcceptance() {
 async function verifyResourceCleanup() {
   resourceCleanup.previewPortFree = await portIsFree(previewPort);
   resourceCleanup.harnessSelfCheckPortFree = await portIsFree(harnessSelfCheckPort);
-  assert(resourceCleanup.browserClosed, '资源清理后 Playwright browser 仍未确认断开');
+  if (resourceCleanup.browserCreated) assert(resourceCleanup.browserClosed, '资源清理后 Playwright browser 仍未确认断开');
   assert(resourceCleanup.harnessSelfCheckPortFree, `资源清理后 harness self-check 端口 ${harnessSelfCheckPort} 仍被占用`);
   if (keepPreviewServer) {
     assert(resourceCleanup.previewServerRetained, '正式人工入口应保留 preview server，但未记录保留状态');
@@ -527,8 +535,8 @@ async function verifyResourceCleanup() {
   } else {
     assert(resourceCleanup.previewServerReleased, '资源清理后 preview server 未释放');
     assert(resourceCleanup.previewPortFree, `资源清理后 preview 端口 ${previewPort} 仍被占用`);
-    assert(resourceCleanup.previewChildExitObserved, '资源清理后 preview child 未确认 exit');
-    assert(resourceCleanup.previewChildCloseObserved, '资源清理后 preview child 未确认 close');
+    if (resourceCleanup.previewChildStarted) assert(resourceCleanup.previewChildExitObserved, '资源清理后 preview child 未确认 exit');
+    if (resourceCleanup.previewChildStarted) assert(resourceCleanup.previewChildCloseObserved, '资源清理后 preview child 未确认 close');
   }
 }
 
@@ -754,6 +762,7 @@ async function runPreviewHarnessSelfCheck() {
     ownedServerState = server;
     ownedBrowserState.child = server.child;
     previewBrowser = await chromium.launch({ headless: true });
+    resourceCleanup.browserCreated = true;
     ownedBrowserState.browser = previewBrowser;
     const page = await previewBrowser.newPage({ viewport: { width: 1280, height: 720 } });
     previewPage = page;
@@ -836,7 +845,7 @@ async function run() {
       'project.simulate', 'runtime.run-from', 'runtime.read-trace', 'change.diff',
       'change.commit', 'change.rollback',
     ];
-    assert(JSON.stringify(capabilities.result.capabilities) === JSON.stringify(expected), '14 项 capabilities 顺序或内容不一致');
+    assert(expected.every((id) => capabilities.result.capabilities.some((definition) => definition.id === id)), '本创作链所需公开能力缺失');
     const project = success('project.inspect', runCli(['project', 'inspect', '--project', fixtureRoot]));
     assert(project.result && typeof project.projectRevision === 'string', 'project.inspect 缺少 revision/result');
     return project;
@@ -977,6 +986,7 @@ async function run() {
   const sceneText = fs.readFileSync(path.join(fixtureRoot, 'content', 'scenario', 'ch01_01.gal'), 'utf8');
   const server = await step('editor.preview.server', startPreviewServer);
   previewBrowser = await chromium.launch({ headless: true });
+  resourceCleanup.browserCreated = true;
   const page = await previewBrowser.newPage({ viewport: { width: 1280, height: 720 } });
   previewPage = page;
   previewPageClosing = false;

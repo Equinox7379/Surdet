@@ -167,7 +167,9 @@ async function openProject(page, rootKey, expectedName, channels) {
       && window.surdetEditorDebug?.state?.assetImportWorkspace?.entryState === 'ready'
   ));
   await page.waitForFunction((name) => (
-    document.querySelector('.editor-project-name')?.textContent === name
+    window.surdetEditorDebug.state.dirName === name
+      && document.querySelector('.editor-project-name')?.textContent
+        === JSON.parse(window.surdetEditorDebug.state.gameConfigText).title
   ), expectedName);
   channels.phase = 'idle';
   channels.rootKey = null;

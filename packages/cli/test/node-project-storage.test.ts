@@ -106,6 +106,75 @@ class FailingReplaceStorage implements ProjectWriteStorage {
 }
 
 describe('NodeProjectStorage safe parent creation', () => {
+  it.each(['modified', 'deleted', 'created'] as const)('rejects a commit target %s externally during staging and keeps its bytes or absence', async kind => {
+    const root = createProjectRoot('surdet-commit-stage-conflict-');
+    const relative = 'content/scenario/agent_support.gal', target = path.join(root, relative);
+    const external = '@scene agent_support\n暂存期间的外部版本。\n@end\n';
+    try {
+      if (kind !== 'created') { fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, '@scene agent_support\n原来的正文。\n@end\n'); }
+      const storage = await NodeProjectStorage.open(root);
+      const snapshot = await loadProjectSnapshot(storage, hasher);
+      const repository = new InMemoryChangeRepository();
+      const change = await beginChange(snapshot, repository, storage);
+      if (kind === 'created') await applySceneCreate(change, { operationId: 'create', sceneId: 'agent_support' });
+      else { const object = buildObjectIndex(snapshot).objects.find(item => item.kind === 'text')!;
+        await applyScenePatch(change, { operationId: 'patch', patch: { kind: 'replaceText', target: object.objectRef,
+          expectedFingerprint: object.fingerprint!, value: '待保存的草稿。' } }); }
+      await recordValidation(change, { evidenceId: 'validation', errors: 0 });
+      const stage = storage.stageText.bind(storage);
+      const fault = vi.spyOn(storage, 'stageText').mockImplementation(async (file, text, id) => {
+        const staged = await stage(file, text, id);
+        if (kind === 'deleted') fs.unlinkSync(target); else fs.writeFileSync(target, external, kind === 'created' ? { flag: 'wx' } : {});
+        return staged;
+      });
+      try { await expect(commitChange(change, storage)).rejects.toMatchObject({ code: 'PROJECT_CHANGED_SINCE_BEGIN' }); }
+      finally { fault.mockRestore(); }
+      expect(change.record.status).toBe('STALE');
+      expect(await repository.readLatestJournal(change.record.changeId)).toMatchObject({ status: 'RECOVERED' });
+      if (kind === 'deleted') expect(fs.existsSync(target)).toBe(false); else expect(fs.readFileSync(target, 'utf8')).toBe(external);
+      expect(temporaryFiles(root)).toEqual([]);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it.each(['modified', 'deleted', 'created'] as const)('does not restore over a file %s externally while rollback text is staged', async kind => {
+    const root = createProjectRoot('surdet-restore-stage-conflict-');
+    const relative = 'content/scenario/agent_support.gal', target = path.join(root, relative);
+    const external = '@scene agent_support\n外部变化必须保留。\n@end\n';
+    try {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      if (kind !== 'created') fs.writeFileSync(target, '@scene agent_support\n待回滚的已写内容。\n@end\n');
+      const storage = await NodeProjectStorage.open(root), stage = storage.stageText.bind(storage);
+      const fault = vi.spyOn(storage, 'stageText').mockImplementation(async (file, text, id) => {
+        const staged = await stage(file, text, id);
+        if (kind === 'deleted') fs.unlinkSync(target); else fs.writeFileSync(target, external, kind === 'created' ? { flag: 'wx' } : {});
+        return staged;
+      });
+      try { await expect(storage.restoreText(relative, '@scene agent_support\n原来的基线。\n@end\n')).rejects.toMatchObject({ code: 'PROJECT_CHANGED_SINCE_BEGIN' }); }
+      finally { fault.mockRestore(); }
+      if (kind === 'deleted') expect(fs.existsSync(target)).toBe(false); else expect(fs.readFileSync(target, 'utf8')).toBe(external);
+      expect(temporaryFiles(root)).toEqual([]);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('rolls back an earlier published new scene when a later staged config has an external conflict', async () => {
+    const root = createProjectRoot('surdet-commit-later-stage-conflict-');
+    const external = '{"entryScene":"agent_support","variables":{},"outside":true}';
+    try {
+      const storage = await NodeProjectStorage.open(root), change = await beginSceneChange(storage, true);
+      const stage = storage.stageText.bind(storage);
+      const fault = vi.spyOn(storage, 'stageText').mockImplementation(async (file, text, id) => {
+        const staged = await stage(file, text, id);
+        if (file === 'game.config.json') fs.writeFileSync(path.join(root, file), external);
+        return staged;
+      });
+      try { await expect(commitChange(change, storage)).rejects.toMatchObject({ code: 'PROJECT_CHANGED_SINCE_BEGIN' }); }
+      finally { fault.mockRestore(); }
+      expect(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8')).toBe(external);
+      expect(fs.existsSync(path.join(root, 'content/scenario/agent_support.gal'))).toBe(false);
+      expect(change.record.status).toBe('STALE'); expect(temporaryFiles(root)).toEqual([]);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   it.each(['new', 'existing'] as const)('preserves an externally edited earlier %s file when a later publication fails', async kind => {
     const root = createProjectRoot('surdet-commit-earlier-external-');
     const relative = 'content/scenario/agent_support.gal';

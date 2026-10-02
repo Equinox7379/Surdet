@@ -12,9 +12,10 @@ export interface SourceEdit { text: string; selectedLine: number }
 /** UI grouping, not control-flow evaluation. Source rows and shared line kinds remain authoritative. */
 export function stepAt(lines: readonly LineModel[], index: number): StepRange {
   if (!Number.isInteger(index) || index < 0 || index >= lines.length) throw new Error('当前步骤已经不存在');
+  const choiceRow = (line: LineModel | undefined): boolean => line?.kind === 'choice-option' || line?.kind === 'blank' || line?.kind === 'comment';
   let start = index;
-  if (lines[start]?.kind === 'choice-option') {
-    while (start > 0 && lines[start - 1]?.kind === 'choice-option') start--;
+  if (choiceRow(lines[start])) {
+    while (start > 0 && choiceRow(lines[start - 1])) start--;
     const before = lines[start - 1];
     if (before?.kind === 'instr' && before.name === 'choice') start--;
     else start = index;
@@ -22,7 +23,12 @@ export function stepAt(lines: readonly LineModel[], index: number): StepRange {
   let end = start;
   const head = lines[start];
   if (head?.kind === 'instr' && head.name === 'choice') {
-    while (lines[end + 1]?.kind === 'choice-option') end++;
+    for (let cursor = start + 1; cursor < lines.length && choiceRow(lines[cursor]); cursor++) {
+      if (lines[cursor]?.kind === 'choice-option') end = cursor;
+    }
+    // Only separators within the actual options belong to this step. Trailing
+    // comments and blank rows remain independently editable.
+    if (index > end) return { start: index, end: index };
   }
   return { start, end };
 }
@@ -30,7 +36,8 @@ export function stepAt(lines: readonly LineModel[], index: number): StepRange {
 export function scriptSteps(lines: readonly LineModel[]): StepRange[] {
   const result: StepRange[] = [];
   for (let index = 0; index < lines.length;) {
-    const range = stepAt(lines, index);
+    const line = lines[index];
+    const range = line?.kind === 'instr' && line.name === 'choice' ? stepAt(lines, index) : { start: index, end: index };
     result.push(range);
     index = range.end + 1;
   }

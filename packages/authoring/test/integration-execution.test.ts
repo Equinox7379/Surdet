@@ -1,9 +1,10 @@
 import * as crypto from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   AuthoringOperationError,
   InMemoryChangeRepository,
   beginChange,
+  openChange,
   commitChange,
   executeIntegrationReplay,
   fingerprintWorkingObject,
@@ -347,15 +348,30 @@ describe('Wave 5 integration execution', () => {
     const plan = makePlan();
     const repository = new InMemoryChangeRepository();
     const change = await beginIntegrationChange(plan, repository);
-    // 第一项 replay 已持久化，但 receipt CAS 被中断：注入一次写失败。
-    await executeIntegrationReplay(change, makePlan({ replayOperations: plan.replayOperations.slice(0, 1) }), hasher)
-      .then(() => undefined)
-      .catch(() => undefined);
-    // 直接重放同 operationId：runOperation 幂等回放旧 result。
-    const resumed = await executeIntegrationReplay(change, plan, hasher);
+    const write = repository.write.bind(repository);
+    let interrupted = false;
+    const fault = vi.spyOn(repository, 'write').mockImplementation(async (record, precondition: ChangeWritePrecondition) => {
+      if (!interrupted && record.integration?.nextOperationIndex === 1 && record.integration.replayedOperations.length === 1) {
+        interrupted = true;
+        throw new Error('receipt write interrupted');
+      }
+      return write(record, precondition);
+    });
+    try {
+      await expect(executeIntegrationReplay(change, plan, hasher)).rejects.toThrow('receipt write interrupted');
+    } finally {
+      fault.mockRestore();
+    }
+    expect(interrupted).toBe(true);
+    const persisted = (await repository.read(change.record.changeId))!;
+    expect(persisted.workingRevision).toBe(1);
+    expect(Object.keys(persisted.operations)).toEqual(['cmp_t4_0000_aaa']);
+    expect(persisted.integration).toMatchObject({ status: 'REPLAYING', nextOperationIndex: 0, replayedOperations: [] });
+    const reopened = openChange(persisted, repository);
+    const resumed = await executeIntegrationReplay(reopened, plan, hasher);
     expect(resumed.status).toBe('READY');
     expect(resumed.replayedOperations).toHaveLength(3);
-    expect(change.record.workingRevision).toBe(3);
+    expect(reopened.record.workingRevision).toBe(3);
   });
 
   it('resumes an exact executeOperationId + plan and rejects fingerprint mismatches', async () => {

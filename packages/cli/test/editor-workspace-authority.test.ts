@@ -29,6 +29,32 @@ afterEach(async () => {
 });
 
 describe('bound Editor write settlement', () => {
+  it.each(['modified', 'deleted', 'created'] as const)('preserves a target %s externally while its Editor text is staged', async change => {
+    const { project, dataRoot } = await fixture();
+    const authority = new EditorWorkspaceAuthority(project, { leaseManager: new NodeLocalLeaseManager(dataRoot) });
+    authorities.push(authority);
+    const { diskBaseline } = await authority.snapshot();
+    const state = { ...identity, workspaceGeneration: 1, availability: 'dirty' as const, dirtyScopes: ['scene' as const] };
+    await authority.heartbeat(state);
+    const begun = await authority.beginWrite({ ...state, purpose: 'save-all', expectedProjectRevision: diskBaseline.projectRevision,
+      expectedCoordinationRevision: diskBaseline.coordinationRevision });
+    const file = change === 'created' ? 'content/scenario/new.gal' : 'content/scenario/start.gal';
+    const external = '@scene start\n旁白：暂存期间的外部版本必须保留。\n@end\n';
+    const stage = NodeProjectStorage.prototype.stageText;
+    vi.spyOn(NodeProjectStorage.prototype, 'stageText').mockImplementation(async function (this: NodeProjectStorage, target, text, id) {
+      const staged = await stage.call(this, target, text, id);
+      if (change === 'deleted') await fs.unlink(path.join(project, target));
+      else await fs.writeFile(path.join(project, target), external, change === 'created' ? { flag: 'wx' } : {});
+      return staged;
+    });
+    await expect(authority.publishFile({ ...state, writeLeaseId: begun.writeLeaseId, path: file,
+      expectedSha256: diskBaseline.files.find(entry => entry.path === file)?.sha256 ?? null,
+      text: '@scene start\n旧草稿不应覆盖外部版本。\n@end\n' })).rejects.toMatchObject({ code: 'EDITOR_PROJECT_BASELINE_CHANGED' });
+    if (change === 'deleted') await expect(fs.readFile(path.join(project, file))).rejects.toMatchObject({ code: 'ENOENT' });
+    else expect(await fs.readFile(path.join(project, file), 'utf8')).toBe(external);
+    expect((await fs.readdir(path.join(project, 'content/scenario'))).some(name => name.startsWith('.surdet-'))).toBe(false);
+  });
+
   it('continues ordinary writes from a scene batch receipt and still rejects a real external edit', async () => {
     const { project, dataRoot } = await fixture();
     const authority = new EditorWorkspaceAuthority(project, { leaseManager: new NodeLocalLeaseManager(dataRoot) });

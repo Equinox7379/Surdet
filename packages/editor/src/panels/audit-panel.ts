@@ -50,7 +50,7 @@ function sceneKeyOfFile(file: string): string | null {
     .replace(/\\/g, '/')
     .replace(/^\.\//, '')
     .replace(/^content\/scenario\//, '')
-    .replace(/\.gal$/, '');
+    .replace(/\.gal$/i, '');
   if (state.scenes.has(normalized)) return normalized;
   const matches = [...state.scenes.keys()].filter((key) => (
     key.endsWith('/' + normalized) || normalized.endsWith('/' + key)

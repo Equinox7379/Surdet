@@ -76,6 +76,55 @@ describe('browser game ownership', () => {
     fail.mockRestore();
     expect((await saves.load('1')).variables.value).toBe(2);
   });
+
+  it.each([
+    { backup: false, corrupt: false }, { backup: false, corrupt: true },
+    { backup: true, corrupt: false }, { backup: true, corrupt: true },
+  ])('preserves the original bytes after the main write fails ($backup/$corrupt)', async ({ backup, corrupt }) => {
+    const storage = memoryStorage();
+    const prefix = gameStoragePrefix('failed-rotation');
+    const key = `${prefix}save:1`;
+    const saves = new SaveManager(createBrowserSaveStorage(storage, prefix));
+    await saves.save('1', snapshot(1));
+    if (backup) await saves.save('1', snapshot(2));
+    if (corrupt) storage.setItem(key, '{bad-main');
+    const before = { ...storage };
+    const write = storage.setItem.bind(storage);
+    const denied = new Error('main write denied');
+    const fail = vi.spyOn(storage, 'setItem').mockImplementation((target, value) => {
+      if (target === key) throw denied;
+      write(target, value);
+    });
+    await expect(saves.save('1', snapshot(3))).rejects.toBe(denied);
+    expect({ ...storage }).toEqual(before);
+    fail.mockRestore();
+    if (backup) {
+      await saves.restoreBackup('1');
+      expect((await saves.load('1')).variables.value).toBe(1);
+    }
+    await saves.save('1', snapshot(4));
+    expect((await saves.load('1')).variables.value).toBe(4);
+  });
+
+  it('reports both the main write failure and a failed backup compensation', async () => {
+    const storage = memoryStorage();
+    const prefix = gameStoragePrefix('failed-compensation');
+    const key = `${prefix}save:1`;
+    const saves = new SaveManager(createBrowserSaveStorage(storage, prefix));
+    await saves.save('1', snapshot(1));
+    await saves.save('1', snapshot(2));
+    const write = storage.setItem.bind(storage);
+    const mainError = new Error('main denied'), restoreError = new Error('backup denied');
+    let mainFailed = false;
+    const fail = vi.spyOn(storage, 'setItem').mockImplementation((target, value) => {
+      if (target === key) { mainFailed = true; throw mainError; }
+      if (mainFailed) throw restoreError;
+      write(target, value);
+    });
+    await expect(saves.save('1', snapshot(3))).rejects.toMatchObject({ errors: [mainError, restoreError] });
+    fail.mockRestore();
+    expect((await saves.load('1')).variables.value).toBe(2);
+  });
 });
 
 describe('browser damaged-slot menu projection', () => {

@@ -15,6 +15,7 @@ test('Renderer v2 docs compile against workspace sources without prebuilt dist p
   assert.deepEqual(config.compilerOptions.paths, {
     '@surdet/core': ['packages/core/src/index.ts'],
     '@surdet/renderer': ['packages/renderer/src/index.ts'],
+    '@surdet/host': ['packages/host/src/index.ts'],
   });
   assert.deepEqual(config.files, ['../../../packages/renderer/src/pixi-unsafe-eval.d.ts']);
   assert.deepEqual(config.include, ['../../../docs/examples/renderer-v2-migration.ts']);

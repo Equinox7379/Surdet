@@ -126,6 +126,7 @@ const originalState = {
   gameConfigText: state.gameConfigText,
   dirAssets: state.dirAssets,
   configReadErrors: state.configReadErrors,
+  handles: state.handles,
 };
 
 afterEach(() => {
@@ -142,10 +143,32 @@ afterEach(() => {
   state.gameConfigText = originalState.gameConfigText;
   state.dirAssets = originalState.dirAssets;
   state.configReadErrors = originalState.configReadErrors;
+  state.handles = originalState.handles;
   resetConfigSession();
 });
 
 describe('timeline preview replay', () => {
+  it('plays a memory scene without a config file and refuses an existing empty config', async () => {
+    vi.stubGlobal('document', documentStub);
+    vi.stubGlobal('window', { addEventListener: vi.fn((type: string, listener: (event: MessageEvent) => void) => {
+      if (type === 'message') previewMessageListener = listener;
+    }) });
+    resetConfigSession();
+    state.current = 'intro.gal'; state.dirHandle = null; state.dirAssets = [];
+    state.reviewWorkspace = null; state.previewTimelineId = null; state.configReadErrors = {};
+    state.gameConfigText = ''; state.handles = { ...state.handles, gameConfig: null };
+    state.scenes = new Map([['intro.gal', { id: 'intro', file: 'intro.gal', text: '@scene intro\n旁白：内存试玩。\n@end', eol: '\n', dirty: false, handle: null }]]);
+    const container = new FakeElement('div');
+    renderPreviewPanel(container as unknown as HTMLElement);
+    const frame = container.querySelector('iframe')!;
+    previewMessageListener!({ data: { type: 'surdet-preview-ready' }, source: frame.contentWindow } as unknown as MessageEvent);
+    await vi.waitFor(() => expect(postedPreviewMessages, container.textContent).toHaveLength(1));
+    expect((postedPreviewMessages[0] as { payload: { gameConfig: unknown } }).payload.gameConfig).toEqual({});
+    state.handles = { ...state.handles, gameConfig: {} as FileSystemFileHandle };
+    container.findButton('重新播放')!.onclick?.();
+    await vi.waitFor(() => expect(container.textContent).toContain('game.config.json 无法读取'));
+    expect(postedPreviewMessages).toHaveLength(1);
+  });
   it('sends the edited theme to the actual preview load and rejects invalid drafts before posting', async () => {
     vi.stubGlobal('document', documentStub);
     vi.stubGlobal('window', {

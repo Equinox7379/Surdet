@@ -90,14 +90,15 @@ const action = (
 
 const terminalAction = (reason: string): RepairAction => ({ reason, terminal: true });
 
-const jsonObjectValueSchema: JsonSchema = {
+const jsonObjectValueSchema: JsonSchema = { $ref: '#/$defs/surdetEnvelopeJsonValue' };
+const jsonObjectValueDefinition: JsonSchema = {
   oneOf: [
     { type: 'string' },
     { type: 'number' },
     { type: 'boolean' },
     { type: 'null' },
-    { type: 'array', items: { type: 'string' } },
-    { type: 'object', patternProperties: { '^.*$': { type: 'string' } }, additionalProperties: false },
+    { type: 'array', items: jsonObjectValueSchema },
+    { type: 'object', additionalProperties: jsonObjectValueSchema },
   ],
 };
 
@@ -279,6 +280,7 @@ function envelopeBaseSchema(): JsonSchema {
       projectRevision: { type: 'string' },
       changeId: { type: 'string' },
       workingRevision: { type: 'integer' },
+      workingSnapshotRevision: { type: 'string', pattern: '^[0-9a-f]{64}$' },
       operationId: { type: 'string' },
     },
   };
@@ -336,7 +338,7 @@ export function createEnvelopeJsonSchema(resultSchema: JsonSchema): JsonSchema {
   };
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
-    ...(resultSchema.$defs ? { $defs: resultSchema.$defs } : {}),
+    $defs: { ...(resultSchema.$defs as Record<string, JsonSchema> | undefined), surdetEnvelopeJsonValue: jsonObjectValueDefinition },
     oneOf: [
       {
         type: 'object',

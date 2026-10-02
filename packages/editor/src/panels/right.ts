@@ -122,7 +122,13 @@ export function renderRightExtras(): void {
       for (const [name, decl] of vars) {
         const chip = h('span', 'chip', `${name}：${VARIABLE_TYPE_LABELS[decl?.type ?? ''] ?? decl?.type ?? '未声明类型'}`);
         chip.title = '点击复制变量名';
-        chip.onclick = () => { void navigator.clipboard?.writeText(name); setStatus(`已复制 ${name}`, true); };
+        chip.onclick = () => {
+          if (!navigator.clipboard) { setStatus('此环境无法自动复制，可手动选择变量名', false, 5000); return; }
+          void navigator.clipboard.writeText(name).then(
+            () => setStatus(`已复制 ${name}`, true, 2500),
+            () => setStatus('复制未完成，可手动选择变量名', false, 5000),
+          );
+        };
         chips.appendChild(chip);
       }
     } else {

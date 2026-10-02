@@ -18,6 +18,7 @@ export interface ConfiguredFontJobOptions {
   resolveFontUrl: (fontPath: string) => Promise<string | null>;
   assets: Pick<AssetCommands, 'registerFontRole' | 'registerFont'>;
   onError?: (message: string) => void;
+  isActive: () => boolean;
 }
 
 export function createConfiguredFontJobs(options: ConfiguredFontJobOptions): () => AssetLoadJob[] {
@@ -28,18 +29,21 @@ export function createConfiguredFontJobs(options: ConfiguredFontJobOptions): () 
     let registered = false;
     try {
       url = await resolveFontUrl(path);
+      if (!options.isActive()) return;
       if (!url) throw new Error('未找到字体文件');
       registered = await assets.registerFontRole(role, url);
+      if (!options.isActive()) return;
       if (!registered) throw new Error('字体无法解码或加载超时');
       if (registered) console.info(`[${label}] ${role} 字体已加载：`, path);
     } catch (error) {
+      if (!options.isActive()) return;
       const message = `${role} 字体加载失败：${path}（${error instanceof Error ? error.message : String(error)}）；使用默认字体。`;
       console.error(`[${label}] ${message}`);
       options.onError?.(message);
       throw new Error(message, { cause: error });
     } finally {
       if (url?.startsWith('blob:')) {
-        if (registered) fontBlobUrls.add(url);
+        if (registered && options.isActive()) fontBlobUrls.add(url);
         else URL.revokeObjectURL(url);
       }
     }

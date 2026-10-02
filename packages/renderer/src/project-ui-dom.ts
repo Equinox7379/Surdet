@@ -357,7 +357,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       };
       row.addEventListener('click', event => { if (event.target instanceof HTMLButtonElement || event.target instanceof HTMLInputElement) return; void activate(); });
       row.addEventListener('keydown', event => { if (event.target === row && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); void activate(); } });
-      if (item.backupAvailable && item.readError) {
+      if (content.source === 'save-slots' && display.context.mode === 'load' && item.backupAvailable) {
         const restore = document.createElement('button');
         restore.type = 'button'; restore.textContent = '恢复备份并读取';
         restore.style.cssText = `position:absolute;right:12px;top:12px;border:1px solid ${hex(theme.colors.line)};background:${hex(theme.colors.surface)};color:${hex(theme.colors.text)};cursor:pointer`;

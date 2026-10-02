@@ -114,7 +114,7 @@ const PUBLICATION_FILE_STATES = new Set([
 
 function validFileIdentity(value: unknown): boolean {
   const identity = value as Record<string, unknown> | undefined;
-  return identity !== undefined
+  return identity !== null && typeof identity === 'object'
     && typeof identity.device === 'string'
     && typeof identity.inode === 'string'
     && typeof identity.birthtimeNs === 'string'
@@ -125,7 +125,7 @@ function validFileIdentity(value: unknown): boolean {
 
 function validReceiptFileIdentity(value: unknown): boolean {
   const identity = value as Record<string, unknown> | undefined;
-  return identity !== undefined
+  return identity !== null && typeof identity === 'object'
     && typeof identity.device === 'string'
     && typeof identity.inode === 'string'
     && typeof identity.birthtimeNs === 'string';
@@ -1205,13 +1205,11 @@ export class AssetImportRecordStore {
         throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', `${status} 操作的发布文件证据不完整`);
       }
       if (status === 'UNDONE') {
-        const target = absoluteAssetImportProjectPath(this.paths, file.targetPath);
-        const targetExists = await fs.lstat(target).then(() => true).catch((error: unknown) => {
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
-          throw error;
-        });
-        if (targetExists) {
-          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', 'UNDONE 操作的目标路径重新出现');
+        // A completed undo releases its target for later imports or author edits.
+        // The retained quarantine and immutable receipt prove this operation;
+        // their bytes are verified by the barrier resolution/discovery callers.
+        if (file.undoIdentity === undefined || !sameNodeIdentity(file.undoIdentity, expected.fileIdentity)) {
+          throw new AssetImportAuthorityError('IMPORT_RECOVERY_REQUIRED', 'UNDONE 操作的隔离身份与成功回执不一致');
         }
       }
     }

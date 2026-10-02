@@ -162,6 +162,35 @@ afterEach(async () => {
 });
 
 describe('project asset import authority storage', () => {
+  it.each(['receipt-file', 'publication-file', 'publication-parent'] as const)(
+    'establishes the recovery barrier for a null %s identity without losing the domain error', async (field) => {
+      const fixture = await temporaryRoot(`surdet-import-null-identity-${field}`);
+      const projectRoot = path.join(fixture, 'project');
+      await mkdir(projectRoot);
+      const paths = await openAssetImportAuthorityPaths({ projectRoot, dataRoot: path.join(fixture, 'data') });
+      const operationId = crypto.randomUUID(), itemId = crypto.randomUUID();
+      await createCommittedFixture(paths, operationId, itemId, 'null-identity.png');
+      const file = path.join(paths.projectNamespace, 'operations', operationId, field === 'receipt-file' ? 'receipt.json' : 'publication.json');
+      const value = JSON.parse(await readFile(file, 'utf8'));
+      if (field === 'receipt-file') value.files[0].fileIdentity = null;
+      else {
+        if (field === 'publication-file') value.files[0].finalIdentity = null;
+        else value.parents[0].identity = null;
+        const { publicationSha256: ignored, ...semantic } = value;
+        void ignored;
+        value.publicationSha256 = stableRecordSha256(semantic);
+      }
+      const corruptBytes = `${JSON.stringify(value, null, 2)}\n`;
+      await writeFile(file, corruptBytes);
+      const store = new AssetImportRecordStore(paths);
+      await expect(field === 'receipt-file' ? store.readReceipt(operationId) : store.readPublication(operationId))
+        .rejects.toMatchObject({ code: 'IMPORT_RECOVERY_REQUIRED' });
+      expect(await new AssetImportRecordStore(paths).hasUnresolvedBarrier()).toBe(true);
+      expect(await readFile(file, 'utf8')).toBe(corruptBytes);
+      expect(await readFile(path.join(projectRoot, 'content/assets/bg/null-identity.png'), 'utf8')).toBe('data');
+    }, 30_000,
+  );
+
   it('opens a stable external namespace without creating the project workspace', async () => {
     const fixture = await temporaryRoot('surdet-asset-import-storage');
     const projectRoot = path.join(fixture, 'project');
@@ -742,7 +771,7 @@ describe('project asset import authority storage', () => {
     },
   );
 
-  it.each(['missing-receipt', 'target-reappeared', 'publication-state'] as const)(
+  it.each(['missing-receipt', 'quarantine-rewritten', 'publication-state'] as const)(
     'keeps a resolved UNDONE barrier unresolved when terminal evidence is $0',
     async (tamper) => {
       const fixture = await temporaryRoot(`surdet-asset-import-undone-resolution-${tamper}`);
@@ -766,10 +795,8 @@ describe('project asset import authority storage', () => {
 
       if (tamper === 'missing-receipt') {
         await rm(path.join(paths.projectNamespace, 'operations', operationId, 'receipt.json'));
-      } else if (tamper === 'target-reappeared') {
-        const target = path.join(paths.projectRoot, 'content', 'assets', 'bg', fileName);
-        await mkdir(path.dirname(target), { recursive: true });
-        await writeFile(target, 'reappeared', 'utf8');
+      } else if (tamper === 'quarantine-rewritten') {
+        await writeFile(path.join(projectRoot, '.surdet/asset-import', operationId, 'undo', `${itemId}.bin`), 'rewritten', 'utf8');
       } else {
         const publicationFile = path.join(paths.projectNamespace, 'operations', operationId, 'publication.json');
         const publication = JSON.parse(await readFile(publicationFile, 'utf8')) as {
@@ -787,7 +814,7 @@ describe('project asset import authority storage', () => {
     },
   );
 
-  it.each(['missing-receipt', 'target-reappeared', 'publication-state'] as const)(
+  it.each(['missing-receipt', 'quarantine-rewritten', 'publication-state'] as const)(
     'does not resolve an UNDONE barrier when terminal evidence is $0',
     async (tamper) => {
       const fixture = await temporaryRoot(`surdet-asset-import-undone-resolution-reject-${tamper}`);
@@ -810,10 +837,8 @@ describe('project asset import authority storage', () => {
 
       if (tamper === 'missing-receipt') {
         await rm(path.join(paths.projectNamespace, 'operations', operationId, 'receipt.json'));
-      } else if (tamper === 'target-reappeared') {
-        const target = path.join(paths.projectRoot, 'content', 'assets', 'bg', fileName);
-        await mkdir(path.dirname(target), { recursive: true });
-        await writeFile(target, 'reappeared', 'utf8');
+      } else if (tamper === 'quarantine-rewritten') {
+        await writeFile(path.join(projectRoot, '.surdet/asset-import', operationId, 'undo', `${itemId}.bin`), 'rewritten', 'utf8');
       } else {
         const publicationFile = path.join(paths.projectNamespace, 'operations', operationId, 'publication.json');
         const publication = JSON.parse(await readFile(publicationFile, 'utf8')) as {

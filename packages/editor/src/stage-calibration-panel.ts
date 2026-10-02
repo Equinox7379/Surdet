@@ -95,7 +95,9 @@ export function createStageCalibrationPanel(onSaved: () => void, isEditable: () 
     context.beginPath(); context.moveTo(ax - 7, ay); context.lineTo(ax + 7, ay); context.moveTo(ax, ay - 7); context.lineTo(ax, ay + 7); context.stroke();
   };
   let bindings: ReturnType<typeof resolveProjectPortraits> = [];
+  const clearImage = () => { readSequence++; loaded = null; bitmap?.close(); bitmap = null; imageInfo.textContent = ''; draw(); };
   const refresh = () => {
+    clearImage();
     const config = parseProjectConfigDocument(state.gameConfigText || '{}');
     bindings = resolveProjectPortraits(config, state.dirAssets.flatMap(asset => { const path = asset.sourcePath ?? (asset.handle ? assetPathForHandle(asset.handle) : undefined); return path ? [path] : []; }));
     select.replaceChildren(); bindings.forEach((binding, index) => { const option = node('option', `${binding.role}:${binding.outfit} · ${binding.expression}`); option.value = String(index); select.append(option); });
@@ -136,14 +138,15 @@ export function createStageCalibrationPanel(onSaved: () => void, isEditable: () 
     for (const [key, value] of Object.entries({ ...frame, baseHeight: profile?.height ?? 648, anchorX: profile?.anchorX ?? .5, anchorY: profile?.anchorY ?? 1 })) inputs[key]!.value = String(value);
     imageInfo.textContent = `${binding.sourcePath} · ${image.width} × ${image.height}${binding.visual ? ' · 显示默认组合，请为所有变体保留足够范围' : ''}`; draw();
   };
-  select.onchange = () => { loaded = null; bitmap?.close(); bitmap = null; draw(); };
+  select.onchange = clearImage;
   calibration.append(node('p', '在图上拖出可见范围，或填写像素坐标。十字为锚点；不自动猜测透明边距。'), select,
     button('刷新角色列表', () => refresh()), button('读取实际图片', readImage), imageInfo, canvas, fields,
     button('确认图片校准并加入草稿', async () => {
       const captured = loaded; if (!captured) throw new Error('请先读取实际图片。');
       for (const part of captured.parts) {
         const current = await (await part.handle.getFile()).arrayBuffer();
-        if (!canUse() || loaded !== captured || await digest(current) !== part.sha256) throw new Error('图片或项目已变化，请重新读取后校准。');
+        const sha256 = await digest(current);
+        if (!canUse() || loaded !== captured || sha256 !== part.sha256) throw new Error('图片或项目已变化，请重新读取后校准。');
       }
       const value = readValue(), target = `${captured.role}:${captured.outfit}`;
       const v = Object.fromEntries(Object.entries(inputs).map(([key, input]) => [key, Number(input.value)]));

@@ -23,6 +23,7 @@ Renderer v2 不改变 DSL、存档格式、游戏规则或玩家可见语义。`
 import { EventBus, Interpreter } from '@surdet/core';
 import type { CoreEventMap } from '@surdet/core';
 import { AudioManager, createRendererRuntime } from '@surdet/renderer';
+import { connectInterpreterPresentation } from '@surdet/host';
 
 export async function startRenderer(
   hostElement: HTMLElement,
@@ -42,13 +43,11 @@ export async function startRenderer(
   window.addEventListener('resize', resizeHandler);
   const unsubscribe = runtime.controller.connect(bus);
 
-  interpreter.setPresentationHooks({
-    snapshot: () => runtime.queries.presentation.snapshot(),
-    restore: (snapshot) => runtime.commands.presentation.restore(snapshot),
-  });
+  const presentationConnection = connectInterpreterPresentation({ interpreter, renderer: runtime });
 
   return () => {
     window.removeEventListener('resize', resizeHandler);
+    presentationConnection.disconnect();
     unsubscribe();
     runtime.dispose();
     audio.dispose();
@@ -96,6 +95,7 @@ export async function startLegacyRenderer(
 import { EventBus, Interpreter } from '@surdet/core';
 import type { CoreEventMap } from '@surdet/core';
 import { AudioManager, createRendererRuntime } from '@surdet/renderer';
+import { connectInterpreterPresentation } from '@surdet/host';
 
 export async function startV2Renderer(
   hostElement: HTMLElement,
@@ -111,11 +111,9 @@ export async function startV2Renderer(
   hostElement.appendChild(runtime.canvas);
   runtime.resize();
   const unsubscribe = runtime.controller.connect(bus);
-  interpreter.setPresentationHooks({
-    snapshot: () => runtime.queries.presentation.snapshot(),
-    restore: (snapshot) => runtime.commands.presentation.restore(snapshot),
-  });
+  const presentationConnection = connectInterpreterPresentation({ interpreter, renderer: runtime });
   return () => {
+    presentationConnection.disconnect();
     unsubscribe();
     runtime.dispose();
     audio.dispose();
@@ -203,7 +201,7 @@ runtime.controller.dispatchInput({ type: 'escape' });
 以下顺序适合浏览器和 Electron：
 
 1. 停止宿主输入和 system adapter；
-2. 断开 `runtime.controller.connect` 返回的 unsubscribe；
+2. 断开 `connectInterpreterPresentation` 返回的连接和 `runtime.controller.connect` 返回的 unsubscribe；
 3. 调用 `runtime.dispose()`；
 4. 释放宿主自己持有的音频与 Blob URL；
 5. 清理临时 userData 或测试目录。

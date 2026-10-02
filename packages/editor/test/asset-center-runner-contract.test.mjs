@@ -117,7 +117,7 @@ test('Asset Center runner proves search, filters, keyboard, previews and referen
     '[data-source-path]',
     '[data-source-line]',
   ]) assert.ok(source.includes(selector), `missing browser selector ${selector}`);
-  assert.match(source, /page\.keyboard\.press\(['"](Enter|Space)/);
+  assert.match(source, /keyboardRow\.press\(['"](Enter|Space)/);
   assert.doesNotMatch(source, /const keyboardId = await selectAsset/);
   assert.match(source, /aria-selected/);
   assert.match(source, /asset-center-preview/);

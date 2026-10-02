@@ -23,6 +23,7 @@ export class ExprParser {
   #nesting = 0;
   /** 一元连缀（!!!x / ---x / +++x）递归深度（括号之外的另一个栈溢出源） */
   #unaryDepth = 0;
+  #depths = new WeakMap<ExprAst, number>();
 
   static parse(source: string): ExprAst {
     return new ExprParser(source).parseRoot();
@@ -98,9 +99,9 @@ export class ExprParser {
       try {
         this.#pos++;
         this.#skipWs();
-        if (ch === '!') return { kind: 'unary', op: '!', operand: this.parseUnary() };
-        if (ch === '-') return { kind: 'unary', op: '-', operand: this.parseUnary() };
-        return this.parseUnary(); // 一元正号：无语义，直接返回操作数
+        const operand = this.parseUnary();
+        if (ch === '+') return operand; // 一元正号：无语义，直接返回操作数
+        return this.#bounded({ kind: 'unary', op: ch, operand }, (this.#depths.get(operand) ?? 0) + 1);
       } finally {
         this.#unaryDepth--;
       }
@@ -179,7 +180,14 @@ export class ExprParser {
   }
 
   #bin(op: BinOp, left: ExprAst, right: ExprAst): ExprAst {
-    return { kind: 'binary', op, left, right };
+    return this.#bounded({ kind: 'binary', op, left, right },
+      Math.max(this.#depths.get(left) ?? 0, this.#depths.get(right) ?? 0) + 1);
+  }
+
+  #bounded(ast: ExprAst, depth: number): ExprAst {
+    if (depth > MAX_EXPR_NESTING) this.#fail(`嵌套过深（超过 ${MAX_EXPR_NESTING} 层运算）`);
+    this.#depths.set(ast, depth);
+    return ast;
   }
 
   #skipWs(): void {

@@ -32,6 +32,7 @@ export interface EnvelopeContext {
   projectRevision?: string;
   changeId?: string;
   workingRevision?: number;
+  workingSnapshotRevision?: string;
   operationId?: string;
 }
 

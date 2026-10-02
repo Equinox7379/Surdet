@@ -259,7 +259,16 @@ async function launchSession(caseId) {
       await this.waitForPresentedFrame(`悬停 ${targetId}`);
     },
     async press(key) {
-      await page.keyboard.press(key);
+      if (key === 'F11') {
+        await app.evaluate(({ BrowserWindow }) => {
+          const win = BrowserWindow.getAllWindows()[0];
+          win.focus();
+          win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F11' });
+          win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F11' });
+        });
+      } else {
+        await page.keyboard.press(key);
+      }
       await this.waitForPresentedFrame(`按键 ${key}`);
     },
     async wheel(deltaY, label) {
@@ -506,6 +515,10 @@ async function openGameSaveLoad(session, mode) {
 async function selectSaveLoadSlot(session, mode, slotId = '1') {
   await openGameSaveLoad(session, mode);
   await session.clickTarget(`save-load:slot-${slotId}`);
+  if (mode === 'save') {
+    const confirmation = session.page.getByRole('button', { name: '覆盖存档', exact: true });
+    if (await confirmation.isVisible()) await confirmation.press('Enter');
+  }
   await session.waitFor(`${mode} 槽位完成`, (expectedMode) => {
     const debug = window.__surdetDebug;
     return debug?.activeOverlay === null
@@ -986,15 +999,18 @@ async function runCommandRailCase(session) {
 
   const beforeHover = await session.snapshot();
   recordRail('before-hover', beforeHover);
-  const targetBefore = await session.captureCanvasRegion('rail-auto-before-hover', 808, 650, 52, 62);
-  const outsideLeftBefore = await session.captureCanvasRegion('rail-outside-left-before-hover', 760, 650, 44, 62);
-  const outsideRightBefore = await session.captureCanvasRegion('rail-outside-right-before-hover', 866, 650, 44, 62);
+  const hoverTarget = await session.targetBounds('rail:auto');
+  if (!hoverTarget) throw new Error('缺少真实 rail:auto 截图区域');
+  const { x, y, width, height } = hoverTarget.logical;
+  const targetBefore = await session.captureCanvasRegion('rail-auto-before-hover', x, y, width, height);
+  const outsideLeftBefore = await session.captureCanvasRegion('rail-outside-left-before-hover', x - 6, y, 4, height);
+  const outsideRightBefore = await session.captureCanvasRegion('rail-outside-right-before-hover', x + width + 2, y, 4, height);
   await session.hoverTarget('rail:auto');
   const afterHover = await session.snapshot();
   recordRail('after-hover', afterHover);
-  const targetAfter = await session.captureCanvasRegion('rail-auto-after-hover', 808, 650, 52, 62);
-  const outsideLeftAfter = await session.captureCanvasRegion('rail-outside-left-after-hover', 760, 650, 44, 62);
-  const outsideRightAfter = await session.captureCanvasRegion('rail-outside-right-after-hover', 866, 650, 44, 62);
+  const targetAfter = await session.captureCanvasRegion('rail-auto-after-hover', x, y, width, height);
+  const outsideLeftAfter = await session.captureCanvasRegion('rail-outside-left-after-hover', x - 6, y, 4, height);
+  const outsideRightAfter = await session.captureCanvasRegion('rail-outside-right-after-hover', x + width + 2, y, 4, height);
   if (targetBefore.pixelHash === targetAfter.pixelHash) {
     throw new Error(`rail:auto 悬停没有可观察的局部投影变化：${JSON.stringify({ targetBefore, targetAfter })}`);
   }
@@ -1029,15 +1045,28 @@ async function runCommandRailCase(session) {
   };
 }
 
+async function readNativeFullscreen(session) {
+  return session.app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    return { fullScreen: win.isFullScreen(), contentBounds: win.getContentBounds() };
+  });
+}
+
 async function runFullscreenCase(session) {
   const initial = await startFormalGame(session);
   const before = await session.snapshot();
+  const beforeNative = await readNativeFullscreen(session);
+  if (beforeNative.fullScreen) throw new Error('独立全屏病例应从普通窗口开始');
   const beforeViewport = await session.viewportEvidence('before-F11');
   const beforeCanvas = await session.captureCanvas('fullscreen-before');
   const beforeMenuTarget = await session.targetBounds('rail:menu');
   const beforeTargets = (before?.interactionTargets ?? []).map((target) => target.id);
   if (!beforeMenuTarget) throw new Error('F11 前缺少 rail:menu 可点击坐标');
   await session.press('F11');
+  const enteredNative = await readNativeFullscreen(session);
+  if (!enteredNative.fullScreen) throw new Error('F11 未使原生窗口进入全屏');
+  await session.page.waitForFunction(({ width, height }) => window.innerWidth === width && window.innerHeight === height,
+    enteredNative.contentBounds, { timeout: 10000 });
   await session.waitForPresentedFrame('F11-entered');
   const entered = await session.snapshot();
   const enteredViewport = await session.viewportEvidence('after-F11-enter');
@@ -1058,6 +1087,10 @@ async function runFullscreenCase(session) {
   }
 
   await session.press('F11');
+  const exitedNative = await readNativeFullscreen(session);
+  if (exitedNative.fullScreen) throw new Error('第二次F11未使原生窗口退出全屏');
+  await session.page.waitForFunction(({ width, height }) => window.innerWidth === width && window.innerHeight === height,
+    exitedNative.contentBounds, { timeout: 10000 });
   await session.waitForPresentedFrame('F11-exited');
   const exited = await session.snapshot();
   const exitedViewport = await session.viewportEvidence('after-F11-exit');
@@ -1089,6 +1122,10 @@ async function runFullscreenCase(session) {
     source: 'game',
     path: ['title:new', 'F11→page.mouse.click rail:menu→system:resume', 'F11→page.mouse.click rail:menu→system:resume'],
     initialPosition: initial?.position ?? null,
+    fullscreenInput: 'Electron webContents.sendInputEvent(F11)',
+    beforeNative,
+    enteredNative,
+    exitedNative,
     beforeViewport,
     enteredViewport,
     exitedViewport,
@@ -1148,7 +1185,7 @@ async function runCase(caseId) {
       throw new Error(`Wave 4 case ${caseId} 未被路由到任何执行器。`);
     }
     await session.waitTitle();
-    await session.clickLogical(640, 478, 'title-gallery-visible-text');
+    await session.clickTarget('title:gallery');
     await session.waitOverlay('gallery:cg');
     const cgBeforeMusic = await session.waitForStableCanvas('gallery-cg-before-music');
     assertions.cgBeforeMusic = cgBeforeMusic;

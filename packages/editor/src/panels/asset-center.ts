@@ -1274,6 +1274,25 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
     container.dataset.assetQuery = state.assetCenterQuery;
     container.dataset.visibleCount = library.dataset.visibleCount = String(filtered.length);
     resultCount.textContent = `${scopeLabel} ${filtered.length} 项，共 ${items.length} 项`;
+    for (const button of rail.querySelectorAll<HTMLButtonElement>('.asset-center-filter')) {
+      const kind = button.dataset.assetFilterAxis === 'kind'
+        ? button.dataset.assetFilterValue as AssetKindFilter : state.assetCenterKind;
+      const status = button.dataset.assetFilterAxis === 'status'
+        ? button.dataset.assetFilterValue as AssetStatusFilter : state.assetCenterStatus;
+      const count = assetFacetCount(items, { kind, status });
+      button.dataset.assetFilterCount = String(count);
+      button.querySelector<HTMLElement>('.asset-center-filter-count')!.textContent = String(count);
+    }
+    for (const button of distribution.body.querySelectorAll<HTMLButtonElement>('[data-asset-insight-kind]')) {
+      button.setAttribute('aria-pressed', String(state.assetCenterQuery === ''
+        && state.assetCenterKind === button.dataset.assetInsightKind
+        && state.assetCenterStatus === 'all' && state.assetCenterFolder === 'all'));
+    }
+    for (const button of attention.body.querySelectorAll<HTMLButtonElement>('[data-asset-insight-status]')) {
+      button.setAttribute('aria-pressed', String(state.assetCenterQuery === ''
+        && state.assetCenterKind === 'all'
+        && state.assetCenterStatus === button.dataset.assetInsightStatus && state.assetCenterFolder === 'all'));
+    }
     if (batchSelecting) hooks.assetRelocation.onSetVisibleBatchItems(filtered.map(item => item.assetId));
     list.replaceChildren();
     if (filtered.length === 0) {

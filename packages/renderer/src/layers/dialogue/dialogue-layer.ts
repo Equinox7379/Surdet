@@ -90,6 +90,7 @@ export interface DialogueLayerDebugSnapshot {
   readonly backlogAboveDialogueText: boolean;
   /** Real projected visibility; false while an overlay suppresses the rail. */
   readonly commandRailVisible: boolean;
+  readonly commandRailTargets: readonly { id: string; x: number; y: number; width: number; height: number }[];
   /** Command-rail root stays fully visible; hover is projected per row. */
   readonly commandRailAlpha: number;
   readonly commandRailSuppressed: boolean;
@@ -118,7 +119,7 @@ interface CommandRailLayout {
 
 interface DestroyableDisplay {
   parent?: Container | null;
-  destroy: (options?: { children?: boolean }) => void;
+  destroy: (options?: { children?: boolean; context?: boolean }) => void;
 }
 
 let dialogMeasureCtx: CanvasRenderingContext2D | null = null;
@@ -217,6 +218,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   #commandRailSuppressed = false;
   #customUiToolbar = false;
   #commandRailLayout: CommandRailLayout | null = null;
+  #commandRailTargets: { id: string; x: number; y: number; width: number; height: number }[] = [];
   #onPointerConsumed: (() => void) | null = null;
 
   #speakerProfiles = new Map<string, SpeakerProfile>();
@@ -418,6 +420,8 @@ export class DialogueLayer implements DialogueProjectionPort {
       backlogVisible: this.#backlogLayer.visible,
       backlogAboveDialogueText: this.#backlogAboveDialogueText(),
       commandRailVisible: this.#commandRail.visible,
+      commandRailTargets: this.#commandRail.visible && this.#commandRail.alpha > 0
+        ? this.#commandRailTargets.map((target) => ({ ...target })) : [],
       commandRailAlpha: this.#commandRail.alpha,
       commandRailSuppressed: this.#commandRailSuppressed,
       backlogLayout: this.#backlogLayoutSnapshot(),
@@ -823,7 +827,7 @@ export class DialogueLayer implements DialogueProjectionPort {
         this.#backlogBuilt = false;
       });
     }
-    layer.removeChildren().forEach((child) => child.destroy({ children: true }));
+    layer.removeChildren().forEach((child) => child.destroy({ children: true, context: true }));
     this.#backlogMask = null;
     layer.addChild(drawPlayerFrame(new Graphics(), this.#theme, 16, 12, this.#w - 32, this.#h - 24, { ornament: true }));
     layer.addChild(bindThemeTextProjection(new PText({
@@ -898,7 +902,7 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   hideBacklog(): void {
     this.#backlogLayer.visible = false;
-    this.#backlogLayer.removeChildren().forEach((child) => child.destroy({ children: true }));
+    this.#backlogLayer.removeChildren().forEach((child) => child.destroy({ children: true, context: true }));
     this.#backlogEntriesLayer = null;
     this.#backlogMask = null;
     this.#backlogViewportTop = BACKLOG_VIEWPORT_TOP_IDLE;
@@ -1106,7 +1110,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#clearChoices();
     this.hideBacklog();
     this.#lifecycle.release('dialogue', 'listener', 'backlog-overlay');
-    this.#backlogLayer.removeChildren().forEach((child) => child.destroy({ children: true }));
+    this.#backlogLayer.removeChildren().forEach((child) => child.destroy({ children: true, context: true }));
     this.#backlogBuilt = false;
     this.#nvlActive = false;
     this.clearNvlText();
@@ -1223,7 +1227,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   #registerDisplay(key: string, display: DestroyableDisplay): void {
     this.#lifecycle.register('dialogue', 'display', key, () => {
       if (display.parent) display.parent.removeChild(display as unknown as Container);
-      display.destroy({ children: true });
+      display.destroy({ children: true, context: true });
     });
   }
 
@@ -1508,7 +1512,8 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   #rebuildCommandRail(): void {
     const layer = this.#commandRail;
-    layer.removeChildren().forEach((child) => child.destroy({ children: true }));
+    this.#commandRailTargets = [];
+    layer.removeChildren().forEach((child) => child.destroy({ children: true, context: true }));
     if (this.#commandRailItems.length === 0) {
       this.#commandRailLayout = null;
       return;
@@ -1533,6 +1538,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#commandRailItems.forEach((item, index) => {
       const row = new Container();
       row.position.set(startX + railPad + index * (slotW + slotGap), top + 3);
+      this.#commandRailTargets.push({ id: item.id, x: row.x, y: row.y, width: slotW, height: railH - 6 });
       const hit = new Graphics();
       const paintHit = (active: boolean): void => {
         bindThemeGraphicsProjection(hit.clear().rect(0, 0, slotW, railH - 6)

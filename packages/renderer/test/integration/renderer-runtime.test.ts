@@ -194,6 +194,26 @@ describe('Renderer v2 runtime facade', () => {
     runtime.dispose();
   });
 
+  it.each([
+    ['setPortraitSpeaking', 'legacy'], ['setPortraitSkipping', 'legacy'],
+    ['setPortraitSpeaking', 'layer'], ['setPortraitSkipping', 'layer'],
+  ] as const)('rejects optional %s after runtime disposal (%s port)', async (command, port) => {
+    const internals = fakeInternals();
+    const update = vi.fn();
+    const legacyUpdate = vi.fn();
+    internals.stage[command] = port === 'legacy' ? update : legacyUpdate;
+    const runtime = await createRendererRuntimeFromInternals(port === 'legacy' ? internals : {
+      ...internals, worldLayer: { [command]: update, dispose: vi.fn() } as unknown as NonNullable<RendererRuntimeInternals['worldLayer']>,
+    });
+    runtime.commands.world[command]!(true);
+    expect(update).toHaveBeenCalledWith(true);
+    expect(update).toHaveBeenCalledTimes(1);
+    runtime.dispose();
+    expect(() => runtime.commands.world[command]!(false)).toThrowError(expect.objectContaining({ code: 'RENDERER_DISPOSED', domain: 'world', command }));
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(legacyUpdate).not.toHaveBeenCalled();
+  });
+
   it('preserves reset and presentation restore delegation', async () => {
     const internals = fakeInternals();
     const runtime = await createRendererRuntimeFromInternals(internals);

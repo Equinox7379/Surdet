@@ -60,8 +60,9 @@ function invalidPresentation(message: string, cause?: unknown): RendererCommandE
 function prepareDialogueRestore(payload: unknown): {
   readonly nvlActive: boolean;
   readonly nvlEntries: readonly NvlPresentationEntry[];
+  readonly advText: NvlPresentationEntry | null;
 } {
-  if (payload === undefined) return { nvlActive: false, nvlEntries: [] };
+  if (payload === undefined) return { nvlActive: false, nvlEntries: [], advText: null };
   if (!isRecord(payload)) throw invalidPresentation('Presentation dialogue is invalid');
   if (typeof payload.nvlActive !== 'boolean') {
     throw invalidPresentation('Presentation dialogue nvlActive must be boolean');
@@ -87,7 +88,16 @@ function prepareDialogueRestore(payload: unknown): {
   if (!payload.nvlActive && entries.length > 0) {
     throw invalidPresentation('Presentation dialogue entries require nvlActive=true');
   }
-  return { nvlActive: payload.nvlActive, nvlEntries: entries };
+  let advText: NvlPresentationEntry | null = null;
+  if (payload.advText !== undefined) {
+    const entry = payload.advText;
+    if (!isRecord(entry) || (entry.speaker !== null && typeof entry.speaker !== 'string') || typeof entry.text !== 'string') {
+      throw invalidPresentation('Presentation dialogue ADV text must contain speaker and text');
+    }
+    if (payload.nvlActive) throw invalidPresentation('Presentation ADV text requires nvlActive=false');
+    advText = { speaker: entry.speaker, text: entry.text };
+  }
+  return { nvlActive: payload.nvlActive, nvlEntries: entries, advText };
 }
 
 function withoutReplayedCurrentNvlLine(
@@ -118,6 +128,7 @@ export interface PreparedPresentationRestore {
   readonly dialogue: {
     readonly nvlActive: boolean;
     readonly nvlEntries: readonly NvlPresentationEntry[];
+    readonly advText: NvlPresentationEntry | null;
   };
 }
 
@@ -137,7 +148,7 @@ export function preparePresentationRestore(
       stage: null,
       timelines: [],
       timelineSequence: currentTimelineSequence + 1,
-      dialogue: { nvlActive: false, nvlEntries: [] },
+      dialogue: { nvlActive: false, nvlEntries: [], advText: null },
     };
   }
   if (!isRecord(payload) || payload.version !== 1) {
@@ -276,6 +287,7 @@ export class PresentationController {
   #tw: Typewriter;
   #status: RenderStatus = 'idle';
   #current: { speaker: string | null; value: string } | null = null;
+  #advCurrent: { speaker: string | null; value: string } | null = null;
   #fade: FadeTween | null = null;
   #onAdvance?: () => void;
   #onSelect?: (index: number) => void;
@@ -485,6 +497,7 @@ export class PresentationController {
     this.#audio.stopVoice?.(); this.#audio.setVoicePaused?.(false);
     this.#status = 'idle';
     this.#current = null;
+    this.#advCurrent = null;
     this.#fade = null;
     this.#waitDeadline = null;
     this.#waitSession += 1;
@@ -849,6 +862,7 @@ export class PresentationController {
       }
     }
     this.#current = { speaker: p.text.speaker, value: p.text.value };
+    if (!this.#nvl) this.#advCurrent = this.#current;
   }
 
   #onText(p: TextEventPayload): void {
@@ -874,6 +888,7 @@ export class PresentationController {
       this.#awaitSince = nowMs();
       return;
     }
+    this.#advCurrent = this.#current;
     this.#beginText(p.speaker);
     if (p.value.length === 0) {
       this.#commands.world.setPortraitSpeaking?.(false);
@@ -973,6 +988,7 @@ export class PresentationController {
     this.#commands.dialogue.hideInterface(false);
     this.#status = 'idle';
     this.#current = null;
+    this.#advCurrent = null;
     this.#fade = null;
     this.#choiceIndices = [];
     this.#choiceCursor = -1;
@@ -1085,6 +1101,8 @@ export class PresentationController {
         nvlActive: this.#nvl,
         nvlEntries: context?.replayCurrentText === false ? dialogueEntries
           : withoutReplayedCurrentNvlLine(dialogueEntries, this.#current, this.#nvl),
+        ...(!this.#nvl && context?.replayCurrentText === false && this.#advCurrent
+          ? { advText: { speaker: this.#advCurrent.speaker, text: this.#advCurrent.value } } : {}),
       },
     };
   }
@@ -1110,10 +1128,16 @@ export class PresentationController {
     this.#clearTimelines();
     this.#timelineSeq = prepared.timelineSequence;
     this.#nvl = prepared.dialogue.nvlActive;
+    this.#advCurrent = null;
     this.#commands.dialogue.setNvlMode(this.#nvl);
     this.#commands.dialogue.clearNvlText();
     for (const entry of prepared.dialogue.nvlEntries) {
       this.#commands.dialogue.appendNvlText(entry.speaker, entry.text);
+    }
+    if (prepared.dialogue.advText) {
+      const entry = prepared.dialogue.advText;
+      this.#current = this.#advCurrent = { speaker: entry.speaker, value: entry.text };
+      this.#commands.dialogue.showText(entry.speaker, entry.text);
     }
     // Rebuilding the saved NVL page projects older speakers. The saved World
     // focus belongs to the current line, which the Interpreter replays next.

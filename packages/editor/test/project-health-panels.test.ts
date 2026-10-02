@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { compileScene } from '@surdet/core';
 import { state } from '../src/state.js';
 import { bindStatsHooks, renderStatsPanel } from '../src/panels/stats-panel.js';
 import { bindAuditHooks, renderAuditPanel } from '../src/panels/audit-panel.js';
@@ -202,6 +203,27 @@ describe('text audit panel', () => {
     expect(jumps).toEqual([['ch01', 2]]);
     expect(variants).toEqual([['凛', '冷']]);
     expect(container.querySelector('[data-audit-technical]')?.tagName).toBe('DETAILS');
+  });
+
+  it.each(['gal', 'GAL', 'GaL'])('navigates to a nested scene with the supported .%s extension', (extension) => {
+    vi.stubGlobal('document', documentStub);
+    state.scenes.clear();
+    const text = '凛：第一句\n凛：第二句\n冷：第三句\n@end';
+    const file = `chapters/ch01.${extension}`;
+    state.scenes.set('chapters/ch01', { ...scene('ch01', text), file });
+    state.lastValidation = {
+      issues: [], scenes: new Map([['ch01', compileScene(text, `content/scenario/${file}`, 'ch01')]]),
+    };
+    state.configFiles.terminology = { terms: [] };
+    const jumps: Array<[string, number]> = [];
+    bindAuditHooks({ onJump: (sceneKey, line) => jumps.push([sceneKey, line]) });
+    const container = new FakeElement('section');
+
+    renderAuditPanel(container as unknown as HTMLElement);
+    const jump = container.querySelector('[data-audit-jump]');
+    expect(jump?.tagName).toBe('BUTTON');
+    jump?.click();
+    expect(jumps).toEqual([['chapters/ch01', 2]]);
   });
 
   it('never presents partial compilation coverage as a clean whole-project result', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseVariableConfig, validateVarDecl, validateSceneVariables, type LintIssue } from '../src/scene-lint.js';
+import { parseVariableConfig, validateVarDecl, validateSceneVariables, checkConsumedModifiers, type LintIssue } from '../src/scene-lint.js';
 import { compileScene } from '../src/dsl/compiler.js';
 import { VariableStore } from '../src/state/variable-store.js';
 import type { VarDeclaration, VarValue } from '../src/state/types.js';
@@ -10,6 +10,28 @@ function lintDeclaration(name: string, decl: unknown): { valid: boolean; issues:
 }
 
 describe('scene-lint 变量声明校验', () => {
+  it('checks references and constant condition types even when the declaration table is empty', () => {
+    const scene = compileScene('@set ghost = 1\n{missing}\n@if 1\n文本\n@endif\n', 'empty.gal', 'empty');
+    const issues: LintIssue[] = [];
+    validateSceneVariables(scene, new Set(), new Map(), new Set(), issues, true);
+    expect(issues.some(issue => issue.code === 'V001' && issue.line === 1)).toBe(true);
+    expect(issues.some(issue => issue.code === 'V002' && issue.line === 2)).toBe(true);
+    expect(issues.some(issue => issue.code === 'T002' && issue.line === 3)).toBe(true);
+    const noConfig: LintIssue[] = [];
+    validateSceneVariables(scene, new Set(), new Map(), new Set(), noConfig, false);
+    expect(noConfig).toEqual([]);
+  });
+
+  it('recognizes consumed stage modifiers while still warning for ignored show modifiers', () => {
+    const scene = compileScene('@show lynn normal @instance left_actor @scale 1.2 @facing left\n@pose left_actor @x 100 @duration 200\n@layer far mist @z 1\n@stage opening @keepActors true\n@show lynn @zoom 2\n', 'stage.gal', 'stage');
+    const issues: LintIssue[] = [];
+    for (const instruction of scene.instructions) {
+      if (instruction.op === 'instr') checkConsumedModifiers(instruction, issues);
+    }
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ code: 'W003', line: 5 });
+    expect(issues[0]?.text).toContain('zoom');
+  });
   it('checks inventory/random targets and has_item result writes', () => {
     const scene = compileScene('@add_item missing potion\n@remove_item missing potion\n@random missing 1 3\n@has_item bag potion fixed', 'scene.gal', 'scene');
     const issues: LintIssue[] = [];

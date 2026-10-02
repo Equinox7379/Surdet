@@ -1,8 +1,11 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  createEnvelopeJsonSchema,
   getCapabilityDefinition,
   type AuthoringCapabilityId,
 } from '@surdet/authoring';
@@ -54,6 +57,60 @@ describe('Agent Port output-schema conformance', () => {
   afterEach(() => {
     delete process.env['SURDET_AGENT_DATA_DIR'];
     for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('validates real simulation-budget and input-error envelopes, including their nested repair facts', async () => {
+    const root = makeProject();
+    const session = await openAgentPortSession({ projectRoot: root, policy: 'observe' });
+    try {
+      const cases = [
+        ['project.simulate', { maxPaths: 1, maxStepsPerPath: 1 }, 'SIMULATION_INCOMPLETE'],
+        ['project.inspect', { unexpectedField: true }, 'INVALID_REQUEST'],
+      ] as const;
+      for (const [capability, input, code] of cases) {
+        const envelope = await session.invoke(capability, input);
+        expect(envelope.ok).toBe(false);
+        if (envelope.ok) throw new Error('expected failure');
+        expect(envelope.error.code).toBe(code);
+        const schema = createEnvelopeJsonSchema(getCapabilityDefinition(capability).outputSchema);
+        const checked = await standardSchemaFromJson(schema)['~standard'].validate(envelope);
+        expect(checked.issues, capability).toBeUndefined();
+        if (capability === 'project.simulate') {
+          const repair = envelope.error.repairActions.find(action => action.capability === 'project.simulate');
+          expect(repair?.inputTemplate?.maxStepsPerPath).toBe(2);
+          expect((envelope.error.details?.report as { paths: unknown[] }).paths).toBeInstanceOf(Array);
+        }
+        for (const malformed of [
+          { ...envelope, unexpectedField: true },
+          { ...envelope, error: { ...envelope.error, code: 'UNADVERTISED_ERROR' } },
+          { ...envelope, error: { ...envelope.error, repairActions: [{ reason: 12 }] } },
+          { ...envelope, error: { ...envelope.error, details: 'not an object' } },
+        ]) expect((await standardSchemaFromJson(schema)['~standard'].validate(malformed)).issues).toBeDefined();
+      }
+    } finally { await session.close(); }
+  });
+
+  it('advertises the existing CLI working snapshot identity while rejecting an invalid hash', async () => {
+    const root = makeProject();
+    const session = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
+    let changeId: string;
+    try {
+      const begun = await session.invoke('change.begin', { intent: 'CLI envelope metadata', initiator: 'external-agent' });
+      if (!begun.ok) throw new Error(begun.error.message);
+      changeId = (begun.result as { changeId: string }).changeId;
+    } finally { await session.close(); }
+    const command = spawnSync(process.execPath, [
+      fileURLToPath(new URL('../dist/index.js', import.meta.url)), 'project', 'inspect',
+      '--project', root, '--change', changeId, '--input', '-', '--json',
+    ], { input: '{"view":"working"}', encoding: 'utf8', windowsHide: true, timeout: 10000 });
+    expect(command.status, command.stderr + command.stdout).toBe(0);
+    const envelope = JSON.parse(command.stdout);
+    expect(envelope.workingSnapshotRevision).toMatch(/^[0-9a-f]{64}$/);
+    const schema = createEnvelopeJsonSchema(getCapabilityDefinition('project.inspect').outputSchema);
+    expect((await standardSchemaFromJson(schema)['~standard'].validate(envelope)).issues).toBeUndefined();
+    expect((await standardSchemaFromJson(schema)['~standard'].validate({
+      ...envelope, workingSnapshotRevision: 'not-a-content-hash',
+    })).issues).toBeDefined();
   });
 
   it('scans every formal-path result and reports all registry mismatches together', async () => {

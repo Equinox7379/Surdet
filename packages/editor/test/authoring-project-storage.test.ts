@@ -35,6 +35,23 @@ afterEach(() => {
 });
 
 describe('editor authoring project storage', () => {
+  it('distinguishes a missing in-memory config from an existing empty config', async () => {
+    state.gameConfigText = '';
+    state.handles = { ...state.handles, gameConfig: null };
+    state.configReadErrors = {};
+    state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null };
+    state.scenes = new Map([['intro', { id: 'intro', file: 'intro.gal', text: '@scene intro\n旁白：内存正文。\n@end\n', eol: '\n', dirty: true, handle: null }]]);
+    state.timelines = [];
+    const storage = createEditorProjectStorage();
+    expect(await storage.exists('game.config.json')).toBe(false);
+    const snapshot = await loadEditorProjectSnapshot();
+    expect(snapshot.configFile).toBeNull();
+    expect(snapshot.config).toEqual({});
+    expect(snapshot.scenes[0]?.file.text).toContain('内存正文');
+    state.handles = { ...state.handles, gameConfig: {} as FileSystemFileHandle };
+    await expect(loadEditorProjectSnapshot()).rejects.toThrow(/game.config.json/);
+    expect(state.gameConfigText).toBe('');
+  });
   it('saves a reviewed translation through the shared transaction and preserves disk on stale/external changes', async () => {
     let disk = JSON.stringify({ entryScene: 'intro', variables: {}, future: 'preserve' }), writes = 0;
     const handle = { getFile: async () => new File([disk], 'game.config.json'), createWritable: async () => ({

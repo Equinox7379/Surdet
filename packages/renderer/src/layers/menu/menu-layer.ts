@@ -57,6 +57,7 @@ export interface MenuLayerDebugSnapshot {
   readonly systemMenuItemCount: number;
   readonly settingsRowCount: number;
   readonly saveLoadSlotCount: number;
+  readonly saveLoadTargets: readonly { id: string; x: number; y: number; width: number; height: number }[];
 }
 
 interface MenuHandlers {
@@ -119,6 +120,7 @@ export class MenuLayer implements MenuProjectionPort {
   #saveLoadTransactionPending = false;
   #saveLoadMode: 'save' | 'load' | null = null;
   #saveLoadSlotCount = 0;
+  #saveLoadTargets: { id: string; x: number; y: number; width: number; height: number }[] = [];
   #saveLoadNotice: PText | null = null;
   #saveLoadPage = 0;
   #confirmation: Container | null = null;
@@ -185,6 +187,7 @@ export class MenuLayer implements MenuProjectionPort {
       systemMenuItemCount: this.#systemMenuItemCount,
       settingsRowCount: this.#settingsRows.length,
       saveLoadSlotCount: this.#saveLoadSlotCount,
+      saveLoadTargets: this.#saveLoadLayer.visible && !this.#confirmation ? this.#saveLoadTargets.map((target) => ({ ...target })) : [],
     };
   }
 
@@ -701,6 +704,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#saveLoadOptions = options;
     this.#saveLoadMode = view.mode;
     this.#saveLoadSlotCount = view.slots.length;
+    this.#saveLoadTargets = [];
     const layer = this.#saveLoadLayer;
     const closeSaveLoad = (): void => {
       if (this.#saveLoadTransactionPending) return;
@@ -743,6 +747,7 @@ export class MenuLayer implements MenuProjectionPort {
     }), { fill: 'textMuted', fontSize: 'captionSize' })).position.set(255, 110);
     const close = bindThemeTextProjection(new PText({ text: '×', style: { fontSize: this.#theme.typography.headingSize, fill: this.#theme.colors.textMuted } satisfies TextStyleOptions }), { fill: 'textMuted', fontSize: 'headingSize' });
     close.position.set(this.#w - 106, 76);
+    this.#saveLoadTargets.push({ id: 'close', x: close.x - 10, y: close.y - 8, width: 48, height: 48 });
     layer.addChild(this.#buttonSkin(close.x - 10, close.y - 8, 48, 48));
     bindPlayerControl(close, { label: '关闭存读档', width: 48, height: 48, x: -10, y: -8 });
     close.eventMode = 'static';
@@ -778,6 +783,8 @@ export class MenuLayer implements MenuProjectionPort {
       const slotName = slot.id === 'quick' ? '快速存档' : slot.id === 'auto' ? '自动存档' : `槽位 ${slot.id}`;
       const x = startX + (i % cols) * (cardW + gapX);
       const y = startY + Math.floor(i / cols) * (cardH + gapY);
+      this.#saveLoadTargets.push({ id: `slot-${slot.id}`, x, y,
+        width: view.mode === 'load' && slot.backupAvailable ? cardW - 218 : cardW, height: cardH });
       const selectable = view.mode === 'save' || (!slot.empty && !slot.readError);
       const card = new Container();
       card.position.set(x, y);
@@ -958,7 +965,7 @@ export class MenuLayer implements MenuProjectionPort {
           }
         });
       } else {
-        bindPlayerControl(card, { label: `${slotName}：空槽位`, width: cardW, height: cardH, enabled: false });
+        bindPlayerControl(card, { label: `${slotName}：${slot.readError ?? '空槽位'}`, width: cardW, height: cardH, enabled: false });
         // Empty load slots are real hit targets so their click cannot fall
         // through to the full-screen close surface. They intentionally do
         // not have an onSelect handler: the event is consumed and is a no-op.
@@ -976,6 +983,7 @@ export class MenuLayer implements MenuProjectionPort {
         pager.position.set(x, this.#h - 54);
         layer.addChild(this.#buttonSkin(pager.x, pager.y, 120, 40));
         const enabled = direction < 0 ? this.#saveLoadPage > 0 : this.#saveLoadPage + 1 < pageCount;
+        if (enabled) this.#saveLoadTargets.push({ id: direction < 0 ? 'page-prev' : 'page-next', x: pager.x, y: pager.y, width: 120, height: 40 });
         bindPlayerControl(pager, { label: `${label}存档`, width: 120, height: 40, enabled });
         pager.alpha = enabled ? 1 : this.#theme.opacity.disabled;
         pager.on('pointerdown', () => { if (enabled) changePage(direction); });
@@ -1050,7 +1058,7 @@ export class MenuLayer implements MenuProjectionPort {
     if (this.#saveLoadTransactionPending || !parent.visible || (this.#confirmation && !this.#confirmation.destroyed)) return;
     const panel = new Container();
     this.#confirmation = panel;
-    const close = (): void => { this.#confirmation = null; parent.removeChild(panel); panel.destroy({ children: true }); this.#requestFrame(); };
+    const close = (): void => { this.#confirmation = null; parent.removeChild(panel); panel.destroy({ children: true, context: true }); this.#requestFrame(); };
     markPlayerModal(panel, { close });
     panel.addChild(this.#surface(0, 0, this.#w, this.#h, 'scrim', 'scrim'));
     panel.eventMode = 'static';
@@ -1136,7 +1144,7 @@ export class MenuLayer implements MenuProjectionPort {
   #registerDisplay(key: string, layer: Container): void {
     this.#lifecycle.register('menu', 'display', key, () => {
       if (layer.parent) layer.parent.removeChild(layer);
-      layer.destroy({ children: true });
+      layer.destroy({ children: true, context: true });
     });
   }
 
@@ -1148,7 +1156,7 @@ export class MenuLayer implements MenuProjectionPort {
   #clearLayer(layer: Container, listenerKey: string): void {
     this.#lifecycle.release('menu', 'listener', listenerKey);
     layer.removeAllListeners();
-    layer.removeChildren().forEach((child) => child.destroy({ children: true }));
+    layer.removeChildren().forEach((child) => child.destroy({ children: true, context: true }));
   }
 
   #bringToFront(layer: Container): void {

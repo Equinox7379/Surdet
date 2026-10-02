@@ -256,10 +256,10 @@ try {
   await waitForOverlay('save-load');
   await waitFor('读档页出现独立恢复按钮的备份槽位', () => window.__surdetDebug?.activeOverlay === 'save-load');
 
-  const restoreLabel = page.getByRole('button', { name: '恢复槽位 1 的备份并读取', exact: true });
+  const restoreLabel = page.getByRole('button', { name: '恢复槽位 1的备份并读取', exact: true });
   backupRestoreTargetVisible = await restoreLabel.isVisible();
   check(backupRestoreTargetVisible, '读档页独立备份恢复按钮可见');
-  await clickAccessibleControl('恢复槽位 1 的备份并读取');
+  await clickAccessibleControl('恢复槽位 1的备份并读取');
   await clickAccessibleControl('恢复并读取');
   await waitFor('恢复备份并读取完成并关闭读档页', () => window.__surdetDebug?.activeOverlay === null && window.__surdetDebug?.status !== 'idle');
   restoredPosition = await page.evaluate(() => window.__surdetDebug.position);

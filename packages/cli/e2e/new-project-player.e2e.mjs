@@ -17,6 +17,19 @@ import { startDevProject } from '../../editor/scripts/dev-project.mjs';
 import { createNodeFsBridge, nodeBackedFileSystemInit } from '../../editor/e2e/asset-import-authority.e2e.mjs';
 import { activate, advanceToChoice, finishToTitle, state, waitTitle, waitOverlay, canvasTexts } from '../../renderer/e2e/player-browser-helpers.mjs';
 
+/** Vite 把 server.port=0 当缺省值并回退 5173；显式取一个空闲端口，
+ *  避免落在 Windows 保留端口段（如 Hyper-V 排除区间）时以 EACCES 直接失败。 */
+async function freeEphemeralPort() {
+  return await new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address();
+      probe.close(() => resolve(address.port));
+    });
+  });
+}
+
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const tempRoot = path.resolve(os.tmpdir());
 const engine = await fs.mkdtemp(path.join(tempRoot, 'surdet-new-player-'));
@@ -499,8 +512,9 @@ async function continueInEditor(game, errors) {
   const priorSceneNames = await fs.readdir(path.join(game, 'content/scenario'));
   await page.getByRole('button', { name: '导入剧本', exact: true }).click();
   const importDialog = page.getByRole('dialog', { name: '导入剧本', exact: true });
-  await importDialog.getByLabel('新场景 ID', { exact: true }).fill('imported_dialogue');
-  await importDialog.getByLabel('选择 UTF-8 文件', { exact: true }).setInputFiles({
+  // 字段可访问名称与 field() 的可见标签一致（451e065 中文化后为“新场景标识/选择文本或表格文件”）。
+  await importDialog.getByLabel('新场景标识', { exact: true }).fill('imported_dialogue');
+  await importDialog.getByLabel('选择文本或表格文件', { exact: true }).setInputFiles({
     name: '中文 稿件.csv', mimeType: 'text/csv', buffer: Buffer.from('\uFEFFspeaker,text\r\n引路人,"这封信,终于送到了。"\r\n引路人,"@jump secret 只是印在信上的字。"\r\n', 'utf8'),
   });
   await page.waitForFunction(() => document.querySelector('.script-import-dialog textarea')?.value.includes('这封信'));
@@ -605,7 +619,7 @@ try {
   await fs.writeFile(endingPath, '\uFEFF\t' + (await fs.readFile(endingPath, 'utf8')).replace(/\r?\n/g, '\r\n'));
   execFileSync(process.execPath, [path.join(repo, 'node_modules/typescript/bin/tsc'), '-p', path.join(game, 'tsconfig.json'), '--noEmit'], { cwd: engine, stdio: 'pipe', shell: false });
   await build({ root: game, configFile: path.join(game, 'vite.config.ts'), logLevel: 'error' });
-  server = await createServer({ root: game, configFile: path.join(game, 'vite.config.ts'), cacheDir: path.join(output, '.vite'), logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
+  server = await createServer({ root: game, configFile: path.join(game, 'vite.config.ts'), cacheDir: path.join(output, '.vite'), logLevel: 'error', server: { host: '127.0.0.1', port: await freeEphemeralPort() } });
   await server.listen();
   await fs.mkdir(output, { recursive: true });
   page = await browser.newPage({ viewport: { width: 1280, height: 800 } });

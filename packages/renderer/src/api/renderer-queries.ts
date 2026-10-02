@@ -90,6 +90,7 @@ export interface DialogueProjectionSnapshot {
   readonly backlogAboveDialogueText: boolean;
   /** Real command-rail projection state; not derived from host session flags. */
   readonly commandRailVisible: boolean;
+  readonly commandRailTargets?: readonly { id: string; x: number; y: number; width: number; height: number }[];
   readonly commandRailSuppressed: boolean;
   readonly nvlActive: boolean;
   readonly nvlLines: readonly string[];
@@ -104,6 +105,7 @@ export interface MenuProjectionSnapshot {
   readonly systemMenuItemCount: number;
   readonly settingsRowCount: number;
   readonly saveLoadSlotCount: number;
+  readonly saveLoadTargets?: readonly { id: string; x: number; y: number; width: number; height: number }[];
 }
 
 export interface GalleryProjectionSnapshot {

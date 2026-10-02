@@ -407,6 +407,11 @@ export class EditorWorkspaceAuthority {
       try {
         this.requireActiveWrite(input);
         await this.leaseManager.assertOwned(active.lease);
+        const latest = await storage.exists(input.path) ? await storage.readText(input.path) : null;
+        if ((latest?.sha256 ?? null) !== input.expectedSha256) {
+          throw new EditorWorkspaceAuthorityError('EDITOR_PROJECT_BASELINE_CHANGED',
+            '暂存期间文件磁盘基线已变化，保留外部内容并停止保存', { path: input.path, projectMutationOccurred: false });
+        }
         await storage.replaceFromStage(input.path, staged.stagedIdentity);
         active.published.set(input.path, staged.sha256);
         return { sha256: staged.sha256 };

@@ -155,6 +155,12 @@ export async function compareCandidates(
   if (input.candidates.length < 2 || input.candidates.length > MAX_CANDIDATES) {
     throw invalidRequest(`候选数量必须在 2..${MAX_CANDIDATES} 之间：${input.candidates.length}`);
   }
+  const seenCandidates = new Set<string>();
+  for (const candidate of input.candidates) {
+    const identity = candidateCapsuleIdentity(candidate.ref);
+    if (seenCandidates.has(identity)) throw invalidRequest(`候选引用重复：${identity}`);
+    seenCandidates.add(identity);
+  }
   const sha256Text = async (text: string) => hasher.sha256(text);
 
   // Step 4：候选先按 artifactSha256、changeId、capsuleId 规范排序。

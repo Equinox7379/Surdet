@@ -19,6 +19,7 @@ import type { LintIssue } from '@surdet/core';
 import {
   buildObjectIndex,
   buildAssetCatalog,
+  parseProjectConfigDocument,
   parseSceneDocument,
   validateSnapshot,
   type ProjectSnapshot,
@@ -39,7 +40,7 @@ function readConfigRaw(root: string): Record<string, unknown> | null {
   const file = path.join(root, 'game.config.json');
   if (!fs.existsSync(file)) return null;
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) as Record<string, unknown>;
+    return parseProjectConfigDocument(fs.readFileSync(file, 'utf8'), file);
   } catch {
     return null;
   }
@@ -232,7 +233,7 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
     issues.push({
       severity: 'warning',
       code: 'EMPTY_VARIABLES',
-      text: `${path.join(root, 'game.config.json')}: variables 为空，变量声明校验被跳过`,
+      text: `${path.join(root, 'game.config.json')}: variables 为空；剧本和配置引用的变量仍须声明`,
       file: path.join(root, 'game.config.json'),
       line: 0,
       col: 0,
@@ -294,7 +295,7 @@ function loadVariables(
 
   let raw: Record<string, unknown>;
   try {
-    raw = JSON.parse(fs.readFileSync(cfgPath, 'utf8').replace(/^\uFEFF/, '')) as Record<string, unknown>;
+    raw = parseProjectConfigDocument(fs.readFileSync(cfgPath, 'utf8'), cfgPath);
   } catch (err) {
     issues.push({
       severity: 'error',
@@ -537,7 +538,7 @@ function lintConfigExpressions(
       });
       return;
     }
-    if (!hasConfig || variables.size === 0) return;
+    if (!hasConfig) return;
     const allowed = new Set([...types.keys(), ...extraAllowed]);
     checkExprVars(expr, at(file), allowed, issues);
     checkExprOperands(ast, types, (code, message) => {
@@ -575,7 +576,12 @@ function readConfigJson(
   const full = path.join(dir, name);
   if (!fs.existsSync(full)) return null;
   try {
-    return JSON.parse(fs.readFileSync(full, 'utf8').replace(/^\uFEFF/, '')) as Record<string, unknown>;
+    const text = fs.readFileSync(full, 'utf8');
+    if (name !== 'achievements.json') return parseProjectConfigDocument(text, full);
+    const value: unknown = JSON.parse(text.replace(/^\uFEFF/, ''));
+    if (!Array.isArray(value)) throw new Error('achievements.json 必须是 JSON 数组');
+    // The achievements extractor is the one documented array consumer.
+    return value as unknown as Record<string, unknown>;
   } catch (err) {
     issues.push({
       severity: 'error',
@@ -628,7 +634,7 @@ function lintGrowthConfig(
     const prof = p as Record<string, unknown>;
     const charId = typeof prof.characterId === 'string' ? prof.characterId : '?';
     const statGrowth = prof.statGrowth;
-    if (hasConfig && variables.size > 0 && statGrowth && typeof statGrowth === 'object' && !Array.isArray(statGrowth)) {
+    if (hasConfig && statGrowth && typeof statGrowth === 'object' && !Array.isArray(statGrowth)) {
       for (const varName of Object.keys(statGrowth as Record<string, unknown>)) {
         if (!variables.has(varName)) {
           issues.push({

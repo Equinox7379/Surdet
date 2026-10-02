@@ -121,6 +121,9 @@ export class NodeCompositionStore {
     if (sidecar === null) {
       throw new AuthoringOperationError('CAPSULE_IDENTITY_MISMATCH', `integration plan 缺少 identity sidecar：${planId}`);
     }
+    if (!isRecord(sidecar.value) || typeof sidecar.value.path !== 'string') {
+      throw new AuthoringOperationError('CAPSULE_IDENTITY_MISMATCH', `integration plan identity sidecar 格式无效：${planId}`);
+    }
     const sameWindowsPath = (left: string, right: string): boolean => (
       process.platform === 'win32'
         ? path.normalize(left).toLowerCase() === path.normalize(right).toLowerCase()

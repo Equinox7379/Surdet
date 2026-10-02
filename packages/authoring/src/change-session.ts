@@ -658,10 +658,12 @@ export async function commitChange(
   let pendingReplacement: CommitJournal['files'][number] | undefined;
   try {
     for (const entry of journal.files) {
+      const current = await storage.exists(entry.path) ? await storage.readText(entry.path) : null;
+      if ((current?.sha256 ?? null) !== (entry.originalSha256 ?? null)) {
+        throw new AuthoringOperationError('PROJECT_CHANGED_SINCE_BEGIN', `提交暂存期间文件已变化：${entry.path}`);
+      }
       pendingReplacement = entry;
       if (entry.kind === 'delete') {
-        const original = await storage.readText(entry.path);
-        if (original.sha256 !== entry.originalSha256) throw new Error(`删除前文件身份已变化：${entry.path}`);
         await storage.removePath!(entry.path);
       } else {
         await storage.replaceFromStage(entry.path, entry.stagedIdentity);
@@ -725,6 +727,10 @@ export async function commitChange(
       try { await storage.removeStage(entry.stagedIdentity); } catch { /* 失败证据由 journal 保留 */ }
     }
     await writeJournal('RECOVERED');
+    if (error instanceof AuthoringOperationError && error.code === 'PROJECT_CHANGED_SINCE_BEGIN') {
+      await markStale(change);
+      throw error;
+    }
     throw new AuthoringOperationError('COMMIT_FAILED_RECOVERED', `提交失败但已恢复：${String(error)}`);
   }
 

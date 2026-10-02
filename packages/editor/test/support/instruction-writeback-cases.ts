@@ -4,9 +4,7 @@ import { renderEditor, insertLine, moveLine } from '../../src/panels/editor.js';
 
 function equal(actual: unknown, expected: unknown): void {
   if (Object.is(actual, expected)) return;
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    throw new Error(`Expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}`);
-  }
+  throw new Error(`Expected the same value or reference (${String(expected)}), received ${String(actual)}`);
 }
 
 function present<T>(value: T | null | undefined): T {

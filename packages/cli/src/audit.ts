@@ -80,7 +80,7 @@ export function compileAuditEntries(
 }
 
 /** 分支与出口分析：空心分支（goto 目标块文本少于 2 行）与无出口场景。
- *  sources 提供时 NO_EXIT 按源码是否含 '@end' 判断（编译器自动给每个场景追加 end 指令，编译产物无法区分显式/自动）。 */
+ *  sources 提供时忽略编译器在文末自动追加的最后一个 end；其余 end 包含显式结束与返回。 */
 export function auditBranches(compiled: Map<string, CompiledScene>, entryScene: string | undefined, sources?: Map<string, string>): AuditFinding[] {
   const findings: AuditFinding[] = [];
   for (const [sceneId, scene] of compiled) {
@@ -117,16 +117,16 @@ export function auditBranches(compiled: Map<string, CompiledScene>, entryScene: 
         }
       }
     }
-    // 无出口场景：既无 @end 也无 @jump/@call（除入口外提示检查）
+    // 无出口场景：既无 @end/@return 也无 @jump/@call（除入口外提示检查）
     const src = sources?.get(sceneId);
-    const hasEnd = src !== undefined ? src.includes('@end') : scene.instructions.some((i) => i.op === 'end');
+    const hasEnd = (src !== undefined ? scene.instructions.slice(0, -1) : scene.instructions).some((i) => i.op === 'end');
     const outEdges = scene.instructions.filter((i) => (i.op === 'jump' && i.kind === 'jump') || i.op === 'call').length;
     if (!hasEnd && outEdges === 0 && sceneId !== entryScene && compiled.size > 1) {
       const first = scene.instructions[0];
       findings.push({
         severity: 'info',
         code: 'NO_EXIT',
-        text: `场景 '${sceneId}' 既无 @end 也无 @jump/@call 出口（文本播完即 sceneEnd；若非尾场景请检查衔接）`,
+        text: `场景 '${sceneId}' 既无 @end/@return 也无 @jump/@call 出口（文本播完即 sceneEnd；若非尾场景请检查衔接）`,
         file: first?.file ?? sceneId,
         line: first?.line ?? 0,
       });

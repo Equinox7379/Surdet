@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import net from 'node:net';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,10 +8,23 @@ import { createServer } from 'vite';
 import { chromium } from 'playwright';
 import { activate, advanceToChoice, finishToTitle, state, waitTitle, waitOverlay, canvasTexts } from './player-browser-helpers.mjs';
 
+/** Vite 把 server.port=0 当缺省值并回退 5173；显式取一个空闲端口，
+ *  避免落在 Windows 保留端口段（如 Hyper-V 排除区间）时以 EACCES 直接失败。 */
+async function freeEphemeralPort() {
+  return await new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address();
+      probe.close(() => resolve(address.port));
+    });
+  });
+}
+
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const output = path.resolve(process.env.SURDET_STARTER_OUTPUT ?? await fs.mkdtemp(path.join(os.tmpdir(), 'surdet-starter-player-')));
 await fs.mkdir(output, { recursive: true });
-const server = await createServer({ root: path.join(repo, 'examples/starter'), configFile: path.join(repo, 'examples/starter/vite.config.ts'), cacheDir: path.join(output, '.vite'), logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
+const server = await createServer({ root: path.join(repo, 'examples/starter'), configFile: path.join(repo, 'examples/starter/vite.config.ts'), cacheDir: path.join(output, '.vite'), logLevel: 'error', server: { host: '127.0.0.1', port: await freeEphemeralPort() } });
 let browser;
 const contexts = [];
 const evidence = [];

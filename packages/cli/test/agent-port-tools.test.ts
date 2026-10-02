@@ -74,6 +74,12 @@ async function connectedProject(projectRoot: string, policy: 'observe' | 'stage'
 }
 
 describe('Surdet Agent Port MCP tool projection', () => {
+  it('accepts each advertised minimal example at the actual MCP schema boundary', async () => {
+    for (const capability of AUTHORING_CAPABILITY_REGISTRY) {
+      const result = await standardSchemaFromJson(capability.inputSchema)['~standard'].validate(capability.minimalExample.input);
+      expect(result.issues, capability.id).toBeUndefined();
+    }
+  });
   it('records saved history and repairs malformed content through real MCP tools before authorized writeback', async () => {
     const { session, client, server } = await connected('apply');
     const root = session.projectRoot;
@@ -205,11 +211,29 @@ describe('Surdet Agent Port MCP tool projection', () => {
       const stale = await client.callTool({ name: 'surdet_gallery_profile_patch', arguments: { operationId: 'stale', id: 'intro', expectedFingerprint: gallery.profiles[0].fingerprint, patch: { title: '过期' } } });
       expect(stale.structuredContent).toMatchObject({ error: { code: 'OBJECT_REF_STALE' } });
       await call('surdet_gallery_policy_patch', { operationId: 'policy', expectedFingerprint: gallery.unlockPolicy.fingerprint, patch: { profiles: 'profile', terms: 'save' } });
+      const termPatch = { operationId: 'port-edit', id: 'port', expectedFingerprint: gallery.terms[0].fingerprint,
+        patch: { canonical: '灯港', description: '已经修订的港口资料。' } };
+      const patchedTerm = await call('surdet_gallery_term_patch', termPatch);
+      expect(patchedTerm.entry).toMatchObject({ id: 'port', canonical: '灯港', description: '已经修订的港口资料。' });
+      expect(await call('surdet_gallery_term_patch', termPatch)).toEqual(patchedTerm);
+      const withoutDescription = await call('surdet_gallery_term_patch', { operationId: 'port-description-remove', id: 'port',
+        expectedFingerprint: patchedTerm.fingerprint, patch: { description: null } });
+      expect(withoutDescription.entry).not.toHaveProperty('description');
+      await call('surdet_gallery_term_patch', { operationId: 'port-description-restore', id: 'port',
+        expectedFingerprint: withoutDescription.fingerprint, patch: { description: '已经修订的港口资料。' } });
+      expect((await call('surdet_project_gallery', { view: 'project' })).terms).toEqual([]);
       const object = await call('surdet_object_inspect', { view: 'working', objectRef: 'gallery:profiles:intro' });
       expect(object.references).toContain('character:rin');
       const known = await call('surdet_project_inspect', { view: 'working' });
       const removed = await client.callTool({ name: 'surdet_character_remove', arguments: { operationId: 'remove-rin', id: 'rin', expectedFingerprint: known.charactersFingerprint } });
       expect(removed.structuredContent).toMatchObject({ error: { code: 'OBJECT_PRECONDITION_FAILED' } });
+      await call('surdet_character_ensure', { operationId: 'unused-character', id: 'unused', name: '路人', expectedFingerprint: known.charactersFingerprint });
+      const removable = await call('surdet_project_inspect', { view: 'working' });
+      const removal = { operationId: 'remove-unused', id: 'unused', expectedFingerprint: removable.charactersFingerprint };
+      const removalResult = await call('surdet_character_remove', removal);
+      expect(removalResult).toMatchObject({ id: 'unused', removed: true });
+      expect(await call('surdet_character_remove', removal)).toEqual(removalResult);
+      expect((await call('surdet_project_inspect', { view: 'working' })).characters.map((character: { id: string }) => character.id)).toEqual(['rin']);
       await call('surdet_scene_create', { operationId: 'dossiers', sceneId: 'dossiers', blocks: [
         { kind: 'instruction', name: 'unlock_profile', args: ['"intro"'] }, { kind: 'instruction', name: 'unlock_profile', args: ['secret'] },
         { kind: 'instruction', name: 'unlock_term', args: ['port'] }, { kind: 'text', value: '资料已解锁。' },
@@ -230,9 +254,12 @@ describe('Surdet Agent Port MCP tool projection', () => {
       await call('surdet_project_simulate'); await call('surdet_runtime_run_from', { sceneId: 'dossiers', choices: [] });
       await call('surdet_change_diff'); await call('surdet_delivery_capsule', { label: '人物与用语资料' }); await call('surdet_change_commit');
       const saved = JSON.parse(fs.readFileSync(path.join(session.projectRoot, 'content/config/gallery.json'), 'utf8'));
-      expect(saved.profiles[0].description).toBe('已经修订的初见。'); expect(saved.terms[0].canonical).toBe('雾港');
-      expect(JSON.parse(fs.readFileSync(path.join(session.projectRoot, 'content/config/terminology.json'), 'utf8')).terms).toEqual([{ canonical: '雾港', variants: [] }]);
-      expect(JSON.parse(fs.readFileSync(path.join(session.projectRoot, 'game.config.json'), 'utf8')).textCatalog.entries[0].translations.en.value).toBe('A seaside town.');
+      expect(saved.profiles[0].description).toBe('已经修订的初见。');
+      expect(saved.terms[0]).toMatchObject({ canonical: '灯港', description: '已经修订的港口资料。' });
+      expect(JSON.parse(fs.readFileSync(path.join(session.projectRoot, 'content/config/terminology.json'), 'utf8')).terms).toEqual([{ canonical: '雾港', variants: [] }, { canonical: '灯港', variants: [] }]);
+      const savedConfig = JSON.parse(fs.readFileSync(path.join(session.projectRoot, 'game.config.json'), 'utf8'));
+      expect(savedConfig.textCatalog.entries[0].translations.en.value).toBe('A seaside town.');
+      expect(savedConfig.characters).toEqual({ rin: { name: '凛' } });
     } finally { await client.close(); await server.close(); await session.close(); }
   });
   it('authors replay and ending entries through public tools, validates and commits them', async () => {

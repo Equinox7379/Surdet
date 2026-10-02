@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const panelSource = readFileSync(fileURLToPath(new URL('../src/panels/timeline-panel.ts', import.meta.url)), 'utf8');
-const mainSource = readFileSync(fileURLToPath(new URL('../src/main.ts', import.meta.url)), 'utf8');
+const panelSource = readFileSync(fileURLToPath(new URL('../src/panels/timeline-panel.ts', import.meta.url)), 'utf8').replace(/\r\n/g, '\n');
+const mainSource = readFileSync(fileURLToPath(new URL('../src/main.ts', import.meta.url)), 'utf8').replace(/\r\n/g, '\n');
 
 describe('Timeline panel project-asset and freshness contract', () => {
   it('does not inject Starter-specific asset placeholders', () => {

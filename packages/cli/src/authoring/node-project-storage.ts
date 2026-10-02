@@ -268,8 +268,13 @@ export class NodeProjectStorage implements ProjectWriteStorage {
   }
 
   async restoreText(relativePath: string, originalText: string): Promise<void> {
+    const before = await this.exists(relativePath) ? await this.readText(relativePath) : null;
     const staged = await this.stageText(relativePath, originalText, 'restore');
     try {
+      const latest = await this.exists(relativePath) ? await this.readText(relativePath) : null;
+      if ((latest?.sha256 ?? null) !== (before?.sha256 ?? null)) {
+        throw new AuthoringOperationError('PROJECT_CHANGED_SINCE_BEGIN', `恢复暂存期间文件已变化：${relativePath}`);
+      }
       await this.replaceFromStage(relativePath, staged.stagedIdentity);
     } finally {
       await this.removeStage(staged.stagedIdentity);

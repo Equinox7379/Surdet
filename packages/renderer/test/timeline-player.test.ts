@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TimelinePlayer, ease } from '../src/timeline-player.js';
+import { TimelineRegistry } from '../../core/src/timeline.js';
 
 const definition = {
   version: 1 as const,
@@ -12,6 +13,15 @@ const definition = {
 };
 
 describe('TimelinePlayer', () => {
+  it('emits actual source coordinates after untrusted author data passes through the shared registry', () => {
+    const registry = new TimelineRegistry();
+    registry.register({ ...definition, resolvedCueSources: [[{ kind: 'timeline', timelineId: 'forged', trackIndex: 99, cueIndex: 88 }]] });
+    const events = new TimelinePlayer(registry.get('intro')!).eventsAtCursor();
+    expect(events.map(event => event.source)).toEqual([
+      { kind: 'timeline', timelineId: 'intro', trackIndex: 0, cueIndex: 0 },
+      { kind: 'timeline', timelineId: 'intro', trackIndex: 1, cueIndex: 0 },
+    ]);
+  });
   it('emits equal-time cues together and reaches exact final values', () => {
     const player = new TimelinePlayer(definition);
     expect(player.advance(0).map((e) => e.track)).toEqual(['background', 'portrait']);

@@ -27,6 +27,18 @@ it('includes preceding if/elif guards for a choice in else, and marks repeated u
   expect(first.get(10)!.unique).toBe(false);
 });
 
+it('keeps equal text ambiguous only within its scene and anchor, including a large labelled scene', async () => {
+  const lines = ['@scene start', '相同正文。', '相同正文。'];
+  for (let index = 0; index < 5000; index++) lines.push(`@label point${index}`, '相同正文。');
+  lines.push('@end');
+  const sources = await buildPreviewReplaySources([{ id: 'start', text: lines.join('\n') }, { id: 'other', text: '@scene other\n相同正文。\n@end' }], hasher);
+  const points = sources.get('start')!;
+  expect(points.get(2)!.unique).toBe(false);
+  expect(points.get(3)!.unique).toBe(false);
+  expect([...points.values()].filter(point => point.source.anchor !== null).every(point => point.unique)).toBe(true);
+  expect([...sources.get('other')!.values()].every(point => point.unique)).toBe(true);
+});
+
 it('accepts only replay identities and seed, never injected variables or an overlong/truncated path', () => {
   const source = { sceneId: 'start', kind: 'choice', anchor: null, fingerprint: 'a'.repeat(64) };
   const value = { seed: 7, sceneId: 'start', choices: [{ source, optionFingerprint: 'b'.repeat(64) }], target: source };

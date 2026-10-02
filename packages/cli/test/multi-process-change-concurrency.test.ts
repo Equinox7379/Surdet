@@ -37,7 +37,7 @@ function collectOutput(child: ChildProcess): { stdout: string; stderr: string } 
   child.stderr?.setEncoding('utf8');
   child.stdout?.on('data', (chunk: string) => { stdout += chunk; });
   child.stderr?.on('data', (chunk: string) => { stderr += chunk; });
-  return { stdout, stderr };
+  return { get stdout() { return stdout; }, get stderr() { return stderr; } };
 }
 
 async function fileExists(file: string): Promise<boolean> {
@@ -76,6 +76,20 @@ describe('cross-process change concurrency', () => {
   afterEach(() => {
     delete process.env['SURDET_AGENT_DATA_DIR'];
     for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('keeps the actual worker output available after the collector returns', async () => {
+    const child = spawn(process.execPath, ['--eval',
+      "process.stdout.write('worker stdout'); process.stderr.write('worker stderr');"],
+    { stdio: ['ignore', 'pipe', 'pipe'] });
+    const output = collectOutput(child);
+    try {
+      expect(await waitForExit(child, 5000)).toBe(0);
+      expect(output.stdout).toBe('worker stdout');
+      expect(output.stderr).toBe('worker stderr');
+    } finally {
+      if (child.exitCode === null) child.kill();
+    }
   });
 
   it('retains cross-process mutations with one deterministic CAS conflict and refresh retry', { timeout: 90000 }, async () => {

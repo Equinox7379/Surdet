@@ -928,7 +928,8 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     let assets: PreviewAssets;
     let requestConfigText: string;
     try {
-      requestConfigText = projected?.configText ?? previewUiConfigText(previewThemeConfigText(previewStageConfigText(state.gameConfigText)));
+      const sourceConfig = state.gameConfigText === '' && state.handles.gameConfig === null ? '{}' : state.gameConfigText;
+      requestConfigText = projected?.configText ?? previewUiConfigText(previewThemeConfigText(previewStageConfigText(sourceConfig)));
       const snapshot = projected?.snapshot ?? await loadEditorProjectSnapshot();
       signal.throwIfAborted();
       const requiredPaths = previewAssetPaths({ ...snapshot, config: parseProjectConfigDocument(requestConfigText) }, requestAssets);

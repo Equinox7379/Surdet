@@ -6,7 +6,8 @@
     "baseUrl": "../../..",
     "paths": {
       "@surdet/core": ["packages/core/src/index.ts"],
-      "@surdet/renderer": ["packages/renderer/src/index.ts"]
+      "@surdet/renderer": ["packages/renderer/src/index.ts"],
+      "@surdet/host": ["packages/host/src/index.ts"]
     }
   },
   "files": ["../../../packages/renderer/src/pixi-unsafe-eval.d.ts"],

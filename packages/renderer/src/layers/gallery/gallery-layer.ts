@@ -508,7 +508,7 @@ export class GalleryLayer implements GalleryProjectionPort {
   #registerDisplay(key: string, layer: Container): void {
     this.#lifecycle.register('gallery', 'display', key, () => {
       if (layer.parent) layer.parent.removeChild(layer);
-      layer.destroy({ children: true });
+      layer.destroy({ children: true, context: true });
     });
   }
 
@@ -530,7 +530,7 @@ export class GalleryLayer implements GalleryProjectionPort {
     this.#galleryHeader = null;
     this.#galleryTabs = null;
     this.#tabBorders.clear();
-    this.#galleryLayer.removeChildren().forEach((child) => child.destroy({ children: true }));
+    this.#galleryLayer.removeChildren().forEach((child) => child.destroy({ children: true, context: true }));
   }
 
   #clearContent(): void {
@@ -539,7 +539,7 @@ export class GalleryLayer implements GalleryProjectionPort {
     this.#galleryContent?.removeAllListeners();
     const content = this.#galleryContent;
     if (content?.parent) content.parent.removeChild(content);
-    content?.removeChildren().forEach((child) => child.destroy({ children: true }));
+    content?.removeChildren().forEach((child) => child.destroy({ children: true, context: true }));
     content?.destroy({ children: false });
     this.#galleryContent = null;
     this.#scrollContent = null;

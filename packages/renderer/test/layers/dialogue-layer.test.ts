@@ -396,6 +396,31 @@ describe('DialogueLayer visual layout contracts', () => {
 });
 
 describe('DialogueLayer command rail stability', () => {
+  it('projects current command identities and drawn hit regions across rebuild and visibility changes', () => {
+    const runtime = makeRuntime();
+    const onSelect = vi.fn();
+    try {
+      runtime.layer.showCommandRail(railItems, onSelect);
+      const targets = runtime.layer.debugSnapshot().commandRailTargets;
+      expect(targets.map(target => target.id)).toEqual(['auto', 'menu']);
+      const rail = commandRailRoot(runtime.root);
+      const row = rail.children[1] as Container;
+      const hit = row.children[0] as Graphics;
+      expect(targets[0]).toMatchObject({ x: row.x + hit.context.bounds.x, y: row.y + hit.context.bounds.y,
+        width: hit.context.bounds.width, height: hit.context.bounds.height });
+      row.emit('pointerdown', {} as FederatedPointerEvent);
+      expect(onSelect).toHaveBeenCalledWith('auto');
+      targets[0]!.x = -100;
+      expect(runtime.layer.debugSnapshot().commandRailTargets[0]!.x).not.toBe(-100);
+      runtime.layer.setCommandRailItems([{ id: 'rollback', label: '回退' }]);
+      expect(runtime.layer.debugSnapshot().commandRailTargets.map(target => target.id)).toEqual(['rollback']);
+      runtime.layer.hideCommandRail();
+      expect(runtime.layer.debugSnapshot().commandRailTargets).toEqual([]);
+      runtime.layer.restoreCommandRail();
+      expect(runtime.layer.debugSnapshot().commandRailTargets).toHaveLength(1);
+    } finally { disposeRuntime(runtime); }
+  });
+
   it('keeps the command rail fully visible and idle after show and a long wait', () => {
     const runtime = makeRuntime();
     try {

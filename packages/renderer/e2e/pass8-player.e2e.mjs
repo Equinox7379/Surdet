@@ -24,6 +24,11 @@ let writes = 0;
 const scenario = await fs.readFile(new URL('./fixtures/pass8.gal', import.meta.url), 'utf8');
 const systemsScenario = await fs.readFile(new URL('./fixtures/pass8-systems.gal', import.meta.url), 'utf8');
 const battleScenario = await fs.readFile(new URL('./fixtures/pass8-battle.gal', import.meta.url), 'utf8');
+const baseScenario = '@scene ch01_01\n@label start\n@calendar map_01\n@end';
+const longBaseConfig = JSON.parse(await fs.readFile(path.join(root, 'examples/starter/content/config/calendar.json'), 'utf8'));
+longBaseConfig.baseCommands = Array.from({ length: 15 }, (_, index) => ({
+  id: `audit_${index + 1}`, name: `审计指令${index + 1}`, apCost: 1, effects: { 'lynn.trust': 1 },
+}));
 const longScenario = `@scene ch01_01\n@label start\n@bg post_office\n旁白：${'长篇中文。'.repeat(120)}\n@nvl on\n旁白：${'全文阅读。'.repeat(120)}\n@end`;
 const errors = [];
 // Vite treats port: 0 as its default 5173, which Windows may reserve.
@@ -53,11 +58,13 @@ const server = await createServer({
       const file = id.replaceAll('\\', '/').split('?')[0];
       if (file.endsWith('/examples/starter/src/scene-hmr-boundary.ts')) {
         return code.replace('export const sceneFiles =', 'const originalScenes =')
-          + `\nconst mode = new URLSearchParams(location.search).get('system-test');\nexport const sceneFiles = new URLSearchParams(location.search).has('fixture') || mode ? {'../content/scenario/ch01_01.gal': async () => mode === 'long' ? ${JSON.stringify(longScenario)} : mode === 'battle' ? ${JSON.stringify(battleScenario)} : mode ? ${JSON.stringify(systemsScenario)} : ${JSON.stringify(scenario)}} : originalScenes;`;
+          + `\nconst mode = new URLSearchParams(location.search).get('system-test');\nexport const sceneFiles = new URLSearchParams(location.search).has('fixture') || mode ? {'../content/scenario/ch01_01.gal': async () => mode === 'long' ? ${JSON.stringify(longScenario)} : mode === 'battle' ? ${JSON.stringify(battleScenario)} : mode === 'base-long' ? ${JSON.stringify(baseScenario)} : mode ? ${JSON.stringify(systemsScenario)} : ${JSON.stringify(scenario)}} : originalScenes;`;
       }
       if (file.endsWith('/examples/starter/src/main.ts')) {
         assert(code.includes('theme: PROJECT_THEME'));
-        return code.replace('theme: PROJECT_THEME', "theme: new URLSearchParams(location.search).has('project-theme') ? { colors: { accent: 0xda9146, panel: 0x22202b }, typography: { bodySize: 32, titleSize: 44 } } : PROJECT_THEME");
+        assert(code.includes("import calendar from '../content/config/calendar.json';"));
+        return code.replace('theme: PROJECT_THEME', "theme: new URLSearchParams(location.search).has('project-theme') ? { colors: { accent: 0xda9146, panel: 0x22202b }, typography: { bodySize: 32, titleSize: 44 } } : PROJECT_THEME")
+          .replace("import calendar from '../content/config/calendar.json';", `import defaultCalendar from '../content/config/calendar.json';\nconst calendar = new URLSearchParams(location.search).get('system-test') === 'base-long' ? ${JSON.stringify(longBaseConfig)} : defaultCalendar;`);
       }
     },
   }],
@@ -85,7 +92,8 @@ try {
     window.surdetSave = Object.fromEntries(['read', 'write', 'delete', 'list', 'listMeta', 'listBackupMeta', 'restoreBackup']
       .map((name) => [name, (...args) => window.__pass8Save(name, ...args)]));
     window.__pass8Gamepads = [];
-    Object.defineProperty(navigator, 'getGamepads', { value: () => window.__pass8Gamepads });
+    window.__pass8GamepadReads = 0;
+    Object.defineProperty(navigator, 'getGamepads', { value: () => { window.__pass8GamepadReads++; return window.__pass8Gamepads; } });
   });
   page = await context.newPage();
   page.on('pageerror', (error) => errors.push(error.message));
@@ -186,10 +194,11 @@ try {
   assert.equal((await state()).session, first.session, 'menu/load do not construct another runtime');
   await advanceUntil(() => window.__surdetDebug.rendererStatus === 'choice');
   const pad = async (button) => {
-    await page.evaluate((pressed) => {
+    const reads = await page.evaluate((pressed) => {
       window.__pass8Gamepads = [{ id: 'Pass8 simulated standard pad', index: 0, connected: true, mapping: 'standard', axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: i === pressed, touched: i === pressed, value: i === pressed ? 1 : 0 })), timestamp: performance.now() }];
+      return window.__pass8GamepadReads;
     }, button);
-    await page.waitForTimeout(80);
+    await page.waitForFunction(reads => window.__pass8GamepadReads > reads, reads);
   };
   // The original controller starts at -1: Down -> first, Down -> second, Up -> first.
   await pad(13); await pad(-1); await pad(13); await pad(-1); await pad(12); await pad(-1); await pad(0); await pad(-1);
@@ -241,7 +250,7 @@ try {
   await page.keyboard.press('l'); await overlay('backlog');
   await activate('返回正文'); await overlay('none');
   await openMenu(); await activate('鉴赏'); await overlay('gallery');
-  const locked = page.getByRole('button', { name: '未解锁的 CG（不可用）', exact: true }).first();
+  const locked = page.getByRole('button', { name: '未解锁的图片（不可用）', exact: true }).first();
   assert.equal(await locked.getAttribute('aria-disabled'), 'true');
   const lockedBox = await locked.boundingBox(); assert(lockedBox);
   await page.mouse.click(lockedBox.x + lockedBox.width / 2, lockedBox.y + lockedBox.height / 2);
@@ -367,6 +376,37 @@ try {
   await canvasText('执行了「喝一杯热茶」。');
   await activate('返回地图');
   await page.waitForFunction(() => window.__surdetDebug.queries.overlay.system().type === 'map');
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 800, height: 600 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto(`${url}?system-test=base-long`);
+    await page.waitForFunction(() => window.__surdetDebug?.uiSession.base === 'title');
+    await activate('开始游戏');
+    await page.waitForFunction(() => window.__surdetDebug.queries.overlay.system().type === 'map');
+    await activate('进入 旧邮局');
+    await page.waitForFunction(() => window.__surdetDebug.queries.overlay.system().type === 'base');
+    const last = page.getByRole('button', { name: '执行 审计指令15', exact: true });
+    await page.mouse.move(viewport.width / 2, viewport.height / 2); await page.mouse.wheel(0, 4000);
+    for (let step = 0; step < 18 && await page.evaluate(() => document.activeElement?.getAttribute('aria-label')) !== '执行 审计指令15'; step++) {
+      await page.keyboard.press('ArrowDown');
+    }
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '执行 审计指令15');
+    await page.waitForFunction(() => {
+      const target = document.querySelector('button[aria-label="执行 审计指令15"]')?.container;
+      if (!target) return false;
+      const bounds = target.getBounds();
+      return bounds.y >= 104 && bounds.y + bounds.height <= 604;
+    });
+    assert.equal(await page.evaluate(() => window.scrollY), 0, 'command focus must reveal inside the canvas without scrolling the document');
+    const box = await last.boundingBox(); assert(box && box.y >= 0 && box.y + box.height <= viewport.height);
+    if (viewport.width === 1440) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    else await page.keyboard.press('Enter');
+    await canvasText('执行了「审计指令15」。');
+    await page.screenshot({ path: path.join(output, `base-long-${viewport.width}.png`) });
+    await activate('返回地图');
+    await page.waitForFunction(() => window.__surdetDebug.queries.overlay.system().type === 'map');
+  }
+  console.log('PASS long base command list remains in the real canvas; last command executes by pointer and keyboard at two viewports');
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`${url}?system-test=battle`);
   await page.waitForFunction(() => window.__surdetDebug?.uiSession.base === 'title');
   await activate('开始游戏');
@@ -407,7 +447,7 @@ try {
   await activate('开始游戏');
   await advanceUntil(() => window.__surdetDebug.dialogueProjection.dialogText.length > 500);
   const longPosition = (await state()).position;
-  await page.mouse.move(500, 400); await page.mouse.wheel(0, 3000);
+  await page.mouse.move(720, 650); await page.mouse.wheel(0, 3000);
   const scrolled = (prefix) => page.waitForFunction((prefix) => {
     let root = Array.from(document.querySelectorAll('button')).find((button) => button.container?.parent)?.container;
     if (!root) return false;
@@ -419,7 +459,7 @@ try {
   assert.deepEqual((await state()).position, longPosition);
   await advanceUntil(() => window.__surdetDebug.dialogueProjection.nvlActive);
   const nvlPosition = (await state()).position;
-  await page.mouse.move(500, 400); await page.mouse.wheel(0, 3000);
+  await page.mouse.move(720, 650); await page.mouse.wheel(0, 3000);
   await scrolled('旁白：全文阅读');
   assert.deepEqual((await state()).position, nvlPosition);
   console.log('PASS oversized ADV/NVL text remains scrollable without advancing the original interpreter');

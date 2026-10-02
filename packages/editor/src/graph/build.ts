@@ -88,6 +88,13 @@ function targetNodeId(target: string): string {
   return dot >= 0 ? labelNodeId(target.slice(0, dot), target.slice(dot + 1)) : sceneNodeId(target);
 }
 
+/** 编译器的内部跳转按目标索引投影到既有流单元，不制造空标签。 */
+function gotoTargetNode(scene: CompiledScene, units: FlowUnit[], jump: JumpInstr): string {
+  return jump.target === '' && jump.gotoIndex !== null
+    ? unitAt(units, jump.gotoIndex).nodeId
+    : labelNodeId(scene.sceneId, jump.target);
+}
+
 /** 构建单个场景内部的节点与边 */
 function buildScene(scene: CompiledScene, nodes: Map<string, FlowNode>, edges: FlowEdge[]): void {
   // 节点：场景入口 + 各 label
@@ -118,9 +125,9 @@ function buildScene(scene: CompiledScene, nodes: Map<string, FlowNode>, edges: F
         const j = instr as JumpInstr;
         if (j.kind === 'goto') {
           // @loop 与 @goto 同编译为回跳/跳转指令：目标标签在指令之前 = 循环回边（loop）
-          const targetIdx = scene.labels.get(j.target);
+          const targetIdx = j.gotoIndex ?? scene.labels.get(j.target);
           const isBack = targetIdx !== undefined && targetIdx <= instr.index;
-          edges.push({ from, to: labelNodeId(scene.sceneId, j.target), kind: isBack ? 'loop' : 'goto' });
+          edges.push({ from, to: gotoTargetNode(scene, units, j), kind: isBack ? 'loop' : 'goto' });
         } else {
           edges.push({ from, to: targetNodeId(j.target), kind: 'jump' });
         }
@@ -141,7 +148,7 @@ function buildScene(scene: CompiledScene, nodes: Map<string, FlowNode>, edges: F
         const cj = instr as CondJumpInstr;
         const target = scene.instructions[cj.target];
         if (target && target.op === 'label') {
-          edges.push({ from, to: labelNodeId(scene.sceneId, target.name), kind: 'if', label: `if ${cj.expr}` });
+          edges.push({ from, to: labelNodeId(scene.sceneId, target.name), kind: 'if', label: `不满足（${cj.expr}）` });
         }
         break;
       }
@@ -153,7 +160,7 @@ function buildScene(scene: CompiledScene, nodes: Map<string, FlowNode>, edges: F
           const end = oi + 1 < ch.options.length ? starts[oi + 1]! : ch.afterIndex;
           const jump = optionJump(scene, opt.blockStart, end);
           if (!jump) return; // 无跳转选项：落到 choice 之后（顺序流已表达）
-          const to = jump.kind === 'goto' ? labelNodeId(scene.sceneId, jump.target) : targetNodeId(jump.target);
+          const to = jump.kind === 'goto' ? gotoTargetNode(scene, units, jump) : targetNodeId(jump.target);
           edges.push({
             from,
             to,

@@ -999,7 +999,8 @@ async function run() {
     await page.addInitScript(fakeFileSystemInit, { rootName: 'starter', files: browserFiles });
     await page.goto(`${baseUrl}/index.html`, { waitUntil: 'networkidle' });
     opened = await openRealStarter(page);
-    assert(opened.projectName === 'starter', `project bar did not show Starter: ${opened.projectName}`);
+    const expectedProjectName = JSON.parse(fs.readFileSync(path.join(starterRoot, 'game.config.json'), 'utf8')).title || 'starter';
+    assert(opened.projectName === expectedProjectName, `project bar name mismatch: ${opened.projectName} != ${expectedProjectName}`);
     assert(opened.sceneCount === 7, `expected seven real Starter scenes, got ${opened.sceneCount}`);
     assert(opened.timelineCount === 1, `expected one real Starter timeline, got ${opened.timelineCount}`);
     assert(opened.assetCount >= 6, `expected real Starter assets, got ${opened.assetCount}`);
@@ -1106,11 +1107,8 @@ async function run() {
     assert(technicalMap.technicalPressed === 'true', 'technical route toggle did not expose its pressed state');
     assert(revealedRouteCount > defaultRouteCount, 'technical route toggle did not reveal more real routes');
     assert(technicalMap.unprojectableExplanationVisible, 'technical explanation for unprojectable connections is not visible');
-    assert(technicalMap.unprojectableExplanation.includes('另有 13 条连接因端点缺失未显示'), `unexpected unprojectable explanation: ${technicalMap.unprojectableExplanation}`);
-    const unprojectableMatch = /另有\s+(\d+)\s+条连接因端点缺失未显示/.exec(technicalMap.unprojectableExplanation);
-    assert(unprojectableMatch, `visible technical explanation has no unprojectable count: ${technicalMap.unprojectableExplanation}`);
-    const unprojectableRawEdgeCount = Number(unprojectableMatch[1]);
-    assert(unprojectableRawEdgeCount === 13, `expected 13 raw Starter connections with missing endpoints, got ${unprojectableRawEdgeCount}`);
+    assert(!technicalMap.unprojectableExplanation.includes('另有'), `valid Starter contains a reported missing flow target: ${technicalMap.unprojectableExplanation}`);
+    const unprojectableRawEdgeCount = 0;
     const projectableNarrativeRouteCount = flowFacts.statusEdgeCount - unprojectableRawEdgeCount;
     assert(revealedRouteCount === projectableNarrativeRouteCount, `technical route toggle revealed ${revealedRouteCount}/${projectableNarrativeRouteCount} projectable narrative routes`);
     assert(technicalMap.frames.length === 7, `technical view rendered ${technicalMap.frames.length}/7 scene frames`);

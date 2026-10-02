@@ -101,6 +101,7 @@ import { installSceneHotReload, type SceneHotModule } from '../scene-hmr.js';
 import { createStarterOwnerTeardown } from './owner-teardown.js';
 import { showPlayerRecovery } from './recovery-screen.js';
 import { prepareStoryReplay } from './story-replay.js';
+import { readClearRecord, type GlobalClearRecord } from './clear-record.js';
 import type {} from './window.js';
 
 export interface PlayerProject {
@@ -220,7 +221,10 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   const terminology = parseTerminology(project.terminology);
   const dossiers = readGalleryDossiers({ ...galleryConfig }, { characters: gameConfig.characters ?? {}, terms: terminology.map(term => term.canonical) });
   const timelines = new TimelineRegistry();
-  for (const definition of Object.values(timelineFiles)) timelines.register(definition);
+  for (const definition of Object.values(timelineFiles)) {
+    const value = typeof definition === 'string' ? JSON.parse(definition.replace(/^\uFEFF/, '')) : definition;
+    timelines.register(value);
+  }
 
   // Optional systems remain project data; a new narrative project needs none of them.
   const definitions = project.systems ?? {};
@@ -626,6 +630,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     config: gameConfig,
     fontBlobUrls,
     label: 'starter',
+    isActive: () => !ownerTeardown.disposed,
     onError: message => dialogue.showBanner(message, 'tip'),
     resolveFontUrl,
     assets,
@@ -637,6 +642,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     const backgroundErrors = new Map<string, string>();
     const desktopAsset = window.surdetAsset;
     const files = desktopAsset ? await desktopAsset.list() : Object.keys(project.assetFiles);
+    if (ownerTeardown.disposed) return;
     // Validate effective bindings before concurrent loading can overwrite a key.
     // Count physical paths, not roles: one image may serve several UI purposes.
     const themeImageKeys = new Set([playerConfig.titleLogo, ...Object.values(playerTheme.skins), ...projectUiAssetKeys(workUi)].filter(Boolean));
@@ -710,7 +716,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     const loadAndRegister = async (rel: string, url: string, revoke?: () => void, retain?: () => void): Promise<void> => {
       try {
         const retained = await register(rel, url);
-        if (retained) retain?.();
+        if (retained && !ownerTeardown.disposed) retain?.();
         else revoke?.();
       } catch (error) {
         revoke?.();
@@ -744,10 +750,12 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       }
     }
     const finalProgress = await new AssetLoadQueue(4).run(jobs, (progress) => {
+      if (ownerTeardown.disposed) return;
       lastLoadingProgress = { ...progress };
       loading.showLoading(progress);
     });
     lastLoadingProgress = { ...finalProgress };
+    if (ownerTeardown.disposed) return;
     for (const key of themeImageKeys) {
       if (!loadedBackgrounds.has(key)) throw new Error(`作品主题图片未加载：${key}${backgroundErrors.has(key) ? ` · ${backgroundErrors.get(key)}` : '（素材不存在）'}`);
     }
@@ -766,17 +774,9 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   }
 
   // ===== 周目继承（兰斯式全局通关记录：@clear 事件 → 跨周目持久化；新周目开局应用继承） =====
-  /** 全局通关记录（跨存档/跨周目；Electron 与浏览器的 localStorage 均持久化到各自 userData） */
-  interface GlobalClearRecord {
-    endings: string[];
-    /** 累计通关周目数（每次游戏会话计 1；同周目多结局不重复计数） */
-    playthroughs: number;
-    /** 最近一次 @clear 时刻的变量全量快照（继承计算源） */
-    variables: Record<string, unknown>;
-    clearedAt: number;
-  }
   const CLEAR_KEY = window.surdetProfile ? 'surdet:clearRecord' : `${browserPrefix}clearRecord`;
-  const profileStorage = new LocalStorageProfileStorage(localStorage, `${browserPrefix}profile:`);
+  const profileStorage = project.preview ? new MemoryProfileStorage()
+    : new LocalStorageProfileStorage(localStorage, `${browserPrefix}profile:`);
   let galleryCollection: Awaited<ReturnType<typeof createGalleryCollection>> | undefined;
   const replayExit = document.createElement('button');
   replayExit.textContent = '结束回想';
@@ -868,7 +868,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   };
   if (Object.values(galleryPolicy).includes('profile')) {
     try {
-      const storage = project.preview ? new MemoryProfileStorage() : window.surdetProfile ?? profileStorage;
+      const storage = project.preview ? profileStorage : window.surdetProfile ?? profileStorage;
       galleryCollection = await createGalleryCollection(storage, await galleryCollectionKey(project.id), galleryPolicy);
     } catch (error) { collectionError(error); }
   }
@@ -878,33 +878,49 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     if (!galleryConfig[section]?.some(entry => entry.id === event.id)) return;
     void galleryCollection.unlock(section, event.id).catch(collectionError);
   });
+  let clearRecordWriteBlocked = false;
+  let clearRecordNotice: HTMLElement | undefined;
+  function clearRecordReadFailed(error: unknown): void {
+    clearRecordWriteBlocked = true;
+    console.warn('[starter] 通关记录读取失败，保留原记录：', error);
+    if (collectionDisposed || signal?.aborted) return;
+    clearRecordNotice ??= document.createElement('div');
+    clearRecordNotice.setAttribute('role', 'alert');
+    clearRecordNotice.style.cssText = 'position:fixed;z-index:10000;bottom:16px;left:50%;transform:translateX(-50%);max-width:85vw;padding:12px 20px;background:#fff8ed;color:#573c2f;border-radius:8px;font:16px/1.6 sans-serif';
+    clearRecordNotice.textContent = '通关记录读取失败，原记录已保留。本次不保存周目继承，剧情存档仍可使用；请检查存储后重开游戏。';
+    document.body.append(clearRecordNotice);
+  }
   async function loadLegacyClearRecord(): Promise<GlobalClearRecord | null> {
+    if (project.preview) return null;
     try {
       const raw = localStorage.getItem(CLEAR_KEY);
-      return raw ? (JSON.parse(raw) as GlobalClearRecord) : null;
-    } catch {
+      return raw === null ? null : readClearRecord(JSON.parse(raw), store, ngp);
+    } catch (error) {
+      clearRecordReadFailed(error);
       return null;
     }
   }
   async function loadClearRecord(): Promise<GlobalClearRecord | null> {
     try {
-      const value = window.surdetProfile
-        ? await window.surdetProfile.read('clear-record')
-        : await profileStorage.read<GlobalClearRecord>('clear-record');
-      if (value !== null) return value as GlobalClearRecord;
+      const value = !project.preview && window.surdetProfile
+        ? await window.surdetProfile.read('clear-record', { strict: true })
+        : await profileStorage.read('clear-record', { strict: true });
+      if (value !== null) return readClearRecord(value, store, ngp);
     } catch (err) {
-      console.warn('[starter] Profile 通关记录读取失败，尝试兼容记录：', err);
+      clearRecordReadFailed(err);
     }
     return loadLegacyClearRecord();
   }
   async function saveClearRecord(rec: GlobalClearRecord): Promise<void> {
+    if (clearRecordWriteBlocked) return;
     try {
-      if (window.surdetProfile) await window.surdetProfile.write('clear-record', rec);
+      if (!project.preview && window.surdetProfile) await window.surdetProfile.write('clear-record', rec);
       else await profileStorage.write('clear-record', rec);
       return;
     } catch (err) {
       console.error('[starter] Profile 通关记录写入失败，尝试兼容记录：', err);
     }
+    if (project.preview) return;
     try {
       localStorage.setItem(CLEAR_KEY, JSON.stringify(rec));
     } catch (err) {
@@ -923,6 +939,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     if (galleryCollection && !rollbackRuntime.isRestoring() && galleryConfig.endings?.some(entry => entry.id === p.ending)) {
       void galleryCollection.unlock('endings', p.ending).catch(collectionError);
     }
+    if (clearRecordWriteBlocked) return;
     const rec = clearRecord ?? { endings: [], playthroughs: 0, variables: {}, clearedAt: 0 };
     const freshEnding = !rec.endings.includes(p.ending);
     if (freshEnding) rec.endings.push(p.ending);
@@ -931,7 +948,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       rec.playthroughs += 1;
     }
     // 继承源始终取最近一次 @clear 的变量值（同周目后续结局覆盖前值，语义 = 最新通关状态）
-    rec.variables = store.snapshot() as Record<string, unknown>;
+    rec.variables = store.snapshot();
     rec.clearedAt = Date.now();
     clearRecord = rec;
     void saveClearRecord(rec);
@@ -1267,12 +1284,13 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   // Both authored buttons and list rows use the same ordinary slot projection,
   // confirmation and existing Host transaction. No custom UI may silently overwrite.
   async function selectWorkUiSave(mode: 'save' | 'load', slotId: string, restore = false): Promise<boolean | undefined> {
-    if (isUiBusy()) return false;
+    if (ownerTeardown.disposed || isUiBusy()) return false;
     if (uiSnapshot().overlay !== 'save-load' || activeSaveLoad?.mode !== mode) {
       await openSaveLoad(mode, uiSnapshot().overlay === 'system-menu' ? 'system-menu' : uiSnapshot().base);
-      if (activeSaveLoad?.mode !== mode || uiSnapshot().overlay !== 'save-load') return false;
+      if (ownerTeardown.disposed || activeSaveLoad?.mode !== mode || uiSnapshot().overlay !== 'save-load') return false;
     }
     const slots = await listPlayerSaveSlots(saves, browserSave, SLOT_IDS, mode);
+    if (ownerTeardown.disposed) return false;
     const slot = slots.find(value => value.id === slotId);
     if (!slot) throw new Error(`存档槽位不存在：${slotId}`);
     if (restore) {
@@ -1308,6 +1326,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
 
   /** 标题菜单选择（E2E 探针 titleSelect 与画面点击共用同一入口；自我迭代②） */
   async function titleSelect(id: string): Promise<void> {
+    if (ownerTeardown.disposed) return;
     if (galleryReplay) { returnFromReplay(); return; }
     playerShell!.commands.consumePointer();
     const entry = project.additionalEntrypoints?.find((candidate) => candidate.id === id);
@@ -1328,14 +1347,13 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         clearCountedThisSession = false; // 新周目会话开始，周目计数重新可用
         // 周目继承：存在全局通关记录时，按 ngp.json 继承项把通关值应用到新周目初始表
         const rec = await loadClearRecord();
+        if (ownerTeardown.disposed) return;
         if (rec) {
           const inherited = ngp.computeInheritFrom(
             store.snapshot(),
             rec.variables as Record<string, VarValue>,
           );
-          for (const [name, value] of Object.entries(inherited)) {
-            if (store.has(name) && store.get(name) !== value) store.set(name, value);
-          }
+          store.restore(inherited, { allowReadonly: true });
           console.info(`[starter] 新周目开局（第 ${rec.playthroughs + 1} 周目，继承 ${ngp.inheritEntries().length} 项）`);
         }
         sessionStart = Date.now(); // 新周目重新计游戏时长
@@ -1388,19 +1406,21 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   // ===== 存档/读档 UI：多槽位 + 快速/自动档 =====
   const SLOT_IDS = ['1', '2', '3', '4', '5', '6', QUICK_SLOT, AUTO_SLOT];
   async function openSaveLoad(mode: 'save' | 'load', source: 'title' | 'game' | 'system-menu' = uiSnapshot().base): Promise<void> {
+    if (ownerTeardown.disposed) return;
     if (galleryReplay) { dialogue.showBanner('回想中不能存读档，请先结束回想。', 'tip'); return; }
     if (source === 'title') menu.hideTitle(false);
     let slots: SaveSlotView[];
     try {
       slots = await listPlayerSaveSlots(saves, browserSave, SLOT_IDS, mode);
     } catch (err) {
+      if (ownerTeardown.disposed) return;
       if (source === 'title') showTitleScreen();
       console.error('[starter] 存档列表读取失败:', err);
       dialogue.showBanner('存档列表读取失败，请重试。', 'tip');
       refreshCommandRail();
       return;
     }
-    if (galleryReplay) return;
+    if (ownerTeardown.disposed || galleryReplay) return;
     activeSaveLoad = { mode, slots };
     playerShell!.commands.open({ slot: 'save-load', source, mode });
   }
@@ -1468,7 +1488,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   let quickSaveInFlight: Promise<boolean> | null = null;
 
   function quickSave(): Promise<boolean> {
-    if (galleryReplay) return Promise.resolve(false);
+    if (ownerTeardown.disposed || galleryReplay) return Promise.resolve(false);
     // 快速读档必须等当前 IPC 写入完成，否则连续 F5/F9 会读到旧槽位。
     if (quickSaveInFlight || isUiBusy()) return quickSaveInFlight ?? Promise.resolve(false);
     const snap = interp.saveSnapshot();
@@ -1479,6 +1499,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     if (railWasVisible) dialogue.hideCommandRail();
     const task = saves.save(QUICK_SLOT, enrichSnapshot({ ...snap, kind: 'quick' })).then(
       () => {
+        if (ownerTeardown.disposed) return false;
         playerShell!.commands.completeOperation({
           base: origin.base,
           overlay: origin.overlay,
@@ -1490,6 +1511,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         return true;
       },
       (err) => {
+        if (ownerTeardown.disposed) return false;
         playerShell!.commands.failOperation(err);
         if (railWasVisible) dialogue.restoreCommandRail();
         console.error('[starter] 快速存档失败：', err);
@@ -1504,21 +1526,23 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   }
 
   async function quickLoad(): Promise<boolean> {
-    if (galleryReplay) return false;
+    if (ownerTeardown.disposed || galleryReplay) return false;
     if (quickSaveInFlight) await quickSaveInFlight;
+    if (ownerTeardown.disposed) return false;
     try {
       if (!await saves.has(QUICK_SLOT)) return false;
     } catch (err) {
       console.error('[starter] 快速读档槽位读取失败：', err);
       return false;
     }
-    if (galleryReplay || isUiBusy()) return false;
+    if (ownerTeardown.disposed || galleryReplay || isUiBusy()) return false;
     const origin = uiSnapshot();
     const railWasVisible = queries.diagnostics.projectionSnapshot().dialogue?.commandRailVisible === true;
     playerShell!.commands.beginOperation('loading');
     if (railWasVisible) dialogue.hideCommandRail();
     try {
       const snap = await saves.load(QUICK_SLOT);
+      if (ownerTeardown.disposed) return false;
       clearRollback();
       interp.loadSnapshot(snap);
       sessionStart = Date.now() - Math.max(0, snap.meta.playTimeSec ?? 0) * 1000;
@@ -1530,6 +1554,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       console.info('[starter] 快速读档');
       return true;
     } catch (err) {
+      if (ownerTeardown.disposed) return false;
       playerShell!.commands.failOperation(err);
       if (railWasVisible) dialogue.restoreCommandRail();
       console.error('[starter] 快速读档失败：', err);
@@ -1550,7 +1575,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   }
 
   async function selectSaveLoad(mode: 'save' | 'load', slotId: string): Promise<boolean> {
-    if (galleryReplay) return false;
+    if (ownerTeardown.disposed || galleryReplay) return false;
     playerShell!.commands.consumePointer();
     if (mode === 'save') {
       const snap = interp.saveSnapshot();
@@ -1562,6 +1587,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       playerShell!.commands.beginOperation('saving');
       try {
         await saves.save(slotId, enrichSnapshot(snap));
+        if (ownerTeardown.disposed) return false;
         playerShell!.commands.completeOperation({
           base: origin.base,
           overlay: 'none',
@@ -1573,6 +1599,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         refreshCommandRail();
         return true;
       } catch (err) {
+        if (ownerTeardown.disposed) return false;
         playerShell!.commands.failOperation(err);
         console.error('[starter] 存档失败:', err);
         return false;
@@ -1582,10 +1609,12 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     playerShell!.commands.beginOperation('loading');
     try {
       const snap = await saves.load(slotId);
+      if (ownerTeardown.disposed) return false;
       completeLoadedSnapshot(snap);
       console.info('[starter] 已读档', slotId);
       return true;
     } catch (err) {
+      if (ownerTeardown.disposed) return false;
       playerShell!.commands.failOperation(err);
       console.error('[starter] 读档失败:', err);
       return false;
@@ -1593,17 +1622,21 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   }
 
   async function restoreSaveLoad(slotId: string): Promise<boolean> {
-    if (galleryReplay) return false;
+    if (ownerTeardown.disposed || galleryReplay) return false;
     playerShell!.commands.consumePointer();
     const slot = activeSaveLoad?.slots.find((candidate) => candidate.id === slotId);
     if (!slot || !slot.backupAvailable) return false;
     playerShell!.commands.beginOperation('loading');
     try {
       await saves.restoreBackup(slotId);
-      completeLoadedSnapshot(await saves.load(slotId));
+      if (ownerTeardown.disposed) return false;
+      const snap = await saves.load(slotId);
+      if (ownerTeardown.disposed) return false;
+      completeLoadedSnapshot(snap);
       console.info('[starter] 已恢复备份并读档', slotId);
       return true;
     } catch (error) {
+      if (ownerTeardown.disposed) return false;
       playerShell!.commands.failOperation(error);
       console.error('[starter] 备份恢复失败:', error);
       return false;
@@ -1793,7 +1826,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     assetBlobUrls,
     revokeObjectUrl: (url) => URL.revokeObjectURL(url),
   });
-  ownerTeardown.trackListener(() => { collectionDisposed = true; collectionNotice?.remove(); replayExit.remove(); galleryReplay = null; });
+  ownerTeardown.trackListener(() => { collectionDisposed = true; collectionNotice?.remove(); clearRecordNotice?.remove(); replayExit.remove(); galleryReplay = null; });
   ownerTeardown.trackListener(() => window.removeEventListener('resize', resizeHandler));
   ownerTeardown.trackListener(() => runtime.canvas.removeEventListener('pointerdown', canvasPointerDown));
   ownerTeardown.trackListener(() => runtime.canvas.removeEventListener('wheel', canvasWheel, canvasWheelOptions));
@@ -2039,7 +2072,12 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
 
   // 启动：加载素材 → 标题画面（不再直进剧情）
   try { await loadAssets(); }
-  catch (error) { ownerTeardown.dispose(); if (!signal?.aborted) throw error; return; }
+  catch (error) {
+    const cancelled = ownerTeardown.disposed || signal?.aborted;
+    ownerTeardown.dispose();
+    if (!cancelled) throw error;
+    return;
+  }
   if (ownerTeardown.disposed) return;
   commands.preferences.setTheme(playerTheme);
   if (workUi) {
