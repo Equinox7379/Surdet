@@ -8,7 +8,7 @@ import { enhanceConfigTables } from '../../src/v4/surfaces.js';
 import { bindSearchHooks, renderSearchPanel, focusSearchInput, resetSearchSession } from '../../src/panels/search-panel.js';
 import { renderConfig, resetConfigSession, inspectConfigDraftState, prepareConfigLabelRename, configUndo } from '../../src/panels/config.js';
 import { renderTimelinePanel, bindTimelineHooks, clearTimelineViewStates } from '../../src/panels/timeline-panel.js';
-import { clearTimelineHistories, timelineHistoryDepth } from '../../src/timeline-history.js';
+import { clearTimelineHistories, timelineHistoryDepth, takeTimelineUndo } from '../../src/timeline-history.js';
 import { renderFlow } from '../../src/panels/flow.js';
 import { validateProject } from '../../src/validate.js';
 import { openScriptImport } from '../../src/panels/script-import.js';
@@ -1027,6 +1027,53 @@ export const v4WorkbenchCases: BrowserCase[] = [
     const third = await read();
     assert(third.version === second.version && third.buffer.byteLength === 3, 'repeat transfer reused detached or stale bytes');
     disposePreviewPanel();
+  } },
+  { name: 'timeline resource insertion selects the committed cue and retains undo selection', run: () => {
+    fixture(); clearTimelineHistories(); clearTimelineViewStates();
+    let edits = 0;
+    bindTimelineHooks({ onPreview: () => {}, onEdited: () => { edits++; } });
+    const text = '\uFEFF' + JSON.stringify({ version: 1, id: 't', durationMs: 1000, tracks: [
+      { kind: 'portrait', target: 'lynn:uniform', cues: [{ action: 'show', expression: 'normal', position: 'left', atMs: 50, durationMs: 100, easing: 'linear' }] },
+    ] }, null, 2).replaceAll('\n', '\r\n');
+    const entry = { id: 't', file: 't.json', text, eol: '\r\n' as const, dirty: false, handle: null };
+    state.timelines = [entry]; state.currentTimeline = 't'; state.currentTimelineCue = { trackIndex: 0, cueIndex: 0 };
+    const panel = control<HTMLElement>('#main'); renderTimelinePanel(panel);
+    input('[data-timeline-focus="track-0-add-action"]', 'show', 'change');
+    const resource = control<HTMLSelectElement>('[data-timeline-focus="track-0-add-resource"]');
+    const option = [...resource.options].find(item => item.value !== '' && !item.disabled);
+    assert(option, 'the real project portrait must be selectable'); resource.value = option.value;
+    control<HTMLButtonElement>('[data-timeline-focus="track-0-add"]').click();
+    const added = JSON.parse(entry.text.slice(1));
+    assert(added.tracks[0].cues.length === 2 && entry.dirty && edits === 1, 'insertion did not commit once');
+    assert(state.currentTimelineCue?.trackIndex === 0 && state.currentTimelineCue.cueIndex === 1, 'new cue was not selected');
+    assert(control('[data-timeline-focus="cue-0-1"]').classList.contains('selected'), 'committed cue is not visibly selected');
+    assert(added.tracks[0].cues[0].atMs === 50 && added.tracks[0].cues[0].position === 'left', 'existing cue changed');
+    assert(entry.text.startsWith('\uFEFF') && !/(?<!\r)\n/.test(entry.text), 'BOM or CRLF lost');
+    const previous = takeTimelineUndo('t', entry.text, state.currentTimelineCue);
+    assert(previous?.text === text && previous.selection?.cueIndex === 0, 'undo lost original bytes or selection');
+    bindTimelineHooks({ onPreview: () => {}, onEdited: () => {} }); clearTimelineViewStates();
+  } },
+  { name: 'timeline disclosure clicks survive immediate rerender and switching timelines', run: async () => {
+    fixture(); clearTimelineHistories(); clearTimelineViewStates();
+    bindTimelineHooks({ onPreview: () => {}, onEdited: () => {} });
+    const entry = (id: string) => ({ id, file: `${id}.json`, text: JSON.stringify({ version: 1, id, durationMs: 1000, tracks: [{ kind: 'camera', cues: [] }] }), eol: '\n' as const, dirty: false, handle: null });
+    state.timelines = [entry('first'), entry('second')]; state.currentTimeline = 'first'; state.currentTimelineCue = null;
+    const panel = control<HTMLElement>('#main'); panel.style.width = '780px';
+    renderTimelinePanel(panel); await nextTask();
+    for (const selector of ['.timeline-inspector', '.timeline-library']) {
+      const details = control<HTMLDetailsElement>(selector);
+      assert(details.open, `${selector} should start expanded`);
+      details.querySelector('summary')!.click();
+      renderTimelinePanel(panel); // Before the old details' deferred native toggle event.
+      assert(!control<HTMLDetailsElement>(selector).open, `${selector} lost its click state`);
+      await nextTask();
+    }
+    state.currentTimeline = 'second'; renderTimelinePanel(panel); await nextTask();
+    assert(control<HTMLDetailsElement>('.timeline-inspector').open && control<HTMLDetailsElement>('.timeline-library').open, 'another timeline borrowed the collapsed state');
+    state.currentTimeline = 'first'; renderTimelinePanel(panel); await nextTask();
+    assert(!control<HTMLDetailsElement>('.timeline-inspector').open && !control<HTMLDetailsElement>('.timeline-library').open, 'return lost the first timeline state');
+    assert(state.timelines.every(item => !item.dirty) && timelineHistoryDepth().undo === 0, 'view changes edited source');
+    panel.style.width = ''; clearTimelineViewStates();
   } },
   { name: 'timeline fields reject invalid payloads and retain unrelated timing', run: () => {
     fixture(); clearTimelineHistories(); clearTimelineViewStates();

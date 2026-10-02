@@ -5,7 +5,8 @@ import { describe, expect, it } from 'vitest';
 const panelSource = readFileSync(fileURLToPath(new URL('../src/panels/timeline-panel.ts', import.meta.url)), 'utf8').replace(/\r\n/g, '\n');
 const mainSource = readFileSync(fileURLToPath(new URL('../src/main.ts', import.meta.url)), 'utf8').replace(/\r\n/g, '\n');
 
-describe('Timeline panel project-asset and freshness contract', () => {
+// Structural checks only. Real selection/commit/disclosure behavior runs in v4-workbench-cases.
+describe('Timeline panel source wiring', () => {
   it('does not inject Starter-specific asset placeholders', () => {
     expect(panelSource).not.toMatch(/castle_hall|lynn:uniform|tense_01/);
   });
@@ -48,15 +49,9 @@ describe('Timeline panel project-asset and freshness contract', () => {
     expect(panelSource).toContain('timelineLayoutObserver');
     expect(panelSource).toContain('currentExpression');
     expect(panelSource).toContain('choice.expression === currentExpression');
-    expect(panelSource).toContain('state.currentTimelineCue = { trackIndex, cueIndex };\n      commit(');
     expect(panelSource).toContain('删除轨道');
     expect(panelSource).toContain('前往素材工作区');
     expect(panelSource).toContain("block.classList.toggle('instant', cue.durationMs === 0)");
-  });
-
-  it('persists an explicit disclosure click before the deferred native toggle event', () => {
-    expect(panelSource).toContain("summary.addEventListener('click', () => {\n    view.inspectorOpen = !inspector.open;\n  });");
-    expect(panelSource).toContain("librarySummary.addEventListener('click', () => {\n    if (view) view.libraryOpen = !library.open;\n  });");
   });
 
   it('implements real search and keeps zero valid for signed numeric inputs', () => {
