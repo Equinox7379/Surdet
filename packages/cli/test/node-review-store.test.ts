@@ -398,7 +398,7 @@ describe('NodeReviewStore', () => {
       .toThrowError(/projectIdentity/);
   });
 
-  it('rejects a review root symlink instead of following it', async () => {
+  it('rejects a review root symlink instead of following it', async ({ skip }) => {
     const fixture = await setup();
     const outside = await fsp.mkdtemp(path.join(os.tmpdir(), 'surdet-review-store-outside-'));
     temporaryRoots.push(outside);
@@ -406,8 +406,9 @@ describe('NodeReviewStore', () => {
     try {
       await fsp.symlink(outside, reviews, 'junction');
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EPERM' || (error as NodeJS.ErrnoException).code === 'EACCES') return;
-      throw error;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'EPERM' && code !== 'EACCES') throw error;
+      skip(`当前环境无法创建文件系统链接（${code}），未验证链接边界`);
     }
     await expect(fixture.store.createReview('rev_safe', payload())).rejects.toMatchObject({ code: 'PATH_OUTSIDE_PROJECT' });
     expect(await fsp.readdir(outside)).toEqual([]);
