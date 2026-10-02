@@ -42,6 +42,34 @@ try {
     return { page, context, errors };
   };
 
+  // A disabled empty load slot must not close the real menu or advance the game.
+  {
+    const { page, context, errors } = await open();
+    await activate(page, '开始游戏'); await advanceToChoice(page);
+    const before = await state(page);
+    await page.keyboard.press('Escape'); await waitOverlay(page, 'system-menu');
+    await activate(page, '读档'); await waitOverlay(page, 'save-load');
+    await page.waitForFunction(() => window.surdetDebug.queries.diagnostics.projectionSnapshot().menu.saveLoadTargets.some(target => target.id === 'slot-1'));
+    assert.ok((await canvasTexts(page)).includes('空槽位'));
+    const point = await page.evaluate(() => {
+      const target = window.surdetDebug.queries.diagnostics.projectionSnapshot().menu.saveLoadTargets.find(target => target.id === 'slot-1');
+      const canvas = document.querySelector('canvas').getBoundingClientRect();
+      return { x: canvas.x + (target.x + target.width / 2) / 1280 * canvas.width,
+        y: canvas.y + (target.y + target.height / 2) / 720 * canvas.height };
+    });
+    await page.mouse.click(point.x, point.y);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal((await state(page)).ui.overlay, 'save-load');
+    assert.deepEqual((await state(page)).position, before.position);
+    await page.keyboard.press('Escape'); await waitOverlay(page, 'none');
+    assert.deepEqual((await state(page)).position, before.position);
+    assert.deepEqual((await state(page)).dialogue.choiceLabels, before.dialogue.choiceLabels);
+    assert.deepEqual(errors, []);
+    evidence.push({ case: 'empty-load-slot-keeps-menu-and-story', position: before.position });
+    console.log('PASS actual empty load card preserves menu/story and closes back to the same choice');
+    await context.close();
+  }
+
   // A new play session must reset optional systems, not merely their visible panels.
   {
     const { page, context, errors } = await open();
