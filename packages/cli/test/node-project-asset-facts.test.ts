@@ -120,27 +120,24 @@ describe('NodeProjectStorage asset file facts', () => {
     }
   });
 
-  it('rejects a real symlink or junction escape when the host can create one', async () => {
+  it('rejects a real symlink or junction escape when the host can create one', async ({ skip }) => {
     const root = makeRoot('surdet-node-asset-facts-link-');
     const outside = makeRoot('surdet-node-asset-facts-link-outside-');
     const link = path.join(root, 'content', 'assets', 'linked');
     try {
       writeFile(outside, 'escape.webp', new Uint8Array([1]));
       const storage = await NodeProjectStorage.open(root);
-      let created = false;
       try {
         fs.mkdirSync(path.dirname(link), { recursive: true });
         fs.symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
-        created = true;
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (!['EACCES', 'EPERM', 'ENOTSUP', 'UNKNOWN'].includes(code ?? '')) throw error;
+        skip(`当前环境无法创建文件系统链接（${code}），未验证链接边界`);
       }
 
-      if (created) {
-        await expect(storage.inspectFileFacts(['content/assets/linked/escape.webp']))
-          .rejects.toMatchObject({ code: 'PATH_OUTSIDE_PROJECT' });
-      }
+      await expect(storage.inspectFileFacts(['content/assets/linked/escape.webp']))
+        .rejects.toMatchObject({ code: 'PATH_OUTSIDE_PROJECT' });
     } finally {
       if (fs.existsSync(link)) fs.unlinkSync(link);
       removeRoot(root);
