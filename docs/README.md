@@ -20,9 +20,7 @@
 
 - [长期路线与决策台账](superpowers/plans/2026-08-13-project-roadmap-and-decision-ledger.md)：当前状态、长期决策、授权边界和下一阶段方向。
 - [完整创作引擎总规划](superpowers/plans/2026-09-25-complete-creation-engine-roadmap.md)：完整 Gal 制作终态、LetsGal 对照取舍、能力覆盖、阶段依赖、验收和压缩后续接入口；规划审核与施工状态在文内维护。
-- [默认完整创作路径实施计划](superpowers/plans/2026-09-23-default-authoring-path.md)：已完成阶段的任务、合同、验收及单作者样本边界。
-- [最近维护记录](superpowers/plans/2026-09-16-maintenance-reports.md)：9 月 16–23 日修复的编号、实现、首红、复验与保留边界。
-- [历史资料索引](archive/README.md)：旧阶段任务书、设计稿、交付报告和精简前完整台账。
+- [历史资料索引](archive/README.md)：已结束的默认创作路径、9 月维护、旧阶段任务书、设计稿和完整施工流水，沿固定 Git 版本查阅，不在本地重复堆积。
 
 ## 必须保留的技术资料
 
