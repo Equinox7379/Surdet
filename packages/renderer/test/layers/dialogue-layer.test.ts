@@ -109,7 +109,7 @@ function disposeRuntime(runtime: DialogueRuntime): void {
 function commandRailRoot(root: Container): Container {
   const dialogueRoot = root.children[0];
   expect(dialogueRoot).toBeInstanceOf(Container);
-  const rail = (dialogueRoot as Container).children[6];
+  const rail = (dialogueRoot as Container).children[7];
   expect(rail).toBeInstanceOf(Container);
   return rail as Container;
 }
@@ -196,7 +196,7 @@ describe('DialogueLayer visual layout contracts', () => {
       expect(speaker.getBounds().minX).toBeGreaterThanOrEqual(0);
       expect(speaker.getBounds().maxX).toBeLessThanOrEqual(1280);
       runtime.layer.showChoices([{ index: 2, label: '第一项'.repeat(50) }, { index: 4, label: '第二项' }]);
-      const choices = dialogueRoot(runtime.root).children[5] as Container;
+      const choices = dialogueRoot(runtime.root).children[6] as Container;
       expect((choices.mask as Graphics).context.bounds.maxY).toBeLessThan(speaker.getBounds().minY);
     } finally { disposeRuntime(runtime); }
   });
@@ -262,7 +262,7 @@ describe('DialogueLayer visual layout contracts', () => {
           expect(current.y - (previous.y + previous.height)).toBeCloseTo(12, 5);
         }
 
-        const choiceLayer = dialogueRoot(runtime.root).children[5] as Container;
+        const choiceLayer = dialogueRoot(runtime.root).children[6] as Container;
         (choiceLayer.children[0] as Container).emit('pointerdown', {} as FederatedPointerEvent);
         expect(onSelect).toHaveBeenLastCalledWith(options[0]!.index);
         const lifecycle = runtime.lifecycle.snapshot();
@@ -307,7 +307,7 @@ describe('DialogueLayer visual layout contracts', () => {
 
       const root = dialogueRoot(runtime.root);
       const indicator = root.children[4];
-      const rail = root.children[6];
+      const rail = root.children[7];
       expect(indicator).toBeInstanceOf(Container);
       expect(rail).toBeInstanceOf(Container);
 

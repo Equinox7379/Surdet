@@ -1196,9 +1196,10 @@ export class DialogueLayer implements DialogueProjectionPort {
       ['speaker-plate', this.#speakerPlate],
       ['dialog-ruby', this.#dialogRubyLayer],
       ['continue-indicator', this.#continueIndicator],
+      // The full-screen reading surface receives scrolls, but must stay below interactive controls.
+      ['nvl-layer', this.#nvlLayer],
       ['choice-layer', this.#choiceLayer],
       ['command-rail', this.#commandRail],
-      ['nvl-layer', this.#nvlLayer],
       ['banner-layer', this.#bannerLayer],
       ['dialog-reading-mask', this.#dialogMask],
       ['choice-reading-mask', this.#choiceMask],

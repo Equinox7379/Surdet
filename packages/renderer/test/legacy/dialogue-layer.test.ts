@@ -353,7 +353,7 @@ describe('DialogueLayer v2 projection contract', () => {
     try {
       const dialogueRoot = root.children[0] as Container;
       layer.showCommandRail([{ id: 'auto', label: '自动' }], (id) => selected.push(id));
-      const commandRail = dialogueRoot.children[6] as Container;
+      const commandRail = dialogueRoot.children[7] as Container;
       commandRail.children[1]?.emit('pointerdown', {} as FederatedPointerEvent);
       expect(selected).toEqual(['auto']);
       expect(consumed).toBe(1);
