@@ -16,8 +16,7 @@ import {
   createRendererPlayerShellSlots,
 } from '@surdet/host';
 import { createRendererTheme } from '@surdet/renderer';
-import { createSystemAdapters as createSharedSystemAdapters } from '../../shared/player/system-adapters.js';
-import { createSystemAdapters as createZeroSystemAdapters } from '../src/system-adapters.js';
+import { createSystemAdapters } from '../../shared/player/system-adapters.js';
 
 const zeroMain = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
 const sharedPlayer = readFileSync(new URL('../../shared/player/player.ts', import.meta.url), 'utf8');
@@ -30,7 +29,7 @@ function sourceBlock(source: string, startMarker: string, endMarker: string): st
   return source.slice(start, end);
 }
 
-async function runCalendarHeadEvent(kind: 'shared' | 'zero'): Promise<{
+async function runCalendarHeadEvent(): Promise<{
   reward: unknown;
   fired: boolean;
   texts: string[];
@@ -75,9 +74,7 @@ async function runCalendarHeadEvent(kind: 'shared' | 'zero'): Promise<{
     scheduler,
     onTurnResumeSnapshot: (snapshot: unknown) => { resumeSnapshot = snapshot; },
   };
-  const adapters = kind === 'shared'
-    ? createSharedSystemAdapters(options)
-    : createZeroSystemAdapters(options);
+  const adapters = createSystemAdapters(options);
   const host = createDefaultHost({ interpreter, renderer, adapters, onError: (error) => { errors.push(error); } });
   let routed: Promise<boolean> | undefined;
   bus.on('text', ({ value }) => { texts.push(value); });
@@ -135,8 +132,8 @@ describe('Zero public player shell coordination', () => {
     expect(block).toMatch(/stateReset[\s\S]*releaseCtrlTempSkip/);
   });
 
-  it.each(['shared', 'zero'] as const)('routes a once calendar head event scene exactly once (%s)', async (kind) => {
-    const result = await runCalendarHeadEvent(kind);
+  it('routes a once calendar head event scene exactly once through the shared adapter', async () => {
+    const result = await runCalendarHeadEvent();
     expect(result.reward).toBe(1);
     expect(result.fired).toBe(true);
     expect(result.texts).toEqual(['必须显示的一次性演出。']);

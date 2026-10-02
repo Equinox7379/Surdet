@@ -75,7 +75,7 @@ import {
   enterPlayerTitleSession,
   shouldRestoreInterfaceOnPointer,
 } from '@surdet/host';
-import { createSystemAdapters } from './system-adapters.js';
+import { createSystemAdapters } from '../../shared/player/system-adapters.js';
 import { ResolvedAudio } from '../../shared/resolved-audio.js';
 import { createSettingsStorage } from '../../shared/settings-storage.js';
 import { createBrowserSaveStorage, gameStoragePrefix } from '../../shared/player/browser-save-storage.js';
