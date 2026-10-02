@@ -1683,111 +1683,84 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
   'review.inspect-approval': { title: 'Inspect review approval', purpose: 'Read and verify the owner approval or return receipt for an integration result review.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['resultReviewId identifies an integration-result workspace'], possibleErrors: ['REVIEW_NOT_FOUND', 'REVIEW_IDENTITY_MISMATCH', 'REVIEW_FORMAT_UNSUPPORTED', 'REVIEW_RESULT_NOT_READY', 'REVIEW_APPROVAL_REQUIRED', 'REVIEW_APPROVAL_STALE', 'REVIEW_RETURNED'], repairRecipes: ['wait for the owner approval or return decision in Editor; do not synthesize a receipt'] },
 };
 
+const schemaKeys = {
+  'project.ui': 'ui',
+  'project.ui.patch': 'uiPatch',
+  'project.stage-config.patch': 'stageConfigPatch',
+  'project.player-config.patch': 'playerConfigPatch',
+  'project.theme-config.patch': 'themeConfigPatch',
+  'asset.sources': 'assetSources',
+  'project.history': 'history',
+  'project.history.checkpoint': 'historyCheckpoint',
+  'project.history.compare': 'historyCompare',
+  'project.history.restore': 'historyRestore',
+  'project.gallery': 'gallery',
+  'script.import.preview': 'scriptImportPreview',
+  'project.texts': 'texts',
+  'project.texts.import.preview': 'textsImportPreview',
+  'project.texts.patch': 'textsPatch',
+  'gallery.cg.create': 'galleryCgCreate',
+  'gallery.cg.patch': 'galleryCgPatch',
+  'gallery.policy.patch': 'galleryPolicyPatch',
+  'gallery.text.create': 'galleryTextCreate',
+  'gallery.text.patch': 'galleryTextPatch',
+  'gallery.ending.create': 'galleryEndingCreate',
+  'gallery.ending.patch': 'galleryEndingPatch',
+  'gallery.profile.create': 'galleryProfileCreate',
+  'gallery.profile.patch': 'galleryProfilePatch',
+  'gallery.term.create': 'galleryTermCreate',
+  'gallery.term.patch': 'galleryTermPatch',
+  'asset.relocation.replace': 'assetRelocationReplace',
+  'asset.relocation.plan': 'assetRelocationPlan',
+  'asset.relocation.inspect': 'assetRelocationInspect',
+  'asset.relocation.commit': 'assetRelocationCommit',
+  'asset.relocation.cancel': 'assetRelocationCancel',
+  'asset.relocation.recover': 'assetRelocationRecover',
+  'asset.relocation.undo': 'assetRelocationUndo',
+  'asset.import.stage': 'assetImportStage',
+  'asset.import.inspect': 'assetImportInspect',
+  'asset.import.commit': 'assetImportCommit',
+  'asset.import.recover': 'assetImportRecover',
+  'capabilities.describe': 'describe',
+  'project.inspect': 'inspect',
+  'project.assets': 'assets',
+  'object.inspect': 'objectInspect',
+  'change.begin': 'begin',
+  'scene.create': 'sceneCreate',
+  'scene.remove': 'sceneRemove',
+  'scene.rename': 'sceneRename',
+  'scene.move': 'sceneMove',
+  'scene.patch': 'scenePatch',
+  'variable.ensure': 'variableEnsure',
+  'variable.patch-initial': 'variablePatchInitial',
+  'character.ensure': 'characterEnsure',
+  'character.remove': 'characterRemove',
+  'timeline.create': 'timelineCreate',
+  'timeline.patch': 'timelinePatch',
+  'project.entry-scene.set': 'entrySceneSet',
+  'project.validate': 'validate',
+  'project.simulate': 'simulate',
+  'runtime.run-from': 'runFrom',
+  'runtime.read-trace': 'readTrace',
+  'runtime.read-preview': 'readPreview',
+  'change.diff': 'diff',
+  'change.commit': 'commit',
+  'change.rollback': 'rollback',
+  'change.recovery.inspect': 'recoveryInspect',
+  'composition.compare': 'compositionCompare',
+  'composition.plan': 'compositionPlan',
+  'composition.inspect': 'compositionInspect',
+  'composition.execute': 'compositionExecute',
+  'review.prepare-comparison': 'reviewPrepareComparison',
+  'review.inspect-decision': 'reviewInspectDecision',
+  'review.prepare-result': 'reviewPrepareResult',
+  'review.inspect-approval': 'reviewInspectApproval',
+  'change.recovery.execute': 'recoveryExecute',
+} satisfies Record<AuthoringCapabilityId, keyof typeof definitions>;
+
 function definitionFor(id: AuthoringCapabilityId): AuthoringCapabilityDefinition {
   const item = metadata[id];
-  const schema = definitions[id === 'project.ui' ? 'ui' : id === 'project.ui.patch' ? 'uiPatch' : id === 'project.stage-config.patch' ? 'stageConfigPatch' : id === 'project.player-config.patch' ? 'playerConfigPatch' : id === 'project.theme-config.patch' ? 'themeConfigPatch' : id === 'asset.sources' ? 'assetSources'
-    : id === 'project.history' ? 'history'
-    : id === 'project.history.checkpoint' ? 'historyCheckpoint'
-    : id === 'project.history.compare' ? 'historyCompare'
-    : id === 'project.history.restore' ? 'historyRestore'
-    : id === 'project.gallery' ? 'gallery'
-    : id === 'script.import.preview' ? 'scriptImportPreview'
-    : id === 'project.texts' ? 'texts'
-    : id === 'project.texts.import.preview' ? 'textsImportPreview'
-    : id === 'project.texts.patch' ? 'textsPatch'
-    : id === 'gallery.cg.create' ? 'galleryCgCreate'
-    : id === 'gallery.cg.patch' ? 'galleryCgPatch'
-    : id === 'gallery.policy.patch' ? 'galleryPolicyPatch'
-    : id === 'gallery.text.create' ? 'galleryTextCreate'
-    : id === 'gallery.text.patch' ? 'galleryTextPatch'
-    : id === 'gallery.ending.create' ? 'galleryEndingCreate'
-    : id === 'gallery.ending.patch' ? 'galleryEndingPatch'
-    : id === 'gallery.profile.create' ? 'galleryProfileCreate'
-    : id === 'gallery.profile.patch' ? 'galleryProfilePatch'
-    : id === 'gallery.term.create' ? 'galleryTermCreate'
-    : id === 'gallery.term.patch' ? 'galleryTermPatch'
-    : id === 'asset.relocation.replace' ? 'assetRelocationReplace'
-    : id === 'asset.relocation.plan' ? 'assetRelocationPlan'
-    : id === 'asset.relocation.inspect' ? 'assetRelocationInspect'
-    : id === 'asset.relocation.commit' ? 'assetRelocationCommit'
-    : id === 'asset.relocation.cancel' ? 'assetRelocationCancel'
-    : id === 'asset.relocation.recover' ? 'assetRelocationRecover'
-    : id === 'asset.relocation.undo' ? 'assetRelocationUndo'
-    : id === 'asset.import.stage' ? 'assetImportStage'
-    : id === 'asset.import.inspect' ? 'assetImportInspect'
-    : id === 'asset.import.commit' ? 'assetImportCommit'
-    : id === 'asset.import.recover' ? 'assetImportRecover'
-    : id === 'capabilities.describe'
-    ? 'describe'
-    : id === 'project.inspect'
-      ? 'inspect'
-      : id === 'project.assets'
-        ? 'assets'
-        : id === 'object.inspect'
-          ? 'objectInspect'
-          : id === 'change.begin'
-            ? 'begin'
-            : id === 'scene.create'
-              ? 'sceneCreate'
-              : id === 'scene.remove'
-                ? 'sceneRemove'
-              : id === 'scene.rename'
-                ? 'sceneRename'
-              : id === 'scene.move'
-                ? 'sceneMove'
-              : id === 'scene.patch'
-                ? 'scenePatch'
-                : id === 'variable.ensure'
-                  ? 'variableEnsure'
-                  : id === 'variable.patch-initial'
-                    ? 'variablePatchInitial'
-                  : id === 'character.ensure'
-                    ? 'characterEnsure'
-                    : id === 'character.remove'
-                      ? 'characterRemove'
-                      : id === 'timeline.create'
-                        ? 'timelineCreate'
-                        : id === 'timeline.patch'
-                          ? 'timelinePatch'
-                          : id === 'project.entry-scene.set'
-                            ? 'entrySceneSet'
-                            : id === 'project.validate'
-                              ? 'validate'
-                              : id === 'project.simulate'
-                                ? 'simulate'
-                                : id === 'runtime.run-from'
-                                  ? 'runFrom'
-                                  : id === 'runtime.read-trace'
-                                    ? 'readTrace'
-                                    : id === 'runtime.read-preview'
-                                      ? 'readPreview'
-                                    : id === 'change.diff'
-                                      ? 'diff'
-                                      : id === 'change.commit'
-                                        ? 'commit'
-                                        : id === 'change.rollback'
-                                          ? 'rollback'
-                                          : id === 'change.recovery.inspect'
-                                            ? 'recoveryInspect'
-                                            : id === 'composition.compare'
-                                              ? 'compositionCompare'
-                                              : id === 'composition.plan'
-                                                ? 'compositionPlan'
-                                                : id === 'composition.inspect'
-                                                  ? 'compositionInspect'
-                                                  : id === 'composition.execute'
-                                                    ? 'compositionExecute'
-                                                    : id === 'review.prepare-comparison'
-                                                      ? 'reviewPrepareComparison'
-                                                      : id === 'review.inspect-decision'
-                                                        ? 'reviewInspectDecision'
-                                                        : id === 'review.prepare-result'
-                                                          ? 'reviewPrepareResult'
-                                                          : id === 'review.inspect-approval'
-                                                            ? 'reviewInspectApproval'
-                                                            : id === 'change.recovery.execute'
-                                                              ? 'recoveryExecute'
-                                                              : 'compositionExecute'];
+  const schema = definitions[schemaKeys[id]];
   return {
     id,
     title: item.title,
