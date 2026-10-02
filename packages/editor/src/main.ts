@@ -1,3 +1,4 @@
+import { desktopDirectory } from './desktop.js';
 import { bindStageEditingHooks } from './stage-editing.js';
 import { PROJECT_ASSET_RELOCATION_KINDS, AGENT_IMAGE_MAX_BYTES, parseProjectConfigDocument } from '@surdet/authoring';
 /**
@@ -1418,6 +1419,11 @@ function confirmProjectSwitch(): boolean {
 }
 
 async function openProjectSafely(): Promise<void> {
+  if (window.surdetDesktop) {
+    try { await window.surdetDesktop.openProject(); }
+    catch (error) { setStatus(error instanceof Error ? error.message : '无法打开项目', false, 5000); }
+    return;
+  }
   if (!confirmProjectSwitch()) return;
   try {
     await openProject();
@@ -2285,6 +2291,12 @@ window.addEventListener('keydown', (e) => {
 
 // 关页保护：存在未保存改动时提示（防误关丢失编辑）
 window.addEventListener('beforeunload', (e) => {
+  if (window.surdetDesktop) {
+    const busy = state.projectLoading || assetImportActionRunning || sceneLifecycleActionRunning
+      || state.projectWriteLock !== null || sceneAutosaveRecoveryPhase !== 'idle' || editorWorkspaceStatus().saving;
+    window.surdetDesktop.reportUnloadState(busy);
+    if (busy) { e.preventDefault(); e.returnValue = ''; return; }
+  }
   if (inspectConfigDraftState().dirty || hasReviewDraft(state.reviewWorkspace)) {
     e.preventDefault();
     e.returnValue = '';
@@ -2611,4 +2623,9 @@ setInterval(() => {
 renderAll();
 runValidate();
 scheduleAuthoringIndexRebuild();
-void restoreReviewPreparation();
+if (window.surdetDesktop) {
+  void window.surdetDesktop.context().then(async grant => {
+    if (grant) await openProjectFromHandle(desktopDirectory(grant));
+    else await restoreReviewPreparation();
+  }).catch(error => setStatus(error instanceof Error ? error.message : '无法读取项目', false, 8000));
+} else void restoreReviewPreparation();
