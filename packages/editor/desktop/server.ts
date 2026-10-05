@@ -50,7 +50,7 @@ export async function startEditorServer(uiRoot: string, dataRoot: string, projec
   try {
     await asset.api.ready();
     await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
-  } catch (error) { await asset.closeBundle(); server.close(); throw error; }
+  } catch (error) { await review.closeBundle(); await asset.closeBundle(); server.close(); throw error; }
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('无法启动编辑器本地服务。');
   const origin = `http://127.0.0.1:${address.port}`;
@@ -73,8 +73,13 @@ export async function startEditorServer(uiRoot: string, dataRoot: string, projec
     },
     async close() {
       closed = true;
-      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-      await asset.closeBundle();
+      const reviewClosed = review.closeBundle();
+      try {
+        await Promise.all([
+          new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())),
+          reviewClosed,
+        ]);
+      } finally { await asset.closeBundle(); }
     },
   };
 }

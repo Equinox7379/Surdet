@@ -95,6 +95,22 @@ afterEach(async () => {
 });
 
 describe('review authority HTTP boundary', () => {
+  it('refuses new operations after the handler begins closing', async () => {
+    let calls = 0;
+    const handler = createReviewAuthorityHttpHandler({ token, expectedOrigin: () => '', authority: {
+      describe: async () => { calls++; return openSnapshot; }, write: async () => { calls++; return openSnapshot; },
+    } });
+    const server = http.createServer(handler); servers.push(server);
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address() as import('node:net').AddressInfo;
+    await handler.close();
+    const result = await request(`http://127.0.0.1:${address.port}`, '/__surdet/review-authority/v1/status', {
+      headers: { 'X-Surdet-Review-Authority': token },
+    });
+    expect(result.response.status).toBe(503);
+    expect(calls).toBe(0);
+  });
+
   it('validates preview origin, token and exact input before readonly dispatch', async () => {
     const fixture = await harness();
     const previews: ReviewDecisionPreviewCommand[] = [];

@@ -216,7 +216,7 @@ function parseJson(text: string): unknown {
 
 export function createReviewAuthorityHttpHandler(
   options: ReviewAuthorityHttpHandlerOptions,
-): (request: IncomingMessage, response: ServerResponse) => void {
+): ((request: IncomingMessage, response: ServerResponse) => void) & { close(): Promise<void> } {
   const maxBodyBytes = options.maxBodyBytes ?? REVIEW_AUTHORITY_MAX_BODY_BYTES;
   const bodyTimeoutMs = options.bodyTimeoutMs ?? 5_000;
   if (!Number.isSafeInteger(maxBodyBytes)
@@ -229,8 +229,14 @@ export function createReviewAuthorityHttpHandler(
   }
   if (options.token.length < 16) throw new Error('review authority token is too short');
 
-  return (request, response) => {
-    void (async () => {
+  const pending = new Set<Promise<void>>();
+  let closing: Promise<void> | undefined;
+  const handler = (request: IncomingMessage, response: ServerResponse): void => {
+    if (closing !== undefined) {
+      sendBoundaryError(request, response, 503, 'REVIEW_AUTHORITY_UNAVAILABLE', '本机审阅服务正在关闭，未接受新的操作。');
+      return;
+    }
+    const operation = (async () => {
       const route = request.url ?? '';
       const statusRoute = `${REVIEW_AUTHORITY_BASE_PATH}/status`;
       const describeRoute = `${REVIEW_AUTHORITY_BASE_PATH}/describe`;
@@ -321,5 +327,14 @@ export function createReviewAuthorityHttpHandler(
         '本机审阅服务暂时无法完成这项请求。',
       );
     });
+    // Socket closure is not business completion: accepted writes retain ownership until settled.
+    pending.add(operation);
+    void operation.then(() => pending.delete(operation), () => pending.delete(operation));
   };
+  return Object.assign(handler, {
+    close(): Promise<void> {
+      closing ??= Promise.all([...pending]).then(() => undefined);
+      return closing;
+    },
+  });
 }

@@ -519,16 +519,20 @@ export function pendingTerminalActionOf(workspace: ReviewWorkspaceState): Review
   return pendingTerminalCommands.get(workspace)?.action ?? null;
 }
 
+export function hasPendingReviewReceipt(workspace: ReviewWorkspaceState | null): boolean {
+  return workspace !== null && (pendingTerminalCommands.has(workspace) || terminalWrites.has(workspace));
+}
+
 export function hasReviewDraft(workspace: ReviewWorkspaceState | null): boolean {
   if (workspace === null) return false;
   const baseline = workspace.decisionReceipt === null ? reviewDirectoryState(workspace.projection)
     : decisionDraftFromReceipt(workspace.decisionReceipt);
   return JSON.stringify(workspace.decisionDraft) !== JSON.stringify(baseline)
-    || pendingTerminalCommands.has(workspace) || terminalWrites.has(workspace);
+    || hasPendingReviewReceipt(workspace);
 }
 
 export function discardReviewDraft(workspace: ReviewWorkspaceState): void {
-  if (pendingTerminalCommands.has(workspace) || terminalWrites.has(workspace)) {
+  if (hasPendingReviewReceipt(workspace)) {
     throw new Error('审阅回执尚未收束，请先完成或恢复这次审阅操作。');
   }
   workspace.decisionDraft = workspace.decisionReceipt === null ? reviewDirectoryState(workspace.projection)
