@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { stripTypeScriptTypes } from 'node:module';
 import { ReviewApplyController, isReviewApplyRunning } from '../src/review-apply-controller.js';
-import { hasPendingReviewReceipt, hasReviewDraft } from '../src/review-workspace.js';
+import { hasPendingReviewReceipt, hasReviewDraft, isReviewReceiptWriting } from '../src/review-workspace.js';
 
 const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
 function between(source, begin, end) {
@@ -12,7 +12,7 @@ function between(source, begin, end) {
   return source.slice(start, finish);
 }
 const registration = between(main, "window.addEventListener('beforeunload', (e) => {", '\nlet suspendedWorkspaceBaseline:');
-function unload(workspace = null, receiptPending = hasPendingReviewReceipt) {
+function unload(workspace = null, receiptPending = hasPendingReviewReceipt, receiptWriting = isReviewReceiptWriting) {
   let handler, busy;
   vm.runInNewContext(registration, {
     window: { surdetDesktop: { reportUnloadState(value) { busy = value; } }, addEventListener(_type, fn) { handler = fn; } },
@@ -20,7 +20,7 @@ function unload(workspace = null, receiptPending = hasPendingReviewReceipt) {
       pendingSceneDeletes: [], pendingSceneCommit: null, pendingTimelineDeletes: [], pendingTimelineRestores: new Set() },
     assetImportActionRunning: false, sceneLifecycleActionRunning: false, sceneAutosaveRecoveryPhase: 'idle',
     editorWorkspaceStatus: () => ({ saving: false }), inspectConfigDraftState: () => ({ dirty: false }),
-    hasReviewDraft, hasPendingReviewReceipt: receiptPending, isReviewApplyRunning,
+    hasReviewDraft, hasPendingReviewReceipt: receiptPending, isReviewApplyRunning, isReviewReceiptWriting: receiptWriting,
   });
   const event = { prevented: false, preventDefault() { this.prevented = true; } };
   handler(event);
@@ -76,7 +76,7 @@ test('a terminal receipt remains non-discardable after an uncertain response and
   const code = between(source, 'export function hasPendingReviewReceipt(', 'export function hasReviewDraft(')
     + between(source, 'function classifyAuthorityFailure(', 'async function snapshotMatchesCommand(');
   const context = vm.createContext({
-    terminalWrites: new WeakSet(), pendingTerminalCommands: new WeakMap(), crypto: globalThis.crypto,
+    terminalWrites: new Set(), pendingTerminalCommands: new WeakMap(), crypto: globalThis.crypto,
     record: value => value !== null && typeof value === 'object',
     authorityError: (code, message) => Object.assign(new Error(message), { code }),
     terminalClientFor: (_workspace, client) => client,
@@ -90,8 +90,10 @@ test('a terminal receipt remains non-discardable after an uncertain response and
   const outcome = pending.catch(error => error);
   try {
     expect(unload(workspace, context.hasPendingReviewReceipt)).toEqual({ busy: true, prevented: true });
+    expect(unload(null, context.hasPendingReviewReceipt, context.isReviewReceiptWriting)).toEqual({ busy: true, prevented: true });
     gate.reject(Object.assign(new Error('response lost'), { code: 'REQUEST_TIMEOUT' }));
     await outcome;
+    expect(context.isReviewReceiptWriting()).toBe(false);
     expect(unload(workspace, context.hasPendingReviewReceipt)).toEqual({ busy: true, prevented: true });
     workspace.authority.state = 'available'; // Existing explicit refresh/retry is a separate contract.
     await expect(context.submitTerminalCommand(workspace, 'result-approval', {}, {

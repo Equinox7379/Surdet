@@ -319,6 +319,84 @@ afterEach(() => {
 });
 
 describe('Editor review panel', () => {
+  it('keeps the active review when its approval starts during another review read', async () => {
+    vi.stubGlobal('document', documentStub);
+    const original = { reviewWorkspace: state.reviewWorkspace, mainTab: state.mainTab,
+      selectedObjectRef: state.selectedObjectRef, previewChoices: state.previewChoices, dirName: state.dirName };
+    const workspace = resultWorkspace(), replacement = resultWorkspace();
+    let readStarted!: () => void, finishRead!: (value: ReviewWorkspaceState) => void;
+    const reading = new Promise<void>(resolve => { readStarted = resolve; });
+    const loaded = new Promise<ReviewWorkspaceState>(resolve => { finishRead = resolve; });
+    let entered!: () => void, rejectReceipt!: (error: Error) => void;
+    const submitting = new Promise<void>(resolve => { entered = resolve; });
+    const receipt = new Promise<never>((_, reject) => { rejectReceipt = reject; });
+    const client = { status: async () => 'available' as const, describe: async () => { throw new Error('unused'); },
+      write: async () => { entered(); return receipt; } };
+    const open = vi.spyOn(reviewWorkspaceModule, 'openReviewWorkspace').mockImplementation(async () => { readStarted(); return loaded; });
+    vi.stubGlobal('window', { showDirectoryPicker: async () => ({}) });
+    state.reviewWorkspace = workspace;
+    const container = new FakeElement('div');
+    renderReviewPanel(container as unknown as HTMLElement, workspace, { reviewTerminalClient: client });
+    const opening = openReviewPanelWorkspace();
+    try {
+      await reading;
+      container.querySelector('[data-action="approve-result"]')!.click();
+      await submitting;
+      expect(workspace.authority.state).toBe('submitting');
+      expect(reviewWorkspaceModule.isReviewReceiptWriting()).toBe(true);
+      finishRead(replacement);
+      await expect(opening).rejects.toThrow('审阅操作');
+      expect(state.reviewWorkspace).toBe(workspace);
+      expect(reviewWorkspaceModule.hasPendingReviewReceipt(workspace)).toBe(true);
+    } finally {
+      finishRead(replacement); await opening.catch(() => {});
+      rejectReceipt(Object.assign(new Error('controlled rejection'), { code: 'INVALID_REQUEST' }));
+      await vi.waitFor(() => expect(workspace.authority.state).not.toBe('submitting'));
+      expect(reviewWorkspaceModule.isReviewReceiptWriting()).toBe(false);
+      open.mockRestore(); Object.assign(state, original);
+    }
+  });
+
+  it.each(['REQUEST_TIMEOUT', 'INVALID_REQUEST'])('permits explicit review rereading after settled transport: %s', async code => {
+    const original = { reviewWorkspace: state.reviewWorkspace, mainTab: state.mainTab,
+      selectedObjectRef: state.selectedObjectRef, previewChoices: state.previewChoices, dirName: state.dirName };
+    const workspace = resultWorkspace(), reread = resultWorkspace();
+    const open = vi.spyOn(reviewWorkspaceModule, 'openReviewWorkspace').mockResolvedValue(reread);
+    vi.stubGlobal('window', { showDirectoryPicker: async () => ({}) });
+    try {
+      state.reviewWorkspace = workspace;
+      await expect(reviewWorkspaceModule.writeApprovalReceipt(workspace, { approvalId: 'retry-read' }, '2026-10-05T00:00:00.000Z', {
+        status: async () => 'available', describe: async () => { throw new Error('unused'); },
+        write: async () => { throw Object.assign(new Error('controlled transport result'), { code }); },
+      })).rejects.toMatchObject({ code });
+      expect(reviewWorkspaceModule.hasPendingReviewReceipt(workspace)).toBe(code === 'REQUEST_TIMEOUT');
+      await openReviewPanelWorkspace();
+      expect(open).toHaveBeenCalledOnce();
+      expect(state.reviewWorkspace).toBe(reread);
+    } finally { open.mockRestore(); Object.assign(state, original); }
+  });
+
+  it('preserves an uncertain receipt when a different review or an unavailable reread would replace it', async () => {
+    const original = state.reviewWorkspace;
+    const workspace = resultWorkspace(), replacement = resultWorkspace();
+    replacement.identity.reviewId = 'other-review';
+    const open = vi.spyOn(reviewWorkspaceModule, 'openReviewWorkspace').mockResolvedValue(replacement);
+    vi.stubGlobal('window', { showDirectoryPicker: async () => ({}) });
+    try {
+      state.reviewWorkspace = workspace;
+      await expect(reviewWorkspaceModule.writeApprovalReceipt(workspace, { approvalId: 'uncertain' }, '2026-10-05T00:00:00.000Z', {
+        status: async () => 'available', describe: async () => { throw new Error('unused'); },
+        write: async () => { throw Object.assign(new Error('response lost'), { code: 'REQUEST_TIMEOUT' }); },
+      })).rejects.toMatchObject({ code: 'REQUEST_TIMEOUT' });
+      await expect(openReviewPanelWorkspace()).rejects.toThrow('同一审阅');
+      expect(state.reviewWorkspace).toBe(workspace);
+      replacement.identity.reviewId = workspace.identity.reviewId;
+      replacement.authority.state = 'unavailable';
+      await expect(openReviewPanelWorkspace()).rejects.toThrow('核对状态');
+      expect(state.reviewWorkspace).toBe(workspace);
+    } finally { open.mockRestore(); state.reviewWorkspace = original; }
+  });
+
   it('keeps the bound project name while opening review and labels unbound review sessions', async () => {
     const original = {
       dirName: state.dirName,
