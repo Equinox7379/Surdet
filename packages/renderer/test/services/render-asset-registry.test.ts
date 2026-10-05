@@ -37,6 +37,48 @@ afterEach(() => {
 });
 
 describe('RenderAssetRegistry', () => {
+  it('allows a valid large font to finish beyond the old three-second total budget', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(coverageReader, 'readFontCoverage').mockResolvedValue({ characters: new Set([0x6d77]) });
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      await new Promise(resolve => setTimeout(resolve, 4000));
+      return new Response(new Uint8Array([1, 2, 3]));
+    }));
+    class FakeFontFace { async load(): Promise<this> { return this; } }
+    vi.stubGlobal('FontFace', FakeFontFace);
+    vi.stubGlobal('document', { fonts: { add: vi.fn(), delete: vi.fn() } });
+    const registry = new RenderAssetRegistry();
+    try {
+      const loading = registry.registerFontRole('ui', 'large-font', 'LargeCjk');
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(await loading).toBe(true);
+      expect(registry.fontFamily('ui')).toBe('LargeCjk');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { registry.dispose(); vi.useRealTimers(); }
+  });
+
+  it.each([undefined, 40])('aborts an unfinished font at its finite loading deadline: %s', async override => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn((_url, options: RequestInit) => {
+      signal = options.signal!;
+      return new Promise<Response>((_resolve, reject) => signal!.addEventListener('abort', () => reject(new Error('aborted')), { once: true }));
+    }));
+    vi.stubGlobal('FontFace', class {});
+    vi.stubGlobal('document', { fonts: { add: vi.fn(), delete: vi.fn() } });
+    const registry = new RenderAssetRegistry();
+    try {
+      let settled = false;
+      const loading = registry.registerFontRole('ui', 'stalled', 'Stalled', override).then(result => { settled = true; return result; });
+      await vi.advanceTimersByTimeAsync((override ?? 15000) - 1);
+      expect(settled).toBe(false); expect(signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await loading).toBe(false); expect(signal?.aborted).toBe(true);
+      expect(registry.fontFamily('ui')).not.toBe('Stalled');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { registry.dispose(); vi.useRealTimers(); }
+  });
+
   it('does not fail a usable font when the coverage decoder times out', async () => {
     vi.useFakeTimers();
     const coverage = vi.spyOn(coverageReader, 'readFontCoverage').mockImplementationOnce(() => new Promise(() => {}));

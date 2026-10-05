@@ -219,7 +219,8 @@ export class RenderAssetRegistry {
     role: RendererFontRole,
     url: string,
     family = `SurdetGame${role[0]!.toUpperCase()}${role.slice(1)}Font`,
-    timeoutMs = 3000,
+    // This covers transfer and browser decoding, including large bundled CJK fonts.
+    timeoutMs = 15000,
   ): Promise<boolean> {
     if (typeof FontFace === 'undefined' || typeof document === 'undefined') return false;
     this.#ensureActive('registerFontRole');
@@ -247,7 +248,7 @@ export class RenderAssetRegistry {
       // Failure/timeout of the diagnostic decoder must not turn a usable font into a load failure.
       const coverage = await Promise.race([
         readFontCoverage(new Uint8Array(bytes)),
-        new Promise<FontCoverage>(resolve => { timeout = setTimeout(() => resolve({ characters: null, error: '字形覆盖检查超时' }), timeoutMs); }),
+        new Promise<FontCoverage>(resolve => { timeout = setTimeout(() => resolve({ characters: null, error: '字形覆盖检查超时' }), Math.min(timeoutMs, 3000)); }),
       ]);
       if (!token.current || this.#fontRequests.get(role) !== request) return false;
 
