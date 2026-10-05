@@ -357,7 +357,7 @@ export class RendererStageHost {
    * 按角色加载项目内嵌字体。失败仅保留该角色的回退栈，其他角色继续工作。
    * 变量字体以常规字重注册；舞台不通过浏览器伪粗体制造标题重量。
    */
-  async registerFontRole(role: FontRole, url: string, family = `SurdetGame${role[0]!.toUpperCase()}${role.slice(1)}Font`, timeoutMs = 3000): Promise<boolean> {
+  async registerFontRole(role: FontRole, url: string, family = `SurdetGame${role[0]!.toUpperCase()}${role.slice(1)}Font`, timeoutMs?: number): Promise<boolean> {
     const ok = await this.#assetRegistry.registerFontRole(role, url, family, timeoutMs);
     if (!ok) return false;
     this.#fontFamilies[role] = this.#assetRegistry.fontFamily(role);
@@ -370,7 +370,7 @@ export class RendererStageHost {
    * 兼容旧版单字体接口：一个字体同时覆盖标题、正文和 UI。
    * 新项目应改用 registerFontRole，以避免展示字体误用于长文本。
    */
-  async registerFont(url: string, family = 'SurdetGameFont', timeoutMs = 3000): Promise<boolean> {
+  async registerFont(url: string, family = 'SurdetGameFont', timeoutMs?: number): Promise<boolean> {
     const ok = await this.registerFontRole('body', url, family, timeoutMs);
     if (!ok) return false;
     this.#fontFamilies.title = family;
