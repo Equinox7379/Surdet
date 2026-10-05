@@ -98,7 +98,7 @@ export interface ReturnDraft {
 
 const workspaceHashers = new WeakMap<ReviewWorkspaceState, TextHasher>();
 const workspaceTerminalClients = new WeakMap<ReviewWorkspaceState, ReviewTerminalClient>();
-const terminalWrites = new WeakSet<ReviewWorkspaceState>();
+const terminalWrites = new Set<ReviewWorkspaceState>();
 const pendingTerminalCommands = new WeakMap<ReviewWorkspaceState, ReviewTerminalCommand>();
 
 const AUTHORITY_AVAILABLE = '本机审阅服务已连接。';
@@ -522,6 +522,9 @@ export function pendingTerminalActionOf(workspace: ReviewWorkspaceState): Review
 export function hasPendingReviewReceipt(workspace: ReviewWorkspaceState | null): boolean {
   return workspace !== null && (pendingTerminalCommands.has(workspace) || terminalWrites.has(workspace));
 }
+
+/** In-flight transport belongs to the window, even when its review is no longer mounted. */
+export function isReviewReceiptWriting(): boolean { return terminalWrites.size > 0; }
 
 export function hasReviewDraft(workspace: ReviewWorkspaceState | null): boolean {
   if (workspace === null) return false;

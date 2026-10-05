@@ -18,7 +18,7 @@ import { bindEditorWorkspaceHooks, connectEditorWorkspace, disconnectEditorWorks
   publishEditorWorkspaceState, pollEditorWorkspace, readEditorWorkspaceBaseline, currentEditorWorkspaceWrite,
   editorWorkspaceTextChanges, enqueueEditorAssetRequest, recordEditorSceneCommit } from './editor-workspace.js';
 import type { ProjectDiskBaseline } from './project-disk-baseline.js';
-import { hasReviewDraft, hasPendingReviewReceipt, discardReviewDraft, openReviewWorkspace, type ReviewWorkspaceState } from './review-workspace.js';
+import { hasReviewDraft, hasPendingReviewReceipt, isReviewReceiptWriting, discardReviewDraft, openReviewWorkspace, type ReviewWorkspaceState } from './review-workspace.js';
 import { isReviewApplyRunning } from './review-apply-controller.js';
 import { createReviewPreparationClient, preparationErrorMessage } from './review-preparation-client.js';
 import { disposeReviewPreparation } from './review-preparation-section.js';
@@ -2292,7 +2292,7 @@ window.addEventListener('keydown', (e) => {
 
 // 关页保护：存在未保存改动时提示（防误关丢失编辑）
 window.addEventListener('beforeunload', (e) => {
-  const reviewBusy = isReviewApplyRunning() || hasPendingReviewReceipt(state.reviewWorkspace);
+  const reviewBusy = isReviewApplyRunning() || isReviewReceiptWriting() || hasPendingReviewReceipt(state.reviewWorkspace);
   if (window.surdetDesktop) {
     const busy = state.projectLoading || assetImportActionRunning || sceneLifecycleActionRunning
       || state.projectWriteLock !== null || sceneAutosaveRecoveryPhase !== 'idle' || editorWorkspaceStatus().saving || reviewBusy;

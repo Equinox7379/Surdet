@@ -6,7 +6,7 @@ import type {
 } from '@surdet/authoring';
 import { state, h, setStatus } from '../state.js';
 import { publishEditorWorkspaceState, flushEditorWorkspaceState } from '../editor-workspace.js';
-import { ReviewApplyController, type ExistingEditorSyncPort } from '../review-apply-controller.js';
+import { ReviewApplyController, isReviewApplyRunning, type ExistingEditorSyncPort } from '../review-apply-controller.js';
 import { createReviewApplyClient } from '../review-apply-client.js';
 import { renderReviewApplySection } from '../review-apply-section.js';
 import { renderReviewPreparation, type ReviewPreparationOptions } from '../review-preparation-section.js';
@@ -32,6 +32,8 @@ import {
 } from '../review-preview.js';
 import {
   openReviewWorkspace,
+  isReviewReceiptWriting,
+  hasPendingReviewReceipt,
   pendingTerminalActionOf,
   writeApprovalReceipt,
   writeDecisionReceipt,
@@ -1567,9 +1569,23 @@ export function renderReviewPanel(
 
 /** 顶层“打开审阅任务”入口；创建 review workspace 后只切换到审阅页，不自动写回任何回执。 */
 export async function openReviewPanelWorkspace(): Promise<void> {
+  if (isReviewReceiptWriting() || isReviewApplyRunning()) throw new Error('审阅操作仍在进行，请完成后再打开其他任务。');
+  const previous = state.reviewWorkspace;
+  const recovering = hasPendingReviewReceipt(previous);
   const picker = (window as unknown as { showDirectoryPicker: (opts?: unknown) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker;
   const root = await picker({ mode: 'readwrite' });
-  state.reviewWorkspace = await openReviewWorkspace(root);
+  const workspace = await openReviewWorkspace(root);
+  // The old approval button can be used while directory reading awaits I/O.
+  // An unknown but settled receipt may still reopen here to reconcile its actual outcome.
+  if (isReviewReceiptWriting() || isReviewApplyRunning()) throw new Error('审阅操作仍在进行，已保留原任务，请完成后再打开。');
+  const current = state.reviewWorkspace;
+  if (current !== null && hasPendingReviewReceipt(current) && (!recovering || current !== previous
+    || workspace.identity.reviewId !== current.identity.reviewId
+    || workspace.identity.projectIdentity !== current.identity.projectIdentity
+    || (workspace.authority.state !== 'available' && workspace.authority.state !== 'terminal'))) {
+    throw new Error('原审阅操作的结果尚未确认，请重新打开同一审阅核对状态；已保留原任务。');
+  }
+  state.reviewWorkspace = workspace;
   state.mainTab = 'review';
   state.selectedObjectRef = null;
   state.previewChoices = null;
