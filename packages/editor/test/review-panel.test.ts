@@ -319,6 +319,108 @@ afterEach(() => {
 });
 
 describe('Editor review panel', () => {
+  it.each(['decision', 'approval', 'return'] as const)('owns the complete receipt operation and rejects overlapping calls: %s', async kind => {
+    const workspace = kind === 'decision' ? comparisonWorkspace() : resultWorkspace();
+    let reject!: (error: Error) => void;
+    const gate = new Promise<never>((_, no) => { reject = no; });
+    const write = vi.fn(async () => gate);
+    const client = { status: async () => 'available' as const, describe: async () => { throw new Error('unused'); }, write };
+    const now = '2026-10-05T00:00:00.000Z';
+    const start = () => kind === 'decision'
+      ? reviewWorkspaceModule.writeDecisionReceipt(workspace, { decisionId: 'operation-decision', selectedUnitIds: ['unit-a'],
+        conflictResolutions: [{ conflictId: 'conflict-1', resolution: 'choose-unit', chosenUnitId: 'unit-a' }] }, now, client)
+      : kind === 'approval' ? reviewWorkspaceModule.writeApprovalReceipt(workspace, { approvalId: 'operation-approval' }, now, client)
+        : reviewWorkspaceModule.writeReturnReceipt(workspace, { returnId: 'operation-return', reasonCategory: 'content' }, now, client);
+    const pending = start();
+    const result = pending.catch(error => error);
+    try {
+      expect(reviewWorkspaceModule.isReviewReceiptWriting()).toBe(true);
+      expect(write).not.toHaveBeenCalled();
+      await expect(start()).rejects.toMatchObject({ code: 'REVIEW_BUSY' });
+      expect(reviewWorkspaceModule.isReviewReceiptWriting()).toBe(true);
+      await vi.waitFor(() => expect(write).toHaveBeenCalledOnce());
+      reject(Object.assign(new Error('controlled rejection'), { code: 'INVALID_REQUEST' }));
+      expect(await result).toMatchObject({ code: 'INVALID_REQUEST' });
+      expect(reviewWorkspaceModule.isReviewReceiptWriting()).toBe(false);
+      expect(reviewWorkspaceModule.hasPendingReviewReceipt(workspace)).toBe(false);
+    } finally { reject(Object.assign(new Error('cleanup'), { code: 'INVALID_REQUEST' })); await result; }
+  });
+
+  it('releases approval preparation ownership when the actual result directory cannot be read', async () => {
+    const workspace = resultWorkspace();
+    workspace.projectHandle = { kind: 'directory', name: 'unreadable', async *values() {
+      yield { kind: 'file', name: 'scene.gal', getFile: async () => { throw new Error('read failed'); } };
+    } } as unknown as FileSystemDirectoryHandle;
+    const write = vi.fn(async () => { throw Object.assign(new Error('controlled rejection'), { code: 'INVALID_REQUEST' }); });
+    const client = { status: async () => 'available' as const, describe: async () => { throw new Error('unused'); }, write };
+    const start = () => reviewWorkspaceModule.writeApprovalReceipt(workspace, { approvalId: 'preparation-failure' }, '2026-10-05T00:00:00.000Z', client);
+    const pending = start();
+    expect(reviewWorkspaceModule.isReviewReceiptWriting()).toBe(true);
+    await expect(pending).rejects.toMatchObject({ code: 'REVIEW_APPROVAL_STALE' });
+    expect(write).not.toHaveBeenCalled();
+    expect(reviewWorkspaceModule.isReviewReceiptWriting()).toBe(false);
+    expect(reviewWorkspaceModule.hasPendingReviewReceipt(workspace)).toBe(false);
+    workspace.projectHandle = null;
+    await expect(start()).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    expect(write).toHaveBeenCalledOnce();
+  });
+
+  it('keeps approval preparation protected while the actual result file is still being read', async () => {
+    vi.stubGlobal('document', documentStub);
+    const original = { reviewWorkspace: state.reviewWorkspace, mainTab: state.mainTab,
+      selectedObjectRef: state.selectedObjectRef, previewChoices: state.previewChoices, dirName: state.dirName };
+    const workspace = resultWorkspace(), replacement = resultWorkspace();
+    // Fixed fixture facts from the independent reproduction; no separate digest computation.
+    const identity = 'd9c320f4061eff0a7cb9244ac7bba1fcb12dbb30bc3eebfd6967368ae48c0b11';
+    const bytes = new TextEncoder().encode('review result fixture: unchanged source contents\n');
+    let releaseFile!: () => void, finishRead!: (value: ReviewWorkspaceState) => void;
+    const fileReady = new Promise<void>(resolve => { releaseFile = resolve; });
+    const loaded = new Promise<ReviewWorkspaceState>(resolve => { finishRead = resolve; });
+    const getFile = vi.fn(async () => { await fileReady; return { arrayBuffer: async () => bytes.slice().buffer }; });
+    workspace.projectHandle = { kind: 'directory', name: 'project', async *values() {
+      yield { kind: 'file', name: 'scene.gal', getFile };
+    } } as unknown as FileSystemDirectoryHandle;
+    workspace.officialResultTreeSha256 = workspace.currentResultTreeSha256 = identity;
+    workspace.projection.finalResult!.resultTreeSha256 = identity;
+    let rejectReceipt!: (error: Error) => void;
+    const receipt = new Promise<never>((_, reject) => { rejectReceipt = reject; });
+    void receipt.catch(() => {});
+    const write = vi.fn(async () => receipt);
+    const client = { status: async () => 'available' as const, describe: async () => { throw new Error('unused'); }, write };
+    const open = vi.spyOn(reviewWorkspaceModule, 'openReviewWorkspace').mockReturnValue(loaded);
+    vi.stubGlobal('window', { showDirectoryPicker: async () => ({}) });
+    state.reviewWorkspace = workspace;
+    const container = new FakeElement('div');
+    renderReviewPanel(container as unknown as HTMLElement, workspace, { reviewTerminalClient: client });
+    const opening = openReviewPanelWorkspace();
+    let clicked = false;
+    try {
+      await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
+      container.querySelector('[data-action="approve-result"]')!.click(); clicked = true;
+      await vi.waitFor(() => expect(getFile).toHaveBeenCalledOnce());
+      expect(write).not.toHaveBeenCalled();
+      expect(reviewWorkspaceModule.isReviewReceiptWriting()).toBe(true);
+      expect(reviewWorkspaceModule.hasPendingReviewReceipt(workspace)).toBe(true);
+      finishRead(replacement);
+      await expect(opening).rejects.toThrow('审阅操作');
+      expect(state.reviewWorkspace).toBe(workspace);
+      releaseFile();
+      await vi.waitFor(() => expect(write).toHaveBeenCalledOnce());
+      rejectReceipt(Object.assign(new Error('response lost'), { code: 'REQUEST_TIMEOUT' }));
+      await vi.waitFor(() => expect(workspace.authority.state).toBe('unavailable'));
+      expect(reviewWorkspaceModule.isReviewReceiptWriting()).toBe(false);
+      expect(reviewWorkspaceModule.hasPendingReviewReceipt(state.reviewWorkspace)).toBe(true);
+      open.mockResolvedValue(resultWorkspace());
+      await openReviewPanelWorkspace();
+      expect(state.reviewWorkspace).not.toBe(workspace);
+    } finally {
+      finishRead(replacement); releaseFile(); await opening.catch(() => {});
+      rejectReceipt(Object.assign(new Error('response lost'), { code: 'REQUEST_TIMEOUT' }));
+      if (clicked) await vi.waitFor(() => expect(statusElement.textContent).toContain('批准失败'));
+      open.mockRestore(); Object.assign(state, original);
+    }
+  });
+
   it('keeps the active review when its approval starts during another review read', async () => {
     vi.stubGlobal('document', documentStub);
     const original = { reviewWorkspace: state.reviewWorkspace, mainTab: state.mainTab,

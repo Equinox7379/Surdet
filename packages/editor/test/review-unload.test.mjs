@@ -86,7 +86,7 @@ test('a terminal receipt remains non-discardable after an uncertain response and
   vm.runInContext(stripTypeScriptTypes(code.replaceAll('export function ', 'function '), { mode: 'transform' }), context);
   const workspace = { authority: { state: 'available' }, identity: { projectIdentity: 'project', reviewId: 'review', payload: { bytes: 1, sha256: 'fixture-only' } } };
   const gate = deferred();
-  const pending = context.submitTerminalCommand(workspace, 'result-approval', {}, { write: () => gate.promise });
+  const pending = context.runReviewReceiptOperation(workspace, () => context.submitTerminalCommand(workspace, 'result-approval', {}, { write: () => gate.promise }));
   const outcome = pending.catch(error => error);
   try {
     expect(unload(workspace, context.hasPendingReviewReceipt)).toEqual({ busy: true, prevented: true });
@@ -96,9 +96,9 @@ test('a terminal receipt remains non-discardable after an uncertain response and
     expect(context.isReviewReceiptWriting()).toBe(false);
     expect(unload(workspace, context.hasPendingReviewReceipt)).toEqual({ busy: true, prevented: true });
     workspace.authority.state = 'available'; // Existing explicit refresh/retry is a separate contract.
-    await expect(context.submitTerminalCommand(workspace, 'result-approval', {}, {
+    await expect(context.runReviewReceiptOperation(workspace, () => context.submitTerminalCommand(workspace, 'result-approval', {}, {
       write: async () => { throw Object.assign(new Error('rejected'), { code: 'INVALID_REQUEST' }); },
-    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    }))).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
     expect(context.hasPendingReviewReceipt(workspace)).toBe(false);
   } finally { gate.resolve(); await outcome; }
 });
