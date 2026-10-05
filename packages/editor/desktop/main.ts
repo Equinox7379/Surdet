@@ -69,7 +69,7 @@ async function openWindow(project: Directory | null) {
   window.webContents.on('will-attach-webview', event => event.preventDefault());
   window.webContents.on('will-prevent-unload', event => {
     if (state.busy) {
-      dialog.showMessageBoxSync(window, { type: 'info', title: '暂时不能关闭', message: '项目正在保存、整理或恢复，请完成后再关闭。', buttons: ['返回编辑器'] });
+      dialog.showMessageBoxSync(window, { type: 'info', title: '暂时不能关闭', message: '项目正在保存、写回审阅结果、整理或恢复，请完成后再关闭。审阅结果尚未确认时，请先检查或恢复原操作。', buttons: ['返回编辑器'] });
       return;
     }
     const choice = dialog.showMessageBoxSync(window, { type: 'question', title: '尚有未保存修改', message: '修改尚未保存。返回编辑器保存，还是不保存并关闭？', buttons: ['继续编辑', '不保存并关闭'], defaultId: 0, cancelId: 0, noLink: true });

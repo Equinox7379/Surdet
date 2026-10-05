@@ -43,6 +43,7 @@ export interface ReviewAuthorityVitePlugin {
   apply: 'serve';
   configureServer(server: ReviewMiddlewareServer): void;
   configurePreviewServer(server: ReviewPreviewServer): void;
+  closeBundle(): Promise<void>;
   transformIndexHtml: {
     order: 'pre';
     handler(html: string, context: { path: string; server?: unknown }): string;
@@ -114,6 +115,7 @@ export function reviewAuthorityVitePlugin(options: ReviewAuthorityVitePluginOpti
   return {
     name: 'surdet-review-authority',
     apply: 'serve',
+    closeBundle() { return handler.close(); },
     configureServer(server) {
       server.middlewares.use(mountAuthority);
     },

@@ -37,6 +37,10 @@ function identityError(message: string): ReviewApplyError {
   return new ReviewApplyError('REVIEW_IDENTITY_MISMATCH', message);
 }
 
+// A detached panel must not make its still-running write disappear from unload protection.
+let pendingApplications = 0;
+export function isReviewApplyRunning(): boolean { return pendingApplications > 0; }
+
 export class ReviewApplyController {
   private readonly transport: (r: ReviewApplyRequest) => Promise<ReviewApplyStatus>;
   private readonly editor: ExistingEditorSyncPort;
@@ -120,9 +124,11 @@ export class ReviewApplyController {
     clearTimeout(this.recheck);
     const epoch = ++this.epoch;
     const last = this.state.status;
+    const writing = action === 'write-approved-result';
+    if (writing) pendingApplications++;
     this.state = { ...this.state, request: action === 'write-approved-result' ? 'writing' : 'checking', message: '' };
-    this.emit();
     try {
+      this.emit();
       const result = await this.transport({ protocolVersion: '1.0.0', action, approvalRef: { ...this.state.approval } });
       if (!this.current(epoch)) return;
       this.acceptStatus(result, last);
@@ -148,6 +154,8 @@ export class ReviewApplyController {
               ? '写入响应未确认。先检查写入状态，不重复点击写回。'
               : `状态暂时不可读取：${errorMessage(error)}`,
       };
+    } finally {
+      if (writing) pendingApplications--;
     }
     this.emit();
   }

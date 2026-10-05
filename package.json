@@ -15,7 +15,7 @@
   "scripts": {
     "build": "npm run build -w @surdet/core && npm run build -w @surdet/authoring && npm run build -w @surdet/cli && npm run build -w @surdet/renderer && npm run build -w @surdet/host && npm run build -w @surdet/player && npm run build -w @surdet/shell && npm run build -w surdet-editor && npm run build -w surdet-starter",
     "test": "npm run build -w @surdet/core && npm run build -w @surdet/authoring && npm run build -w @surdet/cli && npm run build -w @surdet/renderer && npm run build -w @surdet/host && npm run build -w @surdet/player && npm run test --workspaces --if-present",
-    "typecheck": "npm run build -w @surdet/core && npm run build -w @surdet/authoring && npm run build -w @surdet/renderer && npm run build -w @surdet/host && npm run build -w @surdet/player && npm run typecheck -w @surdet/authoring && npm run typecheck --workspaces --if-present",
+    "typecheck": "npm run build -w @surdet/core && npm run build -w @surdet/authoring && npm run build -w @surdet/cli && npm run build -w @surdet/renderer && npm run build -w @surdet/host && npm run build -w @surdet/player && npm run typecheck -w @surdet/authoring && npm run typecheck --workspaces --if-present",
     "verify:all": "node scripts/verify-all.mjs",
     "verify:asset-import": "node packages/editor/e2e/asset-import-authority.e2e.mjs",
     "verify:editor-save-load": "node packages/editor/e2e/maintenance-save-load.e2e.mjs",
