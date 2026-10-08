@@ -380,6 +380,17 @@ try {
         const inspector = await page.locator('#script-v4-inspector').boundingBox();
         assert(inspector && inspector.height >= 200, 'picture squeezed out the inspector');
       }
+      if (mode === 'flow') {
+        // The first visit fits the map to this canvas instead of a fixed offset.
+        const fit = await page.evaluate(() => {
+          const canvas = document.querySelector('svg.flow-canvas-svg').getBoundingClientRect();
+          const frames = [...document.querySelectorAll('[data-flow-scene-frame] .flow-scene-frame-surface')].map(node => node.getBoundingClientRect());
+          const left = Math.min(...frames.map(r => r.left)), right = Math.max(...frames.map(r => r.right));
+          return { frames: frames.length, inside: frames.every(r => r.left >= canvas.left - 1 && r.right <= canvas.right + 1 && r.top >= canvas.top - 1 && r.bottom <= canvas.bottom + 1),
+            offset: Math.abs((left + right) / 2 - (canvas.left + canvas.right) / 2), width: canvas.width };
+        });
+        assert(fit.frames > 0 && fit.inside && fit.offset < fit.width * 0.1, `flow ${width}: map not fitted to the canvas ${JSON.stringify(fit)}`);
+      }
       if (mode === 'config') {
         await page.locator('.config-ledger-section:not([hidden]) .config-table').waitFor();
         const avatar = await page.getByRole('textbox', { name: 'lynn 的头像素材', exact: true }).boundingBox();
