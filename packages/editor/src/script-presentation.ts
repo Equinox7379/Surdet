@@ -29,5 +29,5 @@ export function instructionArgumentSummary(name: string, args: string[]): string
   if (name === 'nvl' && values[0]) values[0] = ({ on: '开启', off: '关闭', clear: '清空本页' } as Record<string, string>)[values[0]] ?? values[0];
   if (name === 'achievement' && values[0] === 'unlock') values[0] = '解锁';
   if (['wait', 'fadein', 'fadeout'].includes(name) && values[0] && /^\d+(\.\d+)?$/.test(values[0])) values[0] += ' 毫秒';
-  return values.join('  ') || (name === 'choice' ? '选择剧情走向' : '无位置参数');
+  return values.join('  ') || (name === 'choice' ? '选择剧情走向' : '');
 }
