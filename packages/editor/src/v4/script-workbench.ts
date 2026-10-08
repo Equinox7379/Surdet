@@ -21,6 +21,15 @@ const viewStates = new WeakMap<SceneEntry, ViewState>();
 let active: ScriptWorkbench | null = null;
 
 /** Called before the legacy renderer replaces its rows. Return borrowed DOM nodes first. */
+/** Stable, presentation-only colour slot per speaker name; narration stays neutral. */
+function speakerTone(speaker: string): string {
+  const name = speaker.trim();
+  if (name === '' || name === '旁白') return 'narration';
+  let hash = 0;
+  for (const char of name) hash = (hash * 31 + char.codePointAt(0)!) >>> 0;
+  return String(hash % 6 + 1);
+}
+
 export function prepareScriptV4Render(): void { active?.returnFields(); }
 export function disposeScriptV4(): void { active?.dispose(); active = null; }
 
@@ -383,7 +392,7 @@ export class ScriptWorkbench {
 
   private fitTextarea(textarea: HTMLTextAreaElement): void {
     textarea.style.height = 'auto';
-    textarea.style.height = `${Math.max(34, textarea.scrollHeight)}px`;
+    textarea.style.height = `${Math.max(26, textarea.scrollHeight)}px`;
   }
 
   private updateSummary(block: HTMLElement, line: LineModel | undefined): void {
@@ -393,6 +402,8 @@ export class ScriptWorkbench {
     if (summary.dataset.sourceSignature === signature) return;
     summary.dataset.sourceSignature = signature;
     block.dataset.stepKind = line.kind;
+    if (line.kind === 'text') block.dataset.speakerTone = speakerTone(line.speaker);
+    else delete block.dataset.speakerTone;
     if (line.kind === 'instr') {
       const { name, args } = splitInstr(line.raw);
       const source = name === 'bg' ? state.dirAssets.find((asset) => asset.kind === 'bg' && asset.key === decodeInstructionArgument(args[0] ?? ''))
@@ -405,7 +416,8 @@ export class ScriptWorkbench {
         thumb = source ? h('span', 'v4-step-thumb') : null;
         if (thumb) { thumb.dataset.sourcePath = imageKey; queueMicrotask(() => { if (thumb) void this.rowImages.image(thumb, source, '', name === 'bg' ? 'cover' : 'contain'); }); }
       }
-      summary.replaceChildren(...(thumb ? [thumb] : []), h('small', 'v4-step-type', instructionLabel(name)), h('strong', undefined, instructionArgumentSummary(name, args.map(decodeInstructionArgument))));
+      const argumentsSummary = instructionArgumentSummary(name, args.map(decodeInstructionArgument));
+      summary.replaceChildren(...(thumb ? [thumb] : []), h('small', 'v4-step-type', instructionLabel(name)), ...(argumentsSummary ? [h('strong', undefined, argumentsSummary)] : []));
     } else if (line.kind === 'choice-option') {
       const option = simpleChoice(line.raw);
       summary.replaceChildren(h('small', 'v4-step-type', '选项'), h('strong', undefined, option?.text || line.raw.trim()), h('small', 'v4-source-hint', option ? `→ ${option.target}` : '完整行内动作'));
