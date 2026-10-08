@@ -9,6 +9,9 @@ const paths: Record<string, string> = {
   review: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="m8 11 3 3 5-6M8 18h8"/>',
   stats: '<path d="M4 3v18h17M8 16v-5M13 16V7M18 16V4"/>',
   audit: '<circle cx="10" cy="10" r="7"/><path d="m15 15 6 6M7 10l2 2 4-5"/>',
+  history: '<path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4M12 8v4l3 2"/>',
+  blank: '<path d="M6 3h8l4 4v14H6zM14 3v4h4M12 11v6M9 14h6"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   'open-project': '<path d="M3 7V4h7l2 3h9v3M3 7h7l2 3h9l-3 10H3z"/>',
   'open-review': '<path d="M7 3h10v18H4V6h3zM7 3v4h10M8 12h5M8 16h5"/>',
   undo: '<path d="m8 5-5 5 5 5M3 10h11a6 6 0 0 1 0 12" transform="translate(0 -2)"/>',
@@ -21,6 +24,6 @@ export function workbenchIcon(name: string): HTMLElement {
   const icon = document.createElement('span');
   icon.className = 'workbench-icon';
   icon.setAttribute('aria-hidden', 'true');
-  icon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${paths[name] ?? paths.editor}</svg>`;
+  icon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${paths[name] ?? paths.editor}</svg>`;
   return icon;
 }

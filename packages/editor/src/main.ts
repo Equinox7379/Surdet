@@ -111,6 +111,7 @@ import {
 import {
   renderModeNavigation,
   renderProjectBar,
+  renderStatusBar,
   updateProjectBarProjection,
   type ProjectBarProjection,
   type ProjectSaveState,
@@ -1915,10 +1916,6 @@ function renderAll(): void {
     onSaveProject: () => { void saveProject(); },
     onLoadDemo: loadDemoProjectSafely,
     onExportCurrent: exportCurrent,
-    onViewProjectChanges: () => { void viewProjectChanges(); },
-    onSyncProject: () => { void syncProject(); },
-    onDiscardProjectDrafts: () => { void syncProject(true); },
-    onKeepProjectDrafts: () => setStatus('草稿已保留，可继续编辑或导出当前场景。', true, 5000),
     onSearch: searchProject,
   });
   appEl.appendChild(header);
@@ -1936,6 +1933,12 @@ function renderAll(): void {
   main.setAttribute('data-autosave-recovery', sceneAutosaveRecoveryPhase);
   if (sceneAutosaveRecoveryPhase === 'running') main.setAttribute('aria-busy', 'true');
   appEl.appendChild(main);
+  appEl.appendChild(renderStatusBar(projectBarProjection(), {
+    onViewProjectChanges: () => { void viewProjectChanges(); },
+    onSyncProject: () => { void syncProject(); },
+    onDiscardProjectDrafts: () => { void syncProject(true); },
+    onKeepProjectDrafts: () => setStatus('草稿已保留，可继续编辑或导出当前场景。', true, 5000),
+  }));
   renderMainArea();
   renderBlockedSceneRecovery();
 }
@@ -2001,16 +2004,26 @@ function renderMainArea(): void {
   if (state.mainTab === 'editor') {
     if (state.scenes.size === 0 && state.dirHandle === null) {
       const welcome = h('section', 'editor-welcome');
-      const introduction = h('div');
-      introduction.append(h('h1', undefined, 'Surdet 工作台'), h('p', undefined, '打开一个项目，继续编写剧情、安排演出，或接手智能体交付的创作结果。'));
+      welcome.setAttribute('aria-label', '开始创作');
+      const introduction = h('div', 'editor-welcome-intro');
+      const shortcuts = h('dl', 'editor-welcome-shortcuts');
+      for (const [key, label] of [['Ctrl+K', '搜索场景、台词、角色和素材'], ['Ctrl+S', '保存全部修改'], ['Ctrl+Z / Ctrl+Y', '撤销与重做']]) {
+        shortcuts.append(h('dt', undefined, key), h('dd', undefined, label));
+      }
+      introduction.append(
+        h('span', 'editor-welcome-kicker', 'Surdet 剧情创作'),
+        h('h1', undefined, '开始创作'),
+        h('p', undefined, '打开一个游戏项目文件夹，继续编写剧情、安排演出；或打开外部 Agent 交付的审阅任务，比较候选后再决定是否采用。'),
+        shortcuts,
+      );
       const actions = h('div', 'editor-welcome-actions');
-      for (const [action, title, description] of [
-        [state.fsSupported ? 'open-project' : 'load-demo', state.fsSupported ? '打开项目' : '加载演示项目', '剧本、素材与演出，在同一个工作区编辑'],
-        ...(state.fsSupported ? [['open-review', '打开审阅任务', '比较候选，试玩结果，再决定是否采用']] : []),
+      for (const [action, icon, title, description] of [
+        [state.fsSupported ? 'open-project' : 'load-demo', 'folder', state.fsSupported ? '打开项目文件夹' : '加载演示项目', state.fsSupported ? '选择包含 game.config.json 的游戏项目目录' : '当前浏览器不能直接读写本地目录，可先体验编辑与校验'],
+        ...(state.fsSupported ? [['open-review', 'open-review', '打开审阅任务', '比较候选、试玩结果，再决定是否写回项目']] : []),
       ]) {
         const control = h('button'); control.type = 'button'; const label = h('span');
         label.append(h('strong', undefined, title), h('small', undefined, description));
-        control.append(workbenchIcon(action!), label);
+        control.append(workbenchIcon(icon!), label);
         control.onclick = () => document.querySelector<HTMLButtonElement>(`.editor-project-bar [data-action="${action}"]`)?.click();
         actions.append(control);
       }

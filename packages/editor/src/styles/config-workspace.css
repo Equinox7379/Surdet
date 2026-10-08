@@ -596,13 +596,13 @@
 #config-view .config-actions button.primary {
   background-color: var(--surdet-action-primary);
   border-color: var(--surdet-action-primary);
-  color: var(--surdet-surface-panel);
+  color: var(--surdet-text-on-accent);
 }
 
 #config-view .config-actions button.primary:hover {
   background-color: var(--surdet-action-primary);
   border-color: var(--surdet-action-primary);
-  color: var(--surdet-surface-panel);
+  color: var(--surdet-text-on-accent);
   filter: brightness(.92);
 }
 

@@ -15,7 +15,8 @@
 }
 .v4-button:hover, .v4-row-op:hover, .v4-object-link:hover { background: var(--v4-selection); }
 .v4-button:disabled { cursor: not-allowed; opacity: .55; }
-.v4-button.v4-primary { color: #fff; background: var(--surdet-action-primary); border-color: var(--surdet-action-primary); }
+.v4-button.v4-primary { color: var(--surdet-text-on-accent); background: var(--surdet-action-primary); border-color: var(--surdet-action-primary); font-weight: 600; }
+.v4-button.v4-primary:hover { background: var(--surdet-action-primary-hover); border-color: var(--surdet-action-primary-hover); }
 .v4-authoring :is(button,input,textarea,select,summary,[tabindex]):focus-visible,
 #config-view.v4-config :is(button,input,textarea,select,summary,[tabindex]):focus-visible,
 #asset-center-view.v4-asset-center :is(button,input,textarea,select,summary,[tabindex]):focus-visible {
