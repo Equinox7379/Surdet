@@ -981,8 +981,7 @@ export const v4WorkbenchCases: BrowserCase[] = [
     state.dirName = 'same-name-project'; state.dirHandle = makeFontRoot('same-name-project', [21, 22, 23]);
     state.gameConfigText = JSON.stringify({ font: 'font.ttf' });
     const firstHost = document.createElement('section'); document.body.append(firstHost); renderPreviewPanel(firstHost);
-    const first = await startPreviewLoad(firstHost);
-    for (let attempt = 0; attempt < 10 && first.loads.length === 0; attempt++) await nextTask();
+    const first = await startPreviewLoad(firstHost); await waitForPublishedPreviewLoad(first);
     const firstLoad = first.loads.find((value) => (value as { type?: string } | null)?.type === 'surdet-preview-load') as { payload?: { fonts?: { body?: { buffer?: ArrayBuffer } } } } | undefined;
     assert(firstLoad?.payload?.fonts?.body?.buffer, 'first preview load did not contain the test font');
     assert(JSON.stringify([...new Uint8Array(firstLoad.payload.fonts.body.buffer)]) === JSON.stringify([21, 22, 23]), 'first preview font bytes drifted');
@@ -992,8 +991,7 @@ export const v4WorkbenchCases: BrowserCase[] = [
     state.dirName = 'same-name-project'; state.dirHandle = makeFontRoot('same-name-project', [31, 32, 33]);
     state.gameConfigText = JSON.stringify({ font: 'font.ttf' });
     const secondHost = document.createElement('section'); document.body.append(secondHost); renderPreviewPanel(secondHost);
-    const second = await startPreviewLoad(secondHost);
-    for (let attempt = 0; attempt < 10 && second.loads.length === 0; attempt++) await nextTask();
+    const second = await startPreviewLoad(secondHost); await waitForPublishedPreviewLoad(second);
     const secondLoad = second.loads.find((value) => (value as { type?: string } | null)?.type === 'surdet-preview-load') as { payload?: { fonts?: { body?: { buffer?: ArrayBuffer } } } } | undefined;
     assert(secondLoad?.payload?.fonts?.body?.buffer, 'second preview load did not contain the test font');
     assert(JSON.stringify([...new Uint8Array(secondLoad.payload.fonts.body.buffer)]) === JSON.stringify([31, 32, 33]), 'same-name project reused prior font bytes');
