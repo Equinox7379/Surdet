@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
-import { collectProjectTextRows, projectTextSources } from '@surdet/core';
+import { collectProjectTextRows, hintForCode, projectTextSources } from '@surdet/core';
 import { validateProject } from '../src/validate.js';
 
 const sc = (id: string, source: string, key?: string) => ({
@@ -11,6 +11,13 @@ const sc = (id: string, source: string, key?: string) => ({
 });
 
 describe('validateProject', () => {
+  it('gives editor-only checks the same code-specific advice as surdet lint', async () => {
+    const result = await validateProject([sc('a', '@scene a\n@label unused\n凛：继续。\n@end')], 'a', { path: 'game.config.json', raw: { entryScene: 'a' } });
+    const unused = result.issues.find(issue => issue.code === 'W006');
+    expect(unused?.hint).toBe(hintForCode('W006'));
+    expect(result.issues.every(issue => typeof issue.hint === 'string' && issue.hint.length > 0)).toBe(true);
+  });
+
   it.each([
     { name: 'absent without unlocks', source: '@scene a\n凛：继续。\n@end', lines: [] },
     { name: 'absent with dossiers', source: '@scene a\n@unlock_profile "first"\n@unlock_term port\n@end', lines: [2, 3] },

@@ -304,6 +304,57 @@ body {
   color: var(--surdet-state-danger);
 }
 
+.editor-status-problems {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: -2px 0;
+  padding: 1px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--surdet-radius-tight);
+  background: transparent;
+  color: var(--surdet-text-secondary);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.editor-status-problems::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--surdet-state-success);
+}
+
+.editor-status-problems[data-problem-state=pending]::before {
+  background: var(--surdet-text-muted);
+}
+
+.editor-status-problems[data-problem-state=warning] {
+  color: var(--surdet-state-warning);
+}
+
+.editor-status-problems[data-problem-state=error] {
+  color: var(--surdet-state-danger);
+  font-weight: 600;
+}
+
+.editor-status-problems[data-problem-state=warning]::before,
+.editor-status-problems[data-problem-state=error]::before {
+  background: currentColor;
+}
+
+.editor-status-problems:not(:disabled):hover {
+  border-color: var(--surdet-border-default);
+  background: var(--surdet-surface-hover);
+}
+
+.editor-status-problems:disabled {
+  cursor: default;
+}
+
 .editor-relay-status {
   display: flex;
   gap: 8px;

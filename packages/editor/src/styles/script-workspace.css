@@ -823,7 +823,31 @@
   cursor: pointer;
 }
 
+#editor-workspace button.issue {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  margin: 0;
+  padding: 6px var(--surdet-space-8);
+  border: 0;
+  border-bottom: 1px solid var(--surdet-border-default);
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--surdet-type-caption);
+  line-height: 1.5;
+  text-align: left;
+}
+
+#editor-workspace button.issue:hover {
+  border-color: var(--surdet-border-default);
+  background: var(--surdet-surface-hover);
+}
+
 #editor-workspace .issue .loc { font-family: var(--surdet-font-mono); }
+#editor-workspace .issue .issue-code { margin-left: var(--surdet-space-8); color: var(--surdet-text-muted); }
+#editor-workspace .issue .issue-hint { color: var(--surdet-text-secondary); }
+#editor-workspace .issue-keys { margin: 0 0 var(--surdet-space-8); color: var(--surdet-text-muted); font-size: 0.6875rem; }
 
 #editor-workspace .issue:hover {
   border-color: var(--surdet-border-strong);
@@ -834,7 +858,7 @@
 #editor-workspace .issue.error,
 #editor-workspace .issue.warning,
 #editor-workspace .issue.info {
-  border-left: 1px solid var(--surdet-border-default);
+  border-left: 0;
 }
 
 #editor-workspace .issue.error .loc {

@@ -488,6 +488,42 @@ try {
   await page.setViewportSize({ width: 960, height: 720 });
   await dialogue.focus();
   console.log('PASS blank row: quiet while blank, typed long narration stays visible and aligned after blur, refocus continues, undo restores');
+  // The status bar keeps the validation count and opens the existing problem list
+  // from any mode; entries are buttons with code-specific advice, and F8 walks them.
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  const debugState = (key) => page.evaluate((key) => window.surdetEditorDebug.state[key], key);
+  const problems = page.locator('[data-action="show-problems"]');
+  assert.equal(await problems.innerText(), '2 个错误 · 1 条警告');
+  assert.equal(await problems.getAttribute('data-problem-state'), 'error');
+  await page.locator('[data-editor-mode="config"]').click();
+  await problems.click();
+  assert.equal(await debugState('mainTab'), 'editor');
+  assert(await page.locator('details.v4-project-context').evaluate(node => node.open), 'problem list stayed collapsed');
+  const firstProblem = page.locator('#issues-box button.issue').first();
+  // A validation rerun rebuilds the list; focus must survive it.
+  const rebuiltList = await page.locator('#issues-box').elementHandle();
+  await page.evaluate(() => window.surdetEditorDebug.runValidate());
+  await page.waitForFunction(old => !old.isConnected, rebuiltList);
+  await rebuiltList.dispose();
+  assert(await firstProblem.isVisible() && await firstProblem.evaluate(node => node === document.activeElement), 'problems did not focus the first entry');
+  assert.deepEqual(await page.locator('#issues-box button.issue').evaluateAll(nodes => nodes.map(node => node.querySelector('.issue-hint')?.textContent.startsWith('建议：') ?? false)), [true, true, true],
+    'timeline errors and the editor-only W006 warning show their code-specific advice');
+  await page.keyboard.press('Enter');
+  assert.equal(await debugState('mainTab'), 'timeline', 'a timeline problem must open its timeline');
+  const problemStatus = () => page.locator('#status').innerText();
+  for (const [key, expected, mode] of [['F8', /^问题 1\/3（content\/timelines\/invalid\.json:1）/, 'timeline'], ['F8', /^问题 2\/3/, 'timeline'], ['F8', /^问题 3\/3（start\.gal:2）/, 'editor'], ['Shift+F8', /^问题 2\/3/, 'timeline']]) {
+    await page.keyboard.press(key);
+    assert.match(await problemStatus(), expected);
+    assert.equal(await debugState('mainTab'), mode);
+    if (mode === 'editor') assert.equal(await page.locator('.v4-authoring .block.v4-current').getAttribute('data-line'), '1', 'F8 must select the problem line');
+  }
+  await page.locator('[data-editor-mode="editor"]').click();
+  await page.setViewportSize({ width: 960, height: 720 });
+  await problems.click();
+  assert(await page.locator('#issues-box button.issue').first().evaluate(node => node === document.activeElement && node.getClientRects().length > 0), 'medium-width problems must reveal the context panel');
+  await page.locator('[data-workbench-panel="editor"]').click();
+  await dialogue.focus();
+  console.log('PASS problems: status bar count opens the list from another mode, advice shown, Enter and F8 reach timeline and scene lines');
   const beforeCompositionRows = await page.locator('.block[data-line]').count();
   await dialogue.evaluate((node) => {
     node.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
