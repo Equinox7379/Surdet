@@ -444,6 +444,50 @@ try {
   await expectDialogueReflow();
   assert(await dialogue.evaluate(node => node === document.activeElement), 'desktop split reflow must preserve dialogue focus');
   console.log('PASS desktop dialogue reflow follows both panes and window width without changing source or selection');
+  // A blank row is quiet only while it is blank: prose typed into it stays a full,
+  // visible dialogue row after focus moves on, without rebuilding the workspace.
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  const sceneText = () => page.evaluate(() => window.surdetEditorDebug.state.scenes.get('start').text);
+  const beforeBlank = await sceneText();
+  await page.locator('[data-script-view="source"]').click();
+  await page.locator('.v4-source-editor').fill(beforeBlank.replace(/(\r?\n)(@end\s*)$/, '$1$1$2'));
+  assert.notEqual(await sceneText(), beforeBlank, 'fixture needs a blank row before @end');
+  await page.locator('[data-script-view="arrange"]').click();
+  const blankLine = await page.locator('.block.block-blank.v4-empty-dialogue').last().getAttribute('data-line');
+  const narration = page.locator(`.block[data-line="${blankLine}"] .v4-dialogue-input`);
+  await page.mouse.move(0, 0);
+  assert.deepEqual(await narration.evaluate(node => [node.clientHeight, getComputedStyle(node).opacity]), [22, '0'], 'an unused blank row must stay compact and quiet');
+  const blankInput = await narration.elementHandle();
+  const longNarration = '雾港的钟声在潮水里一圈圈散开，灯塔把影子拉得很长。'.repeat(12);
+  await narration.click();
+  await narration.fill(longNarration);
+  const expectNarrationVisible = async (value) => {
+    await dialogue.click();
+    await page.mouse.move(0, 0);
+    const shown = await narration.evaluate((node) => {
+      const reference = document.querySelector('.block[data-line="5"] .v4-dialogue-input');
+      const column = (field) => field.getBoundingClientRect().left + parseFloat(getComputedStyle(field).paddingLeft);
+      return { text: node.closest('.block').classList.contains('block-text'), opacity: getComputedStyle(node).opacity, height: node.clientHeight, content: node.scrollHeight, value: node.value, offset: Math.abs(column(node) - column(reference)) };
+    });
+    assert(shown.text && shown.opacity === '1' && shown.height > 44 && shown.content <= shown.height + 1 && shown.offset <= 2,
+      `typed narration must stay fully visible in the dialogue column: ${JSON.stringify({ ...shown, value: undefined })}`);
+    assert.equal(shown.value, value);
+    assert((await sceneText()).includes(value), 'typed narration must reach the shared scene');
+  };
+  await expectNarrationVisible(longNarration);
+  await narration.click();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.type('续写。');
+  assert(await narration.evaluate(node => node === document.activeElement), 'continued typing lost focus');
+  await expectNarrationVisible(`${longNarration}续写。`);
+  assert(await blankInput.evaluate(node => node.isConnected), 'typing into a blank row must not rebuild the workspace');
+  await blankInput.dispose();
+  // Edits within the history coalescing window may share one undo step.
+  for (let step = 0; step < 8 && await sceneText() !== beforeBlank; step++) await page.locator('[data-action="undo"]').click();
+  assert.equal(await sceneText(), beforeBlank, 'blank-row prose and the inserted row must undo through ordinary history');
+  await page.setViewportSize({ width: 960, height: 720 });
+  await dialogue.focus();
+  console.log('PASS blank row: quiet while blank, typed long narration stays visible and aligned after blur, refocus continues, undo restores');
   const beforeCompositionRows = await page.locator('.block[data-line]').count();
   await dialogue.evaluate((node) => {
     node.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
