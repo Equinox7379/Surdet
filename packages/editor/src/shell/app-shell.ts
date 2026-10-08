@@ -19,7 +19,11 @@ export interface ProjectBarProjection {
   relayProtection?: RelayProtectionState;
   relayUpdate?: RelayUpdateState;
   relayDirty?: boolean;
+  problems?: ProblemSummary | null;
 }
+
+/** Latest validation counts; null while the first validation is still pending. */
+export interface ProblemSummary { errors: number; warnings: number }
 
 export interface ProjectBarActions {
   onOpenProject(): void;
@@ -34,6 +38,7 @@ export interface ProjectBarActions {
   onDiscardProjectDrafts?(): void;
   onKeepProjectDrafts?(): void;
   onSearch?(): void;
+  onShowProblems?(): void;
 }
 
 function element<K extends keyof HTMLElementTagNameMap>(
@@ -203,6 +208,20 @@ export function updateProjectBarProjection(
   updateRelayProjection(projection, root);
 }
 
+export function updateProblemIndicator(summary: ProblemSummary | null, root: ParentNode = document): void {
+  const control = root.querySelector<HTMLButtonElement>('.editor-status-problems');
+  if (!control) return;
+  const total = summary === null ? 0 : summary.errors + summary.warnings;
+  const label = summary === null ? '等待校验'
+    : total === 0 ? '没有问题'
+    : [summary.errors ? `${summary.errors} 个错误` : '', summary.warnings ? `${summary.warnings} 条警告` : ''].filter(Boolean).join(' · ');
+  control.textContent = label;
+  control.setAttribute('data-problem-state', summary === null ? 'pending' : summary.errors ? 'error' : summary.warnings ? 'warning' : 'clean');
+  control.setAttribute('aria-label', total === 0 ? `问题：${label}` : `问题：${label}，打开问题列表`);
+  control.title = total === 0 ? label : `${label}：打开问题列表（F8 下一条，Shift+F8 上一条）`;
+  control.disabled = total === 0;
+}
+
 export function renderProjectBar(
   projection: ProjectBarProjection,
   actions: ProjectBarActions,
@@ -274,7 +293,7 @@ export function renderProjectBar(
  */
 export function renderStatusBar(
   projection: ProjectBarProjection,
-  actions: Pick<ProjectBarActions, 'onViewProjectChanges' | 'onSyncProject' | 'onKeepProjectDrafts' | 'onDiscardProjectDrafts'>,
+  actions: Pick<ProjectBarActions, 'onViewProjectChanges' | 'onSyncProject' | 'onKeepProjectDrafts' | 'onDiscardProjectDrafts' | 'onShowProblems'>,
 ): HTMLElement {
   const footer = element('footer', 'editor-status-bar');
   footer.setAttribute('data-editor-region', 'status-bar');
@@ -293,9 +312,16 @@ export function renderStatusBar(
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
 
+  // Validation counts stay visible here; operation messages keep the #status line.
+  const problems = element('button', 'editor-status-problems');
+  problems.type = 'button';
+  problems.setAttribute('data-action', 'show-problems');
+  problems.setAttribute('aria-keyshortcuts', 'F8 Shift+F8');
+  if (actions.onShowProblems) problems.onclick = actions.onShowProblems;
+
   const feedback = element('div', 'editor-operation-feedback');
   feedback.setAttribute('data-editor-region', 'operation-feedback');
-  feedback.append(saveState, status);
+  feedback.append(saveState, problems, status);
 
   const relayStatus = element('div', 'editor-relay-status');
   relayStatus.setAttribute('aria-live', 'polite');
@@ -317,6 +343,7 @@ export function renderStatusBar(
   relayStatus.append(relayProtection, relayUpdate, relayActions);
   footer.append(feedback, relayStatus);
   updateRelayProjection(projection, footer);
+  updateProblemIndicator(projection.problems ?? null, footer);
   return footer;
 }
 

@@ -64,7 +64,7 @@ import {
 } from './project-io.js';
 import { renderSidebar, bindSidebarHooks } from './panels/sidebar.js';
 import { refreshEditorObjectRefs, refreshManuscriptFacts, renderEditor } from './panels/editor.js';
-import { bindIssueNavigation, invalidatePendingValidation, scheduleValidate, runValidate, renderIssues } from './panels/issues.js';
+import { bindIssueNavigation, invalidatePendingValidation, scheduleValidate, runValidate, renderIssues, problemSummary, stepProblem } from './panels/issues.js';
 import { bindRightNavigation, refreshCurrentSceneContext, renderRightExtras, updateCausalPanel } from './panels/right.js';
 import { bindAssetsPanelHooks, hideAssetPreview } from './panels/assets.js';
 import { disposeAssetCenterPreview, renderAssetCenter } from './panels/asset-center.js';
@@ -1133,6 +1133,7 @@ function projectBarProjection(): ProjectBarProjection {
     relayProtection: relay.protection,
     relayUpdate: relay.update,
     relayDirty: relay.dirty,
+    problems: problemSummary(),
     projectName,
     objectLabel: currentObjectLabel(),
     saveState,
@@ -1861,6 +1862,8 @@ bindSearchHooks({
 });
 bindIssueNavigation({
   onJump: (sceneKey, line) => jumpToScene(sceneKey, line),
+  onTimeline: (id) => navigateTimeline(id),
+  onConfig: () => navigateMode('config'),
   onValidationApplied: () => {
     if (state.mainTab !== 'audit') return;
     const audit = document.getElementById('audit-view');
@@ -1964,6 +1967,7 @@ function renderAll(): void {
     onSyncProject: () => { void syncProject(); },
     onDiscardProjectDrafts: () => { void syncProject(true); },
     onKeepProjectDrafts: () => setStatus('草稿已保留，可继续编辑或导出当前场景。', true, 5000),
+    onShowProblems: showProblems,
   }));
   renderMainArea();
   renderBlockedSceneRecovery();
@@ -2279,7 +2283,28 @@ function searchProject(): void {
   openProjectSearch({ onScene: jumpToScene, onMode: navigateMode, onTimeline: navigateTimeline });
 }
 
+/** Status bar problems: open the existing list in the script workspace and focus its first entry. */
+function showProblems(): void {
+  if (state.mainTab !== 'editor') navigateMode('editor');
+  const context = document.querySelector<HTMLDetailsElement>('details.v4-project-context');
+  const box = document.getElementById('issues-box');
+  if (state.mainTab !== 'editor' || !context || !box) return;
+  context.open = true;
+  // Narrow windows show one workbench panel at a time.
+  const panel = document.querySelector<HTMLButtonElement>('[data-workbench-panel="context"]');
+  if (panel && panel.offsetParent !== null && panel.getAttribute('aria-pressed') !== 'true') panel.click();
+  box.scrollIntoView({ block: 'nearest' });
+  (box.querySelector<HTMLElement>('button.issue') ?? box).focus({ preventScroll: true });
+}
+
 window.addEventListener('keydown', (e) => {
+  if (e.key === 'F8' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    if (state.projectLoading || sceneAutosaveRecoveryPhase !== 'idle' || state.projectWriteLock !== null) {
+      setStatus('请先完成当前恢复或素材整理操作', false, 5000); return;
+    }
+    stepProblem(e.shiftKey ? -1 : 1); return;
+  }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault(); searchProject(); return;
   }
@@ -2394,6 +2419,7 @@ window.addEventListener('focus', () => {
 // 调试探针（对齐 starter surdetDebug 惯例）：devtools/自动化验收只读驱动用，生产可裁剪
 (window as unknown as Record<string, unknown>).surdetEditorDebug = {
   state,
+  runValidate,
   configUndo,
   configRedo,
   configHistoryDepth,
