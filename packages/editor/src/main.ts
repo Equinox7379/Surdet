@@ -97,6 +97,7 @@ import { renderContentHistoryPanel } from './panels/content-history-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput, resetSearchSession } from './panels/search-panel.js';
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
 import { openReviewPanelWorkspace, renderReviewPanel, disposeReviewApply } from './panels/review-panel.js';
+import { refreshReviewTasks, renderReviewTaskList, reviewTaskPendingCount } from './panels/review-tasks.js';
 import { renderTimelineAutosaveConflictPanel } from './panels/timeline-autosave-conflicts.js';
 import {
   AssetImportClientError,
@@ -110,6 +111,7 @@ import {
 } from './asset-relocation-workspace.js';
 import {
   renderModeNavigation,
+  updateModeNavigationBadge,
   renderProjectBar,
   renderStatusBar,
   updateProjectBarProjection,
@@ -131,6 +133,7 @@ let authoringRunning = false;
 let authoringQueued = false;
 let authoringProjectChanging = false;
 let boundReviewProject: { projectIdentity: string; handle: FileSystemDirectoryHandle } | null = null;
+let renderedMainTab: typeof state.mainTab | null = null;
 let returningFromReviewPreview = false;
 const PREPARATION_SESSION_KEY = 'surdet.review-preparation';
 const authoringWaiters: Array<{
@@ -1408,6 +1411,52 @@ function reviewApplyEditor(workspace: ReviewWorkspaceState): ExistingEditorSyncP
   };
 }
 
+function reviewTaskBadge() {
+  const count = reviewTaskPendingCount();
+  return count > 0 ? { count, hint: `${count} 个待审阅任务` } : undefined;
+}
+
+function reviewTaskListFor(workspace: ReviewWorkspaceState | null): HTMLElement | null {
+  return renderReviewTaskList({
+    workspace,
+    onRefresh: () => refreshReviewTasks(reviewTasksChanged),
+    onSettled: reviewTasksChanged,
+    onOpen: async (task, open) => {
+      const current = state.reviewWorkspace;
+      // The list makes switching one click away, so an unsaved decision is confirmed first.
+      if (current !== null && hasReviewDraft(current) && !hasPendingReviewReceipt(current)
+        && !window.confirm('当前审阅还有未保存的决定。打开其他任务会丢弃这些修改，确定继续吗？')) return;
+      try {
+        setStatus(task.kind === 'integration-result' ? '正在读取最终结果…' : '正在打开审阅任务…', true);
+        await openReviewPanelWorkspace(open);
+        renderAll();
+        setStatus('已打开审阅任务', true, 4000);
+        refreshReviewTasks(reviewTasksChanged);
+      } catch (error) {
+        setStatus(`打开审阅任务失败：${error instanceof Error ? error.message : String(error)}`, false, 6000);
+      }
+    },
+  });
+}
+
+/** Updates the rail count in place and redraws only the task list, never an open review's inputs. */
+function reviewTasksChanged(): void {
+  updateModeNavigationBadge('review', reviewTaskBadge());
+  if (state.mainTab !== 'review') return;
+  const view = document.getElementById('review-view');
+  if (view === null) return;
+  if (state.reviewWorkspace === null) {
+    renderReviewPanel(view, null, { taskList: reviewTaskListFor });
+    return;
+  }
+  const existing = view.querySelector<HTMLDetailsElement>('.review-discovery');
+  const next = reviewTaskListFor(state.reviewWorkspace);
+  if (next instanceof HTMLDetailsElement && existing?.open) next.open = true;
+  if (existing !== null && next !== null) existing.replaceWith(next);
+  else if (existing !== null) existing.remove();
+  else if (next !== null) view.querySelector('.review-workspace-header')?.appendChild(next);
+}
+
 function confirmProjectSwitch(): boolean {
   if (sceneAutosaveRecoveryPhase !== 'idle') {
     setStatus('自动恢复尚未收束，现在不能切换项目', false, 5000);
@@ -2018,7 +2067,7 @@ function renderMainArea(): void {
       state.previewTimelineId = null;
       state.mainTab = mode;
       renderMainArea();
-  });
+  }, { review: reviewTaskBadge() });
   const col = h('div', 'main-col editor-mode-surface');
   const conflictHost = h('div', 'timeline-autosave-conflict-host');
   col.setAttribute('data-editor-mode-surface', state.mainTab);
@@ -2201,7 +2250,8 @@ function renderMainArea(): void {
     reviewEl.dataset['editorPanel'] = 'review';
     col.appendChild(reviewEl);
     renderReviewPanel(reviewEl, state.reviewWorkspace,
-      state.reviewWorkspace === null ? {} : {
+      state.reviewWorkspace === null ? { taskList: reviewTaskListFor } : {
+        taskList: reviewTaskListFor,
         reviewApplyEditor: reviewApplyEditor(state.reviewWorkspace),
         onRememberPreparation: rememberReviewPreparation,
         onOpenPreparedResult: openPreparedReview,
@@ -2221,6 +2271,11 @@ function renderMainArea(): void {
     renderConfig(cfgEl);
   }
   refreshProjectBarProjection();
+  // Discovery is read on the review page only: entering it re-reads the directory, and a
+  // local service without the discovery route is never probed from other pages.
+  const enteringReview = state.mainTab === 'review' && renderedMainTab !== 'review';
+  renderedMainTab = state.mainTab;
+  if (enteringReview) refreshReviewTasks(reviewTasksChanged);
 }
 
 /* ============================ 撤销/重做路由（剧本栈 vs 配置栈） ============================ */

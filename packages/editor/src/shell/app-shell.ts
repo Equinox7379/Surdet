@@ -347,9 +347,39 @@ export function renderStatusBar(
   return footer;
 }
 
+export interface ModeBadge { count: number; hint: string }
+
+function applyModeBadge(button: HTMLElement, label: string, badge: ModeBadge | undefined): void {
+  let mark = button.querySelector<HTMLElement>('.editor-mode-badge');
+  if (badge === undefined || badge.count <= 0) {
+    if (mark !== null) {
+      mark.remove();
+      button.title = label;
+      button.removeAttribute('aria-label');
+    }
+    return;
+  }
+  if (mark === null) {
+    mark = element('span', 'editor-mode-badge');
+    mark.setAttribute('aria-hidden', 'true');
+    button.appendChild(mark);
+  }
+  mark.textContent = badge.count > 99 ? '99+' : String(badge.count);
+  button.title = `${label}：${badge.hint}`;
+  button.setAttribute('aria-label', `${label}，${badge.hint}`);
+}
+
+/** A count on a mode is only a hint to look; the mode's own page holds the facts. */
+export function updateModeNavigationBadge(mode: EditorModeId, badge: ModeBadge | undefined, root: ParentNode = document): void {
+  const button = root.querySelector<HTMLElement>(`.editor-mode-button[data-editor-mode="${mode}"]`);
+  const definition = EDITOR_MODES.find(({ id }) => id === mode);
+  if (button !== null && definition !== undefined) applyModeBadge(button, definition.label, badge);
+}
+
 export function renderModeNavigation(
   activeMode: EditorModeId,
   onSelect: (mode: EditorModeId) => void,
+  badges: Partial<Record<EditorModeId, ModeBadge>> = {},
 ): HTMLElement {
   const navigation = element('nav', 'editor-mode-navigation');
   navigation.setAttribute('aria-label', '创作模式');
@@ -372,6 +402,7 @@ export function renderModeNavigation(
       button.setAttribute('aria-controls', mode.panelId);
       if (mode.id === activeMode) button.setAttribute('aria-current', 'page');
       button.onclick = () => onSelect(mode.id);
+      applyModeBadge(button, mode.label, badges[mode.id]);
       groupElement.appendChild(button);
     }
     navigation.appendChild(groupElement);

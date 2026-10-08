@@ -54,6 +54,8 @@ export interface ReviewPanelOptions extends ReviewPreparationOptions {
   onRefreshFixtureIdentity?: (workspace: ReviewWorkspaceState) => Promise<unknown> | unknown;
   reviewTerminalClient?: ReviewTerminalClient;
   reviewApplyEditor?: ExistingEditorSyncPort;
+  /** Current-project task discovery; null keeps the original empty state and picker entry. */
+  taskList?: (workspace: ReviewWorkspaceState | null) => HTMLElement | null;
 }
 
 let activeApply: { workspace: ReviewWorkspaceState; approvalFingerprint: string;
@@ -1556,6 +1558,11 @@ export function renderReviewPanel(
     || workspace?.returnReceipt !== null)) disposeReviewApply();
   container.innerHTML = '';
   if (workspace === null) {
+    const tasks = options.taskList?.(null) ?? null;
+    if (tasks !== null) {
+      container.appendChild(tasks);
+      return;
+    }
     const empty = h('section', 'review-empty-state');
     empty.append(
       h('h2', undefined, '暂无审阅任务'),
@@ -1570,15 +1577,20 @@ export function renderReviewPanel(
   renderReviewPreparation(content, workspace, options);
   const preparation = content.querySelector('.review-preparation');
   if (preparation) content.querySelector('.review-decision-forecast')?.after(preparation);
+  const tasks = options.taskList?.(workspace) ?? null;
+  if (tasks !== null) container.querySelector('.review-workspace-header')?.appendChild(tasks);
 }
 
-/** 顶层“打开审阅任务”入口；创建 review workspace 后只切换到审阅页，不自动写回任何回执。 */
-export async function openReviewPanelWorkspace(): Promise<void> {
+/**
+ * 顶层“打开审阅任务”入口与当前项目任务列表共用；创建 review workspace 后只切换到审阅页，
+ * 不自动写回任何回执。列表入口只替换目录来源，草稿、未明回执与切换保护保持不变。
+ */
+export async function openReviewPanelWorkspace(source?: () => Promise<FileSystemDirectoryHandle>): Promise<void> {
   if (isReviewReceiptWriting() || isReviewApplyRunning()) throw new Error('审阅操作仍在进行，请完成后再打开其他任务。');
   const previous = state.reviewWorkspace;
   const recovering = hasPendingReviewReceipt(previous);
   const picker = (window as unknown as { showDirectoryPicker: (opts?: unknown) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker;
-  const root = await picker({ mode: 'readwrite' });
+  const root = source ? await source() : await picker({ mode: 'readwrite' });
   const workspace = await openReviewWorkspace(root);
   // The old approval button can be used while directory reading awaits I/O.
   // An unknown but settled receipt may still reopen here to reconcile its actual outcome.

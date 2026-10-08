@@ -3,7 +3,7 @@ import { AssetImportClientError, type EditorWorkspaceClient, type EditorWorkspac
 import { bindEditorWorkspaceHooks, beginEditorWorkspaceWrite, connectEditorWorkspace, disconnectEditorWorkspace,
   editorWorkspaceStatus, editorWorkspaceTextChanges, finishEditorWorkspaceWrite, pollEditorWorkspace,
   publishEditorWorkspaceFile, publishEditorWorkspaceState, readEditorWorkspaceBaseline, editorPreviewPublisher,
-  enqueueEditorAssetRequest, editorHistoryClient } from '../src/editor-workspace.js';
+  enqueueEditorAssetRequest, editorHistoryClient, editorReviewTaskClient } from '../src/editor-workspace.js';
 
 const oldBaseline = { projectRevision: '1'.repeat(64), coordinationRevision: '2'.repeat(64), files: [
   { path: 'game.config.json', sha256: '3'.repeat(64) },
@@ -29,6 +29,8 @@ beforeEach(() => {
     history: vi.fn(async () => ({ contentRevision: '1'.repeat(64), checkpoints: [] })),
     historyCheckpoint: vi.fn(async () => { throw new Error('没有请求记录历史'); }),
     historyCompare: vi.fn(async () => { throw new Error('没有请求比较历史'); }),
+    reviewTasks: vi.fn(async () => ({ projectIdentity: 'a'.repeat(32), tasks: [], pendingCount: 0 })),
+    reviewContent: vi.fn(async () => { throw new Error('没有请求审阅内容'); }),
     previewSources: vi.fn(async () => []), previewContent: vi.fn(async () => { throw new Error('没有请求试玩内容'); }),
     heartbeat: vi.fn(async () => {}), snapshot: vi.fn(async () => structuredClone(disk)),
     preview: vi.fn(async ({ preview }) => ({ previewId: preview.action === 'invalidate' ? null : preview.previewId,
@@ -60,6 +62,27 @@ describe('bound Editor sequential relay', () => {
     await disconnectEditorWorkspace();
     await connectEditorWorkspace(client, root);
     expect(() => history.assertCurrent()).toThrow('已经变化');
+  });
+  it('reads review tasks for the bound project only and drops answers that arrive after a switch', async () => {
+    await connectEditorWorkspace(client, root);
+    expect(editorReviewTaskClient({} as FileSystemDirectoryHandle)).toBeNull();
+    const reviews = editorReviewTaskClient(root)!;
+    await expect(reviews.tasks()).resolves.toMatchObject({ pendingCount: 0 });
+    vi.mocked(client.reviewTasks).mockResolvedValueOnce({ projectIdentity: 'b'.repeat(32), tasks: [], pendingCount: 0 });
+    await expect(reviews.tasks()).rejects.toThrow('不属于当前项目');
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.mocked(client.reviewContent).mockImplementationOnce(async () => { await gate; return { kind: 'file', base64: 'e30=' }; });
+    const reading = reviews.content({ reviewId: 'r-1', kind: 'file', path: 'identity.json' }).catch(error => error);
+    await vi.waitFor(() => expect(client.reviewContent).toHaveBeenCalledWith(expect.objectContaining({
+      request: { reviewId: 'r-1', kind: 'file', path: 'identity.json' } })));
+    const closing = disconnectEditorWorkspace(); // Waits for the in-flight read before revoking.
+    release();
+    await closing;
+    expect(await reading).toMatchObject({ message: expect.stringContaining('迟到') });
+    await connectEditorWorkspace(client, root);
+    await expect(reviews.tasks()).rejects.toThrow('已经切换');
+    expect(editorReviewTaskClient(root)).not.toBeNull();
   });
   it('serializes asset requests with preview and polling without retrying a mutation', async () => {
     await connectEditorWorkspace(client, root);
