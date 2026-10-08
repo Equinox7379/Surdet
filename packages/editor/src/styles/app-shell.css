@@ -576,7 +576,7 @@ body {
   gap: 12px;
 }
 
-.editor-welcome-actions button {
+.editor-welcome-actions > button {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -590,12 +590,12 @@ body {
   transition: border-color var(--surdet-motion-fast) ease, background-color var(--surdet-motion-fast) ease;
 }
 
-.editor-welcome-actions button:hover {
+.editor-welcome-actions > button:hover {
   border-color: var(--surdet-border-strong);
   background: var(--surdet-surface-subtle);
 }
 
-.editor-welcome-actions button:first-child {
+.editor-welcome-actions > button:first-child {
   border-color: var(--surdet-action-primary);
 }
 
@@ -620,6 +620,70 @@ body {
   color: var(--surdet-text-secondary);
   font-size: 12px;
   margin-top: 4px;
+}
+
+.editor-welcome-recent {
+  margin-top: 16px;
+}
+
+.editor-welcome-recent h2 {
+  margin: 0 0 8px;
+  color: var(--surdet-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .06em;
+}
+
+.editor-welcome-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.editor-welcome-actions .editor-welcome-recent-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+}
+
+.editor-welcome-actions .editor-welcome-recent-item:hover {
+  border-color: var(--surdet-border-default);
+  background: var(--surdet-surface-panel);
+}
+
+.editor-welcome-recent-item strong {
+  font-size: 13.5px;
+}
+
+.editor-welcome-recent-item small {
+  grid-column: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--surdet-text-muted);
+  font: 11px/1.5 var(--surdet-font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-welcome-recent-item time {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  color: var(--surdet-text-muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.editor-welcome-recent-empty {
+  margin: 0;
+  padding: 6px 12px;
+  color: var(--surdet-text-muted);
+  font-size: 12px;
 }
 
 @media(max-width:1280px) {
