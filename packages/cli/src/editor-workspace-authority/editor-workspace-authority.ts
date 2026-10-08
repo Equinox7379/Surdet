@@ -1,4 +1,5 @@
 import * as crypto from 'node:crypto';
+import * as path from 'node:path';
 import {
   AuthoringOperationError,
   type PreviewPublishInput,
@@ -14,6 +15,7 @@ import {
 import type { LeaseHandle } from '../authoring/node-local-lease.js';
 import { NodeLocalLeaseManager } from '../authoring/node-local-lease.js';
 import { NodeProjectStorage } from '../authoring/node-project-storage.js';
+import { NodeReviewStore } from '../authoring/node-review-store.js';
 import { projectIdentityFromRoot } from '../authoring/project-identity.js';
 import {
   HumanWorkspaceStore,
@@ -145,12 +147,16 @@ export class EditorWorkspaceAuthority {
   private readonly sessions = new Map<string, string>();
   private readonly now: () => number;
   private readonly previews: PreviewObservationService;
+  private readonly projectIdentity: string;
+  private readonly reviews: NodeReviewStore;
 
   constructor(
     readonly projectRootIdentity: string,
     options: EditorWorkspaceAuthorityOptions = {},
   ) {
     this.leaseManager = options.leaseManager ?? new NodeLocalLeaseManager();
+    this.projectIdentity = projectIdentityFromRoot(this.projectRootIdentity);
+    this.reviews = new NodeReviewStore(path.join(this.leaseManager.dataRoot, this.projectIdentity), this.projectIdentity, this.leaseManager);
     this.workspaceStore = options.workspaceStore ?? new HumanWorkspaceStore({
       dataRoot: this.leaseManager.dataRoot,
     });
@@ -226,7 +232,7 @@ export class EditorWorkspaceAuthority {
       this.baseline(),
     ]);
     return {
-      projectIdentity: projectIdentityFromRoot(this.projectRootIdentity),
+      projectIdentity: this.projectIdentity,
       humanWorkspace: humanWorkspace.summary,
       mutationNotice,
       diskBaseline,
@@ -261,6 +267,16 @@ export class EditorWorkspaceAuthority {
   async history(input: EditorWorkspaceStateInput) {
     await this.requireSession(input);
     return new ContentHistoryService(this.leaseManager).list(this.projectRootIdentity);
+  }
+
+  async reviewTasks(input: EditorWorkspaceStateInput) {
+    await this.requireSession(input);
+    return this.reviews.listReviewTasks();
+  }
+
+  async reviewContent(input: EditorWorkspaceStateInput, request: { reviewId: string; path: string; kind: 'file' | 'directory' }) {
+    await this.requireSession(input);
+    return this.reviews.readPreparedContent(request.reviewId, request.path, request.kind);
   }
 
   private async assertHistoryWorkspace(input: EditorWorkspaceStateInput): Promise<void> {

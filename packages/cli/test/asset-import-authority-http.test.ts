@@ -27,6 +27,7 @@ import { openAssetImportAuthorityPaths } from '../src/asset-import-authority/fil
 import { AssetImportRecordStore } from '../src/asset-import-authority/record-store.js';
 import { EditorWorkspaceAuthority } from '../src/editor-workspace-authority/editor-workspace-authority.js';
 import { NodeLocalLeaseManager } from '../src/authoring/node-local-lease.js';
+import { NodeReviewStore } from '../src/authoring/node-review-store.js';
 
 const servers: http.Server[] = [];
 const roots: string[] = [];
@@ -417,6 +418,52 @@ afterEach(async () => {
 });
 
 describe('project asset import authority HTTP boundary', () => {
+  it('discovers and reads reviews through a real project binding without granting terminal writes', async () => {
+    const fixture = await bindingHarness();
+    await writeFile(path.join(fixture.projectRoot, 'game.config.json'), '{"entryScene":"start","variables":{}}');
+    const dataRoot = path.join(path.dirname(fixture.projectRoot), 'coordination');
+    const manager = new NodeLocalLeaseManager(dataRoot);
+    const workspace = new EditorWorkspaceAuthority(await realpath(fixture.projectRoot), { leaseManager: manager });
+    fixture.target.workspace = workspace;
+    const browserSessionId = 'review-discovery-browser';
+    const token = await bindProject(fixture, browserSessionId);
+    const state = { workspaceSessionId: itemId, browserSessionId, workspaceGeneration: 1, availability: 'clean',
+      dirtyScopes: [], busyReasons: [], blockedReasons: [] };
+    const send = (action: string, body: object, binding = token, origin = fixture.origin) => request(fixture.origin,
+      `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/workspace/${action}`, { method: 'POST',
+        headers: headers(origin, { [ASSET_IMPORT_AUTHORITY_BINDING_HEADER]: binding }), body: JSON.stringify(body) });
+    try {
+      expect((await send('review-tasks', state)).response.status).toBe(409);
+      expect((await send('heartbeat', state)).response.status).toBe(200);
+      expect((await send('review-tasks', state)).body.data).toMatchObject({ tasks: [], pendingCount: 0 });
+      const snapshot = await send('snapshot', { workspaceSessionId: itemId, browserSessionId });
+      const projectIdentity = snapshot.body.data.projectIdentity;
+      const store = new NodeReviewStore(path.join(dataRoot, projectIdentity), projectIdentity, manager);
+      await store.createReview('review_owned', { reviewVersion: '2.0.0', reviewId: 'review_owned', kind: 'comparison',
+        projectIdentity, expectedProjectRevision: 'saved-project', comparisonFingerprint: 'comparison' });
+      const listed = await send('review-tasks', state);
+      expect(listed.response.status).toBe(200);
+      expect(listed.body.data).toMatchObject({ projectIdentity, pendingCount: 1, tasks: [{ reviewId: 'review_owned', kind: 'comparison', status: 'pending' }] });
+      expect(listed.text).not.toContain(fixture.projectRoot.replaceAll('\\', '\\\\'));
+      const readInput = { ...state, request: { reviewId: 'review_owned', kind: 'file', path: 'comparison/review.json' } };
+      const read = await send('review-content', readInput);
+      expect(read.response.status).toBe(200);
+      expect(JSON.parse(Buffer.from(read.body.data.base64, 'base64').toString('utf8')).reviewId).toBe('review_owned');
+      const directory = await send('review-content', { ...state, request: { reviewId: 'review_owned', kind: 'directory', path: '' } });
+      expect(directory.body.data.entries).toContainEqual({ name: 'identity.json', kind: 'file' });
+      expect((await send('review-content', { ...state, request: { reviewId: 'missing', kind: 'directory', path: '' } })).response.status).toBe(404);
+      expect((await send('review-tasks', state, 'invalid-binding')).response.status).toBe(403);
+      expect((await send('review-tasks', state, token, 'http://foreign.invalid')).response.status).toBe(403);
+      expect((await send('review-tasks', { ...state, browserSessionId: 'another-browser' })).response.status).toBe(403);
+      expect((await send('review-tasks', { ...state, projectIdentity: 'another-project' })).response.status).toBe(400);
+      expect((await send('review-content', { ...readInput, request: { ...readInput.request, path: '../private.txt' } })).response.status).toBe(400);
+      expect((await send('review-content', { ...readInput, request: { ...readInput.request, kind: 'write' } })).response.status).toBe(400);
+      expect((await send('review-content', { ...readInput, request: { ...readInput.request, rootPath: 'C:/private' } })).response.status).toBe(400);
+      expect((await send('review-tasks', state)).body.data.pendingCount).toBe(1);
+      expect(fixture.target.calls.some(([action]) => action === 'commit')).toBe(false);
+    } finally { await workspace.close(); }
+  });
+
   it('requires matching browser binding for workspace state and publishes only under the guarded write lease', async () => {
     const fixture = await bindingHarness();
     await writeFile(path.join(fixture.projectRoot, 'game.config.json'), JSON.stringify({ entryScene: 'start', variables: {} }));
