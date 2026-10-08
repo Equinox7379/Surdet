@@ -1420,6 +1420,32 @@ function confirmProjectSwitch(): boolean {
     || window.confirm('当前项目还有未保存修改。切换项目会放弃这些修改，确定继续吗？');
 }
 
+/** Desktop start page: directories the person already opened, resolved by the main process. */
+function renderRecentProjects(bridge: NonNullable<Window['surdetDesktop']>): HTMLElement {
+  const section = h('section', 'editor-welcome-recent');
+  section.setAttribute('aria-label', '最近项目');
+  const list = h('div', 'editor-welcome-recent-list');
+  section.append(h('h2', undefined, '最近项目'), list);
+  void bridge.recentProjects().then((projects) => {
+    if (!section.isConnected) return;
+    if (projects.length === 0) { list.append(h('p', 'editor-welcome-recent-empty', '打开过的项目会显示在这里。')); return; }
+    for (const project of projects) {
+      const control = h('button', 'editor-welcome-recent-item');
+      control.type = 'button';
+      control.title = project.location;
+      const when = new Date(project.openedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+      control.append(h('strong', undefined, project.name), h('small', undefined, project.location), h('time', undefined, when));
+      control.onclick = () => {
+        void bridge.openRecentProject(project.id).catch((error: unknown) => {
+          setStatus(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : '无法打开最近项目', false, 6000);
+        });
+      };
+      list.append(control);
+    }
+  }, () => { if (section.isConnected) list.append(h('p', 'editor-welcome-recent-empty', '暂时无法读取最近项目。')); });
+  return section;
+}
+
 async function openProjectSafely(): Promise<void> {
   if (window.surdetDesktop) {
     try { await window.surdetDesktop.openProject(); }
@@ -2027,6 +2053,7 @@ function renderMainArea(): void {
         control.onclick = () => document.querySelector<HTMLButtonElement>(`.editor-project-bar [data-action="${action}"]`)?.click();
         actions.append(control);
       }
+      if (window.surdetDesktop) actions.append(renderRecentProjects(window.surdetDesktop));
       welcome.append(introduction, actions); col.append(welcome); refreshProjectBarProjection(); return;
     }
     const workbench = buildAuthoringWorkbench();

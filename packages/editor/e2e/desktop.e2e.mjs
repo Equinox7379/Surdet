@@ -118,6 +118,33 @@ try {
   assert.equal(JSON.parse(await fs.readFile(path.join(fixture, 'game.config.json'), 'utf8')).variables.score.initial, 42);
   console.log('RESTART: same physical project, saved configuration, persisted draft recovered and saved');
   await restored.screenshot({ path: path.join(output, 'desktop-reopened.png') });
+  // Start page: recent projects are only directories the main process recorded.
+  await app.evaluate(({ dialog }) => { dialog.showMessageBoxSync = () => 1; });
+  await app.close();
+  app = undefined;
+  await fs.rm(path.join(profile, 'last-project.json'));
+  const recentFile = path.join(profile, 'recent-projects.json');
+  const recorded = JSON.parse(await fs.readFile(recentFile, 'utf8')).entries;
+  assert.deepEqual(recorded.map(entry => entry.path), [await fs.realpath(fixture)]);
+  await fs.writeFile(recentFile, JSON.stringify({ entries: [...recorded, { path: path.join(output, 'moved-away'), name: 'moved-away', openedAt: 1 }] }));
+  app = await electron.launch({ args, env, ...(executablePath ? { executablePath } : {}) });
+  const home = await app.firstWindow(); watch(home);
+  const recentItems = home.locator('.editor-welcome-recent-item');
+  await recentItems.nth(1).waitFor();
+  assert.deepEqual(await recentItems.locator('strong').allInnerTexts(), [path.basename(recorded[0].path), 'moved-away']);
+  await home.screenshot({ path: path.join(output, 'desktop-recent-projects.png') });
+  await assert.rejects(home.evaluate(path => window.surdetDesktop.openRecentProject(path), fixture), /最近项目列表已变化/);
+  await recentItems.nth(1).click();
+  await home.waitForFunction(() => document.getElementById('status')?.textContent.includes('无法打开「moved-away」'));
+  assert.equal(app.windows().length, 1, 'a missing recent folder must not open a window');
+  const homeClosed = home.waitForEvent('close');
+  const recentOpened = app.waitForEvent('window');
+  await recentItems.first().click();
+  const recentProject = await recentOpened; watch(recentProject);
+  await recentProject.waitForFunction(() => window.surdetEditorDebug?.state.scenes.size > 0 && document.body.innerText.includes('接力保护：已连接'));
+  await homeClosed;
+  assert.equal(await recentProject.evaluate(() => window.surdetEditorDebug.state.autosaveProjectId), identity);
+  console.log('RECENT PROJECTS: recorded project reopened from the start page; forged id and moved folder rejected');
   assert.equal(errors.length, 0, errors.join('\n'));
   console.log('PASS', { fixture, profile });
 } catch (error) {

@@ -4,6 +4,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDirectory } from './directory.js';
+import { findRecentProject, parseRecentProjects, summarizeRecentProjects, withRecentProject, type RecentProject } from './recent-projects.js';
 import { startEditorServer } from './server.js';
 import { DESKTOP_ORIGIN } from './contracts.js';
 
@@ -27,6 +28,24 @@ function showError(error: unknown, parent?: BrowserWindow) {
   const options = { type: 'error' as const, title: 'Surdet 编辑器', message: '无法完成操作', detail: error instanceof Error ? error.message : String(error) };
   if (parent && !parent.isDestroyed()) void dialog.showMessageBox(parent, options);
   else void dialog.showMessageBox(options);
+}
+
+const recentProjectsFile = (): string => path.join(app.getPath('userData'), 'recent-projects.json');
+async function readRecentProjects(): Promise<RecentProject[]> {
+  try { return parseRecentProjects(JSON.parse(await fs.readFile(recentProjectsFile(), 'utf8'))); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.error('Recent projects:', error);
+    return [];
+  }
+}
+// Windows may open projects concurrently; serialize the read-modify-write.
+let recentWrites: Promise<void> = Promise.resolve();
+function recordRecentProject(project: Directory): Promise<void> {
+  recentWrites = recentWrites.then(async () => {
+    const next = withRecentProject(await readRecentProjects(), { path: project.root, name: project.grant.name, openedAt: Date.now() });
+    await fs.writeFile(recentProjectsFile(), JSON.stringify({ entries: next }));
+  }).catch(error => { console.error('Recent projects:', error); });
+  return recentWrites;
 }
 
 async function chooseProject(parent?: BrowserWindow): Promise<void> {
@@ -58,7 +77,7 @@ async function openWindow(project: Directory | null) {
   const window = new BrowserWindow({
     width: 1440, height: 960, minWidth: 1000, minHeight: 680, show: false,
     title: project ? `${project.grant.name} — Surdet 编辑器` : 'Surdet 编辑器',
-    backgroundColor: '#f6f5f2',
+    backgroundColor: '#111317',
     webPreferences: { preload: path.join(here, 'preload.cjs'), session: browserSession, sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false },
   });
   const state: WindowState = { window, project, grants: new Map(project ? [[project.grant.token, project]] : []), busy: false };
@@ -89,6 +108,7 @@ async function openWindow(project: Directory | null) {
     if (project) {
       await fs.mkdir(app.getPath('userData'), { recursive: true });
       await fs.writeFile(path.join(app.getPath('userData'), 'last-project.json'), JSON.stringify({ path: project.root }));
+      await recordRecentProject(project);
       // The home window remains open if its in-memory demo has unsaved work.
       for (const other of windows.values()) if (!other.project && other.window !== window) other.window.close();
     }
@@ -97,6 +117,17 @@ async function openWindow(project: Directory | null) {
 
 ipcMain.handle('editor:context', event => trusted(event).project?.grant ?? null);
 ipcMain.handle('editor:open-project', async event => { const state = trusted(event); await chooseProject(state.window); });
+ipcMain.handle('editor:recent-projects', async event => { trusted(event); return summarizeRecentProjects(await readRecentProjects()); });
+ipcMain.handle('editor:open-recent-project', async (event, id: unknown) => {
+  trusted(event);
+  // Only a directory recorded from an earlier native selection; never a renderer path.
+  const entry = findRecentProject(await readRecentProjects(), id);
+  if (!entry) throw new Error('最近项目列表已变化，请重新打开项目。');
+  let directory: Directory;
+  try { directory = await openDirectory(entry.path); }
+  catch { throw new Error(`无法打开「${entry.name}」：文件夹已移动、删除或暂时无法访问。`); }
+  await openWindow(directory);
+});
 ipcMain.handle('editor:pick-directory', async event => {
   const state = trusted(event);
   const result = await dialog.showOpenDialog(state.window, { title: '选择审阅目录', properties: ['openDirectory'] });
