@@ -441,3 +441,61 @@
     transition: none;
   }
 }
+
+/* Text audit: one rule between blocks (the heading already closes with one),
+   compact records, and repeated findings shown once with every location. */
+.text-audit-workspace .project-health-audit-overview {
+  margin-top: 0;
+  border-top: 0;
+}
+
+.text-audit-workspace .project-health-audit-overview + .project-health-empty {
+  margin-top: 0;
+  border-top: 0;
+  border-bottom: 0;
+}
+
+.text-audit-workspace .project-health-audit-scope {
+  margin-top: var(--surdet-space-24);
+}
+
+.text-audit-workspace .project-health-section {
+  padding-top: var(--surdet-space-24);
+}
+
+.text-audit-workspace .project-health-record {
+  gap: var(--surdet-space-8) var(--surdet-space-24);
+  padding: var(--surdet-space-12) 0;
+}
+
+.text-audit-workspace .project-health-record-text {
+  margin-top: var(--surdet-space-4);
+}
+
+.text-audit-workspace .project-health-secondary-action {
+  padding: var(--surdet-space-4) var(--surdet-space-12);
+}
+
+.project-health-record-count {
+  margin-left: var(--surdet-space-8);
+  color: var(--surdet-state-warning);
+  font-size: var(--surdet-type-caption);
+  font-weight: 600;
+}
+
+.project-health-record--grouped {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.project-health-record--grouped .project-health-record-actions {
+  justify-content: flex-start;
+}
+
+.project-health-record--grouped .project-health-secondary-action {
+  font-family: var(--surdet-font-mono);
+  font-size: var(--surdet-type-caption);
+}
+
+.project-health-technical-list dd {
+  white-space: pre-line;
+}
