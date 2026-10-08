@@ -10,6 +10,7 @@ import { collectInterpolatedVars } from './runtime/interpreter.js';
 import { VariableStore } from './state/variable-store.js';
 import { isVarType, VAR_TYPES } from './state/types.js';
 import type { VarDeclaration, VarValue } from './state/types.js';
+import type { SourceError, SourceRange } from './dsl/token.js';
 import type {
   ChoiceInstr,
   CompiledScene,
@@ -31,6 +32,19 @@ export interface LintIssue {
   col: number;
   /** 修复建议（写给 AI/作者：精确可操作；由 attachHints 按 code 补齐） */
   hint?: string;
+  /** Exact excerpt in this validation's input, when known; end is exclusive. */
+  range?: SourceRange;
+}
+
+/** Keep the same diagnostic facts across CLI, Editor and Agent failure replies. */
+export function sourceErrorIssue(error: SourceError, fallbackFile: string): LintIssue {
+  const p = error.pos;
+  return {
+    severity: 'error', code: error.code ?? 'LINT', text: error.message,
+    file: p?.file ?? fallbackFile, line: p?.line ?? 0, col: p?.col ?? 0,
+    ...(p?.range ? { range: p.range } : {}),
+    ...(error.hint ? { hint: error.hint } : {}),
+  };
 }
 
 /** 解析 game.config.json 原始对象 → 变量表/类型表/readonly 集/customInstructions/entryScene。
@@ -107,6 +121,7 @@ export function validateSwitchTargets(scene: CompiledScene, issues: LintIssue[])
           file: instr.file,
           line: instr.line,
           col: instr.col,
+          ...(c.range ? { range: c.range } : {}),
         });
       }
     }
@@ -672,7 +687,7 @@ export function checkExprVars(
  *  CallInstr 与 JumpInstr 同为 { target, file, line, col } 结构，按结构类型接收。 */
 export function validateJumpTarget(
   fromScene: string,
-  jump: { target: string; file: string; line: number; col: number },
+  jump: { target: string; file: string; line: number; col: number; range?: SourceRange },
   sceneLabels: Map<string, Set<string>>,
   failedScenes: Set<string>,
   issues: LintIssue[],
@@ -698,6 +713,7 @@ export function validateJumpTarget(
       file: jump.file,
       line: jump.line,
       col: jump.col,
+      ...(jump.range ? { range: jump.range } : {}),
     });
     return;
   }
@@ -711,6 +727,7 @@ export function validateJumpTarget(
       file: jump.file,
       line: jump.line,
       col: jump.col,
+      ...(jump.range ? { range: jump.range } : {}),
     });
     return;
   }
@@ -723,6 +740,7 @@ export function validateJumpTarget(
       file: jump.file,
       line: jump.line,
       col: jump.col,
+      ...(jump.range ? { range: jump.range } : {}),
     });
   }
 }
