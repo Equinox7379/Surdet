@@ -4,14 +4,14 @@
 .ui-player-preview-heading { height:44px; display:flex; align-items:center; justify-content:space-between; padding:0 16px; box-sizing:border-box; color:var(--surdet-text-primary); }
 .ui-player-preview iframe { display:block; width:100%; height:calc(100% - 44px); border:0; }
 .ui-designer-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:24px; }
-.ui-designer button, .ui-player-preview-heading button { font:inherit; cursor:pointer; color:inherit; border:0; border-radius:4px; padding:7px 10px; background:var(--surdet-surface-subtle); }
-.ui-designer button:hover, .ui-player-preview-heading button:hover { background:var(--surdet-surface-selected); }
+.ui-designer button, .ui-player-preview-heading button { font:500 12.5px/1.4 var(--surdet-font-ui); cursor:pointer; color:inherit; border:1px solid var(--surdet-border-default); border-radius:var(--surdet-radius-tight); padding:5px 10px; background:var(--surdet-surface-subtle); }
+.ui-designer button:hover, .ui-player-preview-heading button:hover { background:var(--surdet-surface-raised); border-color:var(--surdet-border-strong); }
 .ui-designer button:disabled { opacity:.45; cursor:default; }
 .ui-designer .ui-designer-toolbar select { margin-right:auto; width:180px; }
 .ui-designer-body { display:grid; grid-template-columns:190px minmax(280px,1fr) 230px; align-items:start; gap:24px; }
 .ui-designer-tree, .ui-designer-properties { min-width:0; font-size:13px; }
 .ui-designer h3 { margin:0 0 16px; font-size:14px; font-weight:600; }
-.ui-designer .ui-tree-node { display:block; width:100%; border:0; background:none; text-align:left; padding:8px 6px; overflow-wrap:anywhere; color:inherit; }
+.ui-designer .ui-tree-node { display:block; width:100%; border:0; border-radius:var(--surdet-radius-tight); background:none; text-align:left; padding:8px 6px; overflow-wrap:anywhere; color:inherit; }
 .ui-tree-node[aria-current=true] { color:var(--surdet-action-primary); background:var(--surdet-surface-selected); }
 .ui-add-row { display:grid; gap:8px; margin-top:24px; }
 .ui-designer-center { min-width:0; padding:16px 0; }

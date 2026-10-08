@@ -275,40 +275,53 @@
 #asset-center-view.v4-asset-center .asset-import-workbench, #asset-center-view.v4-asset-center .asset-relocation-batch-workbench { margin-bottom: 20px; }
 
 /* Select an object, then edit its full existing fields. No replacement JSON model. */
-#config-view.v4-config .config-workspace { grid-template-columns: 200px minmax(0,1fr); gap: 24px; background:var(--surdet-surface-panel); }
-#config-view.v4-config .config-index { background: transparent; border: 0; }
-#config-view.v4-config .config-index-header { border:0; padding-bottom:8px; }
-#config-view.v4-config .config-index :is(button,[data-config-section]) { border-color:transparent; border-radius:5px; }
-#config-view.v4-config .config-index-header p { font-size: 12px; line-height: 1.8; }
-#config-view.v4-config .config-ledger { min-width: 0; padding:36px clamp(24px,5vw,72px) 48px 24px; background:transparent; }
-#config-view.v4-config .config-ledger-header { padding:0 0 28px; border: 0; }
-#config-view.v4-config .config-section-heading { font:600 25px/1.5 var(--surdet-font-ui); }
-#config-view.v4-config .config-ledger-section > :is(.config-table-block,.config-table-scroll,.config-field-grid,.config-subsection,.config-actions) { margin-inline:0; }
-#config-view.v4-config .config-subsection { border:0; padding-top:12px; margin-top:32px; }
-#config-view.v4-config .config-subsection h3 { font:600 15px/1.6 var(--surdet-font-ui); }
-#config-view.v4-config .config-table-block { border:0; background:transparent; padding-block:16px; }
-#config-view.v4-config .config-actions { border:0; padding-top:12px; }
-#config-view.v4-config .config-table-scroll.v4-object-workspace { display: grid; grid-template-columns: 170px minmax(0,1fr); gap: 28px; overflow: visible; border: 0; }
-.v4-object-index { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
-.v4-object-index h3 { font: 500 12px/1.7 var(--surdet-font-ui); color: var(--v4-muted); margin: 0 0 10px; }
-.v4-object-link { text-align: left; border: 0; background: transparent; overflow-wrap: anywhere; }
-.v4-object-link[aria-current=true] { background: var(--v4-selection); color: var(--v4-green); font-weight: 600; }
-#config-view.v4-config .config-table[data-object-editor=true] { display: block; width: 100%; min-width: 0; border: 0; }
+#config-view.v4-config .config-workspace { grid-template-columns: 220px minmax(0,1fr); gap: 0; background: var(--surdet-surface-app); }
+#config-view.v4-config .config-index { gap: 10px; padding: 16px 8px; background: var(--surdet-surface-panel); border: 0; border-right: 1px solid var(--surdet-border-default); }
+#config-view.v4-config .config-index-header { gap: 4px; padding: 0 8px 10px; border: 0; border-bottom: 1px solid var(--surdet-border-default); }
+#config-view.v4-config .config-index-header :is(h2,h3,.config-index-title) { font-size: 13px; font-weight: 600; }
+#config-view.v4-config .config-index-header p { font-size: 11.5px; line-height: 1.6; color: var(--surdet-text-muted); }
+#config-view.v4-config .config-index-header button { justify-self: start; width: auto; min-height: 24px; padding: 2px 8px; border: 1px solid var(--surdet-border-default); border-radius: var(--surdet-radius-tight); color: var(--surdet-text-secondary); font-size: 11.5px; }
+#config-view.v4-config .config-index-list { gap: 1px; }
+#config-view.v4-config .config-index :is(.config-index-item,[data-config-section]) { min-height: 32px; padding: 6px 10px; border-color: transparent; border-radius: var(--surdet-radius-tight); }
+#config-view.v4-config .config-index :is(.config-index-item,[data-config-section]):hover { border-color: transparent; background: var(--surdet-surface-hover); }
+#config-view.v4-config .config-index :is(.config-index-item,[data-config-section])[aria-current=page] { border-color: transparent; background: var(--surdet-surface-raised); font-weight: 600; }
+#config-view.v4-config .config-index-item[aria-current=page] .config-index-label { color: var(--surdet-action-primary); }
+#config-view.v4-config .config-index-label { font-size: 13px; }
+#config-view.v4-config .config-ledger { min-width: 0; padding: 24px clamp(20px,3vw,40px) 48px; background: transparent; }
+#config-view.v4-config .config-ledger-header { padding: 0 0 18px; border: 0; }
+#config-view.v4-config .config-section-heading { font: 600 20px/1.4 var(--surdet-font-ui); }
+#config-view.v4-config .config-ledger-section > :is(.config-table-block,.config-table-scroll,.config-field-grid,.config-subsection,.config-actions) { margin-inline: 0; }
+#config-view.v4-config .config-subsection { border: 0; padding-top: 8px; margin-top: 24px; }
+#config-view.v4-config .config-subsection h3 { font: 600 14px/1.6 var(--surdet-font-ui); }
+#config-view.v4-config .config-table-block { border: 0; background: transparent; padding-block: 12px; }
+#config-view.v4-config .config-table-scroll.v4-object-workspace { display: grid; grid-template-columns: 200px minmax(0,1fr); gap: 20px; align-items: start; overflow: visible; border: 0; }
+.v4-object-index { min-width: 0; display: flex; flex-direction: column; gap: 1px; max-height: calc(100dvh - 300px); overflow: auto; padding: 6px; border: 1px solid var(--surdet-border-default); border-radius: var(--surdet-radius-control); background: var(--surdet-surface-panel); }
+.v4-object-index h3 { margin: 2px 6px 6px; font: 500 11.5px/1.6 var(--surdet-font-ui); color: var(--surdet-text-muted); }
+.v4-object-link { min-height: 30px; padding: 4px 10px; text-align: left; border: 0; background: transparent; overflow-wrap: anywhere; font-size: 12.5px; }
+.v4-object-link:hover { background: var(--surdet-surface-hover); }
+.v4-object-link[aria-current=true] { background: var(--surdet-surface-selected); color: var(--surdet-action-primary); font-weight: 600; }
+#config-view.v4-config .config-table[data-object-editor=true] { display: block; width: 100%; min-width: 0; padding: 18px 20px; border: 1px solid var(--surdet-border-default); border-radius: var(--surdet-radius-control); }
 #config-view.v4-config .config-table[data-object-editor=true] thead { display: none; }
 #config-view.v4-config .config-table[data-object-editor=true] tbody { display: block; }
-#config-view.v4-config .config-table[data-object-editor=true], #config-view.v4-config .config-table-scroll { background:transparent; }
-#config-view.v4-config .config-table[data-object-editor=true] tr { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px 24px; padding: 0; background: transparent; border: 0; }
-#config-view.v4-config .config-table[data-object-editor=true] td { display: flex; flex-direction: column; align-items: stretch; gap: 7px; width: auto; padding: 0; border: 0; background: transparent; min-width: 0; }
+#config-view.v4-config .config-table[data-object-editor=true], #config-view.v4-config .config-table-scroll { background: transparent; }
+#config-view.v4-config .config-table[data-object-editor=true] { background: var(--surdet-surface-panel); }
+#config-view.v4-config .config-table[data-object-editor=true] tr { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px 20px; padding: 0; background: transparent; border: 0; }
+#config-view.v4-config .config-table[data-object-editor=true] td { display: flex; flex-direction: column; align-items: stretch; gap: 6px; width: auto; padding: 0; border: 0; background: transparent; min-width: 0; color: var(--surdet-text-secondary); font-size: 12px; }
 #config-view.v4-config .config-table td:has(.v4-config-json) { grid-column: 1 / -1; }
-.v4-cell-label { font: 12px/1.7 var(--surdet-font-ui); color: var(--surdet-text-secondary); }
-#config-view.v4-config .config-table td :is(input:not([type=checkbox]),textarea,select) { min-width: 0; width: 100%; padding: 9px 12px; min-height: 38px; border: 1px solid transparent; border-radius: 5px; background: var(--surdet-surface-subtle); color: var(--surdet-text-primary); font:13px/1.6 var(--surdet-font-ui); }
-#config-view.v4-config .config-table td :is(input,textarea,select):hover { border-color:var(--v4-line); }
+#config-view.v4-config .config-table td :is(input:not([type=checkbox]),textarea,select) { min-width: 0; width: 100%; padding: 6px 10px; min-height: 32px; border: 1px solid var(--surdet-border-default); border-radius: var(--surdet-radius-tight); background: var(--surdet-surface-app); color: var(--surdet-text-primary); font: 13px/1.6 var(--surdet-font-ui); }
+#config-view.v4-config .config-table td :is(input,textarea,select):hover { border-color: var(--surdet-border-strong); }
 #config-view.v4-config .config-table td input[type=checkbox] { width: 17px; height: 17px; min-height: 0; align-self: start; }
 #config-view.v4-config .config-table textarea.v4-config-json { resize: vertical; font: 12px/1.8 var(--surdet-font-mono); }
-#config-view.v4-config .config-row-add { margin: 18px 0; }
+#config-view.v4-config .config-row-add { margin: 12px 0; }
 #config-view.v4-config .config-row-delete { align-self: flex-start; }
-#config-view.v4-config .config-field-grid { max-width: 840px; gap: 20px 24px; }
-#config-view.v4-config .config-actions { position: static; margin-top: 24px; }
+#config-view.v4-config .config-field-grid { max-width: 920px; gap: 16px 20px; }
+#config-view.v4-config .config-actions { position: static; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 20px; padding-top: 14px; border: 0; border-top: 1px solid var(--surdet-border-default); }
+#config-view.v4-config .config-actions button { min-height: 30px; padding: 4px 12px; border: 1px solid var(--surdet-border-strong); border-radius: var(--surdet-radius-tight); background: var(--surdet-surface-subtle); color: var(--surdet-text-primary); font-size: 12.5px; }
+#config-view.v4-config .config-actions button:hover:not(:disabled) { background: var(--surdet-surface-raised); }
+#config-view.v4-config .config-actions button.primary { border-color: var(--surdet-action-primary); background: var(--surdet-action-primary); color: var(--surdet-text-on-accent); font-weight: 600; }
+#config-view.v4-config .config-actions button.primary:hover:not(:disabled) { border-color: var(--surdet-action-primary-hover); background: var(--surdet-action-primary-hover); }
+#config-view.v4-config :is(.config-field,.config-field-grid) :is(input:not([type=checkbox]),select) { min-height: 32px; padding: 6px 10px; border: 1px solid var(--surdet-border-default); border-radius: var(--surdet-radius-tight); background: var(--surdet-surface-app); color: var(--surdet-text-primary); }
+#config-view.v4-config textarea { border: 1px solid var(--surdet-border-default); border-radius: var(--surdet-radius-tight); background: var(--surdet-surface-app); color: var(--surdet-text-primary); padding: 8px 10px; }
 
 /* Existing flow geometry, timeline tracks and review terminal actions remain intact. */
 #timeline-view .timeline-items { background: transparent; }
