@@ -212,9 +212,7 @@ export function renderProjectBar(
 
   const identity = element('div', 'editor-product-identity');
   identity.setAttribute('data-editor-region', 'product-identity');
-  const productMark = element('span', 'editor-product-mark', '述');
-  productMark.setAttribute('aria-hidden', 'true');
-  identity.append(productMark, element('strong', 'editor-product-name', 'Surdet'));
+  identity.append(element('strong', 'editor-product-name', 'Surdet'));
 
   const context = element('div', 'editor-project-context');
   context.setAttribute('data-editor-region', 'project-context');
