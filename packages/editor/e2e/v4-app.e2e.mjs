@@ -123,6 +123,17 @@ try {
   });
   assert.equal(hiddenSceneActions.opacity, '0');
   assert.equal(hiddenSceneActions.intercepts, false, 'invisible scene rename/delete controls must not intercept row clicks');
+  const firstSceneRow = page.locator('.scene-row').first();
+  await firstSceneRow.hover();
+  const hoveredSceneActions = await firstSceneRow.evaluate((row) => {
+    const item = row.querySelector('.scene-item').getBoundingClientRect();
+    const actions = row.querySelector('.scene-row-actions');
+    const hit = document.elementFromPoint(item.x + item.width / 2, item.y + item.height / 2);
+    return { opacity: getComputedStyle(actions).opacity, centerHitsRow: Boolean(hit?.closest('.scene-item')), share: actions.getBoundingClientRect().width / item.width };
+  });
+  assert(hoveredSceneActions.opacity === '1' && hoveredSceneActions.centerHitsRow && hoveredSceneActions.share <= 0.5,
+    `hover actions must stay at the row edge instead of covering the scene: ${JSON.stringify(hoveredSceneActions)}`);
+  await page.mouse.move(0, 0);
   // Studio workbench: layout and navigation never alter the original document.
   for (const label of ['调整目录宽度', '调整画面与属性区宽度']) {
     const separator = page.getByRole('separator', { name: label, exact: true });
