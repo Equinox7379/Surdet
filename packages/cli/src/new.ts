@@ -110,5 +110,6 @@ export async function cmdNew(name: string, options: NewProjectOptions = {}): Pro
   console.log('  2. npm run dev    开发预览');
   console.log('  3. npm run lint   内容校验');
   console.log('  4. npm run build 构建独立 Web 产物；编辑 content/scenario/ 下的剧本');
+  console.log('  AI 创作：先读项目 AGENTS.md；工具接入见 .mcp.json.example（默认隔离草稿）');
   return 0;
 }

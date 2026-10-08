@@ -16,7 +16,7 @@ npm run dev:project -w surdet-editor -- --project <项目目录绝对路径>
 
 最后一项在需要编辑器/真实试玩时使用，不替代 Agent Port。完整启动与绑定说明见 [README](../README.md#外部-agent-创作)。缺失构建时沿 README 的依赖顺序准备，不让内容作者自行改造工具链。
 
-新项目可追加 `--directory <项目目录>` 指定独立位置，`--template blank` 选空白模板，默认 `example` 带短篇示例。两者都用 `@surdet/player`，无需把项目放进源码仓库或复制播放器。独立环境须先由执行者准备项目 README 所列的同批 Surdet 包与开发依赖；不要假定公共 npm 已发布这些包。安装后可用 `surdet` 与 `surdet-agent-port`，无需源码相对路径；Editor 现阶段仍按上面的已有启动入口，独立作者安装版另属后续阶段。
+新项目可追加 `--directory <项目目录>` 指定独立位置，`--template blank` 选空白模板，默认 `example` 带短篇示例。两者都用 `@surdet/player`，并自带 `AGENTS.md` 和 `.mcp.json.example`，独立作者可从项目内说明开始，不需要取得本指南或复制播放器。连接示例须填写真实 CLI 包和项目路径，再由 MCP 客户端启用，默认 `stage`。独立环境须先由执行者准备项目 README 所列的同批 Surdet 包与开发依赖；不要假定公共 npm 已发布这些包。安装后可用 `surdet` 与 `surdet-agent-port`，无需源码相对路径；Editor 可使用已有独立 Windows 应用或上面的源码启动入口，不随游戏依赖自动安装。
 
 - `observe` 只读；`stage` 可编辑隔离 change、验证和试玩，但不写回来源；`apply` 必须由获授权者明确启动，仍受草稿、租约与提交保护约束。
 - 普通章节在 change.begin 显式传 `compositionMode: "direct"`，可在隔离草稿中编写剧情回访；direct 不是来源写权限。要参与候选组合时显式选 `candidate`，继续受依赖与环检查保护。省略字段仍保留 stage→candidate、apply→direct 的旧默认值；恢复会话沿用记录模式，不随新 policy 改变。
