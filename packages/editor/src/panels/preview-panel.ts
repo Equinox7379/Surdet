@@ -581,7 +581,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   fastWrap.append(fastChk, document.createTextNode(' 跳过逐字显示'));
   controls.appendChild(fastWrap);
 
-  const playBtn = h('button', 'preview-replay-action', '重新播放');
+  const playBtn = h('button', 'preview-replay-action preview-play-action', '重新播放');
   playBtn.setAttribute('data-action', 'reload-preview');
   playBtn.setAttribute('data-action-scope', 'workspace');
   controls.appendChild(playBtn);

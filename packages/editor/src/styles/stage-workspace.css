@@ -11,7 +11,7 @@
  .preview-workspace:has(> .stage-adjustment-workspace[open]) > .preview-stage { flex: 0 0 240px; }
  .preview-workspace:has(> .stage-adjustment-workspace[open]) > .stage-adjustment-workspace { flex: 0 0 320px; }
 }
-.stage-adjustment-workspace { padding: 12px 0; border-top: 1px solid var(--border, #d4d4d4); }
+.stage-adjustment-workspace { padding: 4px 16px 12px; border-top: 1px solid var(--surdet-border-default); background: var(--surdet-surface-panel); }
 .stage-adjustment-workspace summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
 .stage-adjustment-workspace > select { max-width: 100%; margin: 4px 12px 8px 0; }
 .stage-adjustment-workspace .config-scalars { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 12px 0; }
@@ -21,4 +21,4 @@
 .stage-adjustment-workspace p { overflow-wrap: anywhere; line-height: 1.6; }
 .stage-configuration { margin-top: 16px; }
 .stage-configuration button { margin: 4px 8px 4px 0; }
-.stage-calibration-image { display: block; max-width: 100%; height: auto; background: repeating-conic-gradient(#f6f6f6 0 25%, #e3e3e3 0 50%) 0 / 16px 16px; touch-action: none; }
+.stage-calibration-image { display: block; max-width: 100%; height: auto; background: repeating-conic-gradient(#262B32 0 25%, #1F2329 0 50%) 0 / 16px 16px; touch-action: none; }

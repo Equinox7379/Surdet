@@ -311,7 +311,7 @@
 }
 
 .timeline-scroll {
-  --timeline-track-label-width: 196px;
+  --timeline-track-label-width: 268px;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -372,43 +372,58 @@
 }
 
 .timeline-track-row {
+  --cue-rgb: 122 167 255;
   display: grid;
   grid-template-columns: var(--timeline-track-label-width) var(--timeline-lane-min-width);
-  min-height: 78px;
+  min-height: 56px;
   border-bottom: 1px solid var(--surdet-border-default);
 }
+
+.timeline-track-row[data-track-kind=background] { --cue-rgb: 91 155 213; }
+.timeline-track-row[data-track-kind=portrait] { --cue-rgb: 192 132 252; }
+.timeline-track-row[data-track-kind=layer] { --cue-rgb: 119 206 180; }
+.timeline-track-row[data-track-kind=camera] { --cue-rgb: 125 211 252; }
+.timeline-track-row[data-track-kind=screen] { --cue-rgb: 245 158 11; }
+.timeline-track-row[data-track-kind=particle] { --cue-rgb: 242 140 168; }
+.timeline-track-row[data-track-kind=audio] { --cue-rgb: 92 194 143; }
 
 .timeline-track-head {
   position: sticky;
   left: 0;
   z-index: 4;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
   align-content: center;
-  gap: 6px;
-  padding: 10px 12px;
+  gap: 4px 6px;
+  padding: 8px;
   border-right: 1px solid var(--surdet-border-strong);
-  background: var(--surdet-surface-subtle);
+  background: var(--surdet-surface-panel);
 }
 
-.timeline-track-head select {
+.timeline-track-head :is(select, input, button) {
   min-width: 0;
-  padding: 5px 6px;
-  font-size: 10px;
+  min-height: 26px;
+  padding: 2px 6px;
+  font-size: 11.5px;
 }
 
-.timeline-track-head .timeline-resource-select {
-  grid-column: 1 / -1;
-}
+.timeline-track-head > select:first-child { grid-area: 1 / 1; font-weight: 600; }
+.timeline-track-head > .timeline-track-target { grid-area: 1 / 2; }
+.timeline-track-head > .track-remove { grid-area: 1 / 3; }
+.timeline-track-head > select[data-timeline-focus$="add-action"] { grid-area: 2 / 1; }
+.timeline-track-head:not(:has(.timeline-resource-select)) > select[data-timeline-focus$="add-action"] { grid-column: 1 / 3; }
+.timeline-track-head > .timeline-resource-select { grid-area: 2 / 2; }
+.timeline-track-head > .track-add { grid-area: 2 / 3; }
 
 .timeline-track-head .timeline-open-assets {
-  grid-column: 1 / -1;
+  grid-area: 3 / 1 / 4 / 4;
   justify-self: start;
-  padding: 3px 0;
+  min-height: 0;
+  padding: 0;
   border-color: transparent;
   background: transparent;
   color: var(--surdet-action-primary);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .timeline-inspector .timeline-open-assets {
@@ -416,34 +431,29 @@
 }
 
 .timeline-track-target {
-  grid-column: 1 / -1;
   overflow: hidden;
   color: var(--surdet-text-secondary);
   font-family: var(--surdet-font-mono);
-  font-size: 9px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .track-add {
-  grid-column: 1;
-  justify-self: start;
-  padding: 4px 7px;
+  justify-self: stretch;
   color: var(--surdet-action-primary);
-  font-size: 10px;
+  white-space: nowrap;
 }
 
 .track-remove {
-  grid-column: 2;
-  justify-self: end;
-  padding: 4px 7px;
+  justify-self: stretch;
   color: var(--surdet-state-danger);
-  font-size: 10px;
+  white-space: nowrap;
 }
 
 .timeline-lane {
   position: relative;
-  min-height: 78px;
+  min-height: 56px;
   overflow: hidden;
   background: var(--surdet-surface-panel);
 }
@@ -458,20 +468,20 @@
 
 .timeline-cue {
   position: absolute;
-  top: 20px;
+  top: calc(50% - 16px);
   display: flex;
   align-items: center;
-  height: 38px;
+  height: 32px;
   min-width: 28px;
   overflow: hidden;
   padding: 0 13px 0 9px;
-  border: 1px solid #7894A7;
+  border: 1px solid rgb(var(--cue-rgb) / 55%);
   border-radius: var(--surdet-radius-tight);
-  background: #DCE5EA;
-  color: #1E3C50;
+  background: rgb(var(--cue-rgb) / 16%);
+  color: var(--surdet-text-primary);
   box-shadow: none;
   cursor: grab;
-  font-size: 10px;
+  font-size: 11.5px;
   text-overflow: ellipsis;
   touch-action: none;
   white-space: nowrap;
@@ -479,8 +489,8 @@
 
 .timeline-cue:hover {
   transform: none;
-  border-color: var(--surdet-border-strong);
-  background: #D2DEE4;
+  border-color: rgb(var(--cue-rgb) / 85%);
+  background: rgb(var(--cue-rgb) / 24%);
 }
 
 .timeline-cue:active {
@@ -507,8 +517,8 @@
   inset: 6px 11px 6px 7px;
   width: calc(100% - 18px);
   height: calc(100% - 12px);
-  color: currentColor;
-  opacity: 0.2;
+  color: rgb(var(--cue-rgb));
+  opacity: 0.55;
   pointer-events: none;
 }
 
@@ -778,7 +788,7 @@
   }
 
   .timeline-scroll {
-    --timeline-track-label-width: 156px;
+    --timeline-track-label-width: 210px;
   }
 
   .timeline-track-head {

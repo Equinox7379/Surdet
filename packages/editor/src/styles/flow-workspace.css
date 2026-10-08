@@ -106,8 +106,9 @@
 }
 
 .flow-view-switch-button[aria-pressed="true"] {
-  background: var(--surdet-text-primary);
-  color: var(--surdet-surface-panel);
+  background: var(--surdet-surface-raised);
+  color: var(--surdet-text-primary);
+  font-weight: 600;
 }
 
 .flow-view-switch-button:focus-visible {
