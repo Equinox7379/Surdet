@@ -144,7 +144,20 @@ try {
   await recentProject.waitForFunction(() => window.surdetEditorDebug?.state.scenes.size > 0 && document.body.innerText.includes('接力保护：已连接'));
   await homeClosed;
   assert.equal(await recentProject.evaluate(() => window.surdetEditorDebug.state.autosaveProjectId), identity);
-  console.log('RECENT PROJECTS: recorded project reopened from the start page; forged id and moved folder rejected');
+  // A restored project opens straight into its window; the native menu still reaches
+  // the start page and the recent list.
+  const projectMenu = () => app.evaluate(({ Menu }) => Menu.getApplicationMenu().items[0].submenu.items.map(item => ({ label: item.label, items: item.submenu?.items.map(sub => sub.label) ?? null })));
+  const recentMenu = (await projectMenu()).find(item => item.label === '最近项目');
+  assert.equal(recentMenu?.items.length, 2);
+  assert(recentMenu.items[0].startsWith(`${path.basename(recorded[0].path)} — `), recentMenu.items[0]);
+  const homeAgainOpened = app.waitForEvent('window');
+  await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items[0].submenu.items.find(item => item.label === '显示启动页').click());
+  const homeAgain = await homeAgainOpened; watch(homeAgain);
+  await homeAgain.locator('.editor-welcome-recent-item').nth(1).waitFor();
+  await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items[0].submenu.items.find(item => item.label === '最近项目').submenu.items[0].click());
+  await recentProject.waitForTimeout(500);
+  assert.equal(app.windows().length, 2, 'reopening an open project from the menu focuses it instead of adding a window');
+  console.log('RECENT PROJECTS: recorded project reopened from the start page and native menu; forged id and moved folder rejected');
   assert.equal(errors.length, 0, errors.join('\n'));
   console.log('PASS', { fixture, profile });
 } catch (error) {
