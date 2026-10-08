@@ -59,7 +59,7 @@ export function renderSidebar(): void {
   newBtn.setAttribute('data-action', 'create-scene');
   newBtn.onclick = () => { void newScene(); };
   sidebar.appendChild(newBtn);
-  const importBtn = h('button', 'outline-new-scene', '导入剧本'); importBtn.type = 'button';
+  const importBtn = h('button', 'outline-new-scene', '导入剧本'); importBtn.type = 'button'; importBtn.setAttribute('data-action', 'import-script');
   importBtn.onclick = () => openScriptImport(sidebar, onSelectSceneHook);
   sidebar.append(importBtn);
   const list = h('div', 'scene-list');
