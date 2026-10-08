@@ -673,6 +673,7 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
   const canvas = h('div', 'timeline-track-list timeline-tracks');
   definition.tracks.forEach((track, trackIndex) => {
     const row = h('div', 'timeline-track-row');
+    row.dataset.trackKind = track.kind;
     const head = h('div', 'timeline-track-head');
     const kind = selectInput(definition.version === 1 ? TIMELINE_TRACKS.filter(kind => kind !== 'layer') : TIMELINE_TRACKS, track.kind, (option) => timelineTrackLabel(option as TimelineTrackKind));
     kind.dataset.timelineFocus = `track-${trackIndex}-kind`;

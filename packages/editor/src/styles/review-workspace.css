@@ -678,3 +678,24 @@
 }
 .review-preparation-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
 .review-preparation-progress { margin-block: 1rem; }
+
+.review-empty-state {
+  max-width: 46ch;
+  margin: var(--surdet-space-64) auto;
+  padding: 0 var(--surdet-space-24);
+  text-align: center;
+}
+
+.review-empty-state h2 {
+  margin: 0 0 var(--surdet-space-8);
+  color: var(--surdet-text-primary);
+  font-size: var(--surdet-type-section);
+  font-weight: 600;
+}
+
+.review-empty-state p {
+  margin: 0;
+  color: var(--surdet-text-secondary);
+  font-size: var(--surdet-type-control);
+  line-height: 1.75;
+}
