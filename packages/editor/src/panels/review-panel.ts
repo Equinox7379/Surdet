@@ -1554,6 +1554,13 @@ export function renderReviewPanel(
   workspace: ReviewWorkspaceState | null = state.reviewWorkspace,
   options: ReviewPanelOptions = {},
 ): void {
+  // An action can finish after the page was drawn again (e.g. returning from a result preview):
+  // redraw the live review view for the same review, never the detached copy that started it.
+  if (container.isConnected === false && typeof document !== 'undefined') {
+    const live = document.getElementById('review-view');
+    if (live === null || live === container || state.reviewWorkspace !== workspace) return;
+    container = live;
+  }
   if (activeApply !== null && (activeApply.workspace !== workspace || workspace?.approvalReceipt === null
     || workspace?.returnReceipt !== null)) disposeReviewApply();
   container.innerHTML = '';
