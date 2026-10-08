@@ -83,24 +83,39 @@ function appendHeading(workspace: HTMLElement): void {
   workspace.appendChild(heading);
 }
 
-function appendFinding(parent: HTMLElement, finding: AuditFinding, pairs: SpeakerPair[]): void {
-  const record = h('article', 'project-health-record');
+/** The same finding often repeats across lines; show it once with every location. */
+function groupFindings(findings: readonly AuditFinding[]): AuditFinding[][] {
+  const groups = new Map<string, AuditFinding[]>();
+  for (const finding of findings) {
+    const key = `${finding.code}\0${findingText(finding)}`;
+    const group = groups.get(key);
+    if (group) group.push(finding); else groups.set(key, [finding]);
+  }
+  return [...groups.values()];
+}
+
+function appendFinding(parent: HTMLElement, findings: readonly AuditFinding[], pairs: SpeakerPair[]): void {
+  const finding = findings[0]!;
+  const grouped = findings.length > 1;
+  const record = h('article', grouped ? 'project-health-record project-health-record--grouped' : 'project-health-record');
   record.setAttribute('data-audit-finding', finding.code);
 
   const copy = h('div', 'project-health-record-copy');
-  copy.append(
-    h('p', 'project-health-record-kind', findingLabel(finding)),
-    h('p', 'project-health-record-text', findingText(finding)),
-  );
+  const kind = h('p', 'project-health-record-kind', findingLabel(finding));
+  if (grouped) kind.append(h('span', 'project-health-record-count', `${findings.length} 处`));
+  copy.append(kind, h('p', 'project-health-record-text', findingText(finding)));
   record.appendChild(copy);
 
   const actions = h('div', 'project-health-record-actions');
-  const sceneKey = sceneKeyOfFile(finding.file);
-  if (sceneKey) {
-    const jump = h('button', 'project-health-secondary-action', `打开场景 · 第 ${finding.line} 行`);
+  for (const item of findings) {
+    const sceneKey = sceneKeyOfFile(item.file);
+    if (!sceneKey) continue;
+    const sceneName = state.scenes.get(sceneKey)?.id ?? sceneKey;
+    const jump = h('button', 'project-health-secondary-action', grouped ? `${sceneName} · 第 ${item.line} 行` : `打开场景 · 第 ${item.line} 行`);
     jump.type = 'button';
-    jump.setAttribute('data-audit-jump', `${sceneKey}:${finding.line}`);
-    jump.onclick = () => onJumpHook(sceneKey, Math.max(0, finding.line - 1));
+    if (grouped) jump.setAttribute('aria-label', `打开场景 ${sceneName} · 第 ${item.line} 行`);
+    jump.setAttribute('data-audit-jump', `${sceneKey}:${item.line}`);
+    jump.onclick = () => onJumpHook(sceneKey, Math.max(0, item.line - 1));
     actions.appendChild(jump);
   }
 
@@ -118,11 +133,10 @@ function appendFinding(parent: HTMLElement, finding: AuditFinding, pairs: Speake
   technical.setAttribute('data-audit-technical', '');
   technical.appendChild(h('summary', undefined, '查看技术信息'));
   const facts = h('dl', 'project-health-technical-list');
-  for (const [label, value] of [
-    ['问题代码', finding.code],
-    ['来源文件', finding.file || '未知'],
-    ['来源行', String(finding.line)],
-  ]) {
+  const rows: Array<[string, string]> = grouped
+    ? [['问题代码', finding.code], ['来源位置', findings.map((item) => `${item.file || '未知'}:${item.line}`).join('\n')]]
+    : [['问题代码', finding.code], ['来源文件', finding.file || '未知'], ['来源行', String(finding.line)]];
+  for (const [label, value] of rows) {
     const row = h('div');
     row.append(h('dt', undefined, label), h('dd', undefined, value));
     facts.appendChild(row);
@@ -224,7 +238,7 @@ export function renderAuditPanel(container: HTMLElement): void {
       const heading = h('div', 'project-health-section-heading');
       heading.append(h('h2', undefined, titleText), h('span', undefined, `${group.length} 项`));
       section.appendChild(heading);
-      for (const finding of group) appendFinding(section, finding, pairs);
+      for (const same of groupFindings(group)) appendFinding(section, same, pairs);
       workspace.appendChild(section);
     }
   }
