@@ -214,15 +214,7 @@ export function renderProjectBar(
   identity.setAttribute('data-editor-region', 'product-identity');
   const productMark = element('span', 'editor-product-mark', '述');
   productMark.setAttribute('aria-hidden', 'true');
-  const productText = element('span', 'editor-product-text');
-  productText.append(
-    element('strong', 'editor-product-name', 'Surdet'),
-    element('span', 'editor-product-kind', '剧情创作'),
-  );
-  identity.append(
-    productMark,
-    productText,
-  );
+  identity.append(productMark, element('strong', 'editor-product-name', 'Surdet'));
 
   const context = element('div', 'editor-project-context');
   context.setAttribute('data-editor-region', 'project-context');
@@ -231,14 +223,14 @@ export function renderProjectBar(
     contextItem('当前工作', 'editor-current-object', projection.objectLabel),
   );
 
-  const saveState = element(
-    'span',
-    'editor-save-state',
-    projection.writeLocked
-      ? projection.writeLockLabel ?? '素材整理进行中'
-      : saveStateLabel(projection.saveState),
-  );
-  saveState.setAttribute('data-save-state', projection.saveState);
+  const search = element('div', 'editor-project-search');
+  search.setAttribute('data-editor-region', 'project-search');
+  if (actions.onSearch) {
+    const control = actionButton('搜索场景、台词、角色和素材', 'search-project', actions.onSearch, false, 'Ctrl+K');
+    control.setAttribute('aria-keyshortcuts', 'Control+K Meta+K');
+    control.prepend(workbenchIcon('search'));
+    search.appendChild(control);
+  }
 
   const commands = element('div', 'editor-project-commands');
   commands.setAttribute('data-editor-region', 'global-commands');
@@ -273,12 +265,30 @@ export function renderProjectBar(
   );
   saveCommands.appendChild(save);
   commands.append(projectCommands, editCommands, saveCommands);
-  if (actions.onSearch) {
-    const search = actionButton('搜索项目', 'search-project', actions.onSearch, false, 'Ctrl+K');
-    search.appendChild(workbenchIcon('search'));
-    search.setAttribute('aria-keyshortcuts', 'Control+K Meta+K');
-    commands.appendChild(search);
-  }
+
+  header.append(identity, context, search, commands);
+  return header;
+}
+
+/**
+ * Save state, operation messages and relay protection share one bottom status bar.
+ * It is a separate landmark so long messages never push the title bar or navigation.
+ */
+export function renderStatusBar(
+  projection: ProjectBarProjection,
+  actions: Pick<ProjectBarActions, 'onViewProjectChanges' | 'onSyncProject' | 'onKeepProjectDrafts' | 'onDiscardProjectDrafts'>,
+): HTMLElement {
+  const footer = element('footer', 'editor-status-bar');
+  footer.setAttribute('data-editor-region', 'status-bar');
+
+  const saveState = element(
+    'span',
+    'editor-save-state',
+    projection.writeLocked
+      ? projection.writeLockLabel ?? '素材整理进行中'
+      : saveStateLabel(projection.saveState),
+  );
+  saveState.setAttribute('data-save-state', projection.saveState);
 
   const status = element('span', 'editor-operation-status');
   status.id = 'status';
@@ -307,9 +317,9 @@ export function renderProjectBar(
     relayActions.appendChild(actionButton('放弃草稿并同步', 'discard-project-drafts', actions.onDiscardProjectDrafts));
   }
   relayStatus.append(relayProtection, relayUpdate, relayActions);
-  header.append(identity, context, commands, feedback, relayStatus);
-  updateRelayProjection(projection, header);
-  return header;
+  footer.append(feedback, relayStatus);
+  updateRelayProjection(projection, footer);
+  return footer;
 }
 
 export function renderModeNavigation(
@@ -320,8 +330,7 @@ export function renderModeNavigation(
   navigation.setAttribute('aria-label', '创作模式');
   navigation.setAttribute('data-editor-region', 'mode-navigation');
 
-  const heading = element('div', 'editor-mode-navigation-title', '工作区');
-  navigation.appendChild(heading);
+  navigation.appendChild(element('div', 'editor-mode-navigation-title', '工作区'));
 
   for (const group of EDITOR_MODE_GROUPS) {
     const groupElement = element('div', 'editor-mode-group');
@@ -330,8 +339,9 @@ export function renderModeNavigation(
     groupElement.setAttribute('aria-label', group.label);
     groupElement.appendChild(element('span', 'editor-mode-group-label', group.label));
     for (const mode of EDITOR_MODES.filter(({ group: modeGroup }) => modeGroup === group.id)) {
-      const button = element('button', 'editor-mode-button', mode.label);
-      button.appendChild(workbenchIcon(mode.id));
+      const button = element('button', 'editor-mode-button');
+      button.append(workbenchIcon(mode.id), element('span', 'editor-mode-label', mode.label));
+      button.title = mode.label;
       button.type = 'button';
       button.setAttribute('data-editor-mode', mode.id);
       button.setAttribute('aria-controls', mode.panelId);

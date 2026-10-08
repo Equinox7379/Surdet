@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderProjectBar, updateProjectBarProjection } from '../src/shell/app-shell.js';
+import { renderProjectBar, renderStatusBar, updateProjectBarProjection } from '../src/shell/app-shell.js';
+import type { ProjectBarActions, ProjectBarProjection } from '../src/shell/app-shell.js';
 
 class FakeElement {
   readonly tagName: string;
@@ -94,6 +95,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** The title bar and the status bar are separate landmarks sharing one projection. */
+function renderChrome(projection: ProjectBarProjection, actions: ProjectBarActions): FakeElement {
+  const root = new FakeElement('div');
+  root.append(
+    renderProjectBar(projection, actions) as unknown as FakeElement,
+    renderStatusBar(projection, actions) as unknown as FakeElement,
+  );
+  return root;
+}
+
 describe('editor action scope contract', () => {
   it('marks the project save as the unique global save action and keeps its callback intact', () => {
     vi.stubGlobal('document', documentStub);
@@ -136,7 +147,7 @@ describe('editor action scope contract', () => {
   it('refreshes project, object, and save facts without rebuilding command callbacks', () => {
     vi.stubGlobal('document', documentStub);
     const onSaveProject = vi.fn();
-    const bar = renderProjectBar({
+    const bar = renderChrome({
       projectName: '旧项目',
       objectLabel: '场景 ch01_01',
       saveState: 'dirty',
@@ -148,7 +159,7 @@ describe('editor action scope contract', () => {
       onUndo: vi.fn(),
       onRedo: vi.fn(),
       onSaveProject,
-    }) as unknown as FakeElement;
+    });
     const saveButton = bar.querySelector('[data-action="save-project"]');
 
     updateProjectBarProjection({
@@ -168,7 +179,7 @@ describe('editor action scope contract', () => {
 
   it('renders the actual reason when project writing is temporarily locked', () => {
     vi.stubGlobal('document', documentStub);
-    const bar = renderProjectBar({
+    const bar = renderChrome({
       projectName: '当前项目',
       objectLabel: '场景 ch01_01',
       saveState: 'dirty',
@@ -183,7 +194,7 @@ describe('editor action scope contract', () => {
       onUndo: vi.fn(),
       onRedo: vi.fn(),
       onSaveProject: vi.fn(),
-    }) as unknown as FakeElement;
+    });
 
     expect(bar.querySelector('.editor-save-state')!.textContent).toBe('正在恢复上次未完成的保存');
     expect(bar.querySelector('[data-action="save-project"]')!.getAttribute('title'))
@@ -204,7 +215,7 @@ describe('editor action scope contract', () => {
       onKeepProjectDrafts: vi.fn(),
       onDiscardProjectDrafts: vi.fn(),
     };
-    const bar = renderProjectBar({
+    const bar = renderChrome({
       projectName: '当前项目',
       objectLabel: '场景 ch01_01',
       saveState: 'dirty',
@@ -213,7 +224,7 @@ describe('editor action scope contract', () => {
       relayProtection: 'connected',
       relayUpdate: 'pending',
       relayDirty: true,
-    }, callbacks) as unknown as FakeElement;
+    }, callbacks);
     const relay = bar.querySelector('.editor-relay-status')!;
     const view = bar.querySelector('[data-action="view-project-changes"]')!;
     const sync = bar.querySelector('[data-action="sync-project"]')!;

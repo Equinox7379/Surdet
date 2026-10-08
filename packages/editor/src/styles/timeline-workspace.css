@@ -37,7 +37,7 @@
 .timeline-header-actions .primary {
   border-color: var(--surdet-action-primary);
   background: var(--surdet-action-primary);
-  color: var(--surdet-surface-panel);
+  color: var(--surdet-text-on-accent);
 }
 .timeline-header-actions .danger { color: var(--surdet-state-danger); }
 
@@ -488,9 +488,9 @@
 }
 
 .timeline-cue.selected {
-  border-color: var(--surdet-color-frame-900);
-  background: var(--surdet-color-frame-900);
-  color: var(--surdet-surface-panel);
+  border-color: var(--surdet-action-primary);
+  background: var(--surdet-surface-raised);
+  color: var(--surdet-text-primary);
   box-shadow: 0 0 0 2px var(--surdet-surface-panel), 0 0 0 3px var(--surdet-editor-selection-outline);
 }
 
@@ -953,7 +953,7 @@
 .timeline-autosave-conflict-actions button.primary {
   border-color: var(--surdet-action-primary);
   background: var(--surdet-action-primary);
-  color: var(--surdet-surface-panel);
+  color: var(--surdet-text-on-accent);
 }
 
 .timeline-autosave-conflict-actions button:hover:not(:disabled) {
