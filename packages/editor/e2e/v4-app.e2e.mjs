@@ -478,6 +478,9 @@ try {
   // visible dialogue row after focus moves on, without rebuilding the workspace.
   await page.setViewportSize({ width: 1600, height: 1000 });
   const sceneText = () => page.evaluate(() => window.surdetEditorDebug.state.scenes.get('start').text);
+  // History merges edits less than 600ms apart (COALESCE_MS). Let earlier edits settle
+  // so this case's first edit opens its own undo step at exactly this text.
+  await page.waitForTimeout(700);
   const beforeBlank = await sceneText();
   await page.locator('[data-script-view="source"]').click();
   await page.locator('.v4-source-editor').fill(beforeBlank.replace(/(\r?\n)(@end\s*)$/, '$1$1$2'));
@@ -513,8 +516,13 @@ try {
   assert(await blankInput.evaluate(node => node.isConnected), 'typing into a blank row must not rebuild the workspace');
   await blankInput.dispose();
   // Edits within the history coalescing window may share one undo step.
-  for (let step = 0; step < 8 && await sceneText() !== beforeBlank; step++) await page.locator('[data-action="undo"]').click();
-  assert.equal(await sceneText(), beforeBlank, 'blank-row prose and the inserted row must undo through ordinary history');
+  const undoTrail = [];
+  for (let step = 0; step < 8 && await sceneText() !== beforeBlank; step++) {
+    await page.locator('[data-action="undo"]').click();
+    const text = await sceneText();
+    undoTrail.push(text === beforeBlank ? 'case start' : text.includes(longNarration) ? 'with narration' : text.includes('\r\n\r\n@end') ? 'blank row only' : `other(${text.length})`);
+  }
+  assert.equal(await sceneText(), beforeBlank, `blank-row prose and the inserted row must undo through ordinary history: ${undoTrail.join(' -> ')}`);
   await page.setViewportSize({ width: 960, height: 720 });
   await dialogue.focus();
   console.log('PASS blank row: quiet while blank, typed long narration stays visible and aligned after blur, refocus continues, undo restores');
