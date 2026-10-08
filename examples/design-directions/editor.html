@@ -1,0 +1,749 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark" data-screen="script">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Surdet Editor · 视觉方向样稿</title>
+<link rel="icon" href="data:,">
+<style>
+/* Static direction study for the Editor redesign. Not an Editor implementation:
+   no project IO, no authoring calls. Script, names, gallery titles and art are the
+   unmodified Starter (《雾港来信》) content; status values are illustrative.
+   One shared layout, three visual directions: dark / light / wa. */
+@font-face { font-family: "MockSans"; src: url("../starter/content/assets/fonts/MiSans-Regular.otf") format("opentype"); font-display: swap; }
+@font-face { font-family: "MockSerif"; src: url("../starter/content/assets/fonts/NotoSerifSC-Variable.ttf") format("truetype"); font-weight: 200 900; font-display: swap; }
+
+:root {
+  --font-ui: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Segoe UI", "MockSans", sans-serif;
+  --font-mono: "Cascadia Mono", "JetBrains Mono", Consolas, "MockSans", monospace;
+  --font-story: var(--font-ui);
+  --font-head: var(--font-ui);
+  --serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "MockSerif", serif;
+}
+
+/* A · 深色专业：长时间制作，画面与素材最突出 */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111317; --panel: #171a1f; --panel-2: #1d2127; --raised: #232830; --rail: #0d0f12;
+  --line: #262b33; --line-strong: #363c47;
+  --text: #e7e9ec; --text-2: #a7aeb9; --text-3: #6d7581;
+  --accent: #f0a35e; --accent-ink: #1b1207; --accent-soft: rgba(240, 163, 94, .13); --accent-line: rgba(240, 163, 94, .45);
+  --sel: rgba(240, 163, 94, .09); --hover: rgba(255, 255, 255, .04);
+  --ok: #5cc28f; --warn: #e6b04f; --danger: #ef6b6b; --info: #7aa7ff;
+  --c-lynn: #8fb4ff; --c-player: #c3a5ff; --c-narr: #858d99; --c-shen: #77ceb4;
+  --r: 6px; --r-sm: 4px; --shadow: 0 8px 24px rgba(0, 0, 0, .35);
+  --seal: var(--accent); --seal-ink: #1b1207;
+}
+/* B · 浅色现代：干净、高对比、信息层次清楚 */
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f4f6; --panel: #ffffff; --panel-2: #f8f9fb; --raised: #ffffff; --rail: #ffffff;
+  --line: #e5e7eb; --line-strong: #cdd2da;
+  --text: #15171b; --text-2: #4a515c; --text-3: #8b929d;
+  --accent: #4f46e5; --accent-ink: #ffffff; --accent-soft: #eef0ff; --accent-line: #c7cbfb;
+  --sel: #f3f4ff; --hover: #f4f5f7;
+  --ok: #15803d; --warn: #c2650a; --danger: #dc2626; --info: #2563eb;
+  --c-lynn: #2563eb; --c-player: #7c3aed; --c-narr: #6b7280; --c-shen: #0f766e;
+  --r: 8px; --r-sm: 6px; --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 8px 24px rgba(16, 24, 40, .06);
+  --seal: #15171b; --seal-ink: #ffffff;
+}
+/* C · 日式清爽：延续 Player 的雾港气质，衬线正文、纸面与海色 */
+[data-theme="wa"] {
+  color-scheme: light;
+  --bg: #edf2f3; --panel: #fbfcfc; --panel-2: #f4f8f8; --raised: #ffffff; --rail: #e4ecee;
+  --line: #d9e4e6; --line-strong: #b8cbcf;
+  --text: #1e3946; --text-2: #4b6672; --text-3: #8aa2a9;
+  --accent: #2d6b7b; --accent-ink: #ffffff; --accent-soft: #e0eef0; --accent-line: #9fc4cb;
+  --sel: #e9f3f4; --hover: #eef4f5;
+  --ok: #4c8667; --warn: #a8722a; --danger: #b04c44; --info: #2d6b7b;
+  --c-lynn: #355f8f; --c-player: #75568f; --c-narr: #7c9097; --c-shen: #3a8072;
+  --r: 3px; --r-sm: 2px; --shadow: 0 10px 30px rgba(30, 57, 70, .08);
+  --font-story: var(--serif); --font-head: var(--serif);
+  --seal: #b8473c; --seal-ink: #fff7f2;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { display: flex; flex-direction: column; background: var(--bg); color: var(--text); font: 13px/1.5 var(--font-ui); -webkit-font-smoothing: antialiased; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; border: 0; background: none; padding: 0; }
+svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+svg.i.f { fill: currentColor; stroke: none; }
+.mono { font-family: var(--font-mono); }
+
+/* ---------- review bar (outside the product) ---------- */
+.review { flex: none; height: 40px; display: flex; align-items: center; gap: 18px; padding: 0 16px; background: #0a0b0d; color: #c9ced6; font-size: 12px; border-bottom: 1px solid #23262c; }
+.review strong { color: #fff; font-weight: 600; }
+.review .grp { display: flex; gap: 2px; padding: 2px; background: #17191d; border-radius: 6px; }
+.review .grp button { padding: 4px 10px; border-radius: 4px; color: #aeb4bd; }
+.review .grp button[aria-pressed="true"] { background: #2b2f36; color: #fff; }
+.review .note { margin-left: auto; color: #7d838d; }
+.bare .review { display: none; }
+
+/* ---------- app frame ---------- */
+.app { flex: 1; min-height: 0; display: grid; grid-template: "title title" 46px "rail main" 1fr "status status" 26px / 60px 1fr; background: var(--bg); }
+[data-screen="launch"] .app { grid-template: "title" 46px "main" 1fr "status" 26px / 1fr; }
+[data-screen="launch"] .rail, [data-screen="launch"] .t-project, [data-screen="launch"] .t-search, [data-screen="launch"] .t-actions { display: none; }
+
+.titlebar { grid-area: title; display: flex; align-items: center; gap: 14px; padding: 0 12px 0 14px; background: var(--panel); border-bottom: 1px solid var(--line); }
+[data-theme="dark"] .titlebar { background: var(--rail); }
+[data-theme="wa"] .titlebar { background: var(--panel); border-bottom: 3px double var(--line-strong); }
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 600; letter-spacing: .01em; }
+.seal { width: 24px; height: 24px; display: grid; place-items: center; border-radius: var(--r-sm); background: var(--seal); color: var(--seal-ink); font: 600 14px/1 var(--serif); }
+.t-project { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: var(--r-sm); color: var(--text); font-weight: 600; }
+.t-project:hover { background: var(--hover); }
+.t-project .sub { color: var(--text-3); font-weight: 400; }
+.sep-v { width: 1px; height: 18px; background: var(--line); }
+.t-search { flex: 0 1 440px; margin: 0 auto; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel-2); color: var(--text-3); }
+[data-theme="dark"] .t-search { background: var(--panel); }
+.t-search kbd { margin-left: auto; font: 11px var(--font-mono); padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; color: var(--text-3); }
+.t-actions { display: flex; align-items: center; gap: 6px; }
+.icon-btn { width: 30px; height: 30px; display: grid; place-items: center; border-radius: var(--r-sm); color: var(--text-2); }
+.icon-btn:hover { background: var(--hover); color: var(--text); }
+.saved { display: flex; align-items: center; gap: 6px; padding: 0 10px; color: var(--text-3); font-size: 12px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.btn { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 13px; border-radius: var(--r-sm); font-weight: 600; font-size: 12.5px; white-space: nowrap; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); }
+.btn.ghost { border: 1px solid var(--line-strong); color: var(--text); background: var(--panel); }
+[data-theme="dark"] .btn.ghost { background: transparent; }
+.btn kbd { font: 10.5px var(--font-mono); opacity: .6; font-weight: 400; }
+
+/* activity rail */
+.rail { grid-area: rail; display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 8px 6px; background: var(--rail); border-right: 1px solid var(--line); }
+.rail button { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 0 6px; border-radius: var(--r-sm); color: var(--text-3); font-size: 11px; }
+.rail button svg.i { width: 20px; height: 20px; }
+.rail button:hover { color: var(--text); background: var(--hover); }
+.rail button[aria-current="page"] { color: var(--text); }
+[data-theme="dark"] .rail button[aria-current="page"]::before { content: ""; position: absolute; left: -6px; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--accent); }
+[data-theme="dark"] .rail button[aria-current="page"] svg { color: var(--accent); }
+[data-theme="light"] .rail button[aria-current="page"] { background: var(--accent-soft); color: var(--accent); }
+[data-theme="wa"] .rail button[aria-current="page"] { background: var(--panel); color: var(--accent); box-shadow: inset 0 0 0 1px var(--line); }
+.rail .rule { height: 1px; margin: 6px 8px; background: var(--line); }
+.rail .push { margin-top: auto; }
+
+main { grid-area: main; min-width: 0; min-height: 0; position: relative; }
+.screen { display: none; position: absolute; inset: 0; grid-template-rows: minmax(0, 1fr); }
+[data-screen="launch"] [data-screen-id="launch"], [data-screen="script"] [data-screen-id="script"], [data-screen="timeline"] [data-screen-id="timeline"] { display: grid; }
+
+.statusbar { grid-area: status; display: flex; align-items: center; gap: 18px; padding: 0 14px; border-top: 1px solid var(--line); background: var(--panel); color: var(--text-3); font-size: 11.5px; }
+[data-theme="dark"] .statusbar { background: var(--rail); }
+.statusbar span { display: inline-flex; align-items: center; gap: 5px; }
+.statusbar svg.i { width: 13px; height: 13px; }
+.statusbar .ok { color: var(--ok); }
+.statusbar .warn { color: var(--warn); }
+.statusbar .right { margin-left: auto; }
+
+/* shared panel bits */
+.panel { background: var(--panel); min-height: 0; overflow: auto; }
+.ph { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--line); }
+.ph h2 { margin: 0; font: 600 13px var(--font-ui); }
+.ph .count { color: var(--text-3); font-size: 12px; }
+.ph .tools { margin-left: auto; display: flex; gap: 2px; }
+.field { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel-2); color: var(--text-3); }
+[data-theme="dark"] .field { background: var(--bg); }
+.sel { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 30px; padding: 0 8px 0 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel); color: var(--text); }
+[data-theme="dark"] .sel { background: var(--bg); }
+.sel svg { color: var(--text-3); }
+.seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--r-sm); background: var(--panel-2); border: 1px solid var(--line); }
+[data-theme="dark"] .seg { background: var(--bg); }
+.seg button { height: 24px; padding: 0 10px; border-radius: calc(var(--r-sm) - 1px); color: var(--text-2); font-size: 12px; }
+.seg button[aria-pressed="true"] { background: var(--raised); color: var(--text); box-shadow: 0 0 0 1px var(--line); font-weight: 600; }
+[data-theme="dark"] .seg button[aria-pressed="true"] { background: var(--raised); box-shadow: none; }
+.kicker { font-size: 11px; color: var(--text-3); letter-spacing: .04em; }
+[data-theme="wa"] .kicker { letter-spacing: .12em; }
+
+/* ---------- script screen ---------- */
+[data-screen-id="script"] { grid-template-columns: 256px minmax(0, 1fr) 440px; }
+.scenes { border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+.scenes .search { padding: 10px 12px 6px; }
+.tree { padding: 4px 8px 12px; }
+.tree h3 { display: flex; align-items: center; gap: 6px; margin: 12px 8px 4px; font: 600 11px var(--font-ui); color: var(--text-3); letter-spacing: .04em; }
+.tree h3 svg { width: 12px; height: 12px; }
+.scene { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 8px; padding: 6px 8px 6px 26px; border-radius: var(--r-sm); position: relative; }
+.scene:hover { background: var(--hover); }
+.scene b { font: 500 13px var(--font-mono); color: var(--text); }
+.scene small { color: var(--text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.scene .tags { grid-column: 1 / -1; display: flex; gap: 4px; }
+.tag { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 3px; font-size: 10.5px; color: var(--text-2); background: var(--panel-2); border: 1px solid var(--line); }
+.tag.acc { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+.scene[aria-current="true"] { background: var(--sel); }
+.scene[aria-current="true"]::before { content: ""; position: absolute; left: 12px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--accent); }
+[data-theme="dark"] .scene[aria-current="true"] { box-shadow: inset 0 0 0 1px var(--accent-line); }
+.outline { margin: 6px 12px 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+.outline a { display: flex; justify-content: space-between; padding: 4px 6px 4px 14px; border-radius: var(--r-sm); color: var(--text-2); text-decoration: none; font: 12px var(--font-mono); }
+.outline a span { color: var(--text-3); font-family: var(--font-ui); font-size: 11px; }
+.outline a.on { color: var(--text); background: var(--hover); }
+
+.writer { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); }
+[data-theme="dark"] .writer { background: var(--bg); }
+.doc-head { flex: none; display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 18px 0 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.doc-head h1 { margin: 0; font: 600 17px var(--font-mono); }
+[data-theme="wa"] .doc-head h1 { font: 600 18px var(--font-head); letter-spacing: .02em; }
+.doc-head .meta { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.doc-head .seg { margin-left: auto; }
+.lines { flex: 1; overflow: auto; padding: 10px 0 40px; }
+.row { display: grid; grid-template-columns: 52px 80px minmax(0, 1fr) 34px; align-items: baseline; padding: 4px 0; }
+.row:hover { background: var(--hover); }
+.ln { text-align: right; padding-right: 14px; font: 11px var(--font-mono); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.who { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--who, var(--text-2)); white-space: nowrap; }
+.who::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .85; }
+.say { font: 15px/1.7 var(--font-story); color: var(--text); padding-right: 12px; }
+[data-theme="wa"] .say { font-size: 15.5px; letter-spacing: .02em; }
+.row.narr .say { color: var(--text-2); }
+.row.cur { background: var(--sel); box-shadow: inset 3px 0 var(--accent); }
+.caret { display: inline-block; width: 1.5px; height: 1.1em; margin: 0 1px; vertical-align: -0.15em; background: var(--accent); }
+.row .more { opacity: 0; color: var(--text-3); }
+.row.cur .more, .row:hover .more { opacity: 1; }
+.row.dir .chips { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 6px; padding: 1px 0; }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px 0 7px; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--panel); color: var(--text-2); font-size: 12px; white-space: nowrap; }
+[data-theme="dark"] .chip { background: var(--panel-2); }
+.chip b { color: var(--text); font-weight: 600; }
+.chip svg.i { width: 14px; height: 14px; color: var(--k, var(--text-3)); }
+.chip .thumb { width: 18px; height: 18px; border-radius: 3px; background: var(--panel-2) center 14% / 240% auto no-repeat; }
+.k-film { --k: #a78bfa; } .k-unlock { --k: #d4a63c; } .k-flag { --k: var(--ok); } .k-jump { --k: var(--info); } .k-save { --k: var(--text-3); } .k-cond { --k: var(--warn); }
+[data-theme="wa"] .k-film { --k: #7a6aa8; } [data-theme="wa"] .k-unlock { --k: #a8813a; }
+.sec { display: flex; align-items: center; gap: 10px; margin: 16px 0 6px; padding-left: 52px; }
+.sec .name { display: inline-flex; align-items: center; gap: 6px; font: 600 12px var(--font-mono); color: var(--accent); }
+.sec .name svg { width: 13px; height: 13px; }
+.sec .line { flex: 1; height: 1px; background: var(--line); }
+.sec .note { font-size: 11px; color: var(--text-3); padding-right: 20px; }
+.row.in .who { border-left: 2px solid color-mix(in srgb, var(--warn) 55%, transparent); padding-left: 8px; margin-left: -10px; }
+.cond { grid-column: 2 / 4; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); }
+.cond code { font: 12px var(--font-mono); color: var(--text); padding: 1px 6px; border-radius: 3px; background: var(--panel-2); border: 1px solid var(--line); }
+.cond .hint { color: var(--text-3); }
+.choice { grid-column: 2 / 4; margin: 4px 12px 4px 0; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); overflow: hidden; }
+[data-theme="dark"] .choice { background: var(--panel); }
+.choice header { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--panel-2); font-size: 12px; color: var(--text-2); }
+.choice header b { color: var(--text); }
+.choice header svg { color: var(--accent); width: 14px; height: 14px; }
+.opt { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 12px; border-top: 1px solid var(--line); }
+.opt:first-of-type { border-top: 0; }
+.opt .key { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font: 600 11px var(--font-mono); }
+.opt .txt { font: 14.5px/1.5 var(--font-story); }
+.opt .fx { display: flex; gap: 5px; }
+.fx .tag { height: 20px; }
+.fx .tag.up { color: var(--ok); }
+.fx .tag.down { color: var(--danger); }
+.fx .tag.go { color: var(--info); }
+
+.dock { border-left: 1px solid var(--line); display: flex; flex-direction: column; overflow: auto; }
+.stage-card { padding: 14px 16px 12px; border-bottom: 1px solid var(--line); }
+.stage-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.stage-head b { font-size: 13px; }
+.stage-head .kicker { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.toggle { width: 26px; height: 15px; border-radius: 10px; background: var(--accent); position: relative; }
+.toggle::after { content: ""; position: absolute; right: 2px; top: 2px; width: 11px; height: 11px; border-radius: 50%; background: #fff; }
+.game { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--r-sm); background: #9bb6c0 url("../starter/content/assets/bg/harbor.png") center / cover; container-type: inline-size; box-shadow: 0 0 0 1px var(--line); }
+.game .por { position: absolute; bottom: -38%; height: 140%; left: 61%; transform: translateX(-50%); }
+.game .box { position: absolute; left: 0; right: 0; bottom: 0; padding: 3.2cqw 5cqw 3.4cqw; background: linear-gradient(to bottom, rgba(244, 248, 250, 0), rgba(244, 248, 250, .92) 34%); }
+.game .nm { display: inline-block; margin-bottom: 1.2cqw; padding: .4cqw 2.6cqw; font: 600 2.6cqw/1.4 var(--serif); color: #1f3d58; background: rgba(255, 255, 255, .85); border-bottom: 1px solid #7aa3b9; }
+.game .tx { font: 3.15cqw/1.55 var(--serif); color: #1d3446; }
+.transport { display: flex; align-items: center; gap: 4px; margin-top: 10px; }
+.transport .pos { margin-left: 8px; color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.transport .btn { margin-left: auto; }
+.tabs { display: flex; gap: 18px; padding: 0 16px; border-bottom: 1px solid var(--line); }
+.tabs button { height: 38px; color: var(--text-3); font-size: 12.5px; border-bottom: 2px solid transparent; }
+.tabs button[aria-selected="true"] { color: var(--text); font-weight: 600; border-color: var(--accent); }
+.tabs .n { margin-left: 4px; padding: 0 5px; border-radius: 8px; font-size: 10.5px; background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.insp { padding: 14px 16px 18px; display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 12px 12px; align-items: center; }
+.insp > label { color: var(--text-3); font-size: 12px; }
+.faces { display: flex; gap: 8px; }
+.face { width: 64px; text-align: center; font-size: 11px; color: var(--text-3); }
+.face i { display: block; height: 64px; margin-bottom: 4px; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--panel-2) center 13% / 230% auto no-repeat; }
+.face.on { color: var(--text); font-weight: 600; }
+.face.on i { box-shadow: 0 0 0 2px var(--accent); border-color: transparent; }
+.posrow { display: flex; align-items: center; gap: 8px; }
+.slider { flex: 1; height: 4px; border-radius: 2px; background: var(--line-strong); position: relative; }
+.slider::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 61%; border-radius: 2px; background: var(--accent); }
+.slider::after { content: ""; position: absolute; left: 61%; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--raised); box-shadow: 0 0 0 2px var(--accent); }
+.num { width: 56px; height: 28px; padding: 0 8px; display: flex; align-items: center; justify-content: flex-end; border: 1px solid var(--line); border-radius: var(--r-sm); font: 12px var(--font-mono); background: var(--panel-2); }
+[data-theme="dark"] .num { background: var(--bg); }
+.muted-link { color: var(--accent); font-size: 12px; }
+.vars { margin: 0 16px 16px; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.vars header { padding: 8px 12px; font-size: 11.5px; color: var(--text-3); background: var(--panel-2); border-bottom: 1px solid var(--line); }
+.var { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 7px 12px; border-top: 1px solid var(--line); font-size: 12px; }
+.var:first-of-type { border-top: 0; }
+.var code { font: 12px var(--font-mono); }
+.var small { grid-column: 1 / -1; color: var(--text-3); font-size: 11px; }
+.var .v { font: 600 12px var(--font-mono); }
+.var .v.no { color: var(--text-3); font-weight: 400; }
+.var .v.yes { color: var(--ok); }
+
+/* ---------- launch screen ---------- */
+[data-screen-id="launch"] { grid-template-columns: 300px minmax(0, 1fr); }
+.l-side { padding: 36px 28px; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; gap: 10px; }
+.l-side .hello { margin: 4px 0 18px; }
+.l-side .hello h1 { margin: 0 0 6px; font: 600 22px var(--font-head); }
+.l-side .hello p { margin: 0; color: var(--text-2); font-size: 12.5px; }
+.l-side .btn { height: 38px; justify-content: flex-start; padding: 0 14px; font-size: 13px; }
+.l-nav { margin-top: 18px; display: flex; flex-direction: column; gap: 2px; }
+.l-nav a { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: var(--r-sm); color: var(--text-2); text-decoration: none; }
+.l-nav a.on { background: var(--sel); color: var(--text); font-weight: 600; }
+.l-foot { margin-top: auto; color: var(--text-3); font-size: 11.5px; }
+.l-main { padding: 34px 44px; overflow: auto; }
+.l-main h2 { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; font: 600 15px var(--font-head); }
+.l-main h2 .field { margin-left: auto; width: 260px; font-weight: 400; font-family: var(--font-ui); }
+.projects { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-bottom: 34px; }
+.proj { border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); overflow: hidden; }
+[data-theme="light"] .proj { box-shadow: var(--shadow); border-color: transparent; }
+.proj .cover { aspect-ratio: 16 / 8; background: #8aa center / cover; position: relative; }
+.proj .cover .tag { position: absolute; left: 10px; top: 10px; background: rgba(10, 12, 16, .55); color: #fff; border: 0; }
+.proj .body { padding: 12px 14px 14px; }
+.proj h3 { margin: 0 0 3px; font: 600 15px var(--font-head); }
+.proj .path { font: 11px var(--font-mono); color: var(--text-3); }
+.proj .stats { display: flex; gap: 14px; margin-top: 10px; color: var(--text-2); font-size: 12px; }
+.proj .stats span:last-child { margin-left: auto; color: var(--text-3); }
+.proj.on { box-shadow: 0 0 0 2px var(--accent); border-color: transparent; }
+.tpls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.tpl { display: flex; gap: 14px; padding: 16px; border: 1px dashed var(--line-strong); border-radius: var(--r); background: transparent; }
+.tpl .ic { width: 40px; height: 40px; flex: none; display: grid; place-items: center; border-radius: var(--r); background: var(--accent-soft); color: var(--accent); }
+.tpl .ic svg { width: 20px; height: 20px; }
+.tpl h4 { margin: 2px 0 4px; font-size: 13.5px; }
+.tpl p { margin: 0; color: var(--text-2); font-size: 12px; }
+.tpl.agent { border-style: solid; background: var(--panel); }
+
+/* ---------- timeline screen ---------- */
+[data-screen-id="timeline"] { grid-template-columns: 240px minmax(0, 1fr) 320px; }
+.tl-list { border-right: 1px solid var(--line); }
+.tl-item { margin: 8px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--sel); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.tl-item b { display: block; font: 600 13px var(--font-mono); }
+.tl-item small { color: var(--text-3); font-size: 11.5px; }
+.tl-uses { margin: 14px 16px; color: var(--text-3); font-size: 11.5px; }
+.tl-uses a { display: block; margin-top: 6px; color: var(--text-2); font: 12px var(--font-mono); text-decoration: none; }
+.tl-main { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; background: var(--bg); }
+.tl-view { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; padding: 16px 24px 10px; border-bottom: 1px solid var(--line); background: var(--panel); }
+[data-theme="dark"] .tl-view { background: var(--bg); }
+.tl-view .game { width: min(100%, 560px); }
+.tl-view .fade { position: absolute; inset: 0; background: #000; opacity: .42; }
+.tl-view .game .por { left: 61%; opacity: .55; transform: translateX(-50%) translateY(3%); }
+.tl-ctl { width: min(100%, 560px); display: flex; align-items: center; gap: 4px; margin-top: 8px; }
+.tl-ctl .time { margin-left: 6px; font: 12px var(--font-mono); color: var(--text-2); }
+.tl-ctl .time b { color: var(--text); }
+.tl-ctl .seg { margin-left: auto; }
+.tracks { position: relative; overflow: auto; background: var(--panel); }
+.ruler, .track { display: grid; grid-template-columns: 200px minmax(0, 1fr); }
+.ruler { position: sticky; top: 0; z-index: 2; height: 30px; background: var(--panel-2); border-bottom: 1px solid var(--line); }
+.ruler .lead { display: flex; align-items: center; gap: 6px; padding: 0 10px; border-right: 1px solid var(--line); color: var(--text-3); font-size: 11.5px; }
+.ruler .lead .btn { height: 22px; padding: 0 8px; font-size: 11.5px; font-weight: 500; margin-left: auto; }
+.ticks { position: relative; }
+.ticks span { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--line); padding: 7px 0 0 5px; font: 10.5px var(--font-mono); color: var(--text-3); }
+.track { height: 44px; border-bottom: 1px solid var(--line); }
+.track .head { display: flex; align-items: center; gap: 8px; padding: 0 10px; border-right: 1px solid var(--line); background: var(--panel); }
+.track .head .sw { width: 4px; height: 22px; border-radius: 2px; background: var(--tc); }
+.track .head b { font-size: 12.5px; }
+.track .head small { color: var(--text-3); font: 11px var(--font-mono); }
+.track .head .icon-btn { margin-left: auto; width: 24px; height: 24px; }
+.lane { position: relative; }
+.lane::before { content: ""; position: absolute; inset: 0; background: linear-gradient(to right, var(--line) 1px, transparent 1px) 0 0 / calc(100% / 9) 100%; opacity: .6; }
+.cue { position: absolute; top: 8px; bottom: 8px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--tc) 20%, var(--panel)); border: 1px solid color-mix(in srgb, var(--tc) 60%, transparent); display: flex; align-items: center; gap: 6px; padding: 0 8px; font-size: 11.5px; color: var(--text); overflow: hidden; white-space: nowrap; }
+.cue svg.curve { position: absolute; inset: 0; width: 100%; height: 100%; stroke: var(--tc); stroke-width: 1.4; fill: none; opacity: .7; }
+.cue.on { box-shadow: 0 0 0 2px var(--accent); }
+.cue span { position: relative; }
+.kf { position: absolute; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; transform: rotate(45deg); border-radius: 2px; background: var(--tc); box-shadow: 0 0 0 2px var(--panel); }
+.kf + .klabel { position: absolute; top: 50%; transform: translateY(-50%); margin-left: 12px; font-size: 11.5px; color: var(--text-2); }
+.playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); z-index: 3; pointer-events: none; }
+.playhead::before { content: ""; position: absolute; top: 0; left: -5px; width: 12px; height: 12px; background: var(--accent); clip-path: polygon(0 0, 100% 0, 50% 100%); }
+.t-bg { --tc: #5b9bd5; } .t-por { --tc: #c084fc; } .t-scr { --tc: #f59e0b; }
+[data-theme="wa"] .t-bg { --tc: #4c86a8; } [data-theme="wa"] .t-por { --tc: #8a6aa8; } [data-theme="wa"] .t-scr { --tc: #b88a3e; }
+.addtrack { display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 12px; color: var(--text-3); font-size: 12px; border-bottom: 1px solid var(--line); }
+.tl-insp { border-left: 1px solid var(--line); }
+.tl-insp .insp { grid-template-columns: 64px minmax(0, 1fr); }
+.ease { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.ease div { height: 44px; border: 1px solid var(--line); border-radius: var(--r-sm); display: grid; place-items: center; font-size: 10px; color: var(--text-3); background: var(--panel-2); }
+.ease div.on { border-color: transparent; box-shadow: 0 0 0 2px var(--accent); color: var(--text); }
+.ease svg { width: 34px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+.pair { display: flex; gap: 8px; }
+.pair .num { width: auto; flex: 1; }
+.insp-title { padding: 14px 16px 0; }
+.insp-title .kicker { display: block; }
+.insp-title b { font-size: 14px; }
+
+/* ---------- direction-specific character ---------- */
+.game .nm { font-size: 3cqw; padding: .5cqw 3cqw; }
+[data-screen="launch"] .statusbar > :not(.right) { display: none; }
+[data-screen="launch"] .statusbar::before { content: "Surdet 0.1"; }
+
+/* B: page-like manuscript on a quiet canvas, rounder cards */
+[data-theme="light"] .writer { background: var(--bg); }
+[data-theme="light"] .lines { padding: 18px 22px 40px; }
+[data-theme="light"] .page { max-width: 1000px; margin: 0 auto; padding: 6px 0 14px; background: var(--panel); border-radius: 12px; box-shadow: var(--shadow); }
+[data-theme="light"] .choice, [data-theme="light"] .vars, [data-theme="light"] .proj, [data-theme="light"] .tpl { border-radius: 10px; }
+[data-theme="light"] .chip { border-radius: 999px; background: var(--panel-2); }
+[data-theme="light"] .t-search { border-radius: 999px; }
+[data-theme="light"] .dock { background: var(--panel); }
+
+/* C: ink-navy rail, fog paper, serif headings, manuscript rules, vermilion seal */
+[data-theme="wa"] .rail { background: #1f3a48; border-right: 0; }
+[data-theme="wa"] .rail button { color: #93aeb8; }
+[data-theme="wa"] .rail button:hover { color: #fff; background: rgba(255, 255, 255, .06); }
+[data-theme="wa"] .rail button[aria-current="page"] { color: #fff; background: rgba(255, 255, 255, .1); box-shadow: inset 3px 0 var(--seal); }
+[data-theme="wa"] .rail .rule { background: rgba(255, 255, 255, .14); }
+[data-theme="wa"] .btn.primary { background: #1f3a48; color: #f4f8f8; }
+[data-theme="wa"] .ph h2, [data-theme="wa"] .tree h3, [data-theme="wa"] .stage-head b, [data-theme="wa"] .tabs button, [data-theme="wa"] .insp > label, [data-theme="wa"] .choice header b, [data-theme="wa"] .insp-title b, [data-theme="wa"] .l-main h2 { font-family: var(--serif); letter-spacing: .06em; }
+[data-theme="wa"] .writer { background: linear-gradient(to bottom, #f2f7f7, var(--panel) 160px); }
+[data-theme="wa"] .doc-head { background: transparent; border-bottom: 3px double var(--line-strong); }
+[data-theme="wa"] .row { border-bottom: 1px dashed var(--line); padding: 6px 0; }
+[data-theme="wa"] .row.dir { border-bottom-style: dotted; }
+[data-theme="wa"] .who { justify-content: flex-end; padding-right: 14px; margin-right: 14px; border-right: 1px solid var(--line-strong); font-family: var(--serif); letter-spacing: .08em; }
+[data-theme="wa"] .who::before { display: none; }
+[data-theme="wa"] .row.in .who { border-left: 0; margin-left: 0; padding-left: 0; border-right-color: var(--warn); }
+[data-theme="wa"] .row.cur { background: linear-gradient(to right, #e3eff1, transparent 75%); box-shadow: inset 3px 0 var(--seal); }
+[data-theme="wa"] .caret { background: var(--seal); }
+[data-theme="wa"] .sec .name { font-family: var(--serif); color: var(--text); letter-spacing: .1em; }
+[data-theme="wa"] .sec .name svg { color: var(--seal); }
+[data-theme="wa"] .sec .line { height: 4px; background: none; border-top: 1px solid var(--line-strong); border-bottom: 1px solid var(--line); }
+[data-theme="wa"] .chip { border-radius: 0; background: transparent; border-color: var(--line-strong); }
+[data-theme="wa"] .chip b { font-family: var(--serif); letter-spacing: .04em; }
+[data-theme="wa"] .tag.acc { color: var(--seal); border-color: #e3b8ae; background: #fbefeb; }
+[data-theme="wa"] .scene[aria-current="true"]::before { background: var(--seal); border-radius: 0; transform: rotate(45deg); }
+[data-theme="wa"] .choice { border-color: var(--line-strong); }
+[data-theme="wa"] .choice header { background: transparent; border-bottom: 3px double var(--line); }
+[data-theme="wa"] .opt .key { border-radius: 0; background: transparent; border: 1px solid var(--accent-line); font-family: var(--serif); }
+[data-theme="wa"] .tabs button[aria-selected="true"] { border-color: var(--seal); }
+[data-theme="wa"] .l-side { background: #1f3a48; color: #e8f0f2; border-right: 0; }
+[data-theme="wa"] .l-side .hello p, [data-theme="wa"] .l-foot { color: #9fb7c0; }
+[data-theme="wa"] .l-side .btn.primary { background: #f4f8f8; color: #1f3a48; }
+[data-theme="wa"] .l-side .btn.ghost { background: transparent; color: #e8f0f2; border-color: rgba(255, 255, 255, .25); }
+[data-theme="wa"] .l-nav a { color: #b6cad1; }
+[data-theme="wa"] .l-nav a.on { background: rgba(255, 255, 255, .1); color: #fff; box-shadow: inset 3px 0 var(--seal); }
+[data-theme="wa"] .proj .cover { aspect-ratio: 16 / 7; }
+[data-theme="wa"] .proj h3 { letter-spacing: .08em; }
+[data-theme="wa"] .tl-item { box-shadow: inset 3px 0 var(--seal), inset 0 0 0 1px var(--line); }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-script" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z M14 3v4h4 M10 12h5 M10 16h5"/></symbol>
+  <symbol id="i-flow" viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="5" rx="1"/><rect x="14" y="4" width="7" height="5" rx="1"/><rect x="8.5" y="15" width="7" height="5" rx="1"/><path d="M6.5 9v2.5h11V9 M12 11.5V15"/></symbol>
+  <symbol id="i-timeline" viewBox="0 0 24 24"><rect x="4" y="4" width="9" height="4" rx="1"/><rect x="9" y="10" width="11" height="4" rx="1"/><rect x="4" y="16" width="7" height="4" rx="1"/></symbol>
+  <symbol id="i-assets" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M4 17l5-5 4 4 3-3 4 4"/></symbol>
+  <symbol id="i-cast" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.8-3.2 3-5 5.5-5s4.7 1.8 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.3c2.3.2 4 1.8 4.7 4.7"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10 M18 7h2 M4 17h4 M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></symbol>
+  <symbol id="i-review" viewBox="0 0 24 24"><path d="M5 4h14v16H5z M9 10l2 2 4-4 M9 16h6"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20h16 M7 16v-5 M12 16V7 M17 16v-8"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7 M4 4v4h4 M12 8v4l3 2"/></symbol>
+  <symbol id="i-audit" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5 M8.5 11l1.8 1.8 3.2-3.3"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5 M12 18.5V21 M3 12h2.5 M18.5 12H21 M5.6 5.6l1.8 1.8 M16.6 16.6l1.8 1.8 M5.6 18.4l1.8-1.8 M16.6 7.4l1.8-1.8"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14 M5 12h14"/></symbol>
+  <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 4v11 M7.5 10.5L12 15l4.5-4.5 M5 19h14"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 6L4 11l5 5 M4 11h10.5a5 5 0 0 1 0 10H11"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 6l5 5-5 5 M20 11H9.5a5 5 0 0 0 0 10H13"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z M8 4v5h7V4 M8 20v-6h8v6"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-film" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14 M17 5v14 M3 9.5h4 M3 14.5h4 M17 9.5h4 M17 14.5h4"/></symbol>
+  <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.6-1.7"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M6 21V4 M6 4h11l-2.5 4L17 12H6"/></symbol>
+  <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c1-3.8 3.8-6 7-6s6 2.2 7 6"/></symbol>
+  <symbol id="i-jump" viewBox="0 0 24 24"><path d="M5 12h12 M13 7l5 5-5 5"/></symbol>
+  <symbol id="i-diamond" viewBox="0 0 24 24"><path d="M12 3l9 9-9 9-9-9z"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 4l9 16H3z M12 10v4 M12 17v.5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3L5 13.5h6L10 21l8-10.5h-6z"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M7 5v14 M18 5.5v13L9 12z"/></symbol>
+  <symbol id="i-fwd" viewBox="0 0 24 24"><path d="M17 5v14 M6 5.5v13L15 12z"/></symbol>
+  <symbol id="i-loop" viewBox="0 0 24 24"><path d="M17 4l3 3-3 3 M20 7H8a4 4 0 0 0-4 4 M7 20l-3-3 3-3 M4 17h12a4 4 0 0 0 4-4"/></symbol>
+  <symbol id="i-branch" viewBox="0 0 24 24"><path d="M6 4v16 M6 9c0 3 3 4 6 4h6 M15 10l3 3-3 3"/></symbol>
+  <symbol id="i-mark" viewBox="0 0 24 24"><path d="M7 4h10v16l-5-4-5 4z"/></symbol>
+  <symbol id="i-voice" viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6L8 10z M16.5 9a4 4 0 0 1 0 6"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M14 4h6v6 M20 4l-8 8 M10 6H5v13h13v-5"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z M5 17a3 3 0 0 1 3-3h11"/></symbol>
+  <symbol id="i-blank" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z M14 3v4h4 M12.5 11v6 M9.5 14h6"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 6h16 M7 12h10 M10 18h4"/></symbol>
+</svg>
+
+<header class="review" aria-label="样稿切换">
+  <strong>Surdet Editor 视觉方向样稿</strong>
+  <div class="grp" id="themes">
+    <button data-theme-btn="dark">A 深色专业</button>
+    <button data-theme-btn="light">B 浅色现代</button>
+    <button data-theme-btn="wa">C 日式清爽</button>
+  </div>
+  <div class="grp" id="screens">
+    <button data-screen-btn="launch">启动页</button>
+    <button data-screen-btn="script">剧本</button>
+    <button data-screen-btn="timeline">时间轴</button>
+  </div>
+  <span class="note">静态样稿：内容与素材取自《雾港来信》，不读写任何项目</span>
+</header>
+
+<div class="app">
+  <div class="titlebar">
+    <div class="brand"><span class="seal">述</span>Surdet</div>
+    <span class="sep-v"></span>
+    <button class="t-project">雾港来信 <svg class="i"><use href="#i-chev"/></svg></button>
+    <div class="t-search"><svg class="i"><use href="#i-search"/></svg>搜索场景、台词、角色、素材…<kbd>Ctrl K</kbd></div>
+    <div class="t-actions">
+      <button class="icon-btn" title="撤销"><svg class="i"><use href="#i-undo"/></svg></button>
+      <button class="icon-btn" title="重做"><svg class="i"><use href="#i-redo"/></svg></button>
+      <span class="saved"><span class="dot"></span>已保存</span>
+      <button class="btn ghost"><svg class="i"><use href="#i-save"/></svg>保存<kbd>Ctrl S</kbd></button>
+      <button class="btn primary"><svg class="i f"><use href="#i-play"/></svg>从这里试玩</button>
+    </div>
+  </div>
+
+  <nav class="rail" aria-label="工作区">
+    <button data-nav="script"><svg class="i"><use href="#i-script"/></svg>剧本</button>
+    <button><svg class="i"><use href="#i-flow"/></svg>流程</button>
+    <button data-nav="timeline"><svg class="i"><use href="#i-timeline"/></svg>演出</button>
+    <button><svg class="i"><use href="#i-assets"/></svg>素材</button>
+    <button><svg class="i"><use href="#i-cast"/></svg>角色</button>
+    <button><svg class="i"><use href="#i-sliders"/></svg>设定</button>
+    <span class="rule"></span>
+    <button><svg class="i"><use href="#i-play"/></svg>试玩</button>
+    <button><svg class="i"><use href="#i-review"/></svg>审阅</button>
+    <button class="push"><svg class="i"><use href="#i-chart"/></svg>体检</button>
+    <button><svg class="i"><use href="#i-history"/></svg>历史</button>
+  </nav>
+
+  <main>
+    <!-- ================= 启动页 ================= -->
+    <section class="screen" data-screen-id="launch">
+      <aside class="l-side">
+        <div class="hello">
+          <h1>开始创作</h1>
+          <p>打开最近的作品，或从模板新建一个项目。</p>
+        </div>
+        <button class="btn primary"><svg class="i"><use href="#i-plus"/></svg>新建项目</button>
+        <button class="btn ghost"><svg class="i"><use href="#i-folder"/></svg>打开文件夹…</button>
+        <nav class="l-nav">
+          <a class="on" href="#"><svg class="i"><use href="#i-clock"/></svg>最近项目</a>
+          <a href="#"><svg class="i"><use href="#i-review"/></svg>审阅任务</a>
+          <a href="#"><svg class="i"><use href="#i-book"/></svg>创作指南</a>
+        </nav>
+        <div class="l-foot">Surdet 0.1 · 剧本、素材与演出都保存在项目文件夹中</div>
+      </aside>
+      <div class="l-main">
+        <h2>最近项目 <span class="field"><svg class="i"><use href="#i-search"/></svg>筛选项目</span></h2>
+        <div class="projects">
+          <article class="proj on">
+            <div class="cover" style="background-image:url('../starter/content/assets/bg/harbor.png')"><span class="tag">上次打开</span></div>
+            <div class="body"><h3>雾港来信</h3><div class="path">E:\surdet\examples\starter</div>
+              <div class="stats"><span>7 个场景</span><span>3 个结局</span><span>刚刚</span></div></div>
+          </article>
+          <article class="proj">
+            <div class="cover" style="background-image:url('../zero-after-midnight/content/assets/bg/last_train.png')"></div>
+            <div class="body"><h3>零点之后</h3><div class="path">E:\surdet\examples\zero-after-midnight</div>
+              <div class="stats"><span>11 个场景</span><span>昨天</span></div></div>
+          </article>
+          <article class="proj">
+            <div class="cover" style="background-image:url('../../games/tide-mark/content/assets/bg/lighthouse_dawn.png')"></div>
+            <div class="body"><h3>潮痕未干</h3><div class="path">E:\surdet\games\tide-mark</div>
+              <div class="stats"><span>7 个场景</span><span>3 天前</span></div></div>
+          </article>
+        </div>
+        <h2>新建</h2>
+        <div class="tpls">
+          <div class="tpl"><span class="ic"><svg class="i"><use href="#i-blank"/></svg></span><div><h4>空白项目</h4><p>只有一个入口场景和默认界面，从零开始写。</p></div></div>
+          <div class="tpl"><span class="ic"><svg class="i"><use href="#i-book"/></svg></span><div><h4>短篇示例</h4><p>带分支、三个结局和鉴赏的完整小样，适合边改边学。</p></div></div>
+          <div class="tpl agent"><span class="ic"><svg class="i"><use href="#i-bolt"/></svg></span><div><h4>接手 Agent 交付</h4><p>打开外部 Agent 准备好的候选，比较、试玩后再决定是否采用。</p></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 剧本 ================= -->
+    <section class="screen" data-screen-id="script">
+      <aside class="panel scenes">
+        <div class="ph"><h2>场景</h2><span class="count">7</span>
+          <div class="tools"><button class="icon-btn" title="导入剧本"><svg class="i"><use href="#i-import"/></svg></button><button class="icon-btn" title="新建场景"><svg class="i"><use href="#i-plus"/></svg></button></div></div>
+        <div class="search"><div class="field"><svg class="i"><use href="#i-filter"/></svg>筛选场景</div></div>
+        <div class="tree">
+          <h3><svg class="i"><use href="#i-chev"/></svg>主线</h3>
+          <div class="scene" aria-current="true"><b>ch01_01</b><small>884 字</small><div class="tags"><span class="tag acc">入口</span><span class="tag">3 选项</span></div></div>
+          <div class="scene"><b>ch01_02</b><small>932 字</small></div>
+          <div class="scene"><b>ch02</b><small>723 字</small></div>
+          <h3><svg class="i"><use href="#i-chev"/></svg>结局</h3>
+          <div class="scene"><b>ending_delivered</b><small>283 字</small></div>
+          <div class="scene"><b>ending_open_door</b><small>477 字</small></div>
+          <div class="scene"><b>ending_unanswered</b><small>366 字</small></div>
+          <h3><svg class="i"><use href="#i-chev"/></svg>其他</h3>
+          <div class="scene"><b>playground</b><small>880 字</small></div>
+        </div>
+        <div class="outline">
+          <div class="kicker" style="margin:0 0 6px 6px">本场景段落</div>
+          <a class="on" href="#">start<span>入口</span></a>
+          <a href="#">ask_relation<span>选项 A</span></a>
+          <a href="#">inspect_stamp<span>选项 B</span></a>
+          <a href="#">keep_moving<span>选项 C</span></a>
+        </div>
+      </aside>
+
+      <div class="writer">
+        <div class="doc-head">
+          <h1>ch01_01</h1>
+          <span class="meta">884 字 · 44 行 · 3 个选项</span>
+          <div class="seg"><button aria-pressed="true">剧本</button><button>源码</button></div>
+          <button class="icon-btn" title="查找替换"><svg class="i"><use href="#i-search"/></svg></button>
+        </div>
+        <div class="lines" id="lines"></div>
+      </div>
+
+      <aside class="panel dock">
+        <div class="stage-card">
+          <div class="stage-head"><b>画面</b><span class="kicker">跟随光标 <span class="toggle"></span></span></div>
+          <div class="game">
+            <img class="por" src="../starter/content/assets/portrait/lynn_coat_hesitant.png" alt="">
+            <div class="box"><div class="nm">凛</div><div class="tx">因为我不知道他还在不在灯塔，也不知道他还愿不愿意见我。</div></div>
+          </div>
+          <div class="transport">
+            <button class="icon-btn" title="上一句"><svg class="i"><use href="#i-back"/></svg></button>
+            <button class="icon-btn" title="下一句"><svg class="i"><use href="#i-fwd"/></svg></button>
+            <span class="pos">第 12 行 · 第 6 句</span>
+            <button class="btn ghost"><svg class="i"><use href="#i-expand"/></svg>放大</button>
+          </div>
+        </div>
+        <div class="tabs" role="tablist"><button aria-selected="true">当前行</button><button>此处变量</button><button>问题<span class="n">8</span></button></div>
+        <div class="insp">
+          <label>说话人</label><div class="sel"><span><span style="color:var(--c-lynn)">●</span>&nbsp; 凛</span><svg class="i"><use href="#i-chev"/></svg></div>
+          <label>表情</label>
+          <div class="faces">
+            <div class="face"><i style="background-image:url('../starter/content/assets/portrait/lynn_coat_normal.png')"></i>平常</div>
+            <div class="face on"><i style="background-image:url('../starter/content/assets/portrait/lynn_coat_hesitant.png')"></i>犹豫</div>
+            <div class="face"><i style="background-image:url('../starter/content/assets/portrait/lynn_coat_smile.png')"></i>微笑</div>
+          </div>
+          <label>位置</label><div class="posrow"><div class="seg"><button>左</button><button>中</button><button>右</button></div><div class="slider"></div><div class="num">780</div></div>
+          <label>语音</label><div><span style="color:var(--text-3)">未配置</span> · <a class="muted-link">选择语音文件</a></div>
+        </div>
+        <div class="vars">
+          <header>运行到这一句时（沿当前路径）</header>
+          <div class="var"><code>lynn.trust</code><span class="v">0</span><small>凛愿意把多少旧事交给搭档</small></div>
+          <div class="var"><code>receivedLetter</code><span class="v no">否</span><small>是否接下退回三次的旧信 · 第 14 行设为“是”</small></div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- ================= 时间轴 ================= -->
+    <section class="screen" data-screen-id="timeline">
+      <aside class="panel tl-list">
+        <div class="ph"><h2>演出</h2><span class="count">1</span><div class="tools"><button class="icon-btn" title="新建演出"><svg class="i"><use href="#i-plus"/></svg></button></div></div>
+        <div class="tl-item"><b>harbor_arrival</b><small>0.9 秒 · 3 条轨道 · 已保存</small></div>
+        <div class="tl-uses">被这些位置使用
+          <a href="#">ch01_01 · 第 3 行（等待播完）</a>
+        </div>
+      </aside>
+      <div class="tl-main">
+        <div class="tl-view">
+          <div class="game">
+            <img class="por" src="../starter/content/assets/portrait/lynn_coat_normal.png" alt="">
+            <div class="fade"></div>
+          </div>
+          <div class="tl-ctl">
+            <button class="icon-btn"><svg class="i"><use href="#i-back"/></svg></button>
+            <button class="btn primary" style="width:30px;padding:0;justify-content:center"><svg class="i f"><use href="#i-play"/></svg></button>
+            <button class="icon-btn"><svg class="i"><use href="#i-loop"/></svg></button>
+            <span class="time"><b>0.32</b> / 0.90 秒</span>
+            <div class="seg"><button>0.5×</button><button aria-pressed="true">1×</button></div>
+          </div>
+        </div>
+        <div class="tracks">
+          <div class="ruler"><div class="lead">轨道<button class="btn ghost"><svg class="i"><use href="#i-plus"/></svg>添加</button></div>
+            <div class="ticks" id="ticks"></div></div>
+          <div class="track t-bg"><div class="head"><span class="sw"></span><b>背景</b><small>harbor</small><button class="icon-btn"><svg class="i"><use href="#i-dots"/></svg></button></div>
+            <div class="lane"><i class="kf" style="left:1.5%"></i><span class="klabel" style="left:1.5%">切换到 harbor</span></div></div>
+          <div class="track t-por"><div class="head"><span class="sw"></span><b>人物</b><small>lynn:coat</small><button class="icon-btn"><svg class="i"><use href="#i-dots"/></svg></button></div>
+            <div class="lane"><div class="cue on" style="left:22.2%;width:66.7%"><svg class="curve" viewBox="0 0 100 20" preserveAspectRatio="none"><path d="M0 18 C 18 3, 40 2, 100 2"/></svg><span>显示 · 平常 · x 780</span></div></div></div>
+          <div class="track t-scr"><div class="head"><span class="sw"></span><b>画面</b><small>淡入</small><button class="icon-btn"><svg class="i"><use href="#i-dots"/></svg></button></div>
+            <div class="lane"><i class="kf" style="left:1.5%"></i><div class="cue" style="left:2.2%;width:84.4%"><svg class="curve" viewBox="0 0 100 20" preserveAspectRatio="none"><path d="M0 2 C 35 2, 65 18, 100 18"/></svg><span>黑场 1 → 0</span></div></div></div>
+          <div class="addtrack"><svg class="i"><use href="#i-plus"/></svg>添加轨道：镜头、粒子、声音…</div>
+          <div class="playhead" style="left:calc(200px + (100% - 200px) * .3556)"></div>
+        </div>
+      </div>
+      <aside class="panel tl-insp">
+        <div class="insp-title"><span class="kicker">选中片段</span><b>人物 · 显示</b></div>
+        <div class="insp">
+          <label>角色</label><div class="sel"><span><span style="color:var(--c-lynn)">●</span>&nbsp; 凛 · 外套</span><svg class="i"><use href="#i-chev"/></svg></div>
+          <label>表情</label>
+          <div class="faces">
+            <div class="face on"><i style="background-image:url('../starter/content/assets/portrait/lynn_coat_normal.png')"></i>平常</div>
+            <div class="face"><i style="background-image:url('../starter/content/assets/portrait/lynn_coat_hesitant.png')"></i>犹豫</div>
+            <div class="face"><i style="background-image:url('../starter/content/assets/portrait/lynn_coat_smile.png')"></i>微笑</div>
+          </div>
+          <label>位置</label><div class="posrow"><div class="slider"></div><div class="num">780</div></div>
+          <label>时间</label><div class="pair"><div class="num">开始 200 ms</div><div class="num">时长 600 ms</div></div>
+          <label>缓动</label>
+          <div class="ease">
+            <div><svg viewBox="0 0 34 22"><path d="M2 20 L32 2"/></svg>匀速</div>
+            <div><svg viewBox="0 0 34 22"><path d="M2 20 C 12 20, 22 2, 32 2"/></svg>缓入缓出</div>
+            <div class="on"><svg viewBox="0 0 34 22"><path d="M2 20 C 8 4, 18 2, 32 2"/></svg>减速</div>
+            <div><svg viewBox="0 0 34 22"><path d="M2 20 C 14 20, 20 2, 32 2"/></svg>三次</div>
+          </div>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <footer class="statusbar">
+    <span class="ok"><svg class="i"><use href="#i-check"/></svg>校验通过</span>
+    <span class="warn"><svg class="i"><use href="#i-warn"/></svg>8 条提醒</span>
+    <span class="where">ch01_01.gal · 第 12 行</span>
+    <span>自动备份 · 2 分钟前</span>
+    <span class="right"><svg class="i"><use href="#i-bolt"/></svg>Agent 接力：未接入</span>
+  </footer>
+</div>
+
+<script>
+const icon = (name) => `<svg class="i"><use href="#i-${name}"/></svg>`;
+const who = { 凛: 'lynn', 主角: 'player', 旁白: 'narr', 沈岳: 'shen' };
+const say = (ln, name, text, extra = '') => `<div class="row${name === '旁白' ? ' narr' : ''}${extra}"><span class="ln">${ln}</span><span class="who" style="--who:var(--c-${who[name]})">${name}</span><span class="say">${text}</span><button class="more">${icon('dots')}</button></div>`;
+const chip = (k, ic, label, value = '') => `<span class="chip k-${k}">${icon(ic)}<b>${label}</b>${value}</span>`;
+const dir = (ln, chips) => `<div class="row dir"><span class="ln">${ln}</span><div class="chips">${chips}</div></div>`;
+const sec = (name, note) => `<div class="sec"><span class="name">${icon('mark')}${name}</span><span class="line"></span><span class="note">${note}</span></div>`;
+const cond = (ln, html) => `<div class="row"><span class="ln">${ln}</span><div class="cond">${html}</div></div>`;
+const html = [
+  sec('start', '场景入口'),
+  dir('3–5', chip('film', 'film', '演出', ' harbor_arrival · 等待播完') + chip('unlock', 'unlock', '解锁鉴赏图', '「雾港清晨」') + chip('unlock', 'unlock', '解锁回想', '「退回三次的信」')),
+  say(7, '旁白', '清晨五点四十，雾贴着港口的仓门，潮水把缆绳一根根绷紧。'),
+  say(8, '旁白', '你和凛是雾港的代送搭档。今天，旧邮局把一只封好的信封交给你们；退回章已经盖了三次。'),
+  say(9, '凛', '收件人写的是沈岳，山上灯塔的守夜人。'),
+  say(10, '主角', '信封还封着。你为什么不自己送？'),
+  dir(11, `<span class="chip k-person"><span class="thumb" style="background-image:url('../starter/content/assets/portrait/lynn_coat_hesitant.png')"></span><b>凛</b>外套 · 犹豫 · x 780</span>`),
+  say(12, '凛', '因为我不知道他还在不在灯塔，<span class="caret"></span>也不知道他还愿不愿意见我。', ' cur'),
+  say(13, '凛', '父亲出海以后，沈岳替我守过那盏灯。我只知道自己一直没有把话说完。'),
+  dir(14, chip('flag', 'flag', '标记', ' receivedLetter = 是')),
+  cond(16, `${icon('branch')}<span>如果</span><code>lynn.trust ≥ 5</code><span class="hint">凛愿意把多少旧事交给搭档</span>`),
+  say(17, '凛', '你没有立刻追问。那让我能把信拿稳。', ' in'),
+  cond(18, `<span style="margin-left:22px">否则</span>`),
+  say(19, '凛', '我还没想好，要从哪一句开始说。', ' in'),
+  dir(22, chip('save', 'save', '自动存档')),
+  `<div class="row"><span class="ln">23</span><div class="choice"><header>${icon('diamond')}<b>选择</b>3 个选项</header>
+    <div class="opt"><span class="key">A</span><span class="txt">先问凛和沈岳的关系</span><span class="fx"><span class="tag up">信任 +2</span><span class="tag">askedRelation</span><span class="tag go">→ ask_relation</span></span></div>
+    <div class="opt"><span class="key">B</span><span class="txt">在窗口查退回章的理由</span><span class="fx"><span class="tag">foundStamp</span><span class="tag go">→ inspect_stamp</span></span></div>
+    <div class="opt"><span class="key">C</span><span class="txt">先收下信，等她自己开口</span><span class="fx"><span class="tag down">信任 −1</span><span class="tag go">→ keep_moving</span></span></div>
+  </div></div>`,
+  sec('ask_relation', '来自选项 A'),
+  say(29, '凛', '沈岳是我父亲的搭档。父亲出海失踪后，是他把父亲的罗盘送回我手里。'),
+  say(30, '凛', '我十八岁那年寄过第一封信，后来每年一封，没有一封回信。'),
+  say(31, '主角', '所以你把没有回信，当成了他不想见你。'),
+  say(32, '凛', '我一直这么想。现在要把这封信送上去，我得先承认自己可能弄错了。'),
+  dir(33, chip('jump', 'jump', '前往', ' ch01_02')),
+  sec('inspect_stamp', '来自选项 B'),
+  say(36, '主角', '三枚章上写的都是“地址已撤出邮路”，不是“拒收”。'),
+  say(37, '凛', '三次都是这个理由？'),
+  say(38, '主角', '都是。旧邮局的档案室还在，我们先查清楚地址，再上山。'),
+  dir(39, chip('jump', 'jump', '前往', ' ch01_02')),
+].join('');
+document.getElementById('lines').innerHTML = `<div class="page">${html}</div>`;
+document.getElementById('ticks').innerHTML = Array.from({ length: 9 }, (_, i) => `<span style="left:${(i / 9 * 100).toFixed(3)}%">${(i / 10).toFixed(1)}s</span>`).join('');
+
+const root = document.documentElement;
+const apply = () => {
+  const [theme = 'dark', screen = 'script'] = location.hash.slice(1).split('/');
+  root.dataset.theme = theme; root.dataset.screen = screen;
+  document.querySelectorAll('[data-theme-btn]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeBtn === theme)));
+  document.querySelectorAll('[data-screen-btn]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.screenBtn === screen)));
+  document.querySelectorAll('[data-nav]').forEach(b => { if (b.dataset.nav === screen) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+  document.querySelector('.where').textContent = screen === 'timeline' ? 'harbor_arrival.json · 0.32 秒' : 'ch01_01.gal · 第 12 行';
+};
+const go = (theme, screen) => { const [t, s] = location.hash.slice(1).split('/'); location.hash = `${theme ?? t ?? 'dark'}/${screen ?? s ?? 'script'}`; };
+document.querySelectorAll('[data-theme-btn]').forEach(b => b.onclick = () => go(b.dataset.themeBtn));
+document.querySelectorAll('[data-screen-btn]').forEach(b => b.onclick = () => go(undefined, b.dataset.screenBtn));
+document.querySelectorAll('[data-nav]').forEach(b => b.onclick = () => go(undefined, b.dataset.nav));
+if (new URLSearchParams(location.search).has('bare')) document.body.classList.add('bare');
+addEventListener('hashchange', apply); apply();
+</script>
+</body>
+</html>
