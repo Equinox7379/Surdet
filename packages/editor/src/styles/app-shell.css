@@ -483,6 +483,25 @@ body {
   transition: background-color var(--surdet-motion-fast) ease, color var(--surdet-motion-fast) ease;
 }
 
+.editor-mode-button:has(.editor-mode-badge) {
+  position: relative;
+}
+
+.editor-mode-badge {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--surdet-action-primary);
+  color: var(--surdet-text-on-accent);
+  font: 600 10px/16px var(--surdet-font-ui);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
 .editor-mode-button .workbench-icon {
   width: 20px;
   height: 20px;

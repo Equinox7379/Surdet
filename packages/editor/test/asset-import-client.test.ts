@@ -613,6 +613,46 @@ describe('Editor 素材导入 authority client', () => {
     await expect(client.workspace.snapshot(OPERATION_ID)).rejects.toMatchObject({ code: 'AUTHORITY_INVALID_RESPONSE' });
   });
 
+  it('reads current-project review tasks without turning a receipt file into an approval', async () => {
+    const { fetcher, root } = makeBindingFetcher();
+    const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);
+    await bindClient(client, root);
+    const state = { workspaceSessionId: OPERATION_ID, workspaceGeneration: 1, availability: 'clean' as const,
+      dirtyScopes: [], busyReasons: [], blockedReasons: [] };
+    const list = { projectIdentity: 'a'.repeat(32), pendingCount: 1, tasks: [
+      { reviewId: 'r-1', kind: 'comparison', status: 'pending', receiptFiles: [] },
+      { reviewId: 'r-2', kind: 'integration-result', status: 'receipt-present', receiptFiles: ['final-approval.json'] },
+      { reviewId: 'broken name', kind: null, status: 'unavailable', receiptFiles: [], errorCode: 'INVALID_REQUEST' },
+    ] };
+    fetcher.mockResolvedValueOnce(success(list));
+    await expect(client.workspace.reviewTasks(state)).resolves.toEqual(list);
+    const sent = requestRecords(fetcher).at(-1)!;
+    expect(sent.input).toBe(`${AUTHORITY_PATH}/workspace/review-tasks`);
+    expect(header(sent.init, 'x-surdet-project-binding')).toBe(FIRST_BINDING_TOKEN);
+    expect(jsonBody(sent.init)).toEqual({ ...state, browserSessionId: expect.any(String) });
+    for (const broken of [
+      { ...list, pendingCount: 2 },
+      { ...list, extra: true },
+      { ...list, tasks: [{ ...list.tasks[1], receiptFiles: [] }] },
+      { ...list, tasks: [{ ...list.tasks[1], receiptFiles: ['approved.json'] }] },
+      { ...list, tasks: [{ ...list.tasks[0], errorCode: 'X' }] },
+      { ...list, tasks: [{ ...list.tasks[0], reviewId: '../r-1' }] },
+      { ...list, tasks: [{ ...list.tasks[2], errorCode: undefined }] },
+      { ...list, tasks: [list.tasks[0], list.tasks[0]], pendingCount: 2 },
+    ]) {
+      fetcher.mockResolvedValueOnce(success(broken));
+      await expect(client.workspace.reviewTasks(state)).rejects.toMatchObject({ code: 'AUTHORITY_INVALID_RESPONSE' });
+    }
+    const request = { reviewId: 'r-1', kind: 'directory' as const, path: '' };
+    fetcher.mockResolvedValueOnce(success({ kind: 'directory', entries: [{ name: 'identity.json', kind: 'file' }] }));
+    await expect(client.workspace.reviewContent({ ...state, request })).resolves.toEqual({ kind: 'directory', entries: [{ name: 'identity.json', kind: 'file' }] });
+    expect(jsonBody(requestRecords(fetcher).at(-1)!.init)).toEqual({ ...state, request, browserSessionId: expect.any(String) });
+    fetcher.mockResolvedValueOnce(success({ kind: 'directory', entries: [{ name: '../x', kind: 'file' }] }));
+    await expect(client.workspace.reviewContent({ ...state, request })).rejects.toMatchObject({ code: 'AUTHORITY_INVALID_RESPONSE' });
+    fetcher.mockResolvedValueOnce(success({ kind: 'file', base64: 'e30=' }));
+    await expect(client.workspace.reviewContent({ ...state, request })).rejects.toMatchObject({ code: 'AUTHORITY_INVALID_RESPONSE' });
+  });
+
   it('maps an absent authority to a safe client error without making a request', async () => {
     const fetcher = vi.fn<typeof fetch>();
     const client = createAssetImportAuthorityClient({ configuration: null, fetcher } as never);
