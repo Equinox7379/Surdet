@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PreparedReviewContent } from '@surdet/authoring';
 import { AssetImportClientError, type ReviewTaskList, type ReviewTaskSummary } from '../src/asset-import-client.js';
+import type { ReviewWorkspaceState } from '../src/review-workspace.js';
 
 class FakeElement {
   readonly children: FakeElement[] = [];
@@ -32,10 +33,13 @@ const client = vi.hoisted(() => ({
   content: vi.fn<(input: { reviewId: string; kind: 'file' | 'directory'; path: string }) => Promise<PreparedReviewContent>>(),
   bound: true,
 }));
-vi.mock('../src/editor-workspace.js', () => ({ editorReviewTaskClient: () => client.bound ? client : null }));
+vi.mock('../src/editor-workspace.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/editor-workspace.js')>(),
+  editorReviewTaskClient: () => client.bound ? client : null,
+}));
 
 const { state } = await import('../src/state.js');
-const { refreshReviewTasks, renderReviewTaskList, reviewTaskPendingCount } = await import('../src/panels/review-tasks.js');
+const { refreshReviewTasks, renderReviewTaskList, reviewTaskPendingCount, reviewTaskPreviewDirectory, reviewTaskSourceClosed } = await import('../src/panels/review-tasks.js');
 
 const list: ReviewTaskList = { projectIdentity: 'a'.repeat(32), pendingCount: 1, tasks: [
   { reviewId: 'broken', kind: null, status: 'unavailable', receiptFiles: [], errorCode: 'CHANGE_STORE_CORRUPT' },
@@ -47,8 +51,8 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 
 type OpenTask = (task: ReviewTaskSummary, open: () => Promise<FileSystemDirectoryHandle>) => Promise<void>;
 
-function render(onOpen: OpenTask = async () => {}) {
-  return renderReviewTaskList({ workspace: null, onOpen, onRefresh: () => {}, onSettled: () => {} }) as unknown as FakeElement | null;
+function render(onOpen: OpenTask = async () => {}, workspace: ReviewWorkspaceState | null = null, onReturnToSource = async () => {}) {
+  return renderReviewTaskList({ workspace, onOpen, onRefresh: () => {}, onSettled: () => {}, onReturnToSource }) as unknown as FakeElement | null;
 }
 
 function row(section: FakeElement, reviewId: string): FakeElement {
@@ -96,37 +100,43 @@ describe('current-project review task list', () => {
     expect(render()).toBeNull();
   });
 
-  it('reads a result copy in full through the binding before handing the review directory over', async () => {
+  it('reads the formal directory live for every check and keeps only the preview copy once the source closes', async () => {
     refreshReviewTasks(() => {}); await settle();
     const files: Record<string, PreparedReviewContent> = {
-      'directory:result/project': { kind: 'directory', entries: [{ name: 'content', kind: 'directory' }, { name: 'game.config.json', kind: 'file' }] },
-      'directory:result/project/content': { kind: 'directory', entries: [{ name: 'start.gal', kind: 'file' }] },
-      'file:result/project/game.config.json': { kind: 'file', base64: 'e30=' },
-      'file:result/project/content/start.gal': { kind: 'file', base64: 'QA==' },
       'directory:': { kind: 'directory', entries: [{ name: 'identity.json', kind: 'file' }, { name: 'result', kind: 'directory' }] },
       'directory:result': { kind: 'directory', entries: [{ name: 'project', kind: 'directory' }] },
-      'file:identity.json': { kind: 'file', base64: 'e30=' },
+      'directory:result/project': { kind: 'directory', entries: [{ name: 'content', kind: 'directory' }] },
+      'directory:result/project/content': { kind: 'directory', entries: [{ name: 'start.gal', kind: 'file' }] },
+      'file:result/project/content/start.gal': { kind: 'file', base64: btoa('@') },
     };
     client.content.mockImplementation(async ({ kind, path }) => {
       const value = files[`${kind}:${path}`];
       if (!value) throw new AssetImportClientError('OBJECT_NOT_FOUND', '不存在');
-      return value;
+      return structuredClone(value);
     });
     let directory: FileSystemDirectoryHandle | undefined;
-    const section = render(async (_task, open) => { directory = await open(); })!;
-    row(section, 'result').all().find(element => element.tagName === 'button')!.click();
+    row(render(async (_task, open) => { directory = await open(); })!, 'result').all().find(element => element.tagName === 'button')!.click();
     await vi.waitFor(() => expect(directory).toBeDefined());
-    expect(client.content.mock.calls.map(([input]) => `${input.kind}:${input.path}`)).toEqual([
-      'directory:result/project', 'directory:result/project/content', 'file:result/project/content/start.gal', 'file:result/project/game.config.json',
-    ]);
-    // The loader walks to the copy while the project is still bound.
+    expect(client.content).not.toHaveBeenCalled(); // Nothing is read ahead of the loader.
+    const scene = async (project: FileSystemDirectoryHandle) =>
+      (await (await (await project.getDirectoryHandle('content')).getFileHandle('start.gal')).getFile()).text();
     const project = await (await directory!.getDirectoryHandle('result')).getDirectoryHandle('project');
     await expect(directory!.getFileHandle('decision.json')).rejects.toMatchObject({ name: 'NotFoundError' });
-    const calls = client.content.mock.calls.length;
+    expect(await scene(project)).toBe('@');
+    files['file:result/project/content/start.gal'] = { kind: 'file', base64: btoa('!') }; // Changed on disk.
+    expect(await scene(project)).toBe('!');
+    const workspace = { rootHandle: directory, identity: { kind: 'integration-result', reviewId: 'result', projectIdentity: list.projectIdentity } } as unknown as ReviewWorkspaceState;
+    const copy = reviewTaskPreviewDirectory(workspace)!;
+    expect(await scene(copy)).toBe('!');
+    expect(reviewTaskSourceClosed(workspace)).toBe(false);
     client.bound = false; // Previewing the result closes the source binding.
-    const scene = await (await (await project.getDirectoryHandle('content')).getFileHandle('start.gal')).getFile();
-    expect(await scene.text()).toBe('@');
-    expect(client.content.mock.calls.length).toBe(calls);
-    await expect((await directory!.getFileHandle('identity.json')).getFile()).rejects.toMatchObject({ name: 'InvalidStateError' });
+    expect(reviewTaskSourceClosed(workspace)).toBe(true);
+    expect(await scene(copy)).toBe('!'); // The preview keeps what it showed...
+    await expect(scene(project)).rejects.toMatchObject({ name: 'InvalidStateError' }); // ...checks never fall back to it.
+    const back = vi.fn(async () => {});
+    const notice = render(async () => {}, workspace, back)!;
+    expect(notice.textContent).toContain('回到来源项目');
+    notice.all().find(element => element.tagName === 'button')!.click();
+    expect(back).toHaveBeenCalledOnce();
   });
 });

@@ -1585,12 +1585,15 @@ export function renderReviewPanel(
  * 顶层“打开审阅任务”入口与当前项目任务列表共用；创建 review workspace 后只切换到审阅页，
  * 不自动写回任何回执。列表入口只替换目录来源，草稿、未明回执与切换保护保持不变。
  */
-export async function openReviewPanelWorkspace(source?: () => Promise<FileSystemDirectoryHandle>): Promise<void> {
+export async function openReviewPanelWorkspace(
+  source?: () => Promise<FileSystemDirectoryHandle>,
+  confirmReplace?: (current: ReviewWorkspaceState | null) => boolean,
+): Promise<boolean> {
   if (isReviewReceiptWriting() || isReviewApplyRunning()) throw new Error('审阅操作仍在进行，请完成后再打开其他任务。');
   const previous = state.reviewWorkspace;
   const recovering = hasPendingReviewReceipt(previous);
-  const picker = (window as unknown as { showDirectoryPicker: (opts?: unknown) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker;
-  const root = source ? await source() : await picker({ mode: 'readwrite' });
+  const pick = () => (window as unknown as { showDirectoryPicker: (opts?: unknown) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker;
+  const root = source ? await source() : await pick()({ mode: 'readwrite' });
   const workspace = await openReviewWorkspace(root);
   // The old approval button can be used while directory reading awaits I/O.
   // An unknown but settled receipt may still reopen here to reconcile its actual outcome.
@@ -1602,11 +1605,14 @@ export async function openReviewPanelWorkspace(source?: () => Promise<FileSystem
     || (workspace.authority.state !== 'available' && workspace.authority.state !== 'terminal'))) {
     throw new Error('原审阅操作的结果尚未确认，请重新打开同一审阅核对状态；已保留原任务。');
   }
+  // Checked against the review as it is now: edits made while reading must not be dropped silently.
+  if (confirmReplace !== undefined && !confirmReplace(current)) return false;
   state.reviewWorkspace = workspace;
   state.mainTab = 'review';
   state.selectedObjectRef = null;
   state.previewChoices = null;
   if (state.dirHandle === null) state.dirName = `审阅：${state.reviewWorkspace.projection.task.title}`;
+  return true;
 }
 
 /** 仅供预览状态探针调用，保持变化只在当前 review workspace 内。 */

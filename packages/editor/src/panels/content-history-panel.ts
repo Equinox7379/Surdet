@@ -2,6 +2,7 @@ import type { ContentHistorySummary, ContentHistoryComparison } from '@surdet/au
 import { state, h } from '../state.js';
 import { editorHistoryClient } from '../editor-workspace.js';
 import { prepareHistoryFileDraft } from '../content-history-draft.js';
+import { changedLines, textLines } from '../line-diff.js';
 
 export function renderContentHistoryPanel(container: HTMLElement, options: { assertReady: () => void; onRestored: () => void }): void {
   container.className = 'content-history';
@@ -37,8 +38,11 @@ export function renderContentHistoryPanel(container: HTMLElement, options: { ass
     const file = full.files[0]!;
     target.replaceChildren();
     const before = h('section'), after = h('section');
-    before.append(h('h3', undefined, '当前已保存'), diffText(file.currentText, file.historicalText, '（当前没有这个文件）'));
-    after.append(h('h3', undefined, '历史版本'), diffText(file.historicalText, file.currentText, '（此版本没有这个文件）'));
+    const currentLines = file.currentText == null ? null : textLines(file.currentText);
+    const historicalLines = file.historicalText == null ? null : textLines(file.historicalText);
+    const marks = changedLines(currentLines ?? [], historicalLines ?? []);
+    before.append(h('h3', undefined, '当前已保存'), numberedLines(currentLines, marks.left, '（当前没有这个文件）'));
+    after.append(h('h3', undefined, '历史版本'), numberedLines(historicalLines, marks.right, '（此版本没有这个文件）'));
     const columns = h('div', 'content-history-diff'); columns.append(before, after);
     const restore = h('button', 'v4-button v4-primary', '恢复这个文件为草稿');
     restore.disabled = file.historicalText === null || file.currentSha256 === file.historicalSha256;
@@ -127,18 +131,12 @@ export function renderContentHistoryPanel(container: HTMLElement, options: { ass
   void load().catch(report);
 }
 
-/** Numbered lines; lines the other side does not contain (by count) are marked. Display only. */
-function diffText(text: string | null | undefined, other: string | null | undefined, missing: string): HTMLElement {
+/** Numbered lines; lines outside the order-preserving common part are marked. Display only. */
+function numberedLines(lines: readonly string[] | null, changed: readonly boolean[], missing: string): HTMLElement {
   const pre = h('pre');
-  if (text == null) { pre.textContent = missing; return pre; }
-  // A final line break does not add an empty numbered row.
-  const lines = (value: string): string[] => value.replace(/(?:\r\n|\n|\r)$/, '').split(/\r\n|\n|\r/);
-  const remaining = new Map<string, number>();
-  for (const line of other == null ? [] : lines(other)) remaining.set(line, (remaining.get(line) ?? 0) + 1);
-  lines(text).forEach((line, index) => {
-    const count = remaining.get(line) ?? 0;
-    if (count > 0) remaining.set(line, count - 1);
-    const row = h('span', count > 0 ? 'content-history-line' : 'content-history-line is-changed', line);
+  if (lines === null) { pre.textContent = missing; return pre; }
+  lines.forEach((line, index) => {
+    const row = h('span', changed[index] ? 'content-history-line is-changed' : 'content-history-line', line);
     row.dataset.line = String(index + 1);
     pre.append(row);
   });

@@ -2,7 +2,8 @@ import type { PreparedReviewContent } from '@surdet/authoring';
 import { AssetImportClientError, type ReviewTaskList, type ReviewTaskSummary } from '../asset-import-client.js';
 import { editorReviewTaskClient } from '../editor-workspace.js';
 import { readOnlyReviewDirectory } from '../review-content-directory.js';
-import type { ReviewWorkspaceState } from '../review-workspace.js';
+import { hasPendingReviewReceipt, hasReviewDraft, reviewDecisionDraftKey, type ReviewWorkspaceState } from '../review-workspace.js';
+import { openReviewPanelWorkspace } from './review-panel.js';
 import { state, h } from '../state.js';
 
 /**
@@ -63,55 +64,83 @@ export function refreshReviewTasks(onChanged: () => void): void {
   });
 }
 
-function notFound(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'NotFoundError';
+const SOURCE_CLOSED = '预览结果时来源项目已暂时关闭，无法读取正式目录。请先回到来源项目，再检查或批准。';
+
+interface TaskSource { root: FileSystemDirectoryHandle; key: string; read(path: string, kind: 'file' | 'directory'): Promise<PreparedReviewContent> }
+const taskSources = new WeakMap<FileSystemDirectoryHandle, TaskSource>();
+let previewSequence = 0;
+
+/**
+ * The formal review directory of a listed task. Every read goes to the current
+ * files through the binding that listed it, so loading, "检查探索修改", reload and
+ * the pre-approval re-check always see what is on disk now. With that binding
+ * closed a read fails; nothing answers from an earlier copy.
+ */
+export function reviewTaskDirectory(root: FileSystemDirectoryHandle, projectIdentity: string, reviewId: string): FileSystemDirectoryHandle {
+  const read = async (path: string, kind: 'file' | 'directory'): Promise<PreparedReviewContent> => {
+    const client = editorReviewTaskClient(root);
+    if (client === null) throw new DOMException(SOURCE_CLOSED, 'InvalidStateError');
+    try { return await client.content({ reviewId, kind, path }); }
+    catch (error) {
+      if (error instanceof AssetImportClientError && error.code === 'OBJECT_NOT_FOUND') throw new DOMException('审阅内容不存在', 'NotFoundError');
+      throw error;
+    }
+  };
+  const key = `${projectIdentity}/${reviewId}/task`;
+  const directory = readOnlyReviewDirectory({ key, rootName: reviewId, readonlyMessage: '审阅内容为只读；决定与回执通过本机审阅服务保存。', read });
+  taskSources.set(directory, { root, key, read });
+  return directory;
 }
 
 /**
- * Reads go through the project binding that listed the task. Each read is kept
- * for this opened task, and a result copy is read in full before opening, so
- * the result preview and approval checks keep working after the Editor swaps
- * to the read-only preview project.
+ * A display copy of a listed result for the preview loader only. Each preview
+ * starts empty and keeps what it read while the source was still bound, so the
+ * preview keeps its pictures and sounds after the Editor swaps to it. Checks and
+ * approval never use it; they keep reading the formal directory above.
  */
-async function reviewTaskDirectory(root: FileSystemDirectoryHandle, list: ReviewTaskList, task: ReviewTaskSummary): Promise<FileSystemDirectoryHandle> {
-  const cache = new Map<string, Promise<PreparedReviewContent>>();
+export function reviewTaskPreviewDirectory(workspace: ReviewWorkspaceState): FileSystemDirectoryHandle | null {
+  const source = taskSources.get(workspace.rootHandle);
+  if (source === undefined || workspace.identity.kind !== 'integration-result') return null;
+  const copy = new Map<string, Promise<PreparedReviewContent>>();
   const read = (path: string, kind: 'file' | 'directory'): Promise<PreparedReviewContent> => {
-    const key = `${kind}:${path}`;
-    let pending = cache.get(key);
+    const entry = `${kind}:${path}`;
+    let pending = copy.get(entry);
     if (pending === undefined) {
-      pending = (async () => {
-        const client = editorReviewTaskClient(root);
-        if (client === null) throw new DOMException('来源项目已经关闭，请回到项目后重新打开审阅任务。', 'InvalidStateError');
-        try { return await client.content({ reviewId: task.reviewId, kind, path }); }
-        catch (error) {
-          if (error instanceof AssetImportClientError && error.code === 'OBJECT_NOT_FOUND') throw new DOMException('审阅内容不存在', 'NotFoundError');
-          throw error;
-        }
-      })();
-      cache.set(key, pending);
-      pending.catch(() => cache.delete(key));
+      pending = source.read(path ? `result/project/${path}` : 'result/project', kind);
+      copy.set(entry, pending);
+      pending.catch(() => copy.delete(entry));
     }
     return pending;
   };
-  if (task.kind === 'integration-result') {
-    const walk = async (path: string): Promise<void> => {
-      const content = await read(path, 'directory');
-      if (content.kind !== 'directory') return;
-      for (const entry of content.entries) {
-        const child = `${path}/${entry.name}`;
-        if (entry.kind === 'directory') await walk(child);
-        else await read(child, 'file');
-      }
-    };
-    try { await walk('result/project'); }
-    catch (error) { if (!notFound(error)) throw error; }
-  }
-  if (state.dirHandle !== root) throw new Error('项目已经切换，未打开审阅任务。');
-  return readOnlyReviewDirectory({
-    key: `${list.projectIdentity}/${task.reviewId}/task`,
-    rootName: task.reviewId,
-    readonlyMessage: '审阅内容为只读；决定与回执通过本机审阅服务保存。',
-    read,
+  return readOnlyReviewDirectory({ key: `${source.key}/preview/${++previewSequence}`, rootName: 'project', readonlyMessage: '结果预览是只读副本。', read });
+}
+
+/** True while a listed review cannot reach its formal directory, e.g. during its result preview. */
+export function reviewTaskSourceClosed(workspace: ReviewWorkspaceState | null): boolean {
+  const source = workspace === null ? undefined : taskSources.get(workspace.rootHandle);
+  return source !== undefined && editorReviewTaskClient(source.root) === null;
+}
+
+function draftKey(workspace: ReviewWorkspaceState | null): string | null {
+  return workspace === null || !hasReviewDraft(workspace) || hasPendingReviewReceipt(workspace)
+    ? null : reviewDecisionDraftKey(workspace.decisionDraft);
+}
+
+/**
+ * Opens a listed task with the shared review loader. An unsaved decision is
+ * confirmed before reading, and again right before the switch if it changed
+ * while the task was being read; declining keeps the current review as it is.
+ */
+export async function openListedReviewTask(
+  open: () => Promise<FileSystemDirectoryHandle>,
+  confirm: (message: string) => boolean,
+): Promise<boolean> {
+  const before = state.reviewWorkspace, confirmed = draftKey(before);
+  if (confirmed !== null && !confirm('当前审阅还有未保存的决定。打开其他任务会丢弃这些修改，确定继续吗？')) return false;
+  return openReviewPanelWorkspace(open, (current) => {
+    const latest = draftKey(current);
+    return latest === null || (current === before && latest === confirmed)
+      || confirm('读取期间当前审阅有了新的修改。打开其他任务会丢弃这些修改，确定继续吗？');
   });
 }
 
@@ -144,7 +173,23 @@ export function renderReviewTaskList(options: {
   onRefresh(): void;
   /** Called once an open attempt has settled, so the list can render without its busy state. */
   onSettled(): void;
+  /** Reopens the source project so a listed review can read its formal directory again. */
+  onReturnToSource(): Promise<void>;
 }): HTMLElement | null {
+  if (options.workspace !== null && reviewTaskSourceClosed(options.workspace)) {
+    const notice = h('div', 'review-discovery review-discovery--compact review-discovery-notice');
+    notice.setAttribute('role', 'status');
+    notice.appendChild(h('span', undefined, '正在预览结果副本，来源项目已暂时关闭。检查探索修改或批准前，请先回到来源项目。'));
+    const back = h('button', 'primary', '回到来源项目');
+    back.type = 'button';
+    back.onclick = () => {
+      back.disabled = true;
+      back.textContent = '正在返回…';
+      void options.onReturnToSource();
+    };
+    notice.appendChild(back);
+    return notice;
+  }
   const list = currentList();
   if (discovery.root !== state.dirHandle || discovery.status === 'idle' || discovery.status === 'unsupported') return null;
   const compact = options.workspace !== null;
@@ -191,7 +236,10 @@ export function renderReviewTaskList(options: {
           opening = task.reviewId;
           for (const button of items.querySelectorAll<HTMLButtonElement>('.review-discovery-open')) button.disabled = true;
           open.textContent = '正在打开…';
-          void options.onOpen(task, () => reviewTaskDirectory(root, list, task))
+          void options.onOpen(task, async () => {
+            if (state.dirHandle !== root) throw new Error('项目已经切换，未打开审阅任务。');
+            return reviewTaskDirectory(root, list.projectIdentity, task.reviewId);
+          })
             .catch(() => undefined)
             .finally(() => { opening = null; options.onSettled(); });
         };
