@@ -97,7 +97,9 @@ import { renderContentHistoryPanel } from './panels/content-history-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput, resetSearchSession } from './panels/search-panel.js';
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
 import { openReviewPanelWorkspace, renderReviewPanel, disposeReviewApply } from './panels/review-panel.js';
-import { refreshReviewTasks, renderReviewTaskList, reviewTaskPendingCount } from './panels/review-tasks.js';
+import {
+  openListedReviewTask, refreshReviewTasks, renderReviewTaskList, reviewTaskPendingCount, reviewTaskPreviewDirectory,
+} from './panels/review-tasks.js';
 import { renderTimelineAutosaveConflictPanel } from './panels/timeline-autosave-conflicts.js';
 import {
   AssetImportClientError,
@@ -1422,18 +1424,36 @@ function reviewTaskListFor(workspace: ReviewWorkspaceState | null): HTMLElement 
     onRefresh: () => refreshReviewTasks(reviewTasksChanged),
     onSettled: reviewTasksChanged,
     onOpen: async (task, open) => {
-      const current = state.reviewWorkspace;
-      // The list makes switching one click away, so an unsaved decision is confirmed first.
-      if (current !== null && hasReviewDraft(current) && !hasPendingReviewReceipt(current)
-        && !window.confirm('当前审阅还有未保存的决定。打开其他任务会丢弃这些修改，确定继续吗？')) return;
       try {
         setStatus(task.kind === 'integration-result' ? '正在读取最终结果…' : '正在打开审阅任务…', true);
-        await openReviewPanelWorkspace(open);
+        if (!await openListedReviewTask(open, message => window.confirm(message))) {
+          setStatus('已保留当前审阅及其修改，未打开其他任务', true, 5000);
+          return;
+        }
         renderAll();
         setStatus('已打开审阅任务', true, 4000);
         refreshReviewTasks(reviewTasksChanged);
       } catch (error) {
         setStatus(`打开审阅任务失败：${error instanceof Error ? error.message : String(error)}`, false, 6000);
+      }
+    },
+    onReturnToSource: async () => {
+      const workspace = state.reviewWorkspace;
+      if (workspace === null || returningFromReviewPreview) return;
+      returningFromReviewPreview = true;
+      try {
+        // The existing protected path back from a result preview; the review stays open.
+        await reviewApplyEditor(workspace).synchronize(workspace.identity.projectIdentity);
+        if (state.reviewWorkspace !== workspace) return;
+        state.mainTab = 'review';
+        renderAll();
+        setStatus('已回到来源项目，可以重新检查或批准正式结果', true, 5000);
+        refreshReviewTasks(reviewTasksChanged);
+      } catch (error) {
+        setStatus(`回到来源项目失败：${error instanceof Error ? error.message : String(error)}`, false, 6000);
+        reviewTasksChanged();
+      } finally {
+        returningFromReviewPreview = false;
       }
     },
   });
@@ -2261,7 +2281,8 @@ function renderMainArea(): void {
               || sceneLifecycleActionRunning || editorWorkspaceStatus().saving) {
             throw new Error('请先保存当前草稿并完成正在进行的操作，再预览审阅结果。');
           }
-          await openReviewPreview(workspace, request);
+          // A listed result is shown from a checked display copy; checks keep reading the formal directory.
+          await openReviewPreview(workspace, request, undefined, reviewTaskPreviewDirectory(workspace) ?? undefined);
         },
       });
   } else {
