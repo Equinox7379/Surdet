@@ -391,6 +391,14 @@ try {
         const inspector = await page.locator('#script-v4-inspector').boundingBox();
         assert(inspector && inspector.height >= 200, 'picture squeezed out the inspector');
       }
+      if (mode === 'preview' && width >= 1280) {
+        // Wide preview keeps the picture primary; records sit in a side column.
+        const layout = await page.evaluate(() => {
+          const box = (selector) => document.querySelector(`#preview-view ${selector}`).getBoundingClientRect();
+          return { stage: box('.preview-stage').width, workspace: box('.preview-workspace').width, stageRight: box('.preview-stage').right, dockLeft: box('.preview-causal-dock').left };
+        });
+        assert(layout.stage >= layout.workspace * 0.65 && layout.dockLeft >= layout.stageRight - 1, `preview ${width}: picture is not the primary area ${JSON.stringify(layout)}`);
+      }
       if (mode === 'flow') {
         // The first visit fits the map to this canvas instead of a fixed offset.
         const fit = await page.evaluate(() => {
