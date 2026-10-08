@@ -150,12 +150,15 @@
 .v4-authoring[data-script-view=arrange] #editor .block:not(.block-text) > .fields { display: none; }
 .v4-authoring[data-script-view=arrange] #editor .block.v4-empty-dialogue > .fields { display: block; }
 .v4-authoring #editor .block:not(.block-text) > .fields { min-height: 0; padding: 4px 0; }
-.v4-authoring #editor .block.v4-empty-dialogue > .fields { padding: 0; }
+/* The blank-row editor keeps editing the same source line after it receives text: one field in the dialogue column. */
+.v4-authoring #editor .block.v4-empty-dialogue > .fields { display: block; padding: 0; }
 .v4-authoring #editor .v4-empty-dialogue > .v4-step-summary { display: none; }
-.v4-authoring #editor .v4-empty-dialogue { padding-block: 0; }
-.v4-authoring #editor .v4-empty-dialogue .fields .v4-dialogue-input { height: 22px !important; min-height: 22px; padding: 0 0 0 102px; font: 400 13px/22px var(--surdet-font-ui); opacity: 0; }
-.v4-authoring #editor .v4-empty-dialogue:is(:hover,:focus-within,.v4-current) .fields .v4-dialogue-input { opacity: 1; }
-.v4-authoring #editor .v4-empty-dialogue:not(:hover,:focus-within,.v4-current) .continuity-line-number { visibility: hidden; }
+.v4-authoring #editor .v4-empty-dialogue .fields .v4-dialogue-input { padding-left: 102px; }
+/* Only a row that is still blank is compact and stays quiet until hovered, focused or current. */
+.v4-authoring #editor .v4-empty-dialogue.block-blank { padding-block: 0; }
+.v4-authoring #editor .v4-empty-dialogue.block-blank .fields .v4-dialogue-input { height: 22px !important; min-height: 22px; padding-block: 0; font: 400 13px/22px var(--surdet-font-ui); opacity: 0; }
+.v4-authoring #editor .v4-empty-dialogue.block-blank:is(:hover,:focus-within,.v4-current) .fields .v4-dialogue-input { opacity: 1; }
+.v4-authoring #editor .v4-empty-dialogue.block-blank:not(:hover,:focus-within,.v4-current) .continuity-line-number { visibility: hidden; }
 .v4-authoring[data-script-view=arrange] #editor .block:not(.block-text):not(.v4-current):not(:focus-within) > .bar .ops { visibility: hidden; }
 .v4-authoring[data-script-view=manuscript] .v4-step-summary { display: none; }
 .v4-authoring[data-script-view=source] #editor :is(.manuscript-lines,.manuscript-footer) { display: none; }
