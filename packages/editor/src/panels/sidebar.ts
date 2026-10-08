@@ -5,6 +5,7 @@ import { state, h, setStatus, type SceneEntry } from '../state.js';
 import { isSceneFilePathReserved, runProjectWriteOperation } from '../project-io.js';
 import { hideAssetPreview, renderAssetsPanel } from './assets.js';
 import { openScriptImport } from './script-import.js';
+import { workbenchIcon } from '../shell/icons.js';
 
 export function renderSidebar(): void {
   hideAssetPreview();
@@ -96,22 +97,23 @@ export function renderSidebar(): void {
       facts.appendChild(h('span', 'scene-meta', `${sc.text.replace(/\s+/g, '').length} 字`));
       item.appendChild(facts);
       item.onclick = () => onSelectSceneHook(id);
+      // Compact icon actions on the right edge, so the hover overlay never covers the row's name.
       const actions = h('span', 'scene-row-actions');
-      const rename = h('button', 'scene-row-action', '改名');
-      rename.type = 'button';
+      const sceneAction = (icon: string, label: string, onClick: () => void): HTMLButtonElement => {
+        const button = h('button', 'scene-row-action');
+        button.type = 'button';
+        button.title = label.replace('场景', '');
+        button.setAttribute('aria-label', `${label} ${sc.file}`);
+        button.append(workbenchIcon(icon));
+        button.onclick = onClick;
+        return button;
+      };
+      const rename = sceneAction('rename', '重命名场景', () => onRenameSceneHook(id));
       rename.dataset.action = 'rename-scene';
-      rename.setAttribute('aria-label', `重命名场景 ${sc.file}`);
-      rename.onclick = () => onRenameSceneHook(id);
-      const move = h('button', 'scene-row-action', '移动');
-      move.type = 'button';
+      const move = sceneAction('move', '移动场景', () => onMoveSceneHook(id));
       move.dataset.action = 'move-scene';
-      move.setAttribute('aria-label', `移动场景 ${sc.file}`);
-      move.onclick = () => onMoveSceneHook(id);
-      const remove = h('button', 'scene-row-action', '删除');
-      remove.type = 'button';
+      const remove = sceneAction('delete', '删除场景', () => onDeleteSceneHook(id));
       remove.dataset.action = 'delete-scene';
-      remove.setAttribute('aria-label', `删除场景 ${sc.file}`);
-      remove.onclick = () => onDeleteSceneHook(id);
       actions.append(rename, move, remove);
       row.append(item, actions);
       group.appendChild(row);

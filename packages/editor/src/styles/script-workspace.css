@@ -273,16 +273,31 @@
 .scene-row:hover .scene-row-actions, .scene-row:focus-within .scene-row-actions { opacity:1; pointer-events:auto; }
 
 .scene-row-action {
-  min-width: 34px;
-  min-height: 22px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 22px;
   margin: 0;
-  padding: 2px 5px;
+  padding: 0;
   border: 1px solid transparent;
   border-radius: var(--surdet-radius-tight);
   background: transparent;
   color: var(--surdet-text-secondary);
-  font-size: 0.6875rem;
   line-height: 1;
+}
+
+.scene-row-action .workbench-icon,
+.scene-row-action .workbench-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.scene-row:is(:hover, :focus-within) .scene-item {
+  padding-right: 88px;
+}
+
+.scene-row:is(:hover, :focus-within) .scene-facts {
+  visibility: hidden;
 }
 
 .scene-row-action:hover,
