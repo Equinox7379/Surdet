@@ -151,10 +151,9 @@ export class ScriptWorkbench {
     outline.setAttribute('aria-label', '场景与素材目录');
     outline.setAttribute('aria-controls', 'sidebar');
     outline.setAttribute('aria-expanded', String(this.root.dataset.outlineCollapsed !== 'true'));
-    host.replaceChildren(outline, views,
-      button('添加剧情', () => this.openInsert(), 'v4-button v4-primary'),
-      button('查看素材', () => navigateMode('assets')),
-      button('导出 .gal', () => this.download()));
+    const addStep = button('添加剧情', () => this.openInsert(), 'v4-button v4-primary'); addStep.dataset.action = 'add-story-step';
+    const download = button('导出 .gal', () => this.download()); download.dataset.action = 'download-scene';
+    host.replaceChildren(outline, views, addStep, button('查看素材', () => navigateMode('assets')), download);
   }
 
   private installDock(): void {

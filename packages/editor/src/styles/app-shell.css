@@ -860,6 +860,28 @@ body {
   color: var(--surdet-text-primary);
 }
 
+/* Commands read as one line: label, then shortcut or destination on the right. */
+.project-search-results[data-mode=commands] .project-search-result {
+  padding-block: 7px;
+}
+
+.project-search-results[data-mode=commands] .project-search-result>span:last-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.project-search-results[data-mode=commands] .project-search-result small {
+  margin-top: 0;
+  color: var(--surdet-text-muted);
+  white-space: nowrap;
+}
+
+.project-search-result[aria-disabled=true] {
+  opacity: .55;
+}
+
 .project-search-result:hover {
   background: var(--surdet-surface-subtle);
 }

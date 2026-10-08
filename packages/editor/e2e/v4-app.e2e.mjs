@@ -524,6 +524,44 @@ try {
   await page.locator('[data-workbench-panel="editor"]').click();
   await dialogue.focus();
   console.log('PASS problems: status bar count opens the list from another mode, advice shown, Enter and F8 reach timeline and scene lines');
+  // Ctrl+K with > runs the real on-page buttons: disabled stays disabled, other
+  // workspaces are reached through the guarded mode navigation.
+  const palette = page.locator('dialog.project-search-dialog');
+  const paletteInput = palette.locator('input[type="search"]');
+  const openPalette = async (query) => {
+    await page.keyboard.press('Control+K');
+    await paletteInput.waitFor();
+    await paletteInput.fill(query);
+  };
+  await openPalette('>');
+  const commandTitles = await palette.locator('.project-search-result strong').allInnerTexts();
+  for (const title of ['保存全部', '撤销', '重做', '查看问题列表', '添加剧情', '剧本视图：源码', '流程图：查看全图', '前往配置']) assert(commandTitles.includes(title), `missing command ${title}: ${commandTitles}`);
+  const redoDisabled = await page.locator('[data-action="redo"]').isDisabled();
+  await paletteInput.fill('>重做');
+  assert.equal(await palette.locator('.project-search-result').first().getAttribute('aria-disabled'), redoDisabled ? 'true' : null, 'command availability must mirror its button');
+  if (redoDisabled) {
+    const beforeRedo = await sceneText();
+    await paletteInput.press('Enter');
+    assert(await palette.isVisible(), 'an unavailable command must not close the palette');
+    assert.match(await palette.locator('.project-search-footer').innerText(), /当前不可用/);
+    assert.equal(await sceneText(), beforeRedo);
+  }
+  await paletteInput.fill('>源码');
+  await paletteInput.press('Enter');
+  await palette.waitFor({ state: 'detached' });
+  assert.equal(await page.locator('button[data-script-view="source"]').getAttribute('aria-pressed'), 'true');
+  await openPalette('>查看全图');
+  assert.match(await palette.locator('.project-search-result small').first().innerText(), /前往流程/);
+  await paletteInput.press('Enter');
+  await palette.waitFor({ state: 'detached' });
+  assert.equal(await debugState('mainTab'), 'flow', 'a flow command must open the flow workspace first');
+  await openPalette('>编排');
+  await paletteInput.press('Enter');
+  await palette.waitFor({ state: 'detached' });
+  assert.equal(await debugState('mainTab'), 'editor');
+  assert.equal(await page.locator('button[data-script-view="arrange"]').getAttribute('aria-pressed'), 'true');
+  await dialogue.focus();
+  console.log('PASS command palette: > lists real commands, mirrors disabled buttons, runs view and cross-workspace commands through existing controls');
   const beforeCompositionRows = await page.locator('.block[data-line]').count();
   await dialogue.evaluate((node) => {
     node.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
