@@ -1166,6 +1166,32 @@ describe('Editor review panel', () => {
     await vi.waitFor(() => expect(container.querySelector(`[data-action="${action}"]`)?.disabled).toBe(false));
   });
 
+  it('re-enables result actions on the live page when the page was redrawn while a check ran', async () => {
+    const live = new FakeElement('section');
+    vi.stubGlobal('document', { ...documentStub, getElementById: (id: string) => id === 'review-view' ? live : id === 'status' ? statusElement : null });
+    const original = state.reviewWorkspace;
+    const workspace = resultWorkspace();
+    state.reviewWorkspace = workspace;
+    try {
+      let finish!: () => void;
+      const options = { onRefreshFixtureIdentity: () => new Promise<void>(resolve => { finish = resolve; }) };
+      const started = new FakeElement('section');
+      Object.assign(started, { isConnected: true });
+      renderReviewPanel(started as unknown as HTMLElement, workspace, options);
+      started.querySelector('[data-action="refresh-result-tree"]')!.click();
+      // The page is drawn again while the check runs (as after returning to the source project).
+      Object.assign(started, { isConnected: false });
+      Object.assign(live, { isConnected: true });
+      renderReviewPanel(live as unknown as HTMLElement, workspace, options);
+      expect(live.querySelector('[data-action="approve-result"]')?.disabled).toBe(true);
+      finish();
+      await vi.waitFor(() => expect(live.querySelector('[data-action="refresh-result-tree"]')?.disabled).toBe(false));
+      expect(live.querySelector('[data-action="preview-result"]')?.disabled).toBe(false);
+    } finally {
+      state.reviewWorkspace = original;
+    }
+  });
+
   it('requires confirmation before replacing an explored result copy and retains it on cancel', async () => {
     vi.stubGlobal('document', documentStub);
     const confirm = vi.fn(() => false);
