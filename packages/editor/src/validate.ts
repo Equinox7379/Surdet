@@ -6,6 +6,7 @@
 import {
   compileScene,
   SourceError,
+  sourceErrorIssue,
 } from '@surdet/core';
 import type { CompiledScene, JumpInstr, CallInstr, LintIssue } from '@surdet/core';
 import {
@@ -113,15 +114,7 @@ export async function validateProject(
     } catch (err) {
       failedScenes.add(sc.id);
       if (err instanceof SourceError) {
-        const p = err.pos;
-        issues.push({
-          severity: 'error',
-          code: err.code ?? 'LINT',
-          text: err.message,
-          file: p?.file ?? sc.file,
-          line: p?.line ?? 0,
-          col: p?.col ?? 0,
-        });
+        issues.push(sourceErrorIssue(err, sc.file));
       } else {
         issues.push({ severity: 'error', code: 'LINT', text: String(err), file: sc.file, line: 0, col: 0 });
       }
