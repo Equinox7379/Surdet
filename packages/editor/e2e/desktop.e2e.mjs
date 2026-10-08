@@ -118,6 +118,34 @@ try {
   assert.equal(JSON.parse(await fs.readFile(path.join(fixture, 'game.config.json'), 'utf8')).variables.score.initial, 42);
   console.log('RESTART: same physical project, saved configuration, persisted draft recovered and saved');
   await restored.screenshot({ path: path.join(output, 'desktop-reopened.png') });
+  // Content history: record, change and save, compare an older version, restore it as a draft.
+  await restored.locator('[data-editor-mode="history"]').click();
+  const versionName = restored.getByLabel('版本名称');
+  await versionName.fill('恢复前');
+  await restored.getByRole('button', { name: '记录已保存版本' }).click();
+  await restored.locator('.content-history-versions button', { hasText: '恢复前' }).waitFor();
+  await restored.locator('[data-editor-mode="editor"]').click();
+  await restored.getByRole('button', { name: '源码', exact: true }).click();
+  await restored.getByRole('textbox', { name: '完整剧本源码' }).fill(originalScene.replace('桌面初稿。', '历史之后的新稿。'));
+  await restored.keyboard.press('Control+S');
+  await waitSaved(restored);
+  await restored.locator('[data-editor-mode="history"]').click();
+  await restored.locator('.content-history-versions button', { hasText: '恢复前' }).click();
+  await restored.locator('.content-history-versions button[aria-current="true"]', { hasText: '恢复前' }).waitFor();
+  await restored.locator('.content-history-file').first().click();
+  assert.equal(await restored.locator('.content-history-file').first().getAttribute('aria-pressed'), 'true');
+  await restored.locator('.content-history-diff').waitFor();
+  const changed = await restored.locator('.content-history-diff section').evaluateAll(sections => sections.map(section => [...section.querySelectorAll('.content-history-line.is-changed')].map(line => line.textContent)));
+  assert.deepEqual(changed, [['凛：历史之后的新稿。'], ['凛：重启后恢复的草稿。']], JSON.stringify(changed));
+  await restored.screenshot({ path: path.join(output, 'desktop-history.png') });
+  await restored.getByRole('button', { name: '恢复这个文件为草稿' }).click();
+  await restored.waitForFunction(() => [...window.surdetEditorDebug.state.scenes.values()].some(scene => scene.dirty && scene.text.includes('重启后恢复的草稿')));
+  await restored.keyboard.press('Control+S');
+  await waitSaved(restored);
+  assert.match(await fs.readFile(scenePath, 'utf8'), /重启后恢复的草稿/);
+  // The save settlement briefly keeps the window busy; closing waits for the editor to release it.
+  await restored.waitForFunction(() => document.querySelector('[data-action="save-project"]')?.disabled === false);
+  console.log('HISTORY: version recorded, changed lines marked in the comparison, older file restored as a draft and saved');
   // Start page: recent projects are only directories the main process recorded.
   await app.evaluate(({ dialog }) => { dialog.showMessageBoxSync = () => 1; });
   await app.close();
