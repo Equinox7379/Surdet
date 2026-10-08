@@ -272,6 +272,22 @@
 #asset-center-view.v4-asset-center .asset-center-item-context, #asset-center-view.v4-asset-center .asset-center-item-meta { font-size: 11px; color: var(--surdet-text-secondary); }
 #asset-center-view.v4-asset-center .asset-center-preview { min-height: 180px; max-height: 330px; border: 0; background: var(--surdet-surface-subtle); margin: 16px 0; }
 .v4-asset-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Asset library: one browsing row, one title/controls row, denser items. */
+#asset-center-view.v4-asset-center .asset-center-header { padding: 18px 24px 6px; }
+#asset-center-view.v4-asset-center .asset-center-title h1 { font-size: 20px; }
+#asset-center-view.v4-asset-center .asset-center-rail .asset-center-filter { min-height: 30px; padding: 4px 10px; font-size: 13px; }
+#asset-center-view.v4-asset-center .asset-center-library-header { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 10px 16px; margin-bottom: 8px; padding: 0 0 10px; border-bottom: 1px solid var(--surdet-border-default); }
+#asset-center-view.v4-asset-center .asset-center-library-header > .v4-asset-browsing { grid-column: 1 / -1; }
+#asset-center-view.v4-asset-center .asset-center-library-controls { align-items: center; gap: 10px; }
+#asset-center-view.v4-asset-center :is(.asset-center-folder-controls,.asset-center-sort) { display: flex; align-items: center; gap: 6px; color: var(--surdet-text-muted); font-size: 12px; font-weight: 500; }
+#asset-center-view.v4-asset-center :is(.asset-center-folder-controls,.asset-center-sort) select { min-height: 30px; width: auto; max-width: 220px; background-color: var(--surdet-surface-app); font-size: 12.5px; }
+#asset-center-view.v4-asset-center .asset-center-batch-controls button { min-height: 30px; padding: 4px 12px; font-size: 12.5px; }
+#asset-center-view.v4-asset-center .asset-center-library.list .asset-center-item { min-height: 52px; padding: 6px 10px; }
+#asset-center-view.v4-asset-center .asset-center-library.list .asset-center-item:not(.asset-center-item-selecting) { grid-template-columns: 40px minmax(140px,1fr) minmax(70px,.35fr) 90px; }
+#asset-center-view.v4-asset-center .asset-center-library.list .asset-center-thumbnail { width: 38px; height: 40px; border-radius: var(--surdet-radius-tight); }
+#asset-center-view.v4-asset-center .asset-center-library.list .asset-center-item:hover { background: var(--surdet-surface-hover); }
+#asset-center-view.v4-asset-center .asset-center-inspector { border-left: 1px solid var(--surdet-border-default); }
+#asset-center-view.v4-asset-center .asset-center-inspector h2 { font-size: 15px; }
 #asset-center-view.v4-asset-center .asset-import-workbench, #asset-center-view.v4-asset-center .asset-relocation-batch-workbench { margin-bottom: 20px; }
 
 /* Select an object, then edit its full existing fields. No replacement JSON model. */

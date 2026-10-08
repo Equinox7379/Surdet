@@ -187,7 +187,8 @@
 
 .project-health-table th,
 .project-health-table td {
-  padding: var(--surdet-space-12) var(--surdet-space-8);
+  padding: var(--surdet-space-4) var(--surdet-space-8);
+  font-variant-numeric: tabular-nums;
   border-bottom: 1px solid var(--surdet-border-default);
   text-align: right;
   vertical-align: middle;
@@ -225,16 +226,23 @@
 
 .project-health-scene-link {
   width: 100%;
+  min-height: 28px;
   border-color: transparent;
-  padding: var(--surdet-space-6) var(--surdet-space-8);
+  padding: var(--surdet-space-4) var(--surdet-space-8);
   background: transparent;
-  font-weight: 680;
+  font-family: var(--surdet-font-mono);
+  font-size: var(--surdet-type-control);
+  font-weight: 500;
+}
+
+.project-health-table tbody tr:hover {
+  background: var(--surdet-surface-hover);
 }
 
 .project-health-scene-link:hover,
 .project-health-secondary-action:hover {
   border-color: var(--surdet-border-strong);
-  background: var(--surdet-surface-selected);
+  background: var(--surdet-surface-raised);
   color: var(--surdet-text-primary);
 }
 

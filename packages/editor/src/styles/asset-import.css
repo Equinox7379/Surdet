@@ -328,7 +328,7 @@
 .asset-import-primary {
   border-color: var(--surdet-action-primary);
   background: var(--surdet-action-primary);
-  color: var(--surdet-color-paper-50);
+  color: var(--surdet-text-on-accent);
 }
 
 .asset-import-primary:disabled,
