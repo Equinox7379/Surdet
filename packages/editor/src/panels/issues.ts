@@ -147,6 +147,8 @@ async function runValidateOnMainThread(seq: number): Promise<void> {
 }
 
 export function runValidate(): void {
+  // This run reads the current input, so an edit still waiting for its debounce is covered.
+  if (validateTimer) { clearTimeout(validateTimer); validateTimer = null; }
   // 两条路径都按输入序号丢弃过期结果；摘要计算也可能跨越项目切换。
   const seq = ++validateSeq;
   if (validateWorker) {
