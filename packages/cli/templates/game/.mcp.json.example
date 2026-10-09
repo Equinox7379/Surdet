@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "surdet": {
+      "command": "node",
+      "args": [
+        "<SURDET_CLI_DIR>/dist/agent-port/main.js",
+        "--project",
+        "<PROJECT_DIR>",
+        "--policy",
+        "stage"
+      ]
+    }
+  }
+}

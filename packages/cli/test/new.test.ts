@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Client } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { cmdNew } from '../src/new.js';
 import { lintProject } from '../src/lint.js';
 
@@ -126,7 +129,74 @@ describe('surdet new', () => {
     expect(tsconfig.extends).toBeUndefined();
     expect(await cmdNew('again', { directory, template })).toBe(1);
     expect(lintProject(directory).ok).toBe(true);
-  });
+
+    const readme = fs.readFileSync(path.join(directory, 'README.md'), 'utf8');
+    const guide = fs.readFileSync(path.join(directory, 'AGENTS.md'), 'utf8');
+    for (const document of [readme, guide]) {
+      const links = [...document.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)].map(match => match[1]!);
+      expect(links).toContain('.mcp.json.example');
+      for (const link of links) expect(fs.existsSync(path.resolve(directory, link)), link).toBe(true);
+    }
+    expect(readme).toContain('(AGENTS.md)');
+    // Read the shipped config and execute the shipped requests, not copies of them.
+    const configExample = JSON.parse(fs.readFileSync(path.join(directory, '.mcp.json.example'), 'utf8')) as {
+      mcpServers: { surdet: { command: string; args: string[] } };
+    };
+    const port = configExample.mcpServers.surdet;
+    const args = port.args.map(value => value
+      .replaceAll('<SURDET_CLI_DIR>', fileURLToPath(new URL('..', import.meta.url)))
+      .replaceAll('<PROJECT_DIR>', directory));
+    const requests = [...guide.matchAll(/```json\r?\n([\s\S]*?)\r?\n```/g)]
+      .map(match => JSON.parse(match[1]!) as { name: string; arguments: Record<string, unknown> });
+    expect(requests.map(request => request.name)).toEqual(['surdet_change_begin', 'surdet_scene_create']);
+    const sourcePath = path.join(directory, 'content/scenario', `${config.entryScene}.gal`);
+    const source = fs.readFileSync(sourcePath, 'utf8');
+    const connect = async (resumeChangeId?: string) => {
+      const client = new Client({ name: 'generated-project-onboarding', version: '1.0.0' });
+      const transport = new StdioClientTransport({
+        command: port.command,
+        args: [...args, ...(resumeChangeId === undefined ? [] : ['--resume-change', resumeChangeId])],
+        cwd: engine,
+        env: {
+          ...process.env as Record<string, string>,
+          SURDET_AGENT_DATA_DIR: path.join(engine, 'agent-data'),
+          SURDET_EDITOR_ASSET_IMPORT_DATA_ROOT: path.join(engine, 'asset-data'),
+        },
+        stderr: 'pipe',
+      });
+      try { await client.connect(transport); }
+      catch (error) { await client.close(); throw error; }
+      return client;
+    };
+    let client = await connect();
+    const call = async (name: string, input: Record<string, unknown> = {}) => {
+      const response = await client.callTool({ name, arguments: input });
+      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      expect(response.structuredContent).toMatchObject({ ok: true });
+      return response.structuredContent as { result: Record<string, unknown> };
+    };
+    try {
+      expect((await call('surdet_session_describe')).result).toMatchObject({ policy: 'stage', resumed: false });
+      expect((await call('surdet_capabilities_describe', { ids: ['scene.create'], detail: 'full' })).result)
+        .toMatchObject({ capabilities: [{ id: 'scene.create', mcpTool: 'surdet_scene_create' }] });
+      for (const request of requests) await call(request.name, request.arguments);
+      const description = (await call('surdet_session_describe')).result;
+      expect(description.activeChange).toMatchObject({ compositionMode: 'direct' });
+      const { changeId } = description.activeChange as { changeId: string };
+      await client.close();
+      client = await connect(changeId);
+      expect((await call('surdet_session_describe')).result).toMatchObject({
+        resumed: true, activeChange: { changeId, compositionMode: 'direct' },
+      });
+      expect((await call('surdet_object_inspect', { view: 'working', objectRef: 'scene:opening', fragment: {} })).result)
+        .toMatchObject({ fragment: { lines: expect.arrayContaining([
+          expect.objectContaining({ text: '雨停了，窗外传来脚步声。' }),
+          expect.objectContaining({ text: '@end' }),
+        ]) } });
+      expect(fs.existsSync(path.join(directory, 'content/scenario/opening.gal'))).toBe(false);
+      expect(fs.readFileSync(sourcePath, 'utf8')).toBe(source);
+    } finally { await client.close(); }
+  }, 30000);
 
   it('rejects invalid template and empty directory before creating files', async () => {
     const engine = makeFakeEngine();
