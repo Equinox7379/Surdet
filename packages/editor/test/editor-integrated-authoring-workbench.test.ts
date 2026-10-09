@@ -186,9 +186,9 @@ describe('integrated authoring workbench contract', () => {
 
     expect(mainSource).toMatch(/bindSidebarHooks\(\{[\s\S]*?onSelectScene:\s*\(sceneKey\)\s*=>\s*jumpToScene\(sceneKey\)/);
     expect(mainSource).toMatch(/bindSearchHooks\(\{[\s\S]*?onJump:\s*\(sceneKey,\s*line\)\s*=>\s*jumpToScene\(sceneKey,\s*line\)/);
-    expect(mainSource).toMatch(/bindIssueNavigation\(\{[\s\S]*?onJump:\s*\(sceneKey,\s*line\)\s*=>\s*jumpToScene\(sceneKey,\s*line\)/);
+    expect(mainSource).toMatch(/bindIssueNavigation\(\{\s*onJump:\s*\(sceneKey,\s*line,\s*range\)\s*=>\s*jumpToScene\(sceneKey,\s*line,\s*range\)/);
     expect(mainSource).toMatch(/bindRightNavigation\(\{[\s\S]*?onJumpScene:\s*\(sceneKey\)\s*=>\s*jumpToScene\(sceneKey\)/);
-    expect(issueSource).toMatch(/onIssueJumpHook\(key\s*,\s*Math\.max\(0,\s*issue\.line\s*-\s*1\)\)/);
+    expect(issueSource).toMatch(/onIssueJumpHook\(key\s*,\s*Math\.max\(0,\s*issue\.line\s*-\s*1\)\s*,\s*issue\.range\)/);
     expect(issueSource).not.toMatch(/state\.current\s*=\s*key/);
     expect(rightSource).toMatch(/onSceneJumpHook\(/);
     expect(rightSource).not.toMatch(/state\.current\s*=\s*key/);

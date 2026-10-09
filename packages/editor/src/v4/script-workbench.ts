@@ -2,6 +2,8 @@ import { state, h, setStatus, type SceneEntry } from '../state.js';
 import { setCurrentText } from '../history.js';
 import { parseScript, splitInstr, type LineModel } from '../model.js';
 import { decodeInstructionArgument, parseProjectConfigDocument } from '@surdet/authoring';
+import type { SourceRange } from '@surdet/core';
+import { sourceRangeOffsets } from './source-range.js';
 import { portraitDisplayName, projectPortraitAssets } from '../assets.js';
 import { disposePreviewPanel, renderPreviewPanel, refreshPreviewSourceState } from '../panels/preview-panel.js';
 import { allowedToEdit, button, disclosure, field, ImageScope, navigateMode } from './ui.js';
@@ -34,7 +36,7 @@ export function prepareScriptV4Render(): void { active?.returnFields(); }
 export function disposeScriptV4(): void { active?.dispose(); active = null; }
 
 /** Reveal a source location through the currently mounted V4 view. */
-export function revealScriptV4Line(index: number): boolean { return active?.revealLine(index) ?? false; }
+export function revealScriptV4Line(index: number, range?: SourceRange): boolean { return active?.revealLine(index, range) ?? false; }
 
 /** Decorates existing B01-bound rows; it does not own a second document or undo stack. */
 export function installScriptV4(editor: HTMLElement, rerender: () => void): void {
@@ -460,7 +462,8 @@ export class ScriptWorkbench {
   }
 
   /** Main's search/issues/trace navigation must not focus hidden legacy rows in source view. */
-  revealLine(index: number): boolean {
+  /** In the source view a diagnostic range selects its exact text; otherwise the whole row. */
+  revealLine(index: number, range?: SourceRange): boolean {
     const rows = this.lines();
     const line = rows[index];
     if (!this.current() || !Number.isInteger(index) || !line) return false;
@@ -474,10 +477,13 @@ export class ScriptWorkbench {
       const textarea = this.editor.querySelector<HTMLTextAreaElement>('.v4-source-editor');
       if (!textarea) return false;
       // Native textarea offsets use LF and UTF-16, even for CRLF/CR documents.
-      const start = rows.slice(0, index).reduce((offset, row) => offset + row.raw.length + (row.eol ? 1 : 0), 0);
+      const rowStart = (row: number) => rows.slice(0, row).reduce((offset, entry) => offset + entry.raw.length + (entry.eol ? 1 : 0), 0);
+      const start = rowStart(index);
       textarea.scrollIntoView({ block: 'start' });
       textarea.focus({ preventScroll: true });
-      textarea.setSelectionRange(start, start + line.raw.length);
+      const exact = range === undefined ? null : sourceRangeOffsets(rows, rowStart, index, range);
+      if (exact) textarea.setSelectionRange(exact.start, exact.end);
+      else textarea.setSelectionRange(start, start + line.raw.length);
       const style = getComputedStyle(textarea);
       const lineHeight = Number.parseFloat(style.lineHeight) || (Number.parseFloat(style.fontSize) || 13) * 1.9;
       const padding = Number.parseFloat(style.paddingTop) || 0;

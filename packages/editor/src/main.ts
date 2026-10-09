@@ -18,6 +18,7 @@ import { bindEditorWorkspaceHooks, connectEditorWorkspace, disconnectEditorWorks
   publishEditorWorkspaceState, pollEditorWorkspace, readEditorWorkspaceBaseline, currentEditorWorkspaceWrite,
   editorWorkspaceTextChanges, enqueueEditorAssetRequest, recordEditorSceneCommit } from './editor-workspace.js';
 import type { ProjectDiskBaseline } from './project-disk-baseline.js';
+import type { SourceRange } from '@surdet/core';
 import { hasReviewDraft, hasPendingReviewReceipt, isReviewReceiptWriting, discardReviewDraft, openReviewWorkspace, type ReviewWorkspaceState } from './review-workspace.js';
 import { isReviewApplyRunning } from './review-apply-controller.js';
 import { createReviewPreparationClient, preparationErrorMessage } from './review-preparation-client.js';
@@ -341,6 +342,8 @@ async function bindCurrentProjectAssetImport(preservedBaseline?: ProjectDiskBase
     if (generation !== assetImportGeneration || client !== assetImportClient || state.dirHandle !== root) return;
     const projectIdentity = editorWorkspaceStatus().latest?.projectIdentity;
     if (projectIdentity !== undefined) boundReviewProject = { projectIdentity, handle: root };
+    // Read the pending count once per successful binding; the review page and 刷新 read it again.
+    refreshReviewTasks(reviewTasksChanged);
     const pendingRelocation = binding.pendingRelocations[0];
     if (pendingRelocation !== undefined && assetRelocationWorkspace.snapshot().mode === 'idle') {
       const detail = await client.relocationQuery(pendingRelocation.operationId);
@@ -1844,7 +1847,7 @@ bindTimelineHooks({
 });
 
 /** 跳转定位（流程图导航与搜索结果共用）：切块编辑标签页 + 选中场景 + 滚动到指定行 */
-function jumpToScene(sceneKey: string, line?: number): void {
+function jumpToScene(sceneKey: string, line?: number, range?: SourceRange): void {
   if (!state.scenes.has(sceneKey)) return;
   const changedScene = state.current !== sceneKey;
   state.mainTab = 'editor';
@@ -1856,7 +1859,7 @@ function jumpToScene(sceneKey: string, line?: number): void {
     const objectRef = target?.dataset.objectRef || null;
     state.selectedObjectRef = selectAuthoringObject(objectRef);
     document.dispatchEvent(new CustomEvent('surdet-authoring-selection'));
-    if (!revealScriptV4Line(Math.max(0, line))) {
+    if (!revealScriptV4Line(Math.max(0, line), range)) {
       target?.scrollIntoView({ block: 'center' });
       target?.focus({ preventScroll: true });
     }
@@ -1930,7 +1933,7 @@ bindSearchHooks({
   },
 });
 bindIssueNavigation({
-  onJump: (sceneKey, line) => jumpToScene(sceneKey, line),
+  onJump: (sceneKey, line, range) => jumpToScene(sceneKey, line, range),
   onTimeline: (id) => navigateTimeline(id),
   onConfig: () => navigateMode('config'),
   onValidationApplied: () => {
@@ -2292,8 +2295,7 @@ function renderMainArea(): void {
     renderConfig(cfgEl);
   }
   refreshProjectBarProjection();
-  // Discovery is read on the review page only: entering it re-reads the directory, and a
-  // local service without the discovery route is never probed from other pages.
+  // Entering the review page re-reads the directory; the list is never kept as a content snapshot.
   const enteringReview = state.mainTab === 'review' && renderedMainTab !== 'review';
   renderedMainTab = state.mainTab;
   if (enteringReview) refreshReviewTasks(reviewTasksChanged);
