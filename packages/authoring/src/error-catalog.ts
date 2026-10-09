@@ -9,6 +9,7 @@ import type {
 import { AUTHORING_CONTRACT_VERSION, AUTHORING_ENVELOPE_SCHEMA_VERSION } from './capability-contract.js';
 import type { AuthoringCapabilityId } from './capability-registry.js';
 import { AuthoringOperationError } from './change-session.js';
+import { SourceError, sourceErrorIssue } from '@surdet/core';
 
 export const AUTHORING_ERROR_CODES = [
   'TEXT_CATALOG_INVALID',
@@ -243,11 +244,13 @@ export function normalizeAuthoringError(error: unknown): NormalizedAuthoringErro
     : 'INVALID_REQUEST';
   const definition = errorDefinition(code);
   const message = error instanceof Error ? error.message : String(error);
-  const details = error instanceof AuthoringOperationError
-    ? error.details
-    : typeof error === 'object' && error !== null && 'details' in error && typeof error.details === 'object' && error.details !== null && !Array.isArray(error.details)
-      ? error.details as Record<string, unknown>
-      : undefined;
+  const details = error instanceof SourceError
+    ? { diagnostic: sourceErrorIssue(error, '') }
+    : error instanceof AuthoringOperationError
+      ? error.details
+      : typeof error === 'object' && error !== null && 'details' in error && typeof error.details === 'object' && error.details !== null && !Array.isArray(error.details)
+        ? error.details as Record<string, unknown>
+        : undefined;
   const repairActions = definition.repairActions.map((item) => ({
     ...item,
     ...(item.requiredFreshFacts === undefined ? {} : { requiredFreshFacts: [...item.requiredFreshFacts] }),

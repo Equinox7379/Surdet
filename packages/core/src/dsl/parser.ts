@@ -9,7 +9,7 @@ import {
 } from './ast.js';
 import { parseInlineInstructions } from './lexer.js';
 import { validateExpr } from './expr-parser.js';
-import { SourceError, type SourcePos, type InstructionToken, type TextToken, type Token } from './token.js';
+import { SourceError, rangeOfArguments, type SourcePos, type InstructionToken, type TextToken, type Token } from './token.js';
 
 /** token 游标 */
 class TokenCursor {
@@ -105,7 +105,7 @@ export class Parser {
       }
 
       cursor.next();
-      out.push({ kind: 'instr', name, args: tok.args, modifiers: tok.modifiers, pos: tok });
+      out.push({ kind: 'instr', name, args: tok.args, argRanges: tok.argRanges, modifiers: tok.modifiers, pos: tok });
     }
     return out;
   }
@@ -216,7 +216,7 @@ export class Parser {
     try {
       validateExpr(expr);
     } catch {
-      throw new DslError('S002', `@${head.name} 条件表达式语法错误：'${expr}'`, head);
+      throw new DslError('S002', `@${head.name} 条件表达式语法错误：'${expr}'`, { ...head, range: rangeOfArguments(head.argRanges) });
     }
     return expr;
   }
@@ -346,7 +346,9 @@ export class Parser {
       try {
         validateExpr(when);
       } catch {
-        throw new DslError('S002', `选项条件表达式语法错误：'${when}'`, textTok);
+        const start = textTok.col + whenMatch.index + 4 + whenMatch[1]!.length - whenMatch[1]!.trimStart().length;
+        throw new DslError('S002', `选项条件表达式语法错误：'${when}'`, { ...textTok,
+          range: { start: { line: textTok.line, col: start }, end: { line: textTok.line, col: start + when.length } } });
       }
       labelText = labelText.slice(0, whenMatch.index).trim();
     }
@@ -365,20 +367,23 @@ export class Parser {
     }
 
     const inlineTokens = inlinePart.length > 0
-      ? parseInlineInstructions(inlinePart, textTok.file, textTok.line, textTok.col)
+      ? parseInlineInstructions(inlinePart, textTok.file, textTok.line,
+        textTok.col + arrowEnd + raw.slice(arrowEnd).length - raw.slice(arrowEnd).trimStart().length)
       : [];
 
     const inline = inlineTokens.map((t) => ({
       name: t.name,
       args: t.args,
+      argRanges: t.argRanges,
       modifiers: t.modifiers,
-      pos: pos(t.file, t.line, t.col),
+      // Keep the option-row anchor; the exact inline excerpt is separate.
+      pos: { ...pos(t.file, t.line, textTok.col), range: t.range },
     }));
 
     // 提取跳转目标（goto/jump），从 inline 移除（编译器转为 JumpInstr）
     // 块指令（if/choice 等）不允许内联
     const BLOCK_INLINE = new Set(['if', 'elif', 'else', 'endif', 'choice']);
-    let jump: { kind: 'goto' | 'jump'; target: string } | null = null;
+    let jump: AstChoiceOption['jump'] = null;
     let extraJumps = 0; // 选项内第二个及以后的 @goto/@jump 会被丢弃 → 编译器报 W008（审计修复：不再静默）
     const rest: typeof inline = [];
     for (const ins of inline) {
@@ -396,7 +401,7 @@ export class Parser {
           if (target.length === 0) {
             throw new DslError('S006', `@${ins.name} 缺少跳转目标`, ins.pos);
           }
-          jump = { kind: ins.name, target };
+          jump = { kind: ins.name, target, range: rangeOfArguments(ins.argRanges) };
         } else {
           extraJumps += 1;
         }
