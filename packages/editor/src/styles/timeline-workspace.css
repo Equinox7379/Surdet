@@ -210,12 +210,11 @@
 }
 
 .timeline-title h2 {
-  margin: 4px 0 3px;
+  margin: 4px 0 4px;
   overflow: hidden;
   color: var(--surdet-text-primary);
-  font-family: var(--surdet-font-mono);
-  font-size: 19px;
-  font-weight: 680;
+  font: 600 24px/1.3 var(--surdet-font-display);
+  letter-spacing: .02em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

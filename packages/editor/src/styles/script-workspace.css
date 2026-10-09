@@ -675,7 +675,7 @@
 
 #editor-workspace .block .fields input,
 #editor-workspace .block .fields textarea {
-  font-family: var(--surdet-font-story);
+  font-family: var(--surdet-font-ui);
   font-size: 0.9375rem;
   line-height: 1.65;
 }
