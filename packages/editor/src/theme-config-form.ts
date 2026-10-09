@@ -40,7 +40,7 @@ export function renderThemeConfigForm(options: {
     const value = path.reduce<any>((value, key) => value?.[key], initial);
     input.value = value == null ? '' : kind === 'color' && typeof value === 'number' ? `#${value.toString(16).padStart(6, '0')}` : String(value);
     input.placeholder = fallback ? `默认：${fallback}` : '留空使用默认';
-    input.oninput = () => {
+    const apply = () => {
       if (!root.isConnected || root.closest('[inert]')) return;
       try {
         const text = input.value.trim();
@@ -73,7 +73,19 @@ export function renderThemeConfigForm(options: {
         options.onError(problem);
       } catch (error) { options.onError(error instanceof Error ? error.message : String(error)); }
     };
-    field.append(h('span', undefined, label), input); parent.append(field);
+    input.oninput = apply;
+    let control: HTMLElement = input;
+    if (kind === 'color') {
+      // The swatch is only another way to type a six-digit value into the same field.
+      const swatch = h('input'); swatch.type = 'color'; swatch.className = 'theme-color-swatch';
+      swatch.setAttribute('aria-label', `${label}取色`);
+      const sync = () => { const text = input.value.trim(); swatch.value = /^#[\da-f]{6}$/i.test(text) ? text.toLowerCase() : fallback; };
+      input.oninput = () => { apply(); sync(); };
+      swatch.oninput = () => { input.value = swatch.value; apply(); };
+      sync();
+      control = h('span', 'theme-color-control'); control.append(swatch, input);
+    }
+    field.append(h('span', undefined, label), control); parent.append(field);
   };
 
   const images = section('标题与皮肤', true);

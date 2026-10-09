@@ -156,7 +156,10 @@ export function renderAssetInsights(root: HTMLElement): void {
     // Per-kind fields are not guessed: aggregate directly from shared item bytes.
     const measured = items.filter((item) => item.kind === kind && item.physical && typeof item.bytes === 'number');
     const size = measured.length ? measured.reduce((sum, item) => sum + item.bytes!, 0) : undefined;
-    row.append(h('strong', undefined, displayBytes(size)));
+    // Share of the measured total, drawn as a bar; unmeasured kinds stay empty.
+    const bar = h('span', 'v4-analysis-bar'); bar.setAttribute('aria-hidden', 'true');
+    if (size !== undefined && summary.measuredBytes > 0) bar.style.setProperty('--share', `${Math.max(1, Math.round(size / summary.measuredBytes * 100))}%`);
+    row.append(bar, h('strong', undefined, displayBytes(size)));
     distribution.append(row);
   }
   const largest = h('section'); largest.append(h('h3', undefined, '大文件'));

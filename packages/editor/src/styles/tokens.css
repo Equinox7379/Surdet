@@ -1,38 +1,55 @@
 :root {
-  color-scheme: light;
+  /* Direction A · 深色专业 (Owner selected 2026-10-08). Primitives change here only;
+     every workspace consumes the semantic layer below. */
+  color-scheme: dark;
 
-  --surdet-color-paper-0: #F7F8FA;
-  --surdet-color-paper-50: #FFFFFF;
-  --surdet-color-paper-100: #F3F5F8;
-  --surdet-color-ink-900: #303847;
-  --surdet-color-ink-600: #697588;
-  --surdet-color-frame-900: #1D2326;
-  --surdet-color-line-300: #E5E9F0;
-  --surdet-color-line-600: #9AA8BC;
-  --surdet-color-accent-600: #526D9B;
-  --surdet-color-provenance-600: #6F5A45;
-  --surdet-color-success-600: #3F6851;
-  --surdet-color-warning-600: #946426;
-  --surdet-color-danger-600: #9A4039;
+  --surdet-color-paper-0: #111317;
+  --surdet-color-paper-50: #181B20;
+  --surdet-color-paper-100: #1F2329;
+  --surdet-color-paper-200: #262B32;
+  --surdet-color-ink-900: #E7E9EC;
+  --surdet-color-ink-600: #A3ABB7;
+  --surdet-color-ink-400: #6F7783;
+  --surdet-color-frame-900: #0C0E11;
+  --surdet-color-line-300: #282D35;
+  --surdet-color-line-600: #3F4651;
+  --surdet-color-accent-600: #F0A35E;
+  --surdet-color-accent-500: #F5B577;
+  --surdet-color-accent-ink: #1B1207;
+  --surdet-color-provenance-600: #C9A27E;
+  --surdet-color-success-600: #5CC28F;
+  --surdet-color-warning-600: #E6B04F;
+  --surdet-color-danger-600: #EF6B6B;
+  --surdet-color-info-600: #7AA7FF;
 
   --surdet-surface-app: var(--surdet-color-paper-0);
   --surdet-surface-panel: var(--surdet-color-paper-50);
   --surdet-surface-subtle: var(--surdet-color-paper-100);
-  --surdet-surface-selected: #EDF2FA;
+  --surdet-surface-raised: var(--surdet-color-paper-200);
+  --surdet-surface-selected: #2C261F;
+  --surdet-surface-hover: #1E2228;
+  --surdet-surface-stage: #0A0C0F;
   --surdet-text-primary: var(--surdet-color-ink-900);
   --surdet-text-secondary: var(--surdet-color-ink-600);
+  --surdet-text-muted: var(--surdet-color-ink-400);
+  --surdet-text-on-accent: var(--surdet-color-accent-ink);
   --surdet-border-default: var(--surdet-color-line-300);
   --surdet-border-strong: var(--surdet-color-line-600);
   --surdet-action-primary: var(--surdet-color-accent-600);
-  --surdet-focus-ring: #526D9B;
+  --surdet-action-primary-hover: var(--surdet-color-accent-500);
+  --surdet-action-soft: #3A2C1E;
+  --surdet-focus-ring: #F0A35E;
   --surdet-state-provenance: var(--surdet-color-provenance-600);
   --surdet-state-success: var(--surdet-color-success-600);
   --surdet-state-warning: var(--surdet-color-warning-600);
   --surdet-state-danger: var(--surdet-color-danger-600);
+  --surdet-state-info: var(--surdet-color-info-600);
   --surdet-state-readonly: var(--surdet-color-ink-600);
+  --surdet-shadow-popover: 0 12px 32px rgb(0 0 0 / 45%);
+  --surdet-backdrop: rgb(5 6 8 / 62%);
 
   --surdet-font-ui: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
-  --surdet-font-story: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", var(--surdet-font-ui);
+  --surdet-font-story: var(--surdet-font-ui);
   --surdet-font-mono: "Cascadia Mono", "Sarasa Mono SC", Consolas, monospace;
 
   --surdet-type-caption: 12px;
@@ -55,21 +72,32 @@
   --surdet-space-64: 64px;
 
   --surdet-radius-square: 0;
-  --surdet-radius-tight: 3px;
-  --surdet-radius-control: 4px;
+  --surdet-radius-tight: 4px;
+  --surdet-radius-control: 6px;
   --surdet-control-height: 32px;
   --surdet-focus-width: 2px;
   --surdet-motion-fast: 120ms;
   --surdet-motion-standard: 180ms;
 
-  --surdet-shell-chrome-bg: #F7F8FA;
+  --surdet-shell-titlebar-height: 46px;
+  --surdet-shell-statusbar-height: 26px;
+  --surdet-shell-rail-width: 64px;
+  --surdet-shell-chrome-bg: var(--surdet-color-frame-900);
   --surdet-shell-chrome-text: var(--surdet-text-primary);
   --surdet-shell-chrome-muted: var(--surdet-text-secondary);
-  --surdet-shell-chrome-surface: #FFFFFF;
-  --surdet-shell-chrome-selected: #EDF2FA;
+  --surdet-shell-chrome-surface: var(--surdet-surface-panel);
+  --surdet-shell-chrome-selected: var(--surdet-surface-hover);
   --surdet-shell-chrome-border: var(--surdet-border-default);
-  --surdet-editor-nav-active-bg: var(--surdet-surface-selected);
+  --surdet-editor-nav-active-bg: var(--surdet-surface-raised);
   --surdet-editor-selection-outline: var(--surdet-border-strong);
   --surdet-review-decision-border: var(--surdet-border-strong);
   --surdet-timeline-grid-line: var(--surdet-border-default);
+
+  --surdet-speaker-1: #8FB4FF;
+  --surdet-speaker-2: #C3A5FF;
+  --surdet-speaker-3: #77CEB4;
+  --surdet-speaker-4: #F0A35E;
+  --surdet-speaker-5: #F28CA8;
+  --surdet-speaker-6: #D8C66A;
+  --surdet-speaker-narration: var(--surdet-text-muted);
 }

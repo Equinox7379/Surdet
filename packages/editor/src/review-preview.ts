@@ -294,15 +294,27 @@ export async function refreshReviewFixtureIdentity(
   return workspace.fixtureChanged;
 }
 
+/**
+ * displayHandle: a read-only copy of the same result for showing only. The
+ * formal result is checked first, while it can still be read, and the copy must
+ * hold exactly those bytes; later checks keep reading the formal directory.
+ */
 export async function openReviewPreview(
   workspace: ReviewWorkspaceState,
   request: ReviewPreviewRequest = {},
   hasher: ReviewBytesHasher = defaultBytesHasher,
+  displayHandle?: FileSystemDirectoryHandle,
 ): Promise<ReviewPreviewResult> {
   if (workspace.identity.kind !== 'integration-result' || workspace.projectHandle === null) {
     throw new Error('当前审阅没有可预览的结果或项目快照');
   }
-  await openProjectFromHandle(workspace.projectHandle, { source: 'review-fixture' });
+  if (displayHandle !== undefined) {
+    await refreshReviewFixtureIdentity(workspace, hasher);
+    if (await hashReviewFixtureTree(displayHandle, hasher) !== workspace.currentResultTreeSha256) {
+      throw new Error('正式结果在读取期间发生变化，请重新预览。');
+    }
+  }
+  await openProjectFromHandle(displayHandle ?? workspace.projectHandle, { source: 'review-fixture' });
   const sceneIds = [...state.scenes.values()].map((scene) => scene.id);
   const sceneId = selectReviewPreviewScene(sceneIds, workspace.projection, request.sceneId, state.entryScene);
   if (sceneId === null) throw new Error('结果快照没有可运行场景');
@@ -313,7 +325,7 @@ export async function openReviewPreview(
   state.previewChoices = request.choices === undefined ? null : { ...request.choices };
   state.previewTrace = [];
   state.selectedTraceStep = null;
-  await refreshReviewFixtureIdentity(workspace, hasher);
+  if (displayHandle === undefined) await refreshReviewFixtureIdentity(workspace, hasher);
   return {
     sceneId,
     choices: { ...(request.choices ?? {}) },

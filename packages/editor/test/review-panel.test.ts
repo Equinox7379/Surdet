@@ -24,6 +24,23 @@ import {
   reloadOfficialResult,
 } from '../src/review-preview.js';
 import type { ReviewWorkspaceState } from '../src/review-workspace.js';
+import type { PreparedReviewContent } from '@surdet/authoring';
+import { AssetImportClientError } from '../src/asset-import-client.js';
+import { hashReviewFixtureTree, refreshReviewFixtureIdentity } from '../src/review-preview.js';
+import { openListedReviewTask, reviewTaskDirectory, reviewTaskPreviewDirectory } from '../src/panels/review-tasks.js';
+
+const reviewReads = vi.hoisted(() => ({ bound: true, files: new Map<string, PreparedReviewContent>() }));
+vi.mock('../src/editor-workspace.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/editor-workspace.js')>(),
+  editorReviewTaskClient: () => reviewReads.bound ? {
+    tasks: async () => { throw new Error('unused'); },
+    content: async ({ kind, path }: { kind: 'file' | 'directory'; path: string }) => {
+      const value = reviewReads.files.get(`${kind}:${path}`);
+      if (value === undefined) throw new AssetImportClientError('OBJECT_NOT_FOUND', '不存在');
+      return structuredClone(value);
+    },
+  } : null,
+}));
 
 class FakeElement {
   readonly tagName: string;
@@ -1149,6 +1166,32 @@ describe('Editor review panel', () => {
     await vi.waitFor(() => expect(container.querySelector(`[data-action="${action}"]`)?.disabled).toBe(false));
   });
 
+  it('re-enables result actions on the live page when the page was redrawn while a check ran', async () => {
+    const live = new FakeElement('section');
+    vi.stubGlobal('document', { ...documentStub, getElementById: (id: string) => id === 'review-view' ? live : id === 'status' ? statusElement : null });
+    const original = state.reviewWorkspace;
+    const workspace = resultWorkspace();
+    state.reviewWorkspace = workspace;
+    try {
+      let finish!: () => void;
+      const options = { onRefreshFixtureIdentity: () => new Promise<void>(resolve => { finish = resolve; }) };
+      const started = new FakeElement('section');
+      Object.assign(started, { isConnected: true });
+      renderReviewPanel(started as unknown as HTMLElement, workspace, options);
+      started.querySelector('[data-action="refresh-result-tree"]')!.click();
+      // The page is drawn again while the check runs (as after returning to the source project).
+      Object.assign(started, { isConnected: false });
+      Object.assign(live, { isConnected: true });
+      renderReviewPanel(live as unknown as HTMLElement, workspace, options);
+      expect(live.querySelector('[data-action="approve-result"]')?.disabled).toBe(true);
+      finish();
+      await vi.waitFor(() => expect(live.querySelector('[data-action="refresh-result-tree"]')?.disabled).toBe(false));
+      expect(live.querySelector('[data-action="preview-result"]')?.disabled).toBe(false);
+    } finally {
+      state.reviewWorkspace = original;
+    }
+  });
+
   it('requires confirmation before replacing an explored result copy and retains it on cancel', async () => {
     vi.stubGlobal('document', documentStub);
     const confirm = vi.fn(() => false);
@@ -1334,5 +1377,106 @@ describe('Editor review panel', () => {
     expect(labelForObjectKind('timeline')).toBe('时间轴');
     expect(labelForReviewState('STAGE_READY')).toBe('结果已准备，请检查');
     expect(labelForConflictSeverity('selection-required')).toBe('需要你决定');
+  });
+});
+
+describe('review tasks opened from the current-project list', () => {
+  const base64 = (text: string) => Buffer.from(text, 'utf8').toString('base64');
+  const listedResult = async () => {
+    reviewReads.bound = true;
+    reviewReads.files = new Map<string, PreparedReviewContent>([
+      ['directory:', { kind: 'directory', entries: [{ name: 'result', kind: 'directory' }] }],
+      ['directory:result', { kind: 'directory', entries: [{ name: 'project', kind: 'directory' }] }],
+      ['directory:result/project', { kind: 'directory', entries: [{ name: 'scene.gal', kind: 'file' }] }],
+      ['file:result/project/scene.gal', { kind: 'file', base64: base64('原来的台词。\n') }],
+    ]);
+    const workspace = resultWorkspace();
+    workspace.rootHandle = reviewTaskDirectory({} as FileSystemDirectoryHandle, 'project-1', workspace.identity.reviewId);
+    workspace.projectHandle = await (await workspace.rootHandle.getDirectoryHandle('result')).getDirectoryHandle('project');
+    const official = await hashReviewFixtureTree(workspace.projectHandle);
+    workspace.officialResultTreeSha256 = workspace.currentResultTreeSha256 = official;
+    workspace.projection.finalResult!.resultTreeSha256 = official;
+    // What a preview shows: a copy read while the source was still bound.
+    const copy = reviewTaskPreviewDirectory(workspace)!;
+    expect(await hashReviewFixtureTree(copy)).toBe(official);
+    const write = vi.fn(async () => { throw new Error('no approval may be written'); });
+    const client = { status: async () => 'available' as const, describe: async () => { throw new Error('unused'); }, write };
+    return { workspace, official, copy, write, client };
+  };
+
+  it('re-reads a result changed on disk after its preview and writes no approval receipt', async () => {
+    const { workspace, official, copy, write, client } = await listedResult();
+    reviewReads.files.set('file:result/project/scene.gal', { kind: 'file', base64: base64('这份正式结果已在磁盘被改动，必须重新核对。\n') });
+    await expect(reviewWorkspaceModule.writeApprovalReceipt(workspace, { approvalId: 'after-disk-change' }, '2026-10-08T00:00:00.000Z', client))
+      .rejects.toMatchObject({ code: 'REVIEW_APPROVAL_STALE' });
+    expect(write).not.toHaveBeenCalled();
+    expect(workspace.fixtureChanged).toBe(true);
+    await refreshReviewFixtureIdentity(workspace); // "检查探索修改" sees the change as well.
+    expect(workspace.fixtureChanged).toBe(true);
+    expect(workspace.currentResultTreeSha256).not.toBe(official);
+    expect(await hashReviewFixtureTree(copy)).toBe(official); // The preview copy is never consulted.
+  });
+
+  it('refuses approval while the formal result cannot be read instead of trusting the preview copy', async () => {
+    const { workspace, copy, official, write, client } = await listedResult();
+    reviewReads.bound = false; // The result preview closed the source binding.
+    expect(await hashReviewFixtureTree(copy)).toBe(official);
+    await expect(reviewWorkspaceModule.writeApprovalReceipt(workspace, { approvalId: 'source-closed' }, '2026-10-08T00:00:00.000Z', client))
+      .rejects.toMatchObject({ code: 'REVIEW_APPROVAL_STALE' });
+    await expect(refreshReviewFixtureIdentity(workspace)).rejects.toMatchObject({ name: 'InvalidStateError' });
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('asks again before switching when the current decision changed while the next task was being read', async () => {
+    const original = { reviewWorkspace: state.reviewWorkspace, mainTab: state.mainTab, selectedObjectRef: state.selectedObjectRef,
+      previewChoices: state.previewChoices, dirName: state.dirName };
+    const gates: Array<(value: ReviewWorkspaceState) => void> = [];
+    const open = vi.spyOn(reviewWorkspaceModule, 'openReviewWorkspace')
+      .mockImplementation(() => new Promise<ReviewWorkspaceState>(resolve => { gates.push(resolve); }));
+    const confirm = vi.fn((_message: string) => false);
+    const directory = async () => ({} as FileSystemDirectoryHandle);
+    try {
+      const current = comparisonWorkspace();
+      state.reviewWorkspace = current;
+      // Clean when clicked, then a decision is chosen while the result is still being read.
+      let opening = openListedReviewTask(directory, confirm);
+      await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+      expect(confirm).not.toHaveBeenCalled();
+      current.decisionDraft = { ...current.decisionDraft, selectedUnitIds: ['unit-a'] };
+      gates[0]!(resultWorkspace());
+      expect(await opening).toBe(false);
+      expect(confirm).toHaveBeenCalledOnce();
+      expect(confirm.mock.calls[0]![0]).toContain('读取期间');
+      expect(state.reviewWorkspace).toBe(current);
+      expect(current.decisionDraft.selectedUnitIds).toEqual(['unit-a']);
+
+      // A draft confirmed at the click and left as it was is not asked about twice.
+      confirm.mockClear().mockReturnValue(true);
+      opening = openListedReviewTask(directory, confirm);
+      await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(2));
+      expect(confirm).toHaveBeenCalledOnce();
+      const next = resultWorkspace();
+      gates[1]!(next);
+      expect(await opening).toBe(true);
+      expect(confirm).toHaveBeenCalledOnce();
+      expect(state.reviewWorkspace).toBe(next);
+
+      // Confirmed at the click, then changed again while reading: asked again, and declining keeps it.
+      const edited = comparisonWorkspace();
+      edited.decisionDraft = { ...edited.decisionDraft, selectedUnitIds: ['unit-d'] };
+      state.reviewWorkspace = edited;
+      confirm.mockClear().mockReturnValueOnce(true).mockReturnValueOnce(false);
+      opening = openListedReviewTask(directory, confirm);
+      await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(3));
+      edited.decisionDraft = { ...edited.decisionDraft, selectedUnitIds: ['unit-a'] };
+      gates[2]!(resultWorkspace());
+      expect(await opening).toBe(false);
+      expect(confirm).toHaveBeenCalledTimes(2);
+      expect(state.reviewWorkspace).toBe(edited);
+      expect(edited.decisionDraft.selectedUnitIds).toEqual(['unit-a']);
+    } finally {
+      open.mockRestore();
+      Object.assign(state, original);
+    }
   });
 });
