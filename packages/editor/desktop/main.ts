@@ -7,6 +7,7 @@ import { openDirectory } from './directory.js';
 import { findRecentProject, parseRecentProjects, summarizeRecentProjects, withRecentProject, type RecentProject } from './recent-projects.js';
 import { startEditorServer } from './server.js';
 import { DESKTOP_ORIGIN } from './contracts.js';
+import { createDesktopProject, selectProjectLocation, type SelectedProjectLocation } from './project-creation.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 app.setName('Surdet Editor');
@@ -15,7 +16,7 @@ app.setPath('userData', isolatedData || path.join(app.getPath('appData'), 'Surde
 protocol.registerSchemesAsPrivileged([{ scheme: 'surdet-editor', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
 
 type Directory = Awaited<ReturnType<typeof openDirectory>>;
-type WindowState = { window: BrowserWindow; project: Directory | null; grants: Map<string, Directory>; busy: boolean };
+type WindowState = { window: BrowserWindow; project: Directory | null; grants: Map<string, Directory>; busy: boolean; creationLocation: SelectedProjectLocation | null; creating: boolean };
 const windows = new Map<number, WindowState>();
 const closing = new Set<Promise<void>>();
 let picking = false;
@@ -110,7 +111,7 @@ async function openWindow(project: Directory | null) {
     backgroundColor: '#111317',
     webPreferences: { preload: path.join(here, 'preload.cjs'), session: browserSession, sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false },
   });
-  const state: WindowState = { window, project, grants: new Map(project ? [[project.grant.token, project]] : []), busy: false };
+  const state: WindowState = { window, project, grants: new Map(project ? [[project.grant.token, project]] : []), busy: false, creationLocation: null, creating: false };
   windows.set(window.webContents.id, state);
   const id = window.webContents.id;
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -147,6 +148,29 @@ async function openWindow(project: Directory | null) {
 
 ipcMain.handle('editor:context', event => trusted(event).project?.grant ?? null);
 ipcMain.handle('editor:open-project', async event => { const state = trusted(event); await chooseProject(state.window); });
+ipcMain.handle('editor:choose-project-location', async event => {
+  const state = trusted(event);
+  if (picking || state.creating) return null;
+  picking = true;
+  try {
+    const result = await dialog.showOpenDialog(state.window, { title: '选择新项目的保存位置', properties: ['openDirectory'] });
+    if (result.canceled || !result.filePaths[0] || state.window.isDestroyed()) return null;
+    const location = selectProjectLocation(result.filePaths[0]);
+    state.creationLocation = location;
+    return { id: location.id, location: location.location };
+  } finally { picking = false; }
+});
+ipcMain.handle('editor:create-project', async (event, request: unknown) => {
+  const state = trusted(event);
+  if (state.creating) throw new Error('项目正在创建，请稍候。');
+  state.creating = true;
+  try {
+    const directory = createDesktopProject(state.creationLocation, request, path.join(app.isPackaged ? process.resourcesPath : here, 'templates'));
+    state.creationLocation = null;
+    try { await openWindow(await openDirectory(directory)); }
+    catch (error) { throw new Error(`项目已创建在「${directory}」，但暂时无法打开：${error instanceof Error ? error.message : String(error)}`); }
+  } finally { state.creating = false; }
+});
 ipcMain.handle('editor:recent-projects', async event => { trusted(event); return summarizeRecentProjects(await readRecentProjects()); });
 ipcMain.handle('editor:open-recent-project', async (event, id: unknown) => {
   trusted(event);

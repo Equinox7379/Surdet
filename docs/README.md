@@ -7,6 +7,7 @@
 | 需要做什么 | 阅读入口 |
 | --- | --- |
 | 安装、启动、创建或试玩项目 | [仓库 README](../README.md)、[Starter 指南](../examples/starter/README.md) |
+| 接入桌面“新建项目”界面 | [桌面创建项目接口](desktop-project-creation.md) |
 | 给外部 Agent 建立创作上下文 | [AI-GUIDE](AI-GUIDE.md)、[剧本提示词](ai-writing-prompt.md) |
 | 核对剧本语法和实际支持能力 | [DSL 规范](dsl-spec.md)、[能力矩阵](capability-matrix.md) |
 | 理解模块、公共边界和运行链 | [架构说明](architecture.md) |
