@@ -391,10 +391,20 @@ try {
     }
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '执行 审计指令15');
     await page.waitForFunction(() => {
-      const target = document.querySelector('button[aria-label="执行 审计指令15"]')?.container;
-      if (!target) return false;
+      const button = document.querySelector('button[aria-label="执行 审计指令15"]');
+      const target = button?.container;
+      if (!target?.parent || target.destroyed || target.accessibleHint !== '执行 审计指令15') return false;
       const bounds = target.getBounds();
-      return bounds.y >= 104 && bounds.y + bounds.height <= 604;
+      if (bounds.y < 104 || bounds.y + bounds.height > 604) return false;
+      // Focus reveals the Pixi row immediately; its DOM rectangle follows at postrender.
+      // Wait for that projection too, otherwise the real mouse can click the old row position.
+      const hit = target.hitArea;
+      const point = target.toGlobal({ x: hit.x + hit.width / 2, y: hit.y + hit.height / 2 });
+      const canvas = document.querySelector('canvas').getBoundingClientRect();
+      const box = button.getBoundingClientRect();
+      return box.width > 0 && box.height > 0
+        && Math.abs(box.x + box.width / 2 - (canvas.x + point.x / 1280 * canvas.width)) < 1
+        && Math.abs(box.y + box.height / 2 - (canvas.y + point.y / 720 * canvas.height)) < 1;
     });
     assert.equal(await page.evaluate(() => window.scrollY), 0, 'command focus must reveal inside the canvas without scrolling the document');
     const box = await last.boundingBox(); assert(box && box.y >= 0 && box.y + box.height <= viewport.height);

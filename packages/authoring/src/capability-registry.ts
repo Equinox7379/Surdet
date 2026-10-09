@@ -582,6 +582,10 @@ const validationIssueSchema = strictObject({
   line: integerSchema,
   col: integerSchema,
   hint: stringSchema,
+  range: strictObject({
+    start: strictObject({ line: { type: 'integer', minimum: 1 }, col: { type: 'integer', minimum: 1 } }, ['line', 'col']),
+    end: strictObject({ line: { type: 'integer', minimum: 1 }, col: { type: 'integer', minimum: 1 } }, ['line', 'col']),
+  }, ['start', 'end']),
   objectRef: stringSchema,
   action: stringSchema,
 }, ['severity', 'code', 'text', 'file', 'line', 'col', 'action']);

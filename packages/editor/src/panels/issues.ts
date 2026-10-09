@@ -35,6 +35,8 @@ export function invalidatePendingValidation(): void {
 
 export function scheduleValidate(): void {
   if (validateTimer) clearTimeout(validateTimer);
+  // Editing invalidates results immediately, including the debounce window.
+  validateSeq += 1;
   validateTimer = setTimeout(runValidate, 300);
 }
 
@@ -62,6 +64,7 @@ function buildValidateInput(): { sources: { key: string; id: string; file: strin
 /** 应用校验结果并刷新 UI（Worker 回包与同步路径共用）。
  *  scenes 为编译产物（E1a 起保留：流程图从编译产物提取，不重新解析） */
 export function applyValidation(issues: Issue[], edges: { from: string; to: string; kind: 'jump' | 'call' }[], scenes: Map<string, CompiledScene> = new Map()): void {
+  appliedValidationSeq = validateSeq;
   const configIssues = (Object.keys(state.handles) as ConfigSourceName[]).flatMap(name => {
     const error = configSourceError(name);
     return error ? [{ severity: 'error' as const, code: 'CONFIG_READ_ERROR', file: configSourcePath(name), line: 1, col: 1,
@@ -133,11 +136,16 @@ export function renderIssues(): void {
 }
 
 function renderIssue(issue: Issue): HTMLElement {
+  const issueSeq = appliedValidationSeq;
   const el = h('div', 'issue ' + issue.severity);
   const loc = h('div', 'loc', `${issue.file}:${issue.line}:${issue.col}`);
   const msg = h('div', undefined, issue.text);
   el.append(loc, msg);
   el.onclick = () => {
+    if (!isValidationCurrent() || issueSeq !== appliedValidationSeq) {
+      setStatus('内容已修改，请等待重新校验后再定位', false, 4000);
+      return;
+    }
     // 跳转到对应场景与行：场景 Map 的 key 是相对路径（M4），由文件名推导 key；
     // 推导不中再按 basename 回退（部分告警以 sceneId 上报）——修复子目录场景点击失效
     let key = issue.file.replace(/^content\/scenario\//, '').replace(/\.gal$/i, '');
@@ -161,6 +169,12 @@ function renderIssue(issue: Issue): HTMLElement {
 
 let validateWorker: Worker | null = null;
 let validateSeq = 0;
+let appliedValidationSeq = -1;
+
+/** A displayed diagnostic range belongs only to the last unchanged input. */
+export function isValidationCurrent(): boolean {
+  return appliedValidationSeq === validateSeq;
+}
 try {
   validateWorker = new Worker(new URL('../validate-worker.ts', import.meta.url), { type: 'module' });
   validateWorker.onmessage = (e: MessageEvent) => {
