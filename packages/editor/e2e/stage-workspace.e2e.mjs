@@ -159,7 +159,7 @@ try {
   await page.getByRole('button', { name: '重新播放', exact: true }).click();
   await frame.waitForFunction(() => window.surdetPreviewDebug.runtime?.queries.world.inspectStage().objects.find(object => object.target === 'rin:coat')?.pose.baseHeight === 530);
   assert.equal(JSON.parse(fs.readFileSync(path.join(fixture.root, 'game.config.json'), 'utf8')).stage.portraits['rin:coat'].height, 510);
-  assert((await page.locator('.preview-source-state').innerText()).includes('本次内存内容'));
+  assert((await page.locator('.preview-source-state').innerText()).includes('未保存的修改'));
   pass('working-preview-consumes-stage-draft-without-claiming-saved-observation');
   await page.locator('[data-editor-mode="editor"]').click();
   await page.locator('[data-editor-mode="preview"]').click();

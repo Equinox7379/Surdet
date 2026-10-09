@@ -583,15 +583,6 @@ body {
   background: var(--surdet-surface-app);
 }
 
-.editor-welcome-kicker {
-  display: block;
-  margin-bottom: 10px;
-  color: var(--surdet-action-primary);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .08em;
-}
-
 .editor-welcome h1 {
   font-size: 30px;
   letter-spacing: .01em;
@@ -632,39 +623,36 @@ body {
 .editor-welcome-actions {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 4px;
 }
 
+/* Plain rows: an icon, a name and a short note; no tiles or framed cards. */
 .editor-welcome-actions > button {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 18px 20px;
-  border: 1px solid var(--surdet-border-default);
+  padding: 14px 16px;
+  border: 0;
   border-radius: var(--surdet-radius-control);
-  background: var(--surdet-surface-panel);
+  background: transparent;
   cursor: pointer;
   text-align: left;
   color: var(--surdet-text-primary);
-  transition: border-color var(--surdet-motion-fast) ease, background-color var(--surdet-motion-fast) ease;
+  transition: background-color var(--surdet-motion-fast) ease;
 }
 
 .editor-welcome-actions > button:hover {
-  border-color: var(--surdet-border-strong);
-  background: var(--surdet-surface-subtle);
-}
-
-.editor-welcome-actions > button:first-child {
-  border-color: var(--surdet-action-primary);
+  background: var(--surdet-surface-panel);
 }
 
 .editor-welcome-actions .workbench-icon {
-  width: 40px;
-  height: 40px;
-  flex-basis: 40px;
-  padding: 9px;
-  border-radius: var(--surdet-radius-control);
-  background: var(--surdet-action-soft);
+  width: 22px;
+  height: 22px;
+  flex-basis: 22px;
+  color: var(--surdet-text-secondary);
+}
+
+.editor-welcome-actions > button:hover .workbench-icon {
   color: var(--surdet-action-primary);
 }
 
@@ -682,15 +670,14 @@ body {
 }
 
 .editor-welcome-recent {
-  margin-top: 16px;
+  margin-top: 32px;
 }
 
 .editor-welcome-recent h2 {
-  margin: 0 0 8px;
-  color: var(--surdet-text-secondary);
+  margin: 0 0 8px 16px;
+  color: var(--surdet-text-muted);
   font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .06em;
+  font-weight: 500;
 }
 
 .editor-welcome-recent-list {
@@ -703,14 +690,14 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 2px 12px;
-  padding: 8px 12px;
-  border: 1px solid transparent;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: var(--surdet-radius-control);
   background: transparent;
   text-align: left;
 }
 
 .editor-welcome-actions .editor-welcome-recent-item:hover {
-  border-color: var(--surdet-border-default);
   background: var(--surdet-surface-panel);
 }
 
@@ -740,7 +727,7 @@ body {
 
 .editor-welcome-recent-empty {
   margin: 0;
-  padding: 6px 12px;
+  padding: 6px 16px;
   color: var(--surdet-text-muted);
   font-size: 12px;
 }
@@ -750,8 +737,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  padding: 22px 24px 24px;
-  border: 1px solid var(--surdet-border-default);
+  padding: 28px 28px 24px;
   border-radius: var(--surdet-radius-control);
   background: var(--surdet-surface-panel);
 }
@@ -772,13 +758,13 @@ body {
 .editor-welcome-create-form {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 24px;
 }
 
 .editor-welcome-create-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .editor-welcome-create-field > label,
@@ -787,7 +773,6 @@ body {
   color: var(--surdet-text-secondary);
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: .04em;
 }
 
 .editor-welcome-create-field input[type=text] {

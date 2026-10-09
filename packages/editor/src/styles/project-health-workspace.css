@@ -23,20 +23,7 @@
   display: flex;
   justify-content: space-between;
   gap: var(--surdet-space-24);
-  padding-bottom: var(--surdet-space-24);
-  border-bottom: 1px solid var(--surdet-border-strong);
-}
-
-.project-health-heading-copy {
-  max-width: 720px;
-}
-
-.project-health-kicker {
-  margin: 0 0 var(--surdet-space-8);
-  color: var(--surdet-text-secondary);
-  font-size: var(--surdet-type-caption);
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  margin-bottom: var(--surdet-space-40);
 }
 
 .project-health-heading h1 {
@@ -71,9 +58,8 @@
 .project-health-overview {
   display: grid;
   grid-template-columns: minmax(220px, 0.8fr) minmax(0, 2.2fr);
-  gap: var(--surdet-space-40);
-  padding: var(--surdet-space-32) 0;
-  border-bottom: 1px solid var(--surdet-border-default);
+  gap: var(--surdet-space-48);
+  padding-bottom: var(--surdet-space-48);
 }
 
 .project-health-lead {
@@ -104,7 +90,7 @@
 
 .project-health-lead-note {
   max-width: 32ch;
-  color: var(--surdet-text-secondary);
+  color: var(--surdet-text-muted);
   font-size: var(--surdet-type-caption);
   line-height: 1.6;
 }
@@ -112,7 +98,7 @@
 .project-health-facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--surdet-space-32) var(--surdet-space-40);
+  gap: var(--surdet-space-40) var(--surdet-space-48);
 }
 
 .project-health-fact-group h2,
@@ -125,15 +111,14 @@
 }
 
 .project-health-fact-list {
-  margin: var(--surdet-space-12) 0 0;
+  margin: var(--surdet-space-16) 0 0;
 }
 
 .project-health-fact {
   display: flex;
   justify-content: space-between;
   gap: var(--surdet-space-16);
-  padding: var(--surdet-space-8) 0;
-  border-top: 1px solid var(--surdet-border-default);
+  padding: var(--surdet-space-6) 0;
 }
 
 .project-health-fact dt {
@@ -147,7 +132,7 @@
 }
 
 .project-health-section {
-  padding-top: var(--surdet-space-32);
+  padding-top: var(--surdet-space-40);
 }
 
 .project-health-section-heading {
@@ -155,7 +140,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: var(--surdet-space-16);
-  margin-bottom: var(--surdet-space-12);
+  margin-bottom: var(--surdet-space-16);
 }
 
 .project-health-section-heading span {
@@ -166,13 +151,13 @@
 .project-health-table-scroll {
   width: 100%;
   overflow-x: auto;
-  border-top: 1px solid var(--surdet-border-strong);
 }
 
 .project-health-table {
   width: 100%;
   min-width: 620px;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   table-layout: fixed;
 }
 
@@ -187,17 +172,30 @@
 
 .project-health-table th,
 .project-health-table td {
-  padding: var(--surdet-space-4) var(--surdet-space-8);
+  padding: var(--surdet-space-6) var(--surdet-space-12);
   font-variant-numeric: tabular-nums;
-  border-bottom: 1px solid var(--surdet-border-default);
   text-align: right;
   vertical-align: middle;
 }
 
 .project-health-table th {
-  color: var(--surdet-text-secondary);
+  padding-bottom: var(--surdet-space-8);
+  color: var(--surdet-text-muted);
   font-size: var(--surdet-type-caption);
-  font-weight: 700;
+  font-weight: 600;
+}
+
+/* Rows read as a list: alternate a faint surface instead of ruling every line. */
+.project-health-table tbody tr:nth-child(odd) {
+  background: var(--surdet-surface-panel);
+}
+
+.project-health-table tbody td:first-child {
+  border-radius: var(--surdet-radius-tight) 0 0 var(--surdet-radius-tight);
+}
+
+.project-health-table tbody td:last-child {
+  border-radius: 0 var(--surdet-radius-tight) var(--surdet-radius-tight) 0;
 }
 
 .project-health-table th:first-child,
@@ -248,18 +246,15 @@
 
 .project-health-empty,
 .project-health-audit-overview {
-  margin-top: var(--surdet-space-32);
-  padding: var(--surdet-space-24) 0;
-  border-top: 1px solid var(--surdet-border-default);
-  border-bottom: 1px solid var(--surdet-border-default);
+  margin: 0;
 }
 
 .project-health-empty p,
 .project-health-audit-overview p {
   max-width: 760px;
-  margin: var(--surdet-space-8) 0 0;
+  margin: var(--surdet-space-12) 0 0;
   color: var(--surdet-text-secondary);
-  line-height: 1.6;
+  line-height: 1.7;
 }
 
 .project-health-error h2,
@@ -275,8 +270,13 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--surdet-space-12) var(--surdet-space-24);
-  padding: var(--surdet-space-20) 0;
-  border-top: 1px solid var(--surdet-border-default);
+  padding: var(--surdet-space-20) var(--surdet-space-24);
+  border-radius: var(--surdet-radius-control);
+  background: var(--surdet-surface-panel);
+}
+
+.project-health-record + .project-health-record {
+  margin-top: var(--surdet-space-12);
 }
 
 .project-health-record-copy,
@@ -363,8 +363,7 @@
 
 .project-health-method,
 .project-health-audit-scope {
-  padding-top: var(--surdet-space-16);
-  border-top: 1px solid var(--surdet-border-default);
+  margin-top: var(--surdet-space-48);
 }
 
 .project-health-scene-link:focus-visible,
@@ -442,30 +441,14 @@
   }
 }
 
-/* Text audit: one rule between blocks (the heading already closes with one),
-   compact records, and repeated findings shown once with every location. */
-.text-audit-workspace .project-health-audit-overview {
-  margin-top: 0;
-  border-top: 0;
-}
-
+/* Text audit: blocks are separated by space, not rules; repeated findings
+   are shown once with every location. */
 .text-audit-workspace .project-health-audit-overview + .project-health-empty {
-  margin-top: 0;
-  border-top: 0;
-  border-bottom: 0;
-}
-
-.text-audit-workspace .project-health-audit-scope {
-  margin-top: var(--surdet-space-24);
-}
-
-.text-audit-workspace .project-health-section {
-  padding-top: var(--surdet-space-24);
+  margin-top: var(--surdet-space-32);
 }
 
 .text-audit-workspace .project-health-record {
   gap: var(--surdet-space-8) var(--surdet-space-24);
-  padding: var(--surdet-space-12) 0;
 }
 
 .text-audit-workspace .project-health-record-text {

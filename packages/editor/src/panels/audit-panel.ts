@@ -73,13 +73,7 @@ function findingText(finding: AuditFinding): string {
 
 function appendHeading(workspace: HTMLElement): void {
   const heading = h('header', 'project-health-heading');
-  const copy = h('div', 'project-health-heading-copy');
-  copy.append(
-    h('p', 'project-health-kicker', '项目体检'),
-    h('h1', undefined, '文字一致性检查'),
-    h('p', 'project-health-description', '检查角色称谓、疑似笔误和设定用词，问题仍由你决定如何处理。'),
-  );
-  heading.appendChild(copy);
+  heading.appendChild(h('h1', undefined, '文字一致性检查'));
   workspace.appendChild(heading);
 }
 
@@ -160,7 +154,7 @@ export function renderAuditPanel(container: HTMLElement): void {
     empty.setAttribute('data-audit-state', 'waiting');
     empty.append(
       h('h2', undefined, '正在等待项目校验'),
-      h('p', undefined, '打开项目并等待校验完成后，这里会列出需要确认的称谓和设定用词。'),
+      h('p', undefined, '校验完成后会列出需要确认的称谓和设定用词。'),
     );
     workspace.appendChild(empty);
     return;
@@ -221,14 +215,15 @@ export function renderAuditPanel(container: HTMLElement): void {
   workspace.appendChild(overview);
 
   if (findings.length === 0) {
-    const empty = h('section', 'project-health-empty project-health-audit-empty');
-    empty.append(
-      h('h2', undefined, incomplete ? '已校验部分暂未发现问题' : '未发现称谓和设定用词问题'),
-      h('p', undefined, incomplete
-        ? '请先修复剩余剧本错误，再确认整个项目的一致性。'
-        : '后续新增场景或修改名词表后，本页会随项目校验更新。'),
-    );
-    workspace.appendChild(empty);
+    // A clear result is already the overview's title; only an incomplete check needs a second word.
+    if (incomplete) {
+      const empty = h('section', 'project-health-empty project-health-audit-empty');
+      empty.append(
+        h('h2', undefined, '已校验部分暂未发现问题'),
+        h('p', undefined, '请先修复剩余剧本错误，再确认整个项目的一致性。'),
+      );
+      workspace.appendChild(empty);
+    }
   } else {
     const attention = findings.filter((finding) => finding.severity !== 'info');
     const confirmation = findings.filter((finding) => finding.severity === 'info');

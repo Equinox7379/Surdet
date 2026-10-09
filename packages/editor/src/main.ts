@@ -2134,9 +2134,8 @@ function renderMainArea(): void {
         shortcuts.append(h('dt', undefined, key), h('dd', undefined, label));
       }
       introduction.append(
-        h('span', 'editor-welcome-kicker', 'Surdet 剧情创作'),
         h('h1', undefined, '开始创作'),
-        h('p', undefined, `${creation ? '新建或打开' : '打开'}一个游戏项目文件夹，继续编写剧情、安排演出；或打开外部 Agent 交付的审阅任务，比较候选后再决定是否采用。`),
+        h('p', undefined, creation ? '新建一个作品，或打开已有的项目文件夹。' : '打开一个游戏项目文件夹继续写作。'),
         shortcuts,
       );
       const actions = h('div', 'editor-welcome-actions');
@@ -2147,14 +2146,14 @@ function renderMainArea(): void {
       }
       if (creation) {
         const control = h('button'); control.type = 'button'; control.dataset['welcomeAction'] = 'new-project'; const label = h('span');
-        label.append(h('strong', undefined, '新建项目'), h('small', undefined, '从示例或空白模板开始，选好位置后在新窗口中打开'));
+        label.append(h('strong', undefined, '新建项目'), h('small', undefined, '示例或空白模板'));
         control.append(workbenchIcon('blank'), label);
         control.onclick = () => setProjectCreationOpen(true);
         actions.append(control);
       }
       for (const [action, icon, title, description] of [
-        [state.fsSupported ? 'open-project' : 'load-demo', 'folder', state.fsSupported ? '打开项目文件夹' : '加载演示项目', state.fsSupported ? '选择包含 game.config.json 的游戏项目目录' : '当前浏览器不能直接读写本地目录，可先体验编辑与校验'],
-        ...(state.fsSupported ? [['open-review', 'open-review', '打开审阅任务', '比较候选、试玩结果，再决定是否写回项目']] : []),
+        [state.fsSupported ? 'open-project' : 'load-demo', 'folder', state.fsSupported ? '打开项目文件夹' : '加载演示项目', state.fsSupported ? '包含 game.config.json 的目录' : '当前浏览器不能直接读写本地目录，可先体验编辑与校验'],
+        ...(state.fsSupported ? [['open-review', 'open-review', '打开审阅任务', '比较 Agent 交付的候选']] : []),
       ]) {
         const control = h('button'); control.type = 'button'; const label = h('span');
         label.append(h('strong', undefined, title), h('small', undefined, description));

@@ -23,8 +23,7 @@
   align-items: center;
   gap: var(--surdet-space-16);
   min-width: 0;
-  padding: var(--surdet-space-12) var(--surdet-space-16);
-  border-bottom: 1px solid var(--surdet-border-default);
+  padding: var(--surdet-space-16) var(--surdet-space-24) var(--surdet-space-12);
   background-color: var(--surdet-surface-panel);
 }
 
@@ -122,9 +121,7 @@
   align-items: center;
   gap: var(--surdet-space-8);
   min-width: 0;
-  padding-block-start: var(--surdet-space-8);
-  border-top: 1px solid var(--surdet-border-default);
-  color: var(--surdet-text-secondary);
+  color: var(--surdet-text-muted);
   font-size: 0.75rem;
 }
 
