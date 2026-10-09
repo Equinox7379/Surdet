@@ -27,6 +27,7 @@ MIT covers Surdet-authored engine code and technical documentation. Third-party 
 | Starter 的 Noto Serif SC | [OFL-NotoSerifSC.txt](examples/starter/content/assets/fonts/OFL-NotoSerifSC.txt) |
 | 《零点之后》的 Noto Sans SC、Noto Serif SC | [字体说明](examples/zero-after-midnight/content/assets/fonts/FONT-LICENSES.md)及同目录两份 OFL 原文 |
 | Starter 保留的 MiSans | [NOTICE](examples/starter/content/assets/fonts/NOTICE.md)与[官方协议原件](examples/starter/content/assets/fonts/MiSans-LICENSE.pdf) |
+| Editor 界面的 Noto Serif SC（`@fontsource-variable/noto-serif-sc`，随包的切片 woff2） | OFL-1.1；许可正文随 npm 包的 `LICENSE`，桌面构建会把它收进 `licenses/` |
 
 这些字体并非 Surdet 自有 MIT 代码。本轮不修改字体字节、移除许可证或扩大既有授权；正式对外分发须按各自协议核对。
 

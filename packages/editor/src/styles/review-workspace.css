@@ -45,7 +45,7 @@
 .review-story-scene > summary { font-weight: 650; cursor: pointer; }
 .review-story-scene > .review-presentation-heading { display: none; }
 .review-story-action { display: block; margin-top: 18px; color: var(--surdet-text-secondary); font-size: 12px; }
-.review-story-line { margin: 8px 0; white-space: pre-wrap; }
+.review-story-line { margin: 10px 0; white-space: pre-wrap; font: 450 15px/1.85 var(--surdet-font-story); }
 .review-readable-route { padding: 14px 0; }
 .review-readable-route + .review-readable-route { margin-top: 8px; }
 .review-readable-route p { margin: 8px 0; }
@@ -233,8 +233,13 @@
   line-height: 1.35;
 }
 
+.review-section > h2 {
+  font: 600 20px/1.4 var(--surdet-font-display);
+  letter-spacing: .03em;
+}
+
 .review-overview > h2 {
-  font-size: var(--surdet-type-title);
+  font-size: 28px;
 }
 
 .review-overview-goal {
@@ -677,16 +682,16 @@
 
 .review-empty-state {
   max-width: 46ch;
-  margin: var(--surdet-space-64) auto;
+  margin: clamp(64px, 24vh, 220px) auto var(--surdet-space-64);
   padding: 0 var(--surdet-space-24);
   text-align: center;
 }
 
 .review-empty-state h2 {
-  margin: 0 0 var(--surdet-space-8);
+  margin: 0 0 var(--surdet-space-12);
   color: var(--surdet-text-primary);
-  font-size: var(--surdet-type-section);
-  font-weight: 600;
+  font: 600 24px/1.4 var(--surdet-font-display);
+  letter-spacing: .03em;
 }
 
 .review-empty-state p {

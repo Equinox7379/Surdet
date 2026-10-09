@@ -28,8 +28,8 @@
 
 .project-health-heading h1 {
   margin: 0;
-  font-size: var(--surdet-type-display);
-  line-height: 1.25;
+  font: 600 32px/1.3 var(--surdet-font-display);
+  letter-spacing: .03em;
 }
 
 .project-health-description {
@@ -81,11 +81,16 @@
 }
 
 .project-health-lead-value {
-  margin: var(--surdet-space-8) 0;
-  font-size: clamp(2rem, 4vw, 3.5rem);
-  font-weight: 720;
-  letter-spacing: -0.04em;
-  line-height: 1;
+  margin: var(--surdet-space-16) 0 var(--surdet-space-12);
+  font: 500 72px/1 var(--surdet-font-display);
+  letter-spacing: -0.01em;
+}
+
+.project-health-lead-unit {
+  margin-left: var(--surdet-space-12);
+  color: var(--surdet-text-secondary);
+  font: 400 16px/1 var(--surdet-font-ui);
+  letter-spacing: 0;
 }
 
 .project-health-lead-note {
@@ -101,13 +106,20 @@
   gap: var(--surdet-space-40) var(--surdet-space-48);
 }
 
-.project-health-fact-group h2,
 .project-health-section-heading > h2,
 .project-health-audit-overview h2,
 .project-health-empty h2 {
   margin: 0;
-  font-size: var(--surdet-type-section);
-  line-height: 1.35;
+  font: 600 20px/1.4 var(--surdet-font-display);
+  letter-spacing: .03em;
+}
+
+.project-health-fact-group h2 {
+  margin: 0;
+  color: var(--surdet-text-muted);
+  font-size: var(--surdet-type-caption);
+  font-weight: 500;
+  line-height: 1.6;
 }
 
 .project-health-fact-list {
@@ -127,7 +139,7 @@
 
 .project-health-fact dd {
   margin: 0;
-  font-weight: 700;
+  font: 500 20px/1.3 var(--surdet-font-display);
   text-align: right;
 }
 
@@ -200,8 +212,36 @@
 
 .project-health-table th:first-child,
 .project-health-table td:first-child {
-  width: 52%;
+  width: 42%;
   text-align: left;
+}
+
+.project-health-table th:nth-child(2) {
+  width: 26%;
+}
+
+.project-health-chars {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--surdet-space-16);
+  width: 100%;
+}
+
+.project-health-share {
+  width: 96px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--surdet-surface-subtle);
+}
+
+.project-health-share > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--surdet-action-primary);
+  opacity: .7;
 }
 
 .project-health-scene-cell,

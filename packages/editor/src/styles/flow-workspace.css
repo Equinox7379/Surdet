@@ -33,9 +33,8 @@
 
 .flow-heading {
   margin: 0;
-  font-size: 1rem;
-  font-weight: 700;
-  line-height: 1.25;
+  font: 600 20px/1.3 var(--surdet-font-display);
+  letter-spacing: .03em;
 }
 
 .flow-current-scene {
@@ -234,9 +233,9 @@
 
 .flow-component-heading {
   fill: var(--surdet-text-primary);
-  font-family: var(--surdet-font-ui);
-  font-size: 13px;
-  font-weight: 700;
+  font-family: var(--surdet-font-display);
+  font-size: 14px;
+  font-weight: 600;
   letter-spacing: 0.04em;
   pointer-events: none;
 }
@@ -273,8 +272,10 @@
 
 .flow-scene-frame-title {
   fill: var(--surdet-text-primary);
+  font-family: var(--surdet-font-display);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .flow-scene-frame-status {
