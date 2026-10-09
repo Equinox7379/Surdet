@@ -5,7 +5,7 @@
  *  - Parser 产物：SceneAst（嵌套块，含 if/choice 结构）
  *  - Compiler 产物：CompiledScene（展平指令流 + 标签索引 + 诊断）
  */
-import { SourceError, type SourcePos } from './token.js';
+import { SourceError, type SourcePos, type SourceRange } from './token.js';
 
 /* ============================ 中间表示（parser 产物） ============================ */
 
@@ -58,7 +58,7 @@ export interface AstChoiceBlock {
 
 export type AstBlock =
   | { kind: 'label'; name: string; pos: SourcePos }
-  | { kind: 'instr'; name: string; args: string[]; modifiers: Map<string, string>; pos: SourcePos }
+  | { kind: 'instr'; name: string; args: string[]; argRanges?: SourceRange[]; modifiers: Map<string, string>; pos: SourcePos }
   | { kind: 'text'; speaker: string | null; value: string; pos: SourcePos }
   | AstIfBlock
   | AstChoiceBlock;
@@ -71,7 +71,7 @@ export interface AstChoiceOption {
   /** 选中后执行的内联指令 */
   inline: AstInline[];
   /** 显式跳转目标（来自内联 @goto/@jump，编译器提取） */
-  jump: { kind: 'goto' | 'jump'; target: string } | null;
+  jump: { kind: 'goto' | 'jump'; target: string; range?: SourceRange } | null;
   /** 被丢弃的额外跳转数量（第二个及以后的 @goto/@jump；编译器报 W008） */
   extraJumps?: number;
   /** 选项行位置 */
@@ -83,6 +83,7 @@ export interface AstChoiceOption {
 export interface AstInline {
   name: string;
   args: string[];
+  argRanges?: SourceRange[];
   modifiers: Map<string, string>;
   pos: SourcePos;
 }
@@ -194,7 +195,7 @@ export interface SceneEndInstr extends DslInstrBase {
 export interface SwitchInstr extends DslInstrBase {
   op: 'switch';
   varName: string;
-  cases: { value: string; label: string }[];
+  cases: { value: string; label: string; range?: SourceRange }[];
 }
 
 /** @video key：播放视频并阻塞（宿主播放结束/玩家点击后调 finishWait 恢复，与 @wait 同挂起语义） */
@@ -246,7 +247,7 @@ export class DslError extends SourceError {
   override readonly pos: SourcePos;
   override readonly code: string;
 
-  constructor(code: string, message: string, pos: SourcePos, hint?: string) {
+  constructor(code: string, message: string, pos: SourcePos, override readonly hint?: string) {
     super(`${pos.file}:${pos.line}:${pos.col}: ${message}${hint ? `（${hint}）` : ''} [${code}]`);
     this.name = 'DslError';
     this.code = code;
