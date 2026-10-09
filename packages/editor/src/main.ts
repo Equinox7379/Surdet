@@ -18,6 +18,7 @@ import { bindEditorWorkspaceHooks, connectEditorWorkspace, disconnectEditorWorks
   publishEditorWorkspaceState, pollEditorWorkspace, readEditorWorkspaceBaseline, currentEditorWorkspaceWrite,
   editorWorkspaceTextChanges, enqueueEditorAssetRequest, recordEditorSceneCommit } from './editor-workspace.js';
 import type { ProjectDiskBaseline } from './project-disk-baseline.js';
+import type { SourceRange } from '@surdet/core';
 import { hasReviewDraft, hasPendingReviewReceipt, isReviewReceiptWriting, discardReviewDraft, openReviewWorkspace, type ReviewWorkspaceState } from './review-workspace.js';
 import { isReviewApplyRunning } from './review-apply-controller.js';
 import { createReviewPreparationClient, preparationErrorMessage } from './review-preparation-client.js';
@@ -64,7 +65,7 @@ import {
 } from './project-io.js';
 import { renderSidebar, bindSidebarHooks } from './panels/sidebar.js';
 import { refreshEditorObjectRefs, refreshManuscriptFacts, renderEditor } from './panels/editor.js';
-import { bindIssueNavigation, invalidatePendingValidation, scheduleValidate, runValidate, renderIssues } from './panels/issues.js';
+import { bindIssueNavigation, invalidatePendingValidation, scheduleValidate, runValidate, renderIssues, problemSummary, stepProblem } from './panels/issues.js';
 import { bindRightNavigation, refreshCurrentSceneContext, renderRightExtras, updateCausalPanel } from './panels/right.js';
 import { bindAssetsPanelHooks, hideAssetPreview } from './panels/assets.js';
 import { disposeAssetCenterPreview, renderAssetCenter } from './panels/asset-center.js';
@@ -97,6 +98,9 @@ import { renderContentHistoryPanel } from './panels/content-history-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput, resetSearchSession } from './panels/search-panel.js';
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
 import { openReviewPanelWorkspace, renderReviewPanel, disposeReviewApply } from './panels/review-panel.js';
+import {
+  openListedReviewTask, refreshReviewTasks, renderReviewTaskList, reviewTaskPendingCount, reviewTaskPreviewDirectory,
+} from './panels/review-tasks.js';
 import { renderTimelineAutosaveConflictPanel } from './panels/timeline-autosave-conflicts.js';
 import {
   AssetImportClientError,
@@ -110,7 +114,9 @@ import {
 } from './asset-relocation-workspace.js';
 import {
   renderModeNavigation,
+  updateModeNavigationBadge,
   renderProjectBar,
+  renderStatusBar,
   updateProjectBarProjection,
   type ProjectBarProjection,
   type ProjectSaveState,
@@ -130,6 +136,7 @@ let authoringRunning = false;
 let authoringQueued = false;
 let authoringProjectChanging = false;
 let boundReviewProject: { projectIdentity: string; handle: FileSystemDirectoryHandle } | null = null;
+let renderedMainTab: typeof state.mainTab | null = null;
 let returningFromReviewPreview = false;
 const PREPARATION_SESSION_KEY = 'surdet.review-preparation';
 const authoringWaiters: Array<{
@@ -335,6 +342,8 @@ async function bindCurrentProjectAssetImport(preservedBaseline?: ProjectDiskBase
     if (generation !== assetImportGeneration || client !== assetImportClient || state.dirHandle !== root) return;
     const projectIdentity = editorWorkspaceStatus().latest?.projectIdentity;
     if (projectIdentity !== undefined) boundReviewProject = { projectIdentity, handle: root };
+    // Read the pending count once per successful binding; the review page and 刷新 read it again.
+    refreshReviewTasks(reviewTasksChanged);
     const pendingRelocation = binding.pendingRelocations[0];
     if (pendingRelocation !== undefined && assetRelocationWorkspace.snapshot().mode === 'idle') {
       const detail = await client.relocationQuery(pendingRelocation.operationId);
@@ -1132,6 +1141,7 @@ function projectBarProjection(): ProjectBarProjection {
     relayProtection: relay.protection,
     relayUpdate: relay.update,
     relayDirty: relay.dirty,
+    problems: problemSummary(),
     projectName,
     objectLabel: currentObjectLabel(),
     saveState,
@@ -1406,6 +1416,70 @@ function reviewApplyEditor(workspace: ReviewWorkspaceState): ExistingEditorSyncP
   };
 }
 
+function reviewTaskBadge() {
+  const count = reviewTaskPendingCount();
+  return count > 0 ? { count, hint: `${count} 个待审阅任务` } : undefined;
+}
+
+function reviewTaskListFor(workspace: ReviewWorkspaceState | null): HTMLElement | null {
+  return renderReviewTaskList({
+    workspace,
+    onRefresh: () => refreshReviewTasks(reviewTasksChanged),
+    onSettled: reviewTasksChanged,
+    onOpen: async (task, open) => {
+      try {
+        setStatus(task.kind === 'integration-result' ? '正在读取最终结果…' : '正在打开审阅任务…', true);
+        if (!await openListedReviewTask(open, message => window.confirm(message))) {
+          setStatus('已保留当前审阅及其修改，未打开其他任务', true, 5000);
+          return;
+        }
+        renderAll();
+        setStatus('已打开审阅任务', true, 4000);
+        refreshReviewTasks(reviewTasksChanged);
+      } catch (error) {
+        setStatus(`打开审阅任务失败：${error instanceof Error ? error.message : String(error)}`, false, 6000);
+      }
+    },
+    onReturnToSource: async () => {
+      const workspace = state.reviewWorkspace;
+      if (workspace === null || returningFromReviewPreview) return;
+      returningFromReviewPreview = true;
+      try {
+        // The existing protected path back from a result preview; the review stays open.
+        await reviewApplyEditor(workspace).synchronize(workspace.identity.projectIdentity);
+        if (state.reviewWorkspace !== workspace) return;
+        state.mainTab = 'review';
+        renderAll();
+        setStatus('已回到来源项目，可以重新检查或批准正式结果', true, 5000);
+        refreshReviewTasks(reviewTasksChanged);
+      } catch (error) {
+        setStatus(`回到来源项目失败：${error instanceof Error ? error.message : String(error)}`, false, 6000);
+        reviewTasksChanged();
+      } finally {
+        returningFromReviewPreview = false;
+      }
+    },
+  });
+}
+
+/** Updates the rail count in place and redraws only the task list, never an open review's inputs. */
+function reviewTasksChanged(): void {
+  updateModeNavigationBadge('review', reviewTaskBadge());
+  if (state.mainTab !== 'review') return;
+  const view = document.getElementById('review-view');
+  if (view === null) return;
+  if (state.reviewWorkspace === null) {
+    renderReviewPanel(view, null, { taskList: reviewTaskListFor });
+    return;
+  }
+  const existing = view.querySelector<HTMLDetailsElement>('.review-discovery');
+  const next = reviewTaskListFor(state.reviewWorkspace);
+  if (next instanceof HTMLDetailsElement && existing?.open) next.open = true;
+  if (existing !== null && next !== null) existing.replaceWith(next);
+  else if (existing !== null) existing.remove();
+  else if (next !== null) view.querySelector('.review-workspace-header')?.appendChild(next);
+}
+
 function confirmProjectSwitch(): boolean {
   if (sceneAutosaveRecoveryPhase !== 'idle') {
     setStatus('自动恢复尚未收束，现在不能切换项目', false, 5000);
@@ -1417,6 +1491,32 @@ function confirmProjectSwitch(): boolean {
   }
   return !hasDirtyProjectFiles()
     || window.confirm('当前项目还有未保存修改。切换项目会放弃这些修改，确定继续吗？');
+}
+
+/** Desktop start page: directories the person already opened, resolved by the main process. */
+function renderRecentProjects(bridge: NonNullable<Window['surdetDesktop']>): HTMLElement {
+  const section = h('section', 'editor-welcome-recent');
+  section.setAttribute('aria-label', '最近项目');
+  const list = h('div', 'editor-welcome-recent-list');
+  section.append(h('h2', undefined, '最近项目'), list);
+  void bridge.recentProjects().then((projects) => {
+    if (!section.isConnected) return;
+    if (projects.length === 0) { list.append(h('p', 'editor-welcome-recent-empty', '打开过的项目会显示在这里。')); return; }
+    for (const project of projects) {
+      const control = h('button', 'editor-welcome-recent-item');
+      control.type = 'button';
+      control.title = project.location;
+      const when = new Date(project.openedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+      control.append(h('strong', undefined, project.name), h('small', undefined, project.location), h('time', undefined, when));
+      control.onclick = () => {
+        void bridge.openRecentProject(project.id).catch((error: unknown) => {
+          setStatus(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : '无法打开最近项目', false, 6000);
+        });
+      };
+      list.append(control);
+    }
+  }, () => { if (section.isConnected) list.append(h('p', 'editor-welcome-recent-empty', '暂时无法读取最近项目。')); });
+  return section;
 }
 
 async function openProjectSafely(): Promise<void> {
@@ -1747,7 +1847,7 @@ bindTimelineHooks({
 });
 
 /** 跳转定位（流程图导航与搜索结果共用）：切块编辑标签页 + 选中场景 + 滚动到指定行 */
-function jumpToScene(sceneKey: string, line?: number): void {
+function jumpToScene(sceneKey: string, line?: number, range?: SourceRange): void {
   if (!state.scenes.has(sceneKey)) return;
   const changedScene = state.current !== sceneKey;
   state.mainTab = 'editor';
@@ -1759,7 +1859,7 @@ function jumpToScene(sceneKey: string, line?: number): void {
     const objectRef = target?.dataset.objectRef || null;
     state.selectedObjectRef = selectAuthoringObject(objectRef);
     document.dispatchEvent(new CustomEvent('surdet-authoring-selection'));
-    if (!revealScriptV4Line(Math.max(0, line))) {
+    if (!revealScriptV4Line(Math.max(0, line), range)) {
       target?.scrollIntoView({ block: 'center' });
       target?.focus({ preventScroll: true });
     }
@@ -1833,7 +1933,9 @@ bindSearchHooks({
   },
 });
 bindIssueNavigation({
-  onJump: (sceneKey, line) => jumpToScene(sceneKey, line),
+  onJump: (sceneKey, line, range) => jumpToScene(sceneKey, line, range),
+  onTimeline: (id) => navigateTimeline(id),
+  onConfig: () => navigateMode('config'),
   onValidationApplied: () => {
     if (state.mainTab !== 'audit') return;
     const audit = document.getElementById('audit-view');
@@ -1915,10 +2017,6 @@ function renderAll(): void {
     onSaveProject: () => { void saveProject(); },
     onLoadDemo: loadDemoProjectSafely,
     onExportCurrent: exportCurrent,
-    onViewProjectChanges: () => { void viewProjectChanges(); },
-    onSyncProject: () => { void syncProject(); },
-    onDiscardProjectDrafts: () => { void syncProject(true); },
-    onKeepProjectDrafts: () => setStatus('草稿已保留，可继续编辑或导出当前场景。', true, 5000),
     onSearch: searchProject,
   });
   appEl.appendChild(header);
@@ -1936,6 +2034,13 @@ function renderAll(): void {
   main.setAttribute('data-autosave-recovery', sceneAutosaveRecoveryPhase);
   if (sceneAutosaveRecoveryPhase === 'running') main.setAttribute('aria-busy', 'true');
   appEl.appendChild(main);
+  appEl.appendChild(renderStatusBar(projectBarProjection(), {
+    onViewProjectChanges: () => { void viewProjectChanges(); },
+    onSyncProject: () => { void syncProject(); },
+    onDiscardProjectDrafts: () => { void syncProject(true); },
+    onKeepProjectDrafts: () => setStatus('草稿已保留，可继续编辑或导出当前场景。', true, 5000),
+    onShowProblems: showProblems,
+  }));
   renderMainArea();
   renderBlockedSceneRecovery();
 }
@@ -1985,7 +2090,7 @@ function renderMainArea(): void {
       state.previewTimelineId = null;
       state.mainTab = mode;
       renderMainArea();
-  });
+  }, { review: reviewTaskBadge() });
   const col = h('div', 'main-col editor-mode-surface');
   const conflictHost = h('div', 'timeline-autosave-conflict-host');
   col.setAttribute('data-editor-mode-surface', state.mainTab);
@@ -2001,19 +2106,30 @@ function renderMainArea(): void {
   if (state.mainTab === 'editor') {
     if (state.scenes.size === 0 && state.dirHandle === null) {
       const welcome = h('section', 'editor-welcome');
-      const introduction = h('div');
-      introduction.append(h('h1', undefined, 'Surdet 工作台'), h('p', undefined, '打开一个项目，继续编写剧情、安排演出，或接手智能体交付的创作结果。'));
+      welcome.setAttribute('aria-label', '开始创作');
+      const introduction = h('div', 'editor-welcome-intro');
+      const shortcuts = h('dl', 'editor-welcome-shortcuts');
+      for (const [key, label] of [['Ctrl+K', '搜索场景、台词、角色和素材'], ['Ctrl+S', '保存全部修改'], ['Ctrl+Z / Ctrl+Y', '撤销与重做']]) {
+        shortcuts.append(h('dt', undefined, key), h('dd', undefined, label));
+      }
+      introduction.append(
+        h('span', 'editor-welcome-kicker', 'Surdet 剧情创作'),
+        h('h1', undefined, '开始创作'),
+        h('p', undefined, '打开一个游戏项目文件夹，继续编写剧情、安排演出；或打开外部 Agent 交付的审阅任务，比较候选后再决定是否采用。'),
+        shortcuts,
+      );
       const actions = h('div', 'editor-welcome-actions');
-      for (const [action, title, description] of [
-        [state.fsSupported ? 'open-project' : 'load-demo', state.fsSupported ? '打开项目' : '加载演示项目', '剧本、素材与演出，在同一个工作区编辑'],
-        ...(state.fsSupported ? [['open-review', '打开审阅任务', '比较候选，试玩结果，再决定是否采用']] : []),
+      for (const [action, icon, title, description] of [
+        [state.fsSupported ? 'open-project' : 'load-demo', 'folder', state.fsSupported ? '打开项目文件夹' : '加载演示项目', state.fsSupported ? '选择包含 game.config.json 的游戏项目目录' : '当前浏览器不能直接读写本地目录，可先体验编辑与校验'],
+        ...(state.fsSupported ? [['open-review', 'open-review', '打开审阅任务', '比较候选、试玩结果，再决定是否写回项目']] : []),
       ]) {
         const control = h('button'); control.type = 'button'; const label = h('span');
         label.append(h('strong', undefined, title), h('small', undefined, description));
-        control.append(workbenchIcon(action!), label);
+        control.append(workbenchIcon(icon!), label);
         control.onclick = () => document.querySelector<HTMLButtonElement>(`.editor-project-bar [data-action="${action}"]`)?.click();
         actions.append(control);
       }
+      if (window.surdetDesktop) actions.append(renderRecentProjects(window.surdetDesktop));
       welcome.append(introduction, actions); col.append(welcome); refreshProjectBarProjection(); return;
     }
     const workbench = buildAuthoringWorkbench();
@@ -2157,7 +2273,8 @@ function renderMainArea(): void {
     reviewEl.dataset['editorPanel'] = 'review';
     col.appendChild(reviewEl);
     renderReviewPanel(reviewEl, state.reviewWorkspace,
-      state.reviewWorkspace === null ? {} : {
+      state.reviewWorkspace === null ? { taskList: reviewTaskListFor } : {
+        taskList: reviewTaskListFor,
         reviewApplyEditor: reviewApplyEditor(state.reviewWorkspace),
         onRememberPreparation: rememberReviewPreparation,
         onOpenPreparedResult: openPreparedReview,
@@ -2167,7 +2284,8 @@ function renderMainArea(): void {
               || sceneLifecycleActionRunning || editorWorkspaceStatus().saving) {
             throw new Error('请先保存当前草稿并完成正在进行的操作，再预览审阅结果。');
           }
-          await openReviewPreview(workspace, request);
+          // A listed result is shown from a checked display copy; checks keep reading the formal directory.
+          await openReviewPreview(workspace, request, undefined, reviewTaskPreviewDirectory(workspace) ?? undefined);
         },
       });
   } else {
@@ -2177,6 +2295,10 @@ function renderMainArea(): void {
     renderConfig(cfgEl);
   }
   refreshProjectBarProjection();
+  // Entering the review page re-reads the directory; the list is never kept as a content snapshot.
+  const enteringReview = state.mainTab === 'review' && renderedMainTab !== 'review';
+  renderedMainTab = state.mainTab;
+  if (enteringReview) refreshReviewTasks(reviewTasksChanged);
 }
 
 /* ============================ 撤销/重做路由（剧本栈 vs 配置栈） ============================ */
@@ -2239,7 +2361,28 @@ function searchProject(): void {
   openProjectSearch({ onScene: jumpToScene, onMode: navigateMode, onTimeline: navigateTimeline });
 }
 
+/** Status bar problems: open the existing list in the script workspace and focus its first entry. */
+function showProblems(): void {
+  if (state.mainTab !== 'editor') navigateMode('editor');
+  const context = document.querySelector<HTMLDetailsElement>('details.v4-project-context');
+  const box = document.getElementById('issues-box');
+  if (state.mainTab !== 'editor' || !context || !box) return;
+  context.open = true;
+  // Narrow windows show one workbench panel at a time.
+  const panel = document.querySelector<HTMLButtonElement>('[data-workbench-panel="context"]');
+  if (panel && panel.offsetParent !== null && panel.getAttribute('aria-pressed') !== 'true') panel.click();
+  box.scrollIntoView({ block: 'nearest' });
+  (box.querySelector<HTMLElement>('button.issue') ?? box).focus({ preventScroll: true });
+}
+
 window.addEventListener('keydown', (e) => {
+  if (e.key === 'F8' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    if (state.projectLoading || sceneAutosaveRecoveryPhase !== 'idle' || state.projectWriteLock !== null) {
+      setStatus('请先完成当前恢复或素材整理操作', false, 5000); return;
+    }
+    stepProblem(e.shiftKey ? -1 : 1); return;
+  }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault(); searchProject(); return;
   }
@@ -2354,6 +2497,7 @@ window.addEventListener('focus', () => {
 // 调试探针（对齐 starter surdetDebug 惯例）：devtools/自动化验收只读驱动用，生产可裁剪
 (window as unknown as Record<string, unknown>).surdetEditorDebug = {
   state,
+  runValidate,
   configUndo,
   configRedo,
   configHistoryDepth,

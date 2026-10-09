@@ -519,6 +519,12 @@ const flowViews: Record<FlowViewKey, { k: number; tx: number; ty: number }> = {
 let flowViewMode: FlowMapMode = 'focus';
 let view = flowViews.focus;
 let pendingAutoFit = false;
+/** The layout the current view was fitted to; a different layout (first visit, another
+ *  focus scene or project) is fitted to the canvas, while pan/zoom on the same layout stay. */
+let fittedLayoutKey: string | null = null;
+/** Canvas size of the last fit; an untouched fitted view follows window resizes. */
+let fittedViewport = '';
+let viewAdjusted = false;
 let legendExpanded = false;
 let technicalEdgesVisible = false;
 let technicalDetailsExpanded = false;
@@ -673,6 +679,7 @@ function buildMinimap(layout: FlowLayout, cw: number, ch: number, container: HTM
     });
     view.tx = cw / 2 - worldPoint.x * view.k;
     view.ty = ch / 2 - worldPoint.y * view.k;
+    viewAdjusted = true;
     rerenderFlow(container, restoreKeyboardFocus ? '[data-editor-region="flow-minimap"]' : undefined);
   };
   mm.addEventListener('click', (e) => {
@@ -1264,9 +1271,14 @@ export function renderFlow(container: HTMLElement): void {
     view.k = Math.min(2, availableWidth / contentWidth, availableHeight / contentHeight);
     view.tx = (viewport.width - contentWidth * view.k) / 2 - minX * view.k;
     view.ty = (viewport.height - contentHeight * view.k) / 2 - minY * view.k;
+    fittedViewport = `${viewport.width}x${viewport.height}`;
+    viewAdjusted = false;
   };
-  if (pendingAutoFit) {
+  const layoutKey = [state.dirName, state.entryScene, flowViewMode, technicalEdgesVisible, layout.mode === 'focus' ? currentSceneId : ''].join('\0');
+  const resized = !viewAdjusted && fittedViewport !== `${initialViewport.width}x${initialViewport.height}`;
+  if ((pendingAutoFit || fittedLayoutKey !== layoutKey || resized) && layout.boxes.size > 0) {
     pendingAutoFit = false;
+    fittedLayoutKey = layoutKey;
     fitLayoutToViewport(initialViewport);
   }
   const svg = el('svg');
@@ -1358,6 +1370,7 @@ export function renderFlow(container: HTMLElement): void {
     const centerY = py ?? viewport.height / 2;
     const minimumScale = Math.min(0.2, view.k);
     const k2 = Math.max(minimumScale, Math.min(3, nextScale));
+    viewAdjusted = true;
     view.tx = centerX - ((centerX - view.tx) / view.k) * k2;
     view.ty = centerY - ((centerY - view.ty) / view.k) * k2;
     view.k = k2;
@@ -1396,6 +1409,7 @@ export function renderFlow(container: HTMLElement): void {
       return;
     }
     const viewport = currentViewportSize();
+    viewAdjusted = true;
     view.tx = viewport.width / 2 - (box.x + box.w / 2) * view.k;
     view.ty = viewport.height / 2 - (box.y + box.h / 2) * view.k;
     rerenderFlow(container, '[data-flow-action="focus-current"]');
@@ -1447,6 +1461,7 @@ export function renderFlow(container: HTMLElement): void {
       return;
     }
     if (!panning) return;
+    if (e.clientX !== panning.x || e.clientY !== panning.y) viewAdjusted = true;
     view.tx = panning.tx + (e.clientX - panning.x);
     view.ty = panning.ty + (e.clientY - panning.y);
     world.setAttribute('transform', `translate(${view.tx} ${view.ty}) scale(${view.k})`);

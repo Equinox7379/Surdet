@@ -118,6 +118,74 @@ try {
   assert.equal(JSON.parse(await fs.readFile(path.join(fixture, 'game.config.json'), 'utf8')).variables.score.initial, 42);
   console.log('RESTART: same physical project, saved configuration, persisted draft recovered and saved');
   await restored.screenshot({ path: path.join(output, 'desktop-reopened.png') });
+  // Content history: record, change and save, compare an older version, restore it as a draft.
+  await restored.locator('[data-editor-mode="history"]').click();
+  const versionName = restored.getByLabel('版本名称');
+  await versionName.fill('恢复前');
+  await restored.getByRole('button', { name: '记录已保存版本' }).click();
+  await restored.locator('.content-history-versions button', { hasText: '恢复前' }).waitFor();
+  await restored.locator('[data-editor-mode="editor"]').click();
+  await restored.getByRole('button', { name: '源码', exact: true }).click();
+  await restored.getByRole('textbox', { name: '完整剧本源码' }).fill(originalScene.replace('桌面初稿。', '历史之后的新稿。'));
+  await restored.keyboard.press('Control+S');
+  await waitSaved(restored);
+  await restored.locator('[data-editor-mode="history"]').click();
+  await restored.locator('.content-history-versions button', { hasText: '恢复前' }).click();
+  await restored.locator('.content-history-versions button[aria-current="true"]', { hasText: '恢复前' }).waitFor();
+  await restored.locator('.content-history-file').first().click();
+  assert.equal(await restored.locator('.content-history-file').first().getAttribute('aria-pressed'), 'true');
+  await restored.locator('.content-history-diff').waitFor();
+  const changed = await restored.locator('.content-history-diff section').evaluateAll(sections => sections.map(section => [...section.querySelectorAll('.content-history-line.is-changed')].map(line => line.textContent)));
+  assert.deepEqual(changed, [['凛：历史之后的新稿。'], ['凛：重启后恢复的草稿。']], JSON.stringify(changed));
+  await restored.screenshot({ path: path.join(output, 'desktop-history.png') });
+  await restored.getByRole('button', { name: '恢复这个文件为草稿' }).click();
+  await restored.waitForFunction(() => [...window.surdetEditorDebug.state.scenes.values()].some(scene => scene.dirty && scene.text.includes('重启后恢复的草稿')));
+  await restored.keyboard.press('Control+S');
+  await waitSaved(restored);
+  assert.match(await fs.readFile(scenePath, 'utf8'), /重启后恢复的草稿/);
+  // The save settlement briefly keeps the window busy; closing waits for the editor to release it.
+  await restored.waitForFunction(() => document.querySelector('[data-action="save-project"]')?.disabled === false);
+  console.log('HISTORY: version recorded, changed lines marked in the comparison, older file restored as a draft and saved');
+  // Start page: recent projects are only directories the main process recorded.
+  await app.evaluate(({ dialog }) => { dialog.showMessageBoxSync = () => 1; });
+  await app.close();
+  app = undefined;
+  await fs.rm(path.join(profile, 'last-project.json'));
+  const recentFile = path.join(profile, 'recent-projects.json');
+  const recorded = JSON.parse(await fs.readFile(recentFile, 'utf8')).entries;
+  assert.deepEqual(recorded.map(entry => entry.path), [await fs.realpath(fixture)]);
+  await fs.writeFile(recentFile, JSON.stringify({ entries: [...recorded, { path: path.join(output, 'moved-away'), name: 'moved-away', openedAt: 1 }] }));
+  app = await electron.launch({ args, env, ...(executablePath ? { executablePath } : {}) });
+  const home = await app.firstWindow(); watch(home);
+  const recentItems = home.locator('.editor-welcome-recent-item');
+  await recentItems.nth(1).waitFor();
+  assert.deepEqual(await recentItems.locator('strong').allInnerTexts(), [path.basename(recorded[0].path), 'moved-away']);
+  await home.screenshot({ path: path.join(output, 'desktop-recent-projects.png') });
+  await assert.rejects(home.evaluate(path => window.surdetDesktop.openRecentProject(path), fixture), /最近项目列表已变化/);
+  await recentItems.nth(1).click();
+  await home.waitForFunction(() => document.getElementById('status')?.textContent.includes('无法打开「moved-away」'));
+  assert.equal(app.windows().length, 1, 'a missing recent folder must not open a window');
+  const homeClosed = home.waitForEvent('close');
+  const recentOpened = app.waitForEvent('window');
+  await recentItems.first().click();
+  const recentProject = await recentOpened; watch(recentProject);
+  await recentProject.waitForFunction(() => window.surdetEditorDebug?.state.scenes.size > 0 && document.body.innerText.includes('接力保护：已连接'));
+  await homeClosed;
+  assert.equal(await recentProject.evaluate(() => window.surdetEditorDebug.state.autosaveProjectId), identity);
+  // A restored project opens straight into its window; the native menu still reaches
+  // the start page and the recent list.
+  const projectMenu = () => app.evaluate(({ Menu }) => Menu.getApplicationMenu().items[0].submenu.items.map(item => ({ label: item.label, items: item.submenu?.items.map(sub => sub.label) ?? null })));
+  const recentMenu = (await projectMenu()).find(item => item.label === '最近项目');
+  assert.equal(recentMenu?.items.length, 2);
+  assert(recentMenu.items[0].startsWith(`${path.basename(recorded[0].path)} — `), recentMenu.items[0]);
+  const homeAgainOpened = app.waitForEvent('window');
+  await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items[0].submenu.items.find(item => item.label === '显示启动页').click());
+  const homeAgain = await homeAgainOpened; watch(homeAgain);
+  await homeAgain.locator('.editor-welcome-recent-item').nth(1).waitFor();
+  await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items[0].submenu.items.find(item => item.label === '最近项目').submenu.items[0].click());
+  await recentProject.waitForTimeout(500);
+  assert.equal(app.windows().length, 2, 'reopening an open project from the menu focuses it instead of adding a window');
+  console.log('RECENT PROJECTS: recorded project reopened from the start page and native menu; forged id and moved folder rejected');
   assert.equal(errors.length, 0, errors.join('\n'));
   console.log('PASS', { fixture, profile });
 } catch (error) {

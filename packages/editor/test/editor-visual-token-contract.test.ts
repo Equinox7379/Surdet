@@ -43,25 +43,32 @@ const migratedCss = [tokensCss, componentsCss, appShellCss]
 
 describe('editor visual token contract', () => {
   it('declares the approved primitive color family exactly', () => {
+    // Direction A (dark professional), selected by the Owner on 2026-10-08.
     const expected = {
-      '--surdet-color-paper-0': '#f7f8fa',
-      '--surdet-color-paper-50': '#ffffff',
-      '--surdet-color-paper-100': '#f3f5f8',
-      '--surdet-color-ink-900': '#303847',
-      '--surdet-color-ink-600': '#697588',
-      '--surdet-color-frame-900': '#1d2326',
-      '--surdet-color-line-300': '#e5e9f0',
-      '--surdet-color-line-600': '#9aa8bc',
-      '--surdet-color-accent-600': '#526d9b',
-      '--surdet-color-provenance-600': '#6f5a45',
-      '--surdet-color-success-600': '#3f6851',
-      '--surdet-color-warning-600': '#946426',
-      '--surdet-color-danger-600': '#9a4039',
+      '--surdet-color-paper-0': '#111317',
+      '--surdet-color-paper-50': '#181b20',
+      '--surdet-color-paper-100': '#1f2329',
+      '--surdet-color-paper-200': '#262b32',
+      '--surdet-color-ink-900': '#e7e9ec',
+      '--surdet-color-ink-600': '#a3abb7',
+      '--surdet-color-ink-400': '#6f7783',
+      '--surdet-color-frame-900': '#0c0e11',
+      '--surdet-color-line-300': '#282d35',
+      '--surdet-color-line-600': '#3f4651',
+      '--surdet-color-accent-600': '#f0a35e',
+      '--surdet-color-accent-500': '#f5b577',
+      '--surdet-color-accent-ink': '#1b1207',
+      '--surdet-color-provenance-600': '#c9a27e',
+      '--surdet-color-success-600': '#5cc28f',
+      '--surdet-color-warning-600': '#e6b04f',
+      '--surdet-color-danger-600': '#ef6b6b',
+      '--surdet-color-info-600': '#7aa7ff',
     } as const;
 
     for (const [name, value] of Object.entries(expected)) {
       expect(tokenValues.get(name), `${name} must match the approved primitive`).toBe(value);
     }
+    expect(tokensCss).toMatch(/color-scheme\s*:\s*dark/i);
   });
 
   it('declares the approved semantic mappings exactly', () => {
@@ -69,13 +76,17 @@ describe('editor visual token contract', () => {
       '--surdet-surface-app': 'var(--surdet-color-paper-0)',
       '--surdet-surface-panel': 'var(--surdet-color-paper-50)',
       '--surdet-surface-subtle': 'var(--surdet-color-paper-100)',
-      '--surdet-surface-selected': '#edf2fa',
+      '--surdet-surface-raised': 'var(--surdet-color-paper-200)',
+      '--surdet-surface-selected': '#2c261f',
       '--surdet-text-primary': 'var(--surdet-color-ink-900)',
       '--surdet-text-secondary': 'var(--surdet-color-ink-600)',
+      '--surdet-text-muted': 'var(--surdet-color-ink-400)',
+      '--surdet-text-on-accent': 'var(--surdet-color-accent-ink)',
       '--surdet-border-default': 'var(--surdet-color-line-300)',
       '--surdet-border-strong': 'var(--surdet-color-line-600)',
       '--surdet-action-primary': 'var(--surdet-color-accent-600)',
-      '--surdet-focus-ring': '#526d9b',
+      '--surdet-action-primary-hover': 'var(--surdet-color-accent-500)',
+      '--surdet-focus-ring': '#f0a35e',
       '--surdet-state-provenance': 'var(--surdet-color-provenance-600)',
       '--surdet-state-success': 'var(--surdet-color-success-600)',
       '--surdet-state-warning': 'var(--surdet-color-warning-600)',
@@ -92,9 +103,7 @@ describe('editor visual token contract', () => {
     expect(tokenValues.get('--surdet-font-ui')).toBe(
       '"microsoft yahei ui", "microsoft yahei", "segoe ui variable", "segoe ui", "pingfang sc", "noto sans cjk sc", sans-serif',
     );
-    expect(tokenValues.get('--surdet-font-story')).toBe(
-      '"noto serif cjk sc", "source han serif sc", "songti sc", var(--surdet-font-ui)',
-    );
+    expect(tokenValues.get('--surdet-font-story')).toBe('var(--surdet-font-ui)');
     expect(tokenValues.get('--surdet-font-mono')).toBe(
       '"cascadia mono", "sarasa mono sc", consolas, monospace',
     );
@@ -107,7 +116,7 @@ describe('editor visual token contract', () => {
     expect(scaleValues('--surdet-space-')).toEqual([
       '4px', '6px', '8px', '12px', '16px', '20px', '24px', '32px', '40px', '48px', '64px',
     ]);
-    expect(scaleValues('--surdet-radius-')).toEqual(['0', '3px', '4px']);
+    expect(scaleValues('--surdet-radius-')).toEqual(['0', '4px', '6px']);
     expect(tokenValues.get('--surdet-control-height')).toBe('32px');
     expect(tokenValues.get('--surdet-focus-width')).toBe('2px');
 
@@ -206,17 +215,20 @@ describe('editor visual token contract', () => {
     ]);
   });
 
-  it('keeps the wrapped project bar in flow so narrow commands cannot cover mode navigation', () => {
+  it('keeps a single-row title bar and a wrapping status bar in flow', () => {
     const projectBarRules = ruleBodiesMatching(appShellCss, /\.editor-project-bar\s*$/i);
     expect(projectBarRules.length).toBeGreaterThan(0);
     expect(projectBarRules[0]).toMatch(/flex\s*:\s*(?:none|0\s+0\s+auto)/i);
+    expect(projectBarRules[0]).toMatch(/grid-template-areas\s*:\s*["']identity\s+context\s+search\s+commands["']/i);
+    expect(projectBarRules[0]).toMatch(/height\s*:\s*var\(--surdet-shell-titlebar-height\)/i);
 
-    const narrowStart = appShellCss.search(/@media\s*\(max-width:\s*1250px\)/);
-    expect(narrowStart).toBeGreaterThanOrEqual(0);
-    const narrowRules = appShellCss.slice(narrowStart);
-    expect(projectBarRules[0]).toMatch(/grid-template-areas\s*:\s*["']identity\s+context\s+commands["']\s*["']feedback\s+feedback\s+relay["']/i);
-    expect(narrowRules).toMatch(/grid-template-columns\s*:\s*116px\s+minmax\(110px,\s*1fr\)\s+auto/i);
-    const statusRules = ruleBodiesMatching(appShellCss, /\.editor-project-bar\s+#status\s*$/i);
+    const statusBarRules = ruleBodiesMatching(appShellCss, /\.editor-status-bar\s*$/i);
+    expect(statusBarRules.length).toBeGreaterThan(0);
+    expect(statusBarRules[0]).toMatch(/flex\s*:\s*(?:none|0\s+0\s+auto)/i);
+    // Long operation messages wrap instead of being truncated or covering the work surface.
+    expect(statusBarRules[0]).toMatch(/flex-wrap\s*:\s*wrap/i);
+    expect(statusBarRules[0]).toMatch(/min-height\s*:/i);
+    const statusRules = ruleBodiesMatching(appShellCss, /\.editor-status-bar\s+#status\s*$/i);
     expect(statusRules.join('\n')).toMatch(/min-width\s*:\s*0/i);
     expect(statusRules.join('\n')).toMatch(/overflow-wrap\s*:\s*anywhere/i);
   });

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EDITOR_MODE_GROUPS, EDITOR_MODES } from '../src/shell/editor-modes.js';
-import { renderModeNavigation, renderProjectBar } from '../src/shell/app-shell.js';
+import { renderModeNavigation, renderProjectBar, renderStatusBar } from '../src/shell/app-shell.js';
 
 class FakeElement {
   readonly tagName: string;
@@ -129,7 +129,7 @@ describe('editor shell navigation contract', () => {
     expect(selected).toEqual(EDITOR_MODES.map(({ id }) => id));
   });
 
-  it('separates product, context, commands, and feedback without changing action callbacks', () => {
+  it('separates product, context, search and commands in one title bar without changing action callbacks', () => {
     vi.stubGlobal('document', documentStub);
     const callbacks = {
       onOpenProject: vi.fn(),
@@ -151,13 +151,30 @@ describe('editor shell navigation contract', () => {
         'project-bar',
         'product-identity',
         'project-context',
+        'project-search',
         'global-commands',
-        'operation-feedback',
       ]);
     expect(bar.querySelectorAll('[data-command-group]').map((node) => node.getAttribute('data-command-group')))
       .toEqual(['project', 'edit', 'save']);
     expect(bar.querySelectorAll('kbd').map((node) => node.textContent)).toEqual(['Ctrl+Z', 'Ctrl+Y', 'Ctrl+S']);
-    expect(bar.textContent).toContain('剧情创作');
+    expect(bar.textContent).toContain('Surdet');
     expect(bar.textContent).toContain('当前工作');
+    expect(bar.textContent).toContain('长安惊梦');
+  });
+
+  it('keeps save state and operation feedback in a separate status bar landmark', () => {
+    vi.stubGlobal('document', documentStub);
+    const status = renderStatusBar({
+      projectName: '长安惊梦',
+      objectLabel: '场景 雨夜抵达',
+      saveState: 'dirty',
+      canUndo: true,
+      canRedo: false,
+    }, {}) as unknown as FakeElement;
+
+    expect(status.tagName).toBe('FOOTER');
+    expect(status.querySelectorAll('[data-editor-region]').map((node) => node.getAttribute('data-editor-region')))
+      .toEqual(['status-bar', 'operation-feedback']);
+    expect(status.textContent).toContain('有未保存修改');
   });
 });

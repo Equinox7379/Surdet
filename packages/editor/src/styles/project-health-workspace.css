@@ -187,7 +187,8 @@
 
 .project-health-table th,
 .project-health-table td {
-  padding: var(--surdet-space-12) var(--surdet-space-8);
+  padding: var(--surdet-space-4) var(--surdet-space-8);
+  font-variant-numeric: tabular-nums;
   border-bottom: 1px solid var(--surdet-border-default);
   text-align: right;
   vertical-align: middle;
@@ -225,16 +226,23 @@
 
 .project-health-scene-link {
   width: 100%;
+  min-height: 28px;
   border-color: transparent;
-  padding: var(--surdet-space-6) var(--surdet-space-8);
+  padding: var(--surdet-space-4) var(--surdet-space-8);
   background: transparent;
-  font-weight: 680;
+  font-family: var(--surdet-font-mono);
+  font-size: var(--surdet-type-control);
+  font-weight: 500;
+}
+
+.project-health-table tbody tr:hover {
+  background: var(--surdet-surface-hover);
 }
 
 .project-health-scene-link:hover,
 .project-health-secondary-action:hover {
   border-color: var(--surdet-border-strong);
-  background: var(--surdet-surface-selected);
+  background: var(--surdet-surface-raised);
   color: var(--surdet-text-primary);
 }
 
@@ -432,4 +440,62 @@
   .project-health-secondary-action {
     transition: none;
   }
+}
+
+/* Text audit: one rule between blocks (the heading already closes with one),
+   compact records, and repeated findings shown once with every location. */
+.text-audit-workspace .project-health-audit-overview {
+  margin-top: 0;
+  border-top: 0;
+}
+
+.text-audit-workspace .project-health-audit-overview + .project-health-empty {
+  margin-top: 0;
+  border-top: 0;
+  border-bottom: 0;
+}
+
+.text-audit-workspace .project-health-audit-scope {
+  margin-top: var(--surdet-space-24);
+}
+
+.text-audit-workspace .project-health-section {
+  padding-top: var(--surdet-space-24);
+}
+
+.text-audit-workspace .project-health-record {
+  gap: var(--surdet-space-8) var(--surdet-space-24);
+  padding: var(--surdet-space-12) 0;
+}
+
+.text-audit-workspace .project-health-record-text {
+  margin-top: var(--surdet-space-4);
+}
+
+.text-audit-workspace .project-health-secondary-action {
+  padding: var(--surdet-space-4) var(--surdet-space-12);
+}
+
+.project-health-record-count {
+  margin-left: var(--surdet-space-8);
+  color: var(--surdet-state-warning);
+  font-size: var(--surdet-type-caption);
+  font-weight: 600;
+}
+
+.project-health-record--grouped {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.project-health-record--grouped .project-health-record-actions {
+  justify-content: flex-start;
+}
+
+.project-health-record--grouped .project-health-secondary-action {
+  font-family: var(--surdet-font-mono);
+  font-size: var(--surdet-type-caption);
+}
+
+.project-health-technical-list dd {
+  white-space: pre-line;
 }

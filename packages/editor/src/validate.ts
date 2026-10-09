@@ -4,6 +4,7 @@
  * 编辑器额外提供：场景 ID（basename）重复检测（对齐 CLI LINT_DUP）与 @scene 一致性。
  */
 import {
+  attachHints,
   compileScene,
   SourceError,
   sourceErrorIssue,
@@ -235,5 +236,7 @@ export async function validateProject(
   }
 
   issues.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1));
+  // Editor-only checks (compile errors, W006/W007, duplicates) get the same advice as `surdet lint`.
+  attachHints(issues);
   return { issues, scenes: compiled };
 }

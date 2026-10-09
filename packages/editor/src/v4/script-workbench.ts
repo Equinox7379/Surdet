@@ -2,6 +2,8 @@ import { state, h, setStatus, type SceneEntry } from '../state.js';
 import { setCurrentText } from '../history.js';
 import { parseScript, splitInstr, type LineModel } from '../model.js';
 import { decodeInstructionArgument, parseProjectConfigDocument } from '@surdet/authoring';
+import type { SourceRange } from '@surdet/core';
+import { sourceRangeOffsets } from './source-range.js';
 import { portraitDisplayName, projectPortraitAssets } from '../assets.js';
 import { disposePreviewPanel, renderPreviewPanel, refreshPreviewSourceState } from '../panels/preview-panel.js';
 import { allowedToEdit, button, disclosure, field, ImageScope, navigateMode } from './ui.js';
@@ -21,11 +23,20 @@ const viewStates = new WeakMap<SceneEntry, ViewState>();
 let active: ScriptWorkbench | null = null;
 
 /** Called before the legacy renderer replaces its rows. Return borrowed DOM nodes first. */
+/** Stable, presentation-only colour slot per speaker name; narration stays neutral. */
+function speakerTone(speaker: string): string {
+  const name = speaker.trim();
+  if (name === '' || name === '旁白') return 'narration';
+  let hash = 0;
+  for (const char of name) hash = (hash * 31 + char.codePointAt(0)!) >>> 0;
+  return String(hash % 6 + 1);
+}
+
 export function prepareScriptV4Render(): void { active?.returnFields(); }
 export function disposeScriptV4(): void { active?.dispose(); active = null; }
 
 /** Reveal a source location through the currently mounted V4 view. */
-export function revealScriptV4Line(index: number): boolean { return active?.revealLine(index) ?? false; }
+export function revealScriptV4Line(index: number, range?: SourceRange): boolean { return active?.revealLine(index, range) ?? false; }
 
 /** Decorates existing B01-bound rows; it does not own a second document or undo stack. */
 export function installScriptV4(editor: HTMLElement, rerender: () => void): void {
@@ -142,10 +153,9 @@ export class ScriptWorkbench {
     outline.setAttribute('aria-label', '场景与素材目录');
     outline.setAttribute('aria-controls', 'sidebar');
     outline.setAttribute('aria-expanded', String(this.root.dataset.outlineCollapsed !== 'true'));
-    host.replaceChildren(outline, views,
-      button('添加剧情', () => this.openInsert(), 'v4-button v4-primary'),
-      button('查看素材', () => navigateMode('assets')),
-      button('导出 .gal', () => this.download()));
+    const addStep = button('添加剧情', () => this.openInsert(), 'v4-button v4-primary'); addStep.dataset.action = 'add-story-step';
+    const download = button('导出 .gal', () => this.download()); download.dataset.action = 'download-scene';
+    host.replaceChildren(outline, views, addStep, button('查看素材', () => navigateMode('assets')), download);
   }
 
   private installDock(): void {
@@ -383,7 +393,7 @@ export class ScriptWorkbench {
 
   private fitTextarea(textarea: HTMLTextAreaElement): void {
     textarea.style.height = 'auto';
-    textarea.style.height = `${Math.max(34, textarea.scrollHeight)}px`;
+    textarea.style.height = `${Math.max(26, textarea.scrollHeight)}px`;
   }
 
   private updateSummary(block: HTMLElement, line: LineModel | undefined): void {
@@ -393,6 +403,8 @@ export class ScriptWorkbench {
     if (summary.dataset.sourceSignature === signature) return;
     summary.dataset.sourceSignature = signature;
     block.dataset.stepKind = line.kind;
+    if (line.kind === 'text') block.dataset.speakerTone = speakerTone(line.speaker);
+    else delete block.dataset.speakerTone;
     if (line.kind === 'instr') {
       const { name, args } = splitInstr(line.raw);
       const source = name === 'bg' ? state.dirAssets.find((asset) => asset.kind === 'bg' && asset.key === decodeInstructionArgument(args[0] ?? ''))
@@ -405,7 +417,8 @@ export class ScriptWorkbench {
         thumb = source ? h('span', 'v4-step-thumb') : null;
         if (thumb) { thumb.dataset.sourcePath = imageKey; queueMicrotask(() => { if (thumb) void this.rowImages.image(thumb, source, '', name === 'bg' ? 'cover' : 'contain'); }); }
       }
-      summary.replaceChildren(...(thumb ? [thumb] : []), h('small', 'v4-step-type', instructionLabel(name)), h('strong', undefined, instructionArgumentSummary(name, args.map(decodeInstructionArgument))));
+      const argumentsSummary = instructionArgumentSummary(name, args.map(decodeInstructionArgument));
+      summary.replaceChildren(...(thumb ? [thumb] : []), h('small', 'v4-step-type', instructionLabel(name)), ...(argumentsSummary ? [h('strong', undefined, argumentsSummary)] : []));
     } else if (line.kind === 'choice-option') {
       const option = simpleChoice(line.raw);
       summary.replaceChildren(h('small', 'v4-step-type', '选项'), h('strong', undefined, option?.text || line.raw.trim()), h('small', 'v4-source-hint', option ? `→ ${option.target}` : '完整行内动作'));
@@ -449,7 +462,8 @@ export class ScriptWorkbench {
   }
 
   /** Main's search/issues/trace navigation must not focus hidden legacy rows in source view. */
-  revealLine(index: number): boolean {
+  /** In the source view a diagnostic range selects its exact text; otherwise the whole row. */
+  revealLine(index: number, range?: SourceRange): boolean {
     const rows = this.lines();
     const line = rows[index];
     if (!this.current() || !Number.isInteger(index) || !line) return false;
@@ -463,10 +477,13 @@ export class ScriptWorkbench {
       const textarea = this.editor.querySelector<HTMLTextAreaElement>('.v4-source-editor');
       if (!textarea) return false;
       // Native textarea offsets use LF and UTF-16, even for CRLF/CR documents.
-      const start = rows.slice(0, index).reduce((offset, row) => offset + row.raw.length + (row.eol ? 1 : 0), 0);
+      const rowStart = (row: number) => rows.slice(0, row).reduce((offset, entry) => offset + entry.raw.length + (entry.eol ? 1 : 0), 0);
+      const start = rowStart(index);
       textarea.scrollIntoView({ block: 'start' });
       textarea.focus({ preventScroll: true });
-      textarea.setSelectionRange(start, start + line.raw.length);
+      const exact = range === undefined ? null : sourceRangeOffsets(rows, rowStart, index, range);
+      if (exact) textarea.setSelectionRange(exact.start, exact.end);
+      else textarea.setSelectionRange(start, start + line.raw.length);
       const style = getComputedStyle(textarea);
       const lineHeight = Number.parseFloat(style.lineHeight) || (Number.parseFloat(style.fontSize) || 13) * 1.9;
       const padding = Number.parseFloat(style.paddingTop) || 0;

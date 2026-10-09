@@ -123,6 +123,17 @@ try {
   });
   assert.equal(hiddenSceneActions.opacity, '0');
   assert.equal(hiddenSceneActions.intercepts, false, 'invisible scene rename/delete controls must not intercept row clicks');
+  const firstSceneRow = page.locator('.scene-row').first();
+  await firstSceneRow.hover();
+  const hoveredSceneActions = await firstSceneRow.evaluate((row) => {
+    const item = row.querySelector('.scene-item').getBoundingClientRect();
+    const actions = row.querySelector('.scene-row-actions');
+    const hit = document.elementFromPoint(item.x + item.width / 2, item.y + item.height / 2);
+    return { opacity: getComputedStyle(actions).opacity, centerHitsRow: Boolean(hit?.closest('.scene-item')), share: actions.getBoundingClientRect().width / item.width };
+  });
+  assert(hoveredSceneActions.opacity === '1' && hoveredSceneActions.centerHitsRow && hoveredSceneActions.share <= 0.5,
+    `hover actions must stay at the row edge instead of covering the scene: ${JSON.stringify(hoveredSceneActions)}`);
+  await page.mouse.move(0, 0);
   // Studio workbench: layout and navigation never alter the original document.
   for (const label of ['调整目录宽度', '调整画面与属性区宽度']) {
     const separator = page.getByRole('separator', { name: label, exact: true });
@@ -380,6 +391,25 @@ try {
         const inspector = await page.locator('#script-v4-inspector').boundingBox();
         assert(inspector && inspector.height >= 200, 'picture squeezed out the inspector');
       }
+      if (mode === 'preview' && width >= 1280) {
+        // Wide preview keeps the picture primary; records sit in a side column.
+        const layout = await page.evaluate(() => {
+          const box = (selector) => document.querySelector(`#preview-view ${selector}`).getBoundingClientRect();
+          return { stage: box('.preview-stage').width, workspace: box('.preview-workspace').width, stageRight: box('.preview-stage').right, dockLeft: box('.preview-causal-dock').left };
+        });
+        assert(layout.stage >= layout.workspace * 0.65 && layout.dockLeft >= layout.stageRight - 1, `preview ${width}: picture is not the primary area ${JSON.stringify(layout)}`);
+      }
+      if (mode === 'flow') {
+        // The first visit fits the map to this canvas instead of a fixed offset.
+        const fit = await page.evaluate(() => {
+          const canvas = document.querySelector('svg.flow-canvas-svg').getBoundingClientRect();
+          const frames = [...document.querySelectorAll('[data-flow-scene-frame] .flow-scene-frame-surface')].map(node => node.getBoundingClientRect());
+          const left = Math.min(...frames.map(r => r.left)), right = Math.max(...frames.map(r => r.right));
+          return { frames: frames.length, inside: frames.every(r => r.left >= canvas.left - 1 && r.right <= canvas.right + 1 && r.top >= canvas.top - 1 && r.bottom <= canvas.bottom + 1),
+            offset: Math.abs((left + right) / 2 - (canvas.left + canvas.right) / 2), width: canvas.width };
+        });
+        assert(fit.frames > 0 && fit.inside && fit.offset < fit.width * 0.1, `flow ${width}: map not fitted to the canvas ${JSON.stringify(fit)}`);
+      }
       if (mode === 'config') {
         await page.locator('.config-ledger-section:not([hidden]) .config-table').waitFor();
         const avatar = await page.getByRole('textbox', { name: 'lynn 的头像素材', exact: true }).boundingBox();
@@ -444,6 +474,132 @@ try {
   await expectDialogueReflow();
   assert(await dialogue.evaluate(node => node === document.activeElement), 'desktop split reflow must preserve dialogue focus');
   console.log('PASS desktop dialogue reflow follows both panes and window width without changing source or selection');
+  // A blank row is quiet only while it is blank: prose typed into it stays a full,
+  // visible dialogue row after focus moves on, without rebuilding the workspace.
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  const sceneText = () => page.evaluate(() => window.surdetEditorDebug.state.scenes.get('start').text);
+  // History merges edits less than 600ms apart (COALESCE_MS). Let earlier edits settle
+  // so this case's first edit opens its own undo step at exactly this text.
+  await page.waitForTimeout(700);
+  const beforeBlank = await sceneText();
+  await page.locator('[data-script-view="source"]').click();
+  await page.locator('.v4-source-editor').fill(beforeBlank.replace(/(\r?\n)(@end\s*)$/, '$1$1$2'));
+  assert.notEqual(await sceneText(), beforeBlank, 'fixture needs a blank row before @end');
+  await page.locator('[data-script-view="arrange"]').click();
+  const blankLine = await page.locator('.block.block-blank.v4-empty-dialogue').last().getAttribute('data-line');
+  const narration = page.locator(`.block[data-line="${blankLine}"] .v4-dialogue-input`);
+  await page.mouse.move(0, 0);
+  assert.deepEqual(await narration.evaluate(node => [node.clientHeight, getComputedStyle(node).opacity]), [22, '0'], 'an unused blank row must stay compact and quiet');
+  const blankInput = await narration.elementHandle();
+  const longNarration = '雾港的钟声在潮水里一圈圈散开，灯塔把影子拉得很长。'.repeat(12);
+  await narration.click();
+  await narration.fill(longNarration);
+  const expectNarrationVisible = async (value) => {
+    await dialogue.click();
+    await page.mouse.move(0, 0);
+    const shown = await narration.evaluate((node) => {
+      const reference = document.querySelector('.block[data-line="5"] .v4-dialogue-input');
+      const column = (field) => field.getBoundingClientRect().left + parseFloat(getComputedStyle(field).paddingLeft);
+      return { text: node.closest('.block').classList.contains('block-text'), opacity: getComputedStyle(node).opacity, height: node.clientHeight, content: node.scrollHeight, value: node.value, offset: Math.abs(column(node) - column(reference)) };
+    });
+    assert(shown.text && shown.opacity === '1' && shown.height > 44 && shown.content <= shown.height + 1 && shown.offset <= 2,
+      `typed narration must stay fully visible in the dialogue column: ${JSON.stringify({ ...shown, value: undefined })}`);
+    assert.equal(shown.value, value);
+    assert((await sceneText()).includes(value), 'typed narration must reach the shared scene');
+  };
+  await expectNarrationVisible(longNarration);
+  await narration.click();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.type('续写。');
+  assert(await narration.evaluate(node => node === document.activeElement), 'continued typing lost focus');
+  await expectNarrationVisible(`${longNarration}续写。`);
+  assert(await blankInput.evaluate(node => node.isConnected), 'typing into a blank row must not rebuild the workspace');
+  await blankInput.dispose();
+  // Edits within the history coalescing window may share one undo step.
+  const undoTrail = [];
+  for (let step = 0; step < 8 && await sceneText() !== beforeBlank; step++) {
+    await page.locator('[data-action="undo"]').click();
+    const text = await sceneText();
+    undoTrail.push(text === beforeBlank ? 'case start' : text.includes(longNarration) ? 'with narration' : text.includes('\r\n\r\n@end') ? 'blank row only' : `other(${text.length})`);
+  }
+  assert.equal(await sceneText(), beforeBlank, `blank-row prose and the inserted row must undo through ordinary history: ${undoTrail.join(' -> ')}`);
+  await page.setViewportSize({ width: 960, height: 720 });
+  await dialogue.focus();
+  console.log('PASS blank row: quiet while blank, typed long narration stays visible and aligned after blur, refocus continues, undo restores');
+  // The status bar keeps the validation count and opens the existing problem list
+  // from any mode; entries are buttons with code-specific advice, and F8 walks them.
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  const debugState = (key) => page.evaluate((key) => window.surdetEditorDebug.state[key], key);
+  const problems = page.locator('[data-action="show-problems"]');
+  assert.equal(await problems.innerText(), '2 个错误 · 1 条警告');
+  assert.equal(await problems.getAttribute('data-problem-state'), 'error');
+  await page.locator('[data-editor-mode="config"]').click();
+  await problems.click();
+  assert.equal(await debugState('mainTab'), 'editor');
+  assert(await page.locator('details.v4-project-context').evaluate(node => node.open), 'problem list stayed collapsed');
+  const firstProblem = page.locator('#issues-box button.issue').first();
+  // A validation rerun rebuilds the list; focus must survive it.
+  const rebuiltList = await page.locator('#issues-box').elementHandle();
+  await page.evaluate(() => window.surdetEditorDebug.runValidate());
+  await page.waitForFunction(old => !old.isConnected, rebuiltList);
+  await rebuiltList.dispose();
+  assert(await firstProblem.isVisible() && await firstProblem.evaluate(node => node === document.activeElement), 'problems did not focus the first entry');
+  assert.deepEqual(await page.locator('#issues-box button.issue').evaluateAll(nodes => nodes.map(node => node.querySelector('.issue-hint')?.textContent.startsWith('建议：') ?? false)), [true, true, true],
+    'timeline errors and the editor-only W006 warning show their code-specific advice');
+  await page.keyboard.press('Enter');
+  assert.equal(await debugState('mainTab'), 'timeline', 'a timeline problem must open its timeline');
+  const problemStatus = () => page.locator('#status').innerText();
+  for (const [key, expected, mode] of [['F8', /^问题 1\/3（content\/timelines\/invalid\.json:1）/, 'timeline'], ['F8', /^问题 2\/3/, 'timeline'], ['F8', /^问题 3\/3（start\.gal:2）/, 'editor'], ['Shift+F8', /^问题 2\/3/, 'timeline']]) {
+    await page.keyboard.press(key);
+    assert.match(await problemStatus(), expected);
+    assert.equal(await debugState('mainTab'), mode);
+    if (mode === 'editor') assert.equal(await page.locator('.v4-authoring .block.v4-current').getAttribute('data-line'), '1', 'F8 must select the problem line');
+  }
+  await page.locator('[data-editor-mode="editor"]').click();
+  await page.setViewportSize({ width: 960, height: 720 });
+  await problems.click();
+  assert(await page.locator('#issues-box button.issue').first().evaluate(node => node === document.activeElement && node.getClientRects().length > 0), 'medium-width problems must reveal the context panel');
+  await page.locator('[data-workbench-panel="editor"]').click();
+  await dialogue.focus();
+  console.log('PASS problems: status bar count opens the list from another mode, advice shown, Enter and F8 reach timeline and scene lines');
+  // Ctrl+K with > runs the real on-page buttons: disabled stays disabled, other
+  // workspaces are reached through the guarded mode navigation.
+  const palette = page.locator('dialog.project-search-dialog');
+  const paletteInput = palette.locator('input[type="search"]');
+  const openPalette = async (query) => {
+    await page.keyboard.press('Control+K');
+    await paletteInput.waitFor();
+    await paletteInput.fill(query);
+  };
+  await openPalette('>');
+  const commandTitles = await palette.locator('.project-search-result strong').allInnerTexts();
+  for (const title of ['保存全部', '撤销', '重做', '查看问题列表', '添加剧情', '剧本视图：源码', '流程图：查看全图', '前往配置']) assert(commandTitles.includes(title), `missing command ${title}: ${commandTitles}`);
+  const redoDisabled = await page.locator('[data-action="redo"]').isDisabled();
+  await paletteInput.fill('>重做');
+  assert.equal(await palette.locator('.project-search-result').first().getAttribute('aria-disabled'), redoDisabled ? 'true' : null, 'command availability must mirror its button');
+  if (redoDisabled) {
+    const beforeRedo = await sceneText();
+    await paletteInput.press('Enter');
+    assert(await palette.isVisible(), 'an unavailable command must not close the palette');
+    assert.match(await palette.locator('.project-search-footer').innerText(), /当前不可用/);
+    assert.equal(await sceneText(), beforeRedo);
+  }
+  await paletteInput.fill('>源码');
+  await paletteInput.press('Enter');
+  await palette.waitFor({ state: 'detached' });
+  assert.equal(await page.locator('button[data-script-view="source"]').getAttribute('aria-pressed'), 'true');
+  await openPalette('>查看全图');
+  assert.match(await palette.locator('.project-search-result small').first().innerText(), /前往流程/);
+  await paletteInput.press('Enter');
+  await palette.waitFor({ state: 'detached' });
+  assert.equal(await debugState('mainTab'), 'flow', 'a flow command must open the flow workspace first');
+  await openPalette('>编排');
+  await paletteInput.press('Enter');
+  await palette.waitFor({ state: 'detached' });
+  assert.equal(await debugState('mainTab'), 'editor');
+  assert.equal(await page.locator('button[data-script-view="arrange"]').getAttribute('aria-pressed'), 'true');
+  await dialogue.focus();
+  console.log('PASS command palette: > lists real commands, mirrors disabled buttons, runs view and cross-workspace commands through existing controls');
   const beforeCompositionRows = await page.locator('.block[data-line]').count();
   await dialogue.evaluate((node) => {
     node.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
