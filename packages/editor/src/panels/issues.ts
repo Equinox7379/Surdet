@@ -6,7 +6,7 @@ import { state, h, setStatus } from '../state.js';
 import { configSourceError, configSourcePath, type ConfigSourceName } from '../config-source.js';
 import { validateProject } from '../validate.js';
 import type { Issue, ProjectConfig } from '../validate.js';
-import { hintForCode, type CompiledScene } from '@surdet/core';
+import { hintForCode, type CompiledScene, type SourceRange } from '@surdet/core';
 import { parseProjectConfigDocument } from '@surdet/authoring';
 import { renderSidebar } from './sidebar.js';
 import { updateEdges, updateGraph } from './right.js';
@@ -14,13 +14,13 @@ import { refreshFlowIfVisible } from './flow.js';
 import { updateProblemIndicator, type ProblemSummary } from '../shell/app-shell.js';
 
 let validateTimer: ReturnType<typeof setTimeout> | null = null;
-let onIssueJumpHook: (sceneKey: string, line: number) => void = () => {};
+let onIssueJumpHook: (sceneKey: string, line: number, range?: SourceRange) => void = () => {};
 let onTimelineJumpHook: (timelineId: string) => void = () => {};
 let onConfigJumpHook: () => void = () => {};
 let onValidationAppliedHook: () => void = () => {};
 
 export function bindIssueNavigation(opts: {
-  onJump: (sceneKey: string, line: number) => void;
+  onJump: (sceneKey: string, line: number, range?: SourceRange) => void;
   onTimeline?: (timelineId: string) => void;
   onConfig?: () => void;
   onValidationApplied?: () => void;
@@ -42,6 +42,8 @@ export function invalidatePendingValidation(): void {
 
 export function scheduleValidate(): void {
   if (validateTimer) clearTimeout(validateTimer);
+  // Editing invalidates results immediately, including the debounce window.
+  validateSeq += 1;
   validateTimer = setTimeout(runValidate, 300);
 }
 
@@ -69,6 +71,7 @@ function buildValidateInput(): { sources: { key: string; id: string; file: strin
 /** 应用校验结果并刷新 UI（Worker 回包与同步路径共用）。
  *  scenes 为编译产物（E1a 起保留：流程图从编译产物提取，不重新解析） */
 export function applyValidation(issues: Issue[], edges: { from: string; to: string; kind: 'jump' | 'call' }[], scenes: Map<string, CompiledScene> = new Map()): void {
+  appliedValidationSeq = validateSeq;
   const configIssues = (Object.keys(state.handles) as ConfigSourceName[]).flatMap(name => {
     const error = configSourceError(name);
     return error ? [{ severity: 'error' as const, code: 'CONFIG_READ_ERROR', file: configSourcePath(name), line: 1, col: 1,
@@ -96,15 +99,26 @@ export function problemSummary(): ProblemSummary | null {
 let problemCursor = -1;
 /** F8 / Shift+F8: jump through the current problems in list order, announcing each one. */
 export function stepProblem(direction: 1 | -1): void {
+  if (!isValidationCurrent()) { setStatus(STALE_LOCATION, false, 4000); return; }
   const issues = state.lastValidation?.issues ?? [];
   if (issues.length === 0) { setStatus('没有需要处理的问题', true, 2500); return; }
   problemCursor = problemCursor < 0 || problemCursor >= issues.length
     ? (direction > 0 ? 0 : issues.length - 1)
     : (problemCursor + direction + issues.length) % issues.length;
   const issue = issues[problemCursor]!;
-  jumpToIssue(issue);
+  if (!jumpToIssue(issue)) return;
   const hint = specificHint(issue);
   setStatus(`问题 ${problemCursor + 1}/${issues.length}（${issue.file}:${issue.line}）：${issueMessage(issue)}${hint ? `　建议：${hint}` : ''}`, issue.severity !== 'error', 8000);
+}
+
+const STALE_LOCATION = '内容已修改，请等待重新校验后再定位';
+
+/** file:line:col, or the exact extent when the validation reported one. */
+function issueLocation(issue: Issue): string {
+  const range = issue.range;
+  if (range === undefined) return `${issue.file}:${issue.line}:${issue.col}`;
+  const end = range.end.line === range.start.line ? `${range.end.col}` : `${range.end.line}:${range.end.col}`;
+  return `${issue.file}:${range.start.line}:${range.start.col}–${end}`;
 }
 
 /** Some lint messages repeat the location already shown beside them. */
@@ -178,18 +192,29 @@ export function renderIssues(): void {
 }
 
 function renderIssue(issue: Issue): HTMLElement {
+  const issueSeq = appliedValidationSeq;
   const el = h('button', 'issue ' + issue.severity);
   el.type = 'button';
-  const loc = h('span', 'loc', `${issue.file}:${issue.line}:${issue.col}`);
+  const loc = h('span', 'loc', issueLocation(issue));
   if (issue.code) loc.append(h('span', 'issue-code', issue.code));
   el.append(loc, h('span', 'issue-text', issueMessage(issue)));
   const hint = specificHint(issue);
   if (hint) el.append(h('span', 'issue-hint', `建议：${hint}`));
-  el.onclick = () => { jumpToIssue(issue); };
+  el.onclick = () => { jumpToIssue(issue, issueSeq); };
   return el;
 }
 
-function jumpToIssue(issue: Issue): boolean {
+/**
+ * The one jump for clicks, Enter, F8/Shift+F8 and the status bar entry. A
+ * location (and its range) belongs only to the unchanged input it was
+ * computed from: after an edit nothing jumps until the new validation lands,
+ * and an entry from an older list never jumps.
+ */
+function jumpToIssue(issue: Issue, seq = appliedValidationSeq): boolean {
+  if (!isValidationCurrent() || seq !== appliedValidationSeq) {
+    setStatus(STALE_LOCATION, false, 4000);
+    return false;
+  }
   const timeline = state.timelines.find((entry) =>
     (entry.file.startsWith('content/timelines/') ? entry.file : `content/timelines/${entry.file}`) === issue.file);
   if (timeline) { onTimelineJumpHook(timeline.id); return true; }
@@ -206,7 +231,7 @@ function jumpToIssue(issue: Issue): boolean {
     }
     key = matches[0]!;
   }
-  onIssueJumpHook(key, Math.max(0, issue.line - 1));
+  onIssueJumpHook(key, Math.max(0, issue.line - 1), issue.range);
   return true;
 }
 
@@ -214,6 +239,12 @@ function jumpToIssue(issue: Issue): boolean {
 
 let validateWorker: Worker | null = null;
 let validateSeq = 0;
+let appliedValidationSeq = -1;
+
+/** A displayed diagnostic and its range belong only to the last unchanged input. */
+export function isValidationCurrent(): boolean {
+  return appliedValidationSeq === validateSeq;
+}
 try {
   validateWorker = new Worker(new URL('../validate-worker.ts', import.meta.url), { type: 'module' });
   validateWorker.onmessage = (e: MessageEvent) => {
