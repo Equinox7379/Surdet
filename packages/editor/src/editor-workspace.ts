@@ -106,6 +106,27 @@ export function editorHistoryClient(root: FileSystemDirectoryHandle | null) {
   };
 }
 
+/** Review discovery reads through the current binding only; it carries no decision, approval or write permission. */
+export function editorReviewTaskClient(root: FileSystemDirectoryHandle | null) {
+  const current = connection;
+  if (current === null || current.root !== root || current.lost) return null;
+  const request = <T>(run: (state: EditorWorkspaceState) => Promise<T>) => enqueue(current, async () => {
+    if (connection !== current || current.lost) throw new Error('项目已经切换，未继续读取审阅任务。');
+    const value = await run(stateFor(current));
+    if (connection !== current || current.lost) throw new Error('项目已经切换，未使用迟到的审阅结果。');
+    return value;
+  });
+  return {
+    tasks: () => request(async state => {
+      const list = await current.client.reviewTasks(state);
+      if (current.latest !== null && list.projectIdentity !== current.latest.projectIdentity) throw new Error('审阅任务不属于当前项目，已忽略。');
+      return list;
+    }),
+    content: (input: Parameters<EditorWorkspaceClient['reviewContent']>[0]['request']) =>
+      request(state => current.client.reviewContent({ ...state, request: input })),
+  };
+}
+
 /** Capture the existing binding: a late preview must never publish into another workspace. */
 export function editorPreviewPublisher(root: FileSystemDirectoryHandle | null) {
   const current = connection;

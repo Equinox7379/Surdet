@@ -237,6 +237,17 @@ describe('configuration draft state', () => {
     expect(inspectConfigDraftState().dirty).toBe(false);
   });
 
+  it('writes a picked swatch colour through the same theme field and draft', async () => {
+    const root = await renderFixture();
+    const swatch = byAttribute(root, 'aria-label', '主题色取色');
+    swatch.value = '#a1b2c3'; swatch.oninput?.();
+    expect(byAttribute(root, 'aria-label', '主题色').value).toBe('#a1b2c3');
+    expect(JSON.parse(previewThemeConfigText(state.gameConfigText)).theme.colors.accent).toBe(0xa1b2c3);
+    const color = byAttribute(root, 'aria-label', '主题色'); color.value = '#0a0b0c'; color.oninput?.();
+    expect(swatch.value).toBe('#0a0b0c');
+    configUndo(); expect(JSON.parse(readThemeConfigDraft()).theme?.colors?.accent).not.toBe(0x0a0b0c);
+  });
+
   it('retains incomplete form input as a dirty draft and synchronizes raw corrections', async () => {
     const root = await renderFixture();
     const color = byAttribute(root, 'aria-label', '主题色');
@@ -517,7 +528,8 @@ describe('configuration draft state', () => {
     vi.mocked(commitTextCatalogPatch).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
     const save = byText(root, '绑定清单并保存'); save.click();
     await vi.waitFor(() => expect(commitTextCatalogPatch).toHaveBeenCalledOnce());
-    const panel = save.parentElement!.parentElement!;
+    let panel = save.parentElement!;
+    while (!panel.className.split(' ').includes('config-ledger-section')) panel = panel.parentElement!;
     descendants(panel).forEach(node => { node.isConnected = false; });
     byText(root, '＋ 新增变量').click();
     editTextCsvDraft('newer CSV');

@@ -54,6 +54,8 @@ export interface ReviewPanelOptions extends ReviewPreparationOptions {
   onRefreshFixtureIdentity?: (workspace: ReviewWorkspaceState) => Promise<unknown> | unknown;
   reviewTerminalClient?: ReviewTerminalClient;
   reviewApplyEditor?: ExistingEditorSyncPort;
+  /** Current-project task discovery; null keeps the original empty state and picker entry. */
+  taskList?: (workspace: ReviewWorkspaceState | null) => HTMLElement | null;
 }
 
 let activeApply: { workspace: ReviewWorkspaceState; approvalFingerprint: string;
@@ -1552,11 +1554,28 @@ export function renderReviewPanel(
   workspace: ReviewWorkspaceState | null = state.reviewWorkspace,
   options: ReviewPanelOptions = {},
 ): void {
+  // An action can finish after the page was drawn again (e.g. returning from a result preview):
+  // redraw the live review view for the same review, never the detached copy that started it.
+  if (container.isConnected === false && typeof document !== 'undefined') {
+    const live = document.getElementById('review-view');
+    if (live === null || live === container || state.reviewWorkspace !== workspace) return;
+    container = live;
+  }
   if (activeApply !== null && (activeApply.workspace !== workspace || workspace?.approvalReceipt === null
     || workspace?.returnReceipt !== null)) disposeReviewApply();
   container.innerHTML = '';
   if (workspace === null) {
-    container.appendChild(h('div', 'empty', '暂无审阅任务'));
+    const tasks = options.taskList?.(null) ?? null;
+    if (tasks !== null) {
+      container.appendChild(tasks);
+      return;
+    }
+    const empty = h('section', 'review-empty-state');
+    empty.append(
+      h('h2', undefined, '暂无审阅任务'),
+      h('p', undefined, '外部 Agent 交付的候选会在这里比较、试玩，确认后再决定是否写回项目。从顶栏的“打开审阅任务”开始。'),
+    );
+    container.appendChild(empty);
     return;
   }
   if (workspace.projection.kind === 'comparison') renderComparisonReview(container, workspace, options);
@@ -1565,15 +1584,23 @@ export function renderReviewPanel(
   renderReviewPreparation(content, workspace, options);
   const preparation = content.querySelector('.review-preparation');
   if (preparation) content.querySelector('.review-decision-forecast')?.after(preparation);
+  const tasks = options.taskList?.(workspace) ?? null;
+  if (tasks !== null) container.querySelector('.review-workspace-header')?.appendChild(tasks);
 }
 
-/** 顶层“打开审阅任务”入口；创建 review workspace 后只切换到审阅页，不自动写回任何回执。 */
-export async function openReviewPanelWorkspace(): Promise<void> {
+/**
+ * 顶层“打开审阅任务”入口与当前项目任务列表共用；创建 review workspace 后只切换到审阅页，
+ * 不自动写回任何回执。列表入口只替换目录来源，草稿、未明回执与切换保护保持不变。
+ */
+export async function openReviewPanelWorkspace(
+  source?: () => Promise<FileSystemDirectoryHandle>,
+  confirmReplace?: (current: ReviewWorkspaceState | null) => boolean,
+): Promise<boolean> {
   if (isReviewReceiptWriting() || isReviewApplyRunning()) throw new Error('审阅操作仍在进行，请完成后再打开其他任务。');
   const previous = state.reviewWorkspace;
   const recovering = hasPendingReviewReceipt(previous);
-  const picker = (window as unknown as { showDirectoryPicker: (opts?: unknown) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker;
-  const root = await picker({ mode: 'readwrite' });
+  const pick = () => (window as unknown as { showDirectoryPicker: (opts?: unknown) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker;
+  const root = source ? await source() : await pick()({ mode: 'readwrite' });
   const workspace = await openReviewWorkspace(root);
   // The old approval button can be used while directory reading awaits I/O.
   // An unknown but settled receipt may still reopen here to reconcile its actual outcome.
@@ -1585,11 +1612,14 @@ export async function openReviewPanelWorkspace(): Promise<void> {
     || (workspace.authority.state !== 'available' && workspace.authority.state !== 'terminal'))) {
     throw new Error('原审阅操作的结果尚未确认，请重新打开同一审阅核对状态；已保留原任务。');
   }
+  // Checked against the review as it is now: edits made while reading must not be dropped silently.
+  if (confirmReplace !== undefined && !confirmReplace(current)) return false;
   state.reviewWorkspace = workspace;
   state.mainTab = 'review';
   state.selectedObjectRef = null;
   state.previewChoices = null;
   if (state.dirHandle === null) state.dirName = `审阅：${state.reviewWorkspace.projection.task.title}`;
+  return true;
 }
 
 /** 仅供预览状态探针调用，保持变化只在当前 review workspace 内。 */

@@ -40,7 +40,7 @@
   border: 1px solid var(--surdet-action-primary);
   border-radius: var(--surdet-radius-control);
   background: var(--surdet-action-primary);
-  color: var(--surdet-color-paper-50);
+  color: var(--surdet-text-on-accent);
   font-weight: 650;
 }
 
@@ -423,7 +423,7 @@
 .asset-center-batch-controls .asset-center-batch-primary {
   border-color: var(--surdet-action-primary);
   background: var(--surdet-action-primary);
-  color: var(--surdet-color-paper-50);
+  color: var(--surdet-text-on-accent);
   font-weight: 650;
 }
 
@@ -1016,7 +1016,7 @@
 .asset-relocation-actions .asset-relocation-primary {
   border-color: var(--surdet-action-primary);
   background: var(--surdet-action-primary);
-  color: var(--surdet-color-paper-50);
+  color: var(--surdet-text-on-accent);
   font-weight: 650;
 }
 

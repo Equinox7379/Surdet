@@ -5,18 +5,20 @@
 }
 
 ::selection {
-  background: var(--surdet-surface-selected);
+  background: var(--surdet-action-soft);
   color: var(--surdet-text-primary);
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: var(--surdet-border-default);
-  border: 2px solid var(--surdet-surface-app);
+  background: var(--surdet-border-strong);
+  border: 3px solid transparent;
+  background-clip: padding-box;
   border-radius: var(--surdet-radius-control);
 }
-::-webkit-scrollbar-thumb:hover { background: var(--surdet-border-strong); }
+::-webkit-scrollbar-thumb:hover { background-color: var(--surdet-text-muted); }
 
 .empty {
   padding: var(--surdet-space-12);
@@ -29,13 +31,82 @@
 .mono { font-family: var(--surdet-font-mono); }
 .dim { color: var(--surdet-text-secondary); }
 
-#app input[type="checkbox"] { accent-color: var(--surdet-action-primary); }
+#app input[type="checkbox"],
+#app input[type="radio"],
+#app input[type="range"] { accent-color: var(--surdet-action-primary); }
 
 :where(#app) button,
 :where(#app) input,
 :where(#app) select,
 :where(#app) textarea {
   font: inherit;
+  color: inherit;
+}
+
+/* Unstyled form controls inherit the dark surface instead of the UA light field. */
+:where(#app) :where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select, textarea) {
+  padding: 4px 8px;
+  background-color: var(--surdet-surface-app);
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-tight);
+}
+
+:where(#app) :where(input, textarea)::placeholder {
+  color: var(--surdet-text-muted);
+}
+
+:where(#app) select {
+  appearance: none;
+  padding-right: 26px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23A3ABB7' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+:where(#app) input[type="file"]::file-selector-button {
+  margin-right: 10px;
+  padding: 4px 12px;
+  border: 1px solid var(--surdet-border-strong);
+  border-radius: var(--surdet-radius-tight);
+  background: var(--surdet-surface-subtle);
+  color: var(--surdet-text-primary);
+  cursor: pointer;
+}
+
+:where(#app) option {
+  background: var(--surdet-surface-raised);
+  color: var(--surdet-text-primary);
+}
+
+:where(#app) :where(button):not([class]) {
+  border: 1px solid var(--surdet-border-strong);
+  border-radius: var(--surdet-radius-tight);
+  background: var(--surdet-surface-subtle);
+  cursor: pointer;
+}
+
+:where(#app) :where(button):not([class]):hover {
+  background: var(--surdet-surface-raised);
+}
+
+:where(#app) a {
+  color: var(--surdet-action-primary);
+}
+
+:where(#app) dialog {
+  color: var(--surdet-text-primary);
+  background: var(--surdet-surface-panel);
+  border: 1px solid var(--surdet-border-strong);
+  border-radius: var(--surdet-radius-control);
+  box-shadow: var(--surdet-shadow-popover);
+}
+
+:where(#app) dialog::backdrop {
+  background: var(--surdet-backdrop);
+}
+
+:where(#app) :where(code, kbd, samp) {
+  font-family: var(--surdet-font-mono);
 }
 
 .editor-command,
@@ -44,7 +115,7 @@
   min-height: var(--surdet-control-height);
   border: 1px solid var(--surdet-border-strong);
   border-radius: var(--surdet-radius-tight);
-  padding: var(--surdet-space-8) var(--surdet-space-12);
+  padding: var(--surdet-space-6) var(--surdet-space-12);
   font-weight: 600;
   font-size: var(--surdet-type-control);
   line-height: 1.2;
@@ -57,33 +128,33 @@
 
 .editor-command,
 [data-action-scope="workspace"] {
-  background-color: var(--surdet-surface-panel);
+  background-color: var(--surdet-surface-subtle);
   color: var(--surdet-text-primary);
 }
 
 .editor-command:hover,
 [data-action-scope="workspace"]:hover {
-  background-color: var(--surdet-surface-subtle);
+  background-color: var(--surdet-surface-raised);
   border-color: var(--surdet-border-strong);
 }
 
 [data-action-scope="global"] {
   background-color: var(--surdet-action-primary);
   border-color: var(--surdet-action-primary);
-  color: var(--surdet-surface-panel);
+  color: var(--surdet-text-on-accent);
   letter-spacing: 0.01em;
 }
 
 [data-action-scope="global"]:hover {
-  background-color: var(--surdet-shell-chrome-bg);
-  border-color: var(--surdet-shell-chrome-bg);
+  background-color: var(--surdet-action-primary-hover);
+  border-color: var(--surdet-action-primary-hover);
 }
 
 .editor-command:disabled,
 [data-action-scope="global"]:disabled,
 [data-action-scope="workspace"]:disabled {
   cursor: not-allowed;
-  opacity: 0.55;
+  opacity: 0.5;
 }
 
 [aria-selected="true"] {
@@ -103,9 +174,9 @@
   width: 100%;
   border: 1px solid var(--surdet-border-default);
   border-radius: var(--surdet-radius-tight);
-  background-color: var(--surdet-surface-panel);
+  background-color: var(--surdet-surface-app);
   color: var(--surdet-text-primary);
-  padding: var(--surdet-space-8) var(--surdet-space-12);
+  padding: var(--surdet-space-6) var(--surdet-space-12);
 }
 
 .surdet-field:hover {

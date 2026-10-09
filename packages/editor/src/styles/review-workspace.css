@@ -678,3 +678,261 @@
 }
 .review-preparation-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
 .review-preparation-progress { margin-block: 1rem; }
+
+.review-empty-state {
+  max-width: 46ch;
+  margin: var(--surdet-space-64) auto;
+  padding: 0 var(--surdet-space-24);
+  text-align: center;
+}
+
+.review-empty-state h2 {
+  margin: 0 0 var(--surdet-space-8);
+  color: var(--surdet-text-primary);
+  font-size: var(--surdet-type-section);
+  font-weight: 600;
+}
+
+.review-empty-state p {
+  margin: 0;
+  color: var(--surdet-text-secondary);
+  font-size: var(--surdet-type-control);
+  line-height: 1.75;
+}
+
+/* ---- Current-project review tasks (discovery only) ---- */
+
+.review-discovery:not(.review-discovery--compact) {
+  box-sizing: border-box;
+  max-width: 920px;
+  margin: var(--surdet-space-48) auto;
+  padding: 0 var(--surdet-space-24);
+  overflow-y: auto;
+  max-height: 100%;
+}
+
+.review-discovery-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.review-discovery-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+.review-discovery-title h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.review-discovery-summary {
+  color: var(--surdet-text-secondary);
+  font-size: 12.5px;
+}
+
+.review-discovery button {
+  min-height: 30px;
+  padding: 4px 12px;
+  border: 1px solid var(--surdet-border-strong);
+  border-radius: var(--surdet-radius-tight);
+  background: var(--surdet-surface-subtle);
+  color: var(--surdet-text-primary);
+  font: 500 12.5px/1.4 var(--surdet-font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.review-discovery button:hover:not(:disabled) {
+  background: var(--surdet-surface-raised);
+}
+
+.review-discovery button.primary {
+  border-color: var(--surdet-action-primary);
+  background: var(--surdet-action-primary);
+  color: var(--surdet-text-on-accent);
+  font-weight: 600;
+}
+
+.review-discovery button.primary:hover:not(:disabled) {
+  border-color: var(--surdet-action-primary-hover);
+  background: var(--surdet-action-primary-hover);
+}
+
+.review-discovery button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.review-discovery-items {
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-control);
+  background: var(--surdet-surface-panel);
+}
+
+.review-discovery-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 7.5em;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+}
+
+.review-discovery-item + .review-discovery-item {
+  border-top: 1px solid var(--surdet-border-default);
+}
+
+.review-discovery-item[aria-current="true"] {
+  background: var(--surdet-surface-selected);
+}
+
+.review-discovery-name {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.review-discovery-name strong {
+  font: 600 13px/1.5 var(--surdet-font-mono);
+  overflow-wrap: anywhere;
+}
+
+.review-discovery-kind {
+  color: var(--surdet-text-secondary);
+  font-size: 12px;
+}
+
+.review-discovery-note {
+  margin: 4px 0 0;
+  color: var(--surdet-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.review-discovery-status {
+  padding: 1px 8px;
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-tight);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.review-discovery-status--pending { color: var(--surdet-action-primary); }
+.review-discovery-status--receipt-present { color: var(--surdet-state-info); }
+.review-discovery-status--unavailable { color: var(--surdet-state-danger); }
+
+.review-discovery-open,
+.review-discovery-current {
+  justify-self: end;
+}
+
+.review-discovery-current {
+  color: var(--surdet-text-secondary);
+  font-size: 12px;
+}
+
+.review-discovery-error {
+  margin: 12px 0 0;
+  color: var(--surdet-state-danger);
+  font-size: 12.5px;
+}
+
+.review-discovery-empty,
+.review-discovery-footnote {
+  margin: 16px 0 0;
+  color: var(--surdet-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.review-discovery-footnote {
+  color: var(--surdet-text-muted);
+}
+
+.review-workspace-header:has(.review-discovery--compact) {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.review-discovery--compact {
+  position: relative;
+  align-self: center;
+}
+
+.review-discovery--compact > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 4px 4px 10px;
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-tight);
+  cursor: pointer;
+  list-style: none;
+}
+
+.review-discovery--compact > summary::-webkit-details-marker {
+  display: none;
+}
+
+.review-discovery--compact .review-discovery-title strong {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.review-discovery--compact .review-discovery-items,
+.review-discovery--compact .review-discovery-error {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: min(620px, 80vw);
+  max-height: 60vh;
+  margin: 0;
+  overflow-y: auto;
+  box-shadow: var(--surdet-shadow-popover);
+}
+
+.review-discovery--compact .review-discovery-error {
+  padding: 10px 14px;
+  border: 1px solid var(--surdet-border-default);
+  background: var(--surdet-surface-panel);
+}
+
+.review-discovery-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 460px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-tight);
+  color: var(--surdet-state-warning);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  .review-workspace-header:has(.review-discovery--compact) {
+    grid-template-columns: 1fr;
+  }
+
+  .review-discovery-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .review-discovery-open,
+  .review-discovery-current {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}

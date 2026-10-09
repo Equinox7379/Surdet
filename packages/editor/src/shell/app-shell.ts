@@ -19,7 +19,11 @@ export interface ProjectBarProjection {
   relayProtection?: RelayProtectionState;
   relayUpdate?: RelayUpdateState;
   relayDirty?: boolean;
+  problems?: ProblemSummary | null;
 }
+
+/** Latest validation counts; null while the first validation is still pending. */
+export interface ProblemSummary { errors: number; warnings: number }
 
 export interface ProjectBarActions {
   onOpenProject(): void;
@@ -34,6 +38,7 @@ export interface ProjectBarActions {
   onDiscardProjectDrafts?(): void;
   onKeepProjectDrafts?(): void;
   onSearch?(): void;
+  onShowProblems?(): void;
 }
 
 function element<K extends keyof HTMLElementTagNameMap>(
@@ -203,6 +208,20 @@ export function updateProjectBarProjection(
   updateRelayProjection(projection, root);
 }
 
+export function updateProblemIndicator(summary: ProblemSummary | null, root: ParentNode = document): void {
+  const control = root.querySelector<HTMLButtonElement>('.editor-status-problems');
+  if (!control) return;
+  const total = summary === null ? 0 : summary.errors + summary.warnings;
+  const label = summary === null ? '等待校验'
+    : total === 0 ? '没有问题'
+    : [summary.errors ? `${summary.errors} 个错误` : '', summary.warnings ? `${summary.warnings} 条警告` : ''].filter(Boolean).join(' · ');
+  control.textContent = label;
+  control.setAttribute('data-problem-state', summary === null ? 'pending' : summary.errors ? 'error' : summary.warnings ? 'warning' : 'clean');
+  control.setAttribute('aria-label', total === 0 ? `问题：${label}` : `问题：${label}，打开问题列表`);
+  control.title = total === 0 ? label : `${label}：打开问题列表（F8 下一条，Shift+F8 上一条）`;
+  control.disabled = total === 0;
+}
+
 export function renderProjectBar(
   projection: ProjectBarProjection,
   actions: ProjectBarActions,
@@ -212,17 +231,7 @@ export function renderProjectBar(
 
   const identity = element('div', 'editor-product-identity');
   identity.setAttribute('data-editor-region', 'product-identity');
-  const productMark = element('span', 'editor-product-mark', '述');
-  productMark.setAttribute('aria-hidden', 'true');
-  const productText = element('span', 'editor-product-text');
-  productText.append(
-    element('strong', 'editor-product-name', 'Surdet'),
-    element('span', 'editor-product-kind', '剧情创作'),
-  );
-  identity.append(
-    productMark,
-    productText,
-  );
+  identity.append(element('strong', 'editor-product-name', 'Surdet'));
 
   const context = element('div', 'editor-project-context');
   context.setAttribute('data-editor-region', 'project-context');
@@ -231,14 +240,14 @@ export function renderProjectBar(
     contextItem('当前工作', 'editor-current-object', projection.objectLabel),
   );
 
-  const saveState = element(
-    'span',
-    'editor-save-state',
-    projection.writeLocked
-      ? projection.writeLockLabel ?? '素材整理进行中'
-      : saveStateLabel(projection.saveState),
-  );
-  saveState.setAttribute('data-save-state', projection.saveState);
+  const search = element('div', 'editor-project-search');
+  search.setAttribute('data-editor-region', 'project-search');
+  if (actions.onSearch) {
+    const control = actionButton('搜索场景、台词、角色和素材', 'search-project', actions.onSearch, false, 'Ctrl+K');
+    control.setAttribute('aria-keyshortcuts', 'Control+K Meta+K');
+    control.prepend(workbenchIcon('search'));
+    search.appendChild(control);
+  }
 
   const commands = element('div', 'editor-project-commands');
   commands.setAttribute('data-editor-region', 'global-commands');
@@ -273,21 +282,46 @@ export function renderProjectBar(
   );
   saveCommands.appendChild(save);
   commands.append(projectCommands, editCommands, saveCommands);
-  if (actions.onSearch) {
-    const search = actionButton('搜索项目', 'search-project', actions.onSearch, false, 'Ctrl+K');
-    search.appendChild(workbenchIcon('search'));
-    search.setAttribute('aria-keyshortcuts', 'Control+K Meta+K');
-    commands.appendChild(search);
-  }
+
+  header.append(identity, context, search, commands);
+  return header;
+}
+
+/**
+ * Save state, operation messages and relay protection share one bottom status bar.
+ * It is a separate landmark so long messages never push the title bar or navigation.
+ */
+export function renderStatusBar(
+  projection: ProjectBarProjection,
+  actions: Pick<ProjectBarActions, 'onViewProjectChanges' | 'onSyncProject' | 'onKeepProjectDrafts' | 'onDiscardProjectDrafts' | 'onShowProblems'>,
+): HTMLElement {
+  const footer = element('footer', 'editor-status-bar');
+  footer.setAttribute('data-editor-region', 'status-bar');
+
+  const saveState = element(
+    'span',
+    'editor-save-state',
+    projection.writeLocked
+      ? projection.writeLockLabel ?? '素材整理进行中'
+      : saveStateLabel(projection.saveState),
+  );
+  saveState.setAttribute('data-save-state', projection.saveState);
 
   const status = element('span', 'editor-operation-status');
   status.id = 'status';
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
 
+  // Validation counts stay visible here; operation messages keep the #status line.
+  const problems = element('button', 'editor-status-problems');
+  problems.type = 'button';
+  problems.setAttribute('data-action', 'show-problems');
+  problems.setAttribute('aria-keyshortcuts', 'F8 Shift+F8');
+  if (actions.onShowProblems) problems.onclick = actions.onShowProblems;
+
   const feedback = element('div', 'editor-operation-feedback');
   feedback.setAttribute('data-editor-region', 'operation-feedback');
-  feedback.append(saveState, status);
+  feedback.append(saveState, problems, status);
 
   const relayStatus = element('div', 'editor-relay-status');
   relayStatus.setAttribute('aria-live', 'polite');
@@ -307,21 +341,51 @@ export function renderProjectBar(
     relayActions.appendChild(actionButton('放弃草稿并同步', 'discard-project-drafts', actions.onDiscardProjectDrafts));
   }
   relayStatus.append(relayProtection, relayUpdate, relayActions);
-  header.append(identity, context, commands, feedback, relayStatus);
-  updateRelayProjection(projection, header);
-  return header;
+  footer.append(feedback, relayStatus);
+  updateRelayProjection(projection, footer);
+  updateProblemIndicator(projection.problems ?? null, footer);
+  return footer;
+}
+
+export interface ModeBadge { count: number; hint: string }
+
+function applyModeBadge(button: HTMLElement, label: string, badge: ModeBadge | undefined): void {
+  let mark = button.querySelector<HTMLElement>('.editor-mode-badge');
+  if (badge === undefined || badge.count <= 0) {
+    if (mark !== null) {
+      mark.remove();
+      button.title = label;
+      button.removeAttribute('aria-label');
+    }
+    return;
+  }
+  if (mark === null) {
+    mark = element('span', 'editor-mode-badge');
+    mark.setAttribute('aria-hidden', 'true');
+    button.appendChild(mark);
+  }
+  mark.textContent = badge.count > 99 ? '99+' : String(badge.count);
+  button.title = `${label}：${badge.hint}`;
+  button.setAttribute('aria-label', `${label}，${badge.hint}`);
+}
+
+/** A count on a mode is only a hint to look; the mode's own page holds the facts. */
+export function updateModeNavigationBadge(mode: EditorModeId, badge: ModeBadge | undefined, root: ParentNode = document): void {
+  const button = root.querySelector<HTMLElement>(`.editor-mode-button[data-editor-mode="${mode}"]`);
+  const definition = EDITOR_MODES.find(({ id }) => id === mode);
+  if (button !== null && definition !== undefined) applyModeBadge(button, definition.label, badge);
 }
 
 export function renderModeNavigation(
   activeMode: EditorModeId,
   onSelect: (mode: EditorModeId) => void,
+  badges: Partial<Record<EditorModeId, ModeBadge>> = {},
 ): HTMLElement {
   const navigation = element('nav', 'editor-mode-navigation');
   navigation.setAttribute('aria-label', '创作模式');
   navigation.setAttribute('data-editor-region', 'mode-navigation');
 
-  const heading = element('div', 'editor-mode-navigation-title', '工作区');
-  navigation.appendChild(heading);
+  navigation.appendChild(element('div', 'editor-mode-navigation-title', '工作区'));
 
   for (const group of EDITOR_MODE_GROUPS) {
     const groupElement = element('div', 'editor-mode-group');
@@ -330,13 +394,15 @@ export function renderModeNavigation(
     groupElement.setAttribute('aria-label', group.label);
     groupElement.appendChild(element('span', 'editor-mode-group-label', group.label));
     for (const mode of EDITOR_MODES.filter(({ group: modeGroup }) => modeGroup === group.id)) {
-      const button = element('button', 'editor-mode-button', mode.label);
-      button.appendChild(workbenchIcon(mode.id));
+      const button = element('button', 'editor-mode-button');
+      button.append(workbenchIcon(mode.id), element('span', 'editor-mode-label', mode.label));
+      button.title = mode.label;
       button.type = 'button';
       button.setAttribute('data-editor-mode', mode.id);
       button.setAttribute('aria-controls', mode.panelId);
       if (mode.id === activeMode) button.setAttribute('aria-current', 'page');
       button.onclick = () => onSelect(mode.id);
+      applyModeBadge(button, mode.label, badges[mode.id]);
       groupElement.appendChild(button);
     }
     navigation.appendChild(groupElement);

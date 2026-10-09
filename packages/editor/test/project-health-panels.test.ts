@@ -205,6 +205,27 @@ describe('text audit panel', () => {
     expect(container.querySelector('[data-audit-technical]')?.tagName).toBe('DETAILS');
   });
 
+  it('shows a repeated finding once with a jump for every location', () => {
+    vi.stubGlobal('document', documentStub);
+    state.scenes.clear();
+    const text = '凛：去邮局。\n凛：邮局关门了。\n凛：明天再说。\n@end';
+    state.scenes.set('ch01', scene('ch01', text));
+    state.lastValidation = { issues: [], scenes: new Map([['ch01', compileScene(text, 'content/scenario/ch01.gal', 'ch01')]]) };
+    state.configFiles.terminology = { terms: [{ canonical: '港湾邮局', variants: ['邮局'] }] };
+    const jumps: Array<[string, number]> = [];
+    bindAuditHooks({ onJump: (sceneKey, line) => jumps.push([sceneKey, line]) });
+    const container = new FakeElement('section');
+    renderAuditPanel(container as unknown as HTMLElement);
+    const records = container.querySelectorAll('[data-audit-finding="TERM_VARIANT"]');
+    expect(records).toHaveLength(1);
+    expect(visibleText(container)).toContain('2 处');
+    const locations = container.querySelectorAll('[data-audit-jump]');
+    expect(locations.map((button) => button.getAttribute('aria-label'))).toEqual(['打开场景 ch01 · 第 1 行', '打开场景 ch01 · 第 2 行']);
+    for (const button of locations) button.click();
+    expect(jumps).toEqual([['ch01', 0], ['ch01', 1]]);
+    expect(container.querySelector('[data-audit-technical]')!.textContent).toContain('content/scenario/ch01.gal:2');
+  });
+
   it.each(['gal', 'GAL', 'GaL'])('navigates to a nested scene with the supported .%s extension', (extension) => {
     vi.stubGlobal('document', documentStub);
     state.scenes.clear();
