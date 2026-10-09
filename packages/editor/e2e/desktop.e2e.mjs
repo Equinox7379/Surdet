@@ -186,6 +186,40 @@ try {
   await recentProject.waitForTimeout(500);
   assert.equal(app.windows().length, 2, 'reopening an open project from the menu focuses it instead of adding a window');
   console.log('RECENT PROJECTS: recorded project reopened from the start page and native menu; forged id and moved folder rejected');
+  // New project: the start page hands over only the native location id, the title
+  // and the template; the main process writes the folder and opens it in its own window.
+  const parent = await fs.realpath(await fs.mkdtemp(path.join(output, 'new-projects-')));
+  await fs.mkdir(path.join(parent, '旧作'));
+  await app.evaluate(({ dialog }, parent) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [parent] }); }, parent);
+  await homeAgain.locator('[data-welcome-action="new-project"]').click();
+  const projectName = homeAgain.getByLabel('项目名称');
+  await projectName.waitFor();
+  assert.equal(await homeAgain.evaluate(() => document.activeElement?.id), 'new-project-name');
+  const createProject = homeAgain.getByRole('button', { name: '创建并打开' });
+  assert.equal(await createProject.isDisabled(), true, 'nothing to create without a name and a location');
+  await homeAgain.getByRole('button', { name: '返回' }).click();
+  await homeAgain.locator('.editor-welcome-recent-item').nth(1).waitFor();
+  await homeAgain.locator('[data-welcome-action="new-project"]').click();
+  await projectName.fill('旧作');
+  await homeAgain.getByRole('button', { name: '选择位置…' }).click();
+  await homeAgain.waitForFunction(parent => document.querySelector('.editor-welcome-create-path')?.textContent === parent, parent);
+  await createProject.click();
+  await homeAgain.waitForFunction(() => document.querySelector('.editor-welcome-create-message')?.getAttribute('data-tone') === 'error');
+  assert.equal(await homeAgain.locator('.editor-welcome-create-message').innerText(), '文件夹「旧作」已存在，请换一个项目名称。');
+  assert.deepEqual(await fs.readdir(path.join(parent, '旧作')), [], 'an existing folder is never written');
+  assert.equal(app.windows().length, 2, 'a refused creation opens nothing');
+  await projectName.fill('雾港 来信');
+  await homeAgain.getByRole('radio', { name: /空白项目/ }).check();
+  const homeAgainClosed = homeAgain.waitForEvent('close');
+  const createdOpened = app.waitForEvent('window');
+  await createProject.click();
+  const created = await createdOpened; watch(created);
+  await created.waitForFunction(() => window.surdetEditorDebug?.state.scenes.size > 0 && document.body.innerText.includes('接力保护：已连接'));
+  await homeAgainClosed;
+  assert.equal(JSON.parse(await fs.readFile(path.join(parent, '雾港 来信', 'game.config.json'), 'utf8')).title, '雾港 来信');
+  assert.deepEqual(await created.evaluate(() => [...window.surdetEditorDebug.state.scenes.values()].map(scene => scene.id)), ['start']);
+  assert.equal(app.windows().length, 2, 'the already open project keeps its window');
+  console.log('NEW PROJECT: existing folder refused with the plain reason; blank project created from the start page and opened in its own window');
   assert.equal(errors.length, 0, errors.join('\n'));
   console.log('PASS', { fixture, profile });
 } catch (error) {

@@ -1,4 +1,4 @@
-import { desktopDirectory } from './desktop.js';
+import { desktopDirectory, desktopErrorMessage } from './desktop.js';
 import { bindStageEditingHooks } from './stage-editing.js';
 import { PROJECT_ASSET_RELOCATION_KINDS, AGENT_IMAGE_MAX_BYTES, parseProjectConfigDocument } from '@surdet/authoring';
 /**
@@ -102,6 +102,7 @@ import {
   openListedReviewTask, refreshReviewTasks, renderReviewTaskList, reviewTaskPendingCount, reviewTaskPreviewDirectory,
 } from './panels/review-tasks.js';
 import { renderTimelineAutosaveConflictPanel } from './panels/timeline-autosave-conflicts.js';
+import { createProjectCreation, renderProjectCreation, type ProjectCreation } from './panels/project-creation.js';
 import {
   AssetImportClientError,
   createAssetImportAuthorityClient,
@@ -138,6 +139,10 @@ let authoringProjectChanging = false;
 let boundReviewProject: { projectIdentity: string; handle: FileSystemDirectoryHandle } | null = null;
 let renderedMainTab: typeof state.mainTab | null = null;
 let returningFromReviewPreview = false;
+// Desktop start page creation form: kept across redraws so a typed name and chosen location survive them.
+let projectCreation: ProjectCreation | null = null;
+let projectCreationView: ReturnType<typeof renderProjectCreation> | null = null;
+let projectCreationOpen = false;
 const PREPARATION_SESSION_KEY = 'surdet.review-preparation';
 const authoringWaiters: Array<{
   revision: number;
@@ -1493,6 +1498,21 @@ function confirmProjectSwitch(): boolean {
     || window.confirm('当前项目还有未保存修改。切换项目会放弃这些修改，确定继续吗？');
 }
 
+/** Only the real desktop main page offers creation; the browser build and preview frames never do. */
+function desktopProjectCreation(): ProjectCreation | null {
+  const bridge = window.surdetDesktop;
+  if (!bridge || typeof bridge.createProject !== 'function' || typeof bridge.chooseProjectLocation !== 'function') return null;
+  projectCreation ??= createProjectCreation(bridge, () => { if (projectCreationView?.root.isConnected) projectCreationView.refresh(); });
+  return projectCreation;
+}
+
+function setProjectCreationOpen(open: boolean): void {
+  projectCreationOpen = open;
+  renderMainArea();
+  if (open) document.getElementById('new-project-name')?.focus();
+  else document.querySelector<HTMLButtonElement>('.editor-welcome-actions [data-welcome-action="new-project"]')?.focus();
+}
+
 /** Desktop start page: directories the person already opened, resolved by the main process. */
 function renderRecentProjects(bridge: NonNullable<Window['surdetDesktop']>): HTMLElement {
   const section = h('section', 'editor-welcome-recent');
@@ -1510,7 +1530,7 @@ function renderRecentProjects(bridge: NonNullable<Window['surdetDesktop']>): HTM
       control.append(h('strong', undefined, project.name), h('small', undefined, project.location), h('time', undefined, when));
       control.onclick = () => {
         void bridge.openRecentProject(project.id).catch((error: unknown) => {
-          setStatus(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : '无法打开最近项目', false, 6000);
+          setStatus(desktopErrorMessage(error, '无法打开最近项目'), false, 6000);
         });
       };
       list.append(control);
@@ -2107,6 +2127,7 @@ function renderMainArea(): void {
     if (state.scenes.size === 0 && state.dirHandle === null) {
       const welcome = h('section', 'editor-welcome');
       welcome.setAttribute('aria-label', '开始创作');
+      const creation = desktopProjectCreation();
       const introduction = h('div', 'editor-welcome-intro');
       const shortcuts = h('dl', 'editor-welcome-shortcuts');
       for (const [key, label] of [['Ctrl+K', '搜索场景、台词、角色和素材'], ['Ctrl+S', '保存全部修改'], ['Ctrl+Z / Ctrl+Y', '撤销与重做']]) {
@@ -2115,10 +2136,22 @@ function renderMainArea(): void {
       introduction.append(
         h('span', 'editor-welcome-kicker', 'Surdet 剧情创作'),
         h('h1', undefined, '开始创作'),
-        h('p', undefined, '打开一个游戏项目文件夹，继续编写剧情、安排演出；或打开外部 Agent 交付的审阅任务，比较候选后再决定是否采用。'),
+        h('p', undefined, `${creation ? '新建或打开' : '打开'}一个游戏项目文件夹，继续编写剧情、安排演出；或打开外部 Agent 交付的审阅任务，比较候选后再决定是否采用。`),
         shortcuts,
       );
       const actions = h('div', 'editor-welcome-actions');
+      if (creation && projectCreationOpen) {
+        projectCreationView = renderProjectCreation(creation, () => setProjectCreationOpen(false));
+        actions.append(projectCreationView.root);
+        welcome.append(introduction, actions); col.append(welcome); refreshProjectBarProjection(); return;
+      }
+      if (creation) {
+        const control = h('button'); control.type = 'button'; control.dataset['welcomeAction'] = 'new-project'; const label = h('span');
+        label.append(h('strong', undefined, '新建项目'), h('small', undefined, '从示例或空白模板开始，选好位置后在新窗口中打开'));
+        control.append(workbenchIcon('blank'), label);
+        control.onclick = () => setProjectCreationOpen(true);
+        actions.append(control);
+      }
       for (const [action, icon, title, description] of [
         [state.fsSupported ? 'open-project' : 'load-demo', 'folder', state.fsSupported ? '打开项目文件夹' : '加载演示项目', state.fsSupported ? '选择包含 game.config.json 的游戏项目目录' : '当前浏览器不能直接读写本地目录，可先体验编辑与校验'],
         ...(state.fsSupported ? [['open-review', 'open-review', '打开审阅任务', '比较候选、试玩结果，再决定是否写回项目']] : []),
