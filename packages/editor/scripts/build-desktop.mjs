@@ -43,6 +43,8 @@ const preload = ts.transpileModule(await fs.readFile(path.join(root, 'desktop/pr
 }).outputText;
 await fs.writeFile(path.join(output, 'preload.cjs'), preload);
 await fs.cp(path.join(root, 'dist'), path.join(output, 'ui'), { recursive: true });
+await fs.cp(path.join(root, '../cli/templates'), path.join(output, 'templates'), { recursive: true });
+await fs.copyFile(path.join(root, '../cli/NOTICE.md'), path.join(output, 'templates/NOTICE.md'));
 await fs.copyFile(path.join(root, '../../LICENSE'), path.join(output, 'LICENSE'));
 await fs.copyFile(path.join(root, '../../THIRD_PARTY_NOTICES.md'), path.join(output, 'THIRD_PARTY_NOTICES.md'));
 const metadata = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
