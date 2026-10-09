@@ -39,6 +39,21 @@ export interface ReviewWorkspaceRead<T> {
   reviewDirectory: string;
 }
 
+/** Discovery is not receipt validation or permission to approve/apply a result. */
+export interface ReviewTaskSummary {
+  reviewId: string;
+  kind: ReviewKind | null;
+  status: 'pending' | 'receipt-present' | 'unavailable';
+  receiptFiles: string[];
+  errorCode?: string;
+}
+
+export interface ReviewTaskList {
+  projectIdentity: string;
+  tasks: ReviewTaskSummary[];
+  pendingCount: number;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -351,6 +366,50 @@ export class NodeReviewStore {
     if (!(await ensureDirectoryChain(path.join(this.projectDirectory, 'reviews'), false))) return null;
     if (!(await ensureDirectoryChain(directory, false))) return null;
     return directory;
+  }
+
+  /** Read only the current namespace's directory metadata; never materialize a result or write a receipt. */
+  async listReviewTasks(): Promise<ReviewTaskList> {
+    const tasks: ReviewTaskSummary[] = [];
+    const result = (): ReviewTaskList => ({
+      projectIdentity: this.expectedProjectIdentity, tasks,
+      pendingCount: tasks.filter(task => task.status === 'pending').length,
+    });
+    const directory = path.join(this.projectDirectory, 'reviews');
+    if (!await ensureDirectoryChain(directory, false)) return result();
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      let kind: ReviewKind | null = null;
+      try {
+        if (entry.isSymbolicLink()) throw pathError(entry.name);
+        const reviewDirectory = await this.existingReviewDirectory(entry.name);
+        if (reviewDirectory === null) throw identityMismatch('审阅目录已移走。');
+        const bytes = await readBytes(path.join(reviewDirectory, 'identity.json'), this.projectDirectory);
+        if (bytes === null) throw identityMismatch('审阅目录缺少身份记录。');
+        let value: unknown;
+        try { value = JSON.parse(bytes.toString('utf8')); }
+        catch { throw new AuthoringOperationError('CHANGE_STORE_CORRUPT', '审阅身份记录不是合法 JSON。'); }
+        const identity = validateIdentity(value, entry.name, this.expectedProjectIdentity);
+        kind = identity.kind;
+        const payload = path.join(reviewDirectory, ...identity.payload.relativePath.split('/'));
+        if (!await ensureDirectoryChain(path.dirname(payload), false)
+          || !await assertSafeFile(payload, this.projectDirectory, true)) throw identityMismatch('审阅正文缺失。');
+        const receiptFiles: string[] = [];
+        for (const name of ['decision.json', 'final-approval.json', 'return-request.json']) {
+          if (await assertSafeFile(path.join(reviewDirectory, name), this.projectDirectory, true)) receiptFiles.push(name);
+        }
+        if (receiptFiles.length > 1 || (receiptFiles.length === 1
+          && (kind === 'comparison') !== (receiptFiles[0] === 'decision.json'))) {
+          throw identityMismatch('审阅记录类型相互冲突。');
+        }
+        tasks.push({ reviewId: entry.name, kind, status: receiptFiles.length ? 'receipt-present' : 'pending', receiptFiles });
+      } catch (error) {
+        if (!(error instanceof AuthoringOperationError)) throw error;
+        tasks.push({ reviewId: entry.name, kind, status: 'unavailable', receiptFiles: [], errorCode: error.code });
+      }
+    }
+    return result();
   }
 
   async createReview(reviewId: string, payload: unknown): Promise<ReviewWorkspaceIdentity> {

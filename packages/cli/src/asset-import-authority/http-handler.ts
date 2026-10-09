@@ -82,6 +82,7 @@ const PUBLIC_CODES = new Set([
   'HUMAN_WORKSPACE_STATE_CORRUPT',
   'EDITOR_PROJECT_BASELINE_CHANGED',
   'OBJECT_REF_STALE', 'OBJECT_NOT_FOUND', 'OPERATION_ID_CONFLICT', 'CHANGE_STORE_CORRUPT', 'PROJECT_INVALID',
+  'REVIEW_NOT_FOUND', 'REVIEW_IDENTITY_MISMATCH', 'REVIEW_FORMAT_UNSUPPORTED',
 ]);
 
 type EmptyObject = Record<string, never>;
@@ -148,7 +149,7 @@ type Route = {
     | 'relocation-replace' | 'relocation-plan' | 'relocation-list' | 'relocation-query' | 'relocation-resume'
     | 'relocation-commit' | 'relocation-cancel' | 'relocation-recover' | 'relocation-undo'
     | 'scene-plan' | 'scene-commit' | 'workspace';
-  workspaceAction?: 'heartbeat' | 'snapshot' | 'begin' | 'publish' | 'renew' | 'finish' | 'abort' | 'revoke' | 'preview' | 'preview-sources' | 'preview-content' | 'history' | 'history-checkpoint' | 'history-compare';
+  workspaceAction?: 'heartbeat' | 'snapshot' | 'begin' | 'publish' | 'renew' | 'finish' | 'abort' | 'revoke' | 'preview' | 'preview-sources' | 'preview-content' | 'history' | 'history-checkpoint' | 'history-compare' | 'review-tasks' | 'review-content';
   method: 'POST' | 'PUT';
   operationId?: string;
   itemId?: string;
@@ -198,7 +199,7 @@ function sendJson(response: ServerResponse, status: number, body: unknown, close
 
 function retryDisposition(code: string): 'same-request' | 'after-refresh' | 'after-human-action' | 'manual-recovery' | 'never' {
   if (code === 'CHANGE_STORE_CORRUPT') return 'manual-recovery';
-  if (code === 'OBJECT_REF_STALE' || code === 'OBJECT_NOT_FOUND') return 'after-refresh';
+  if (code === 'OBJECT_REF_STALE' || code === 'OBJECT_NOT_FOUND' || code === 'REVIEW_NOT_FOUND') return 'after-refresh';
   if (code === 'PREVIEW_OBSERVATION_CORRUPT') return 'manual-recovery';
   if (code.startsWith('PREVIEW_OBSERVATION_')) return 'after-refresh';
   if (code.startsWith('PREVIEW_CONTENT_') || ['CAPSULE_IDENTITY_MISMATCH', 'CANDIDATE_NOT_COMPOSABLE', 'COMPOSITION_REPLAY_FAILED', 'COMPOSITION_PLAN_INVALID', 'CHANGE_NOT_FOUND', 'CHANGE_NOT_OPEN'].includes(code)) return 'after-refresh';
@@ -210,8 +211,8 @@ function retryDisposition(code: string): 'same-request' | 'after-refresh' | 'aft
 }
 
 function statusForCode(code: string): number {
-  if (code === 'OBJECT_REF_STALE' || code === 'OPERATION_ID_CONFLICT' || code === 'CHANGE_STORE_CORRUPT') return 409;
-  if (code === 'OBJECT_NOT_FOUND') return 404;
+  if (code === 'OBJECT_REF_STALE' || code === 'OPERATION_ID_CONFLICT' || code === 'CHANGE_STORE_CORRUPT' || code === 'REVIEW_IDENTITY_MISMATCH') return 409;
+  if (code === 'OBJECT_NOT_FOUND' || code === 'REVIEW_NOT_FOUND') return 404;
   if (code === 'PREVIEW_OBSERVATION_LIMIT') return 413;
   if (code === 'PREVIEW_OBSERVATION_UNAVAILABLE') return 404;
   if (code === 'PREVIEW_OBSERVATION_STALE' || code === 'PREVIEW_OBSERVATION_CORRUPT') return 409;
@@ -619,7 +620,7 @@ async function publicRelocationList(authority: AssetImportAuthorityHttpTarget): 
 }
 
 function parseRoute(url: string): Route | null {
-  const workspace = url.match(new RegExp(`^${ASSET_IMPORT_AUTHORITY_BASE_PATH}/workspace/(heartbeat|snapshot|begin|publish|renew|finish|abort|revoke|preview|preview-sources|preview-content|history|history-checkpoint|history-compare)$`));
+  const workspace = url.match(new RegExp(`^${ASSET_IMPORT_AUTHORITY_BASE_PATH}/workspace/(heartbeat|snapshot|begin|publish|renew|finish|abort|revoke|preview|preview-sources|preview-content|history|history-checkpoint|history-compare|review-tasks|review-content)$`));
   if (workspace) return { kind: 'workspace', workspaceAction: workspace[1] as Route['workspaceAction'],
     method: 'POST', bindingRequired: true, operationTokenRequired: false, binary: false };
   if (url === `${ASSET_IMPORT_AUTHORITY_BASE_PATH}/status`) return { kind: 'status', method: 'POST', bindingRequired: false, operationTokenRequired: false, binary: false };
@@ -877,14 +878,24 @@ export function createAssetImportAuthorityHttpHandler(
             const extra = action === 'begin' ? ['expectedProjectRevision', 'expectedCoordinationRevision', 'purpose']
               : action === 'publish' ? ['writeLeaseId', 'path', 'text', 'expectedSha256']
                 : action === 'preview' ? ['preview'] : action === 'preview-content' ? ['target']
-                  : action === 'history-checkpoint' || action === 'history-compare' ? ['request']
-                    : action === 'heartbeat' || action === 'preview-sources' || action === 'history' ? [] : ['writeLeaseId'];
+                  : action === 'history-checkpoint' || action === 'history-compare' || action === 'review-content' ? ['request']
+                    : action === 'heartbeat' || action === 'preview-sources' || action === 'history' || action === 'review-tasks' ? [] : ['writeLeaseId'];
             const state = parseWorkspaceState(object, extra);
             if (action === 'heartbeat') {
               const record = await workspace.heartbeat(state);
               data = { workspaceGeneration: record.workspaceGeneration, heartbeatAt: record.heartbeatAt };
             } else if (action === 'history') {
               data = await workspace.history(state);
+            } else if (action === 'review-tasks') {
+              data = await workspace.reviewTasks(state);
+            } else if (action === 'review-content') {
+              const request = exactObject(object.request, ['reviewId', 'path', 'kind']);
+              if (typeof request.reviewId !== 'string' || request.reviewId.length === 0 || request.reviewId.length > 160
+                || typeof request.path !== 'string' || request.path.length > 2048
+                || (request.kind !== 'file' && request.kind !== 'directory')) {
+                throw new AssetImportAuthorityError('INVALID_REQUEST', '审阅读取参数无效');
+              }
+              data = await workspace.reviewContent(state, { reviewId: request.reviewId, path: request.path, kind: request.kind });
             } else if (action === 'history-checkpoint' || action === 'history-compare') {
               const id = action === 'history-checkpoint' ? 'project.history.checkpoint' : 'project.history.compare';
               const request = await validateCapabilityInput(getCapabilityDefinition(id).inputSchema, object.request);
