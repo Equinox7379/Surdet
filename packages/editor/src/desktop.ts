@@ -8,6 +8,11 @@ const fileTypes: Record<string, string> = {
   ttf: 'font/ttf', otf: 'font/otf', woff: 'font/woff', woff2: 'font/woff2', json: 'application/json', gal: 'text/plain',
 };
 export const desktopProjectIdentity = (handle: FileSystemDirectoryHandle): string | undefined => identities.get(handle);
+/** Native bridge rejections arrive wrapped in Electron's invoke prefix; people only need the reason. */
+export function desktopErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback;
+  return error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') || fallback;
+}
 export function desktopDirectory(grant: DirectoryGrant): FileSystemDirectoryHandle {
   const bridge = window.surdetDesktop!;
   const readonly = () => { throw new DOMException('桌面项目只能通过编辑器的正常保存流程写入。', 'NotAllowedError'); };

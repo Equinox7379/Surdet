@@ -745,6 +745,202 @@ body {
   font-size: 12px;
 }
 
+/* Desktop start page: new project form, in place of the action list */
+.editor-welcome-create {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 24px 24px;
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-control);
+  background: var(--surdet-surface-panel);
+}
+
+.editor-welcome-create-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.editor-welcome-create-header h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.editor-welcome-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.editor-welcome-create-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.editor-welcome-create-field > label,
+.editor-welcome-create-label,
+.editor-welcome-create-templates legend {
+  color: var(--surdet-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .04em;
+}
+
+.editor-welcome-create-field input[type=text] {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-control);
+  background: var(--surdet-surface-app);
+  color: var(--surdet-text-primary);
+  font: inherit;
+  font-size: 14px;
+}
+
+.editor-welcome-create-field input[type=text]:focus-visible {
+  border-color: var(--surdet-action-primary);
+  outline: none;
+}
+
+.editor-welcome .editor-welcome-create small {
+  margin-top: 0;
+}
+
+.editor-welcome-create-templates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.editor-welcome-create-templates legend {
+  margin-bottom: 6px;
+  padding: 0;
+}
+
+.editor-welcome-create-template {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-control);
+  background: var(--surdet-surface-app);
+  cursor: pointer;
+}
+
+.editor-welcome-create-template:has(input:checked) {
+  border-color: var(--surdet-action-primary);
+  background: var(--surdet-action-soft);
+}
+
+.editor-welcome-create-template:has(input:focus-visible) {
+  outline: 2px solid var(--surdet-action-primary);
+  outline-offset: 2px;
+}
+
+.editor-welcome-create-template input {
+  margin: 3px 0 0;
+  accent-color: var(--surdet-action-primary);
+}
+
+.editor-welcome-create-template strong {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.editor-welcome-create-location {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-welcome-create-path {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-control);
+  background: var(--surdet-surface-app);
+  color: var(--surdet-text-primary);
+  font: 12px/1.5 var(--surdet-font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-welcome-create-path.is-empty {
+  color: var(--surdet-text-muted);
+  font-family: inherit;
+}
+
+.editor-welcome-create :is(.editor-welcome-create-back, .editor-welcome-create-choose, .editor-welcome-create-submit) {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-control);
+  background: var(--surdet-surface-subtle);
+  color: var(--surdet-text-primary);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.editor-welcome-create .editor-welcome-create-submit {
+  border-color: var(--surdet-action-primary);
+  background: var(--surdet-action-primary);
+  color: var(--surdet-text-on-accent);
+  font-weight: 600;
+}
+
+.editor-welcome-create .editor-welcome-create-submit:hover:not(:disabled) {
+  border-color: var(--surdet-action-primary-hover);
+  background: var(--surdet-action-primary-hover);
+}
+
+.editor-welcome-create button:disabled {
+  cursor: default;
+  opacity: .5;
+}
+
+/* Full paths and folder names may have no spaces; wrap them inside the form rather than cut them. */
+.editor-welcome-create-target,
+.editor-welcome-create-message {
+  overflow-wrap: anywhere;
+}
+
+/* Beats the start page's narrow paragraph measure. */
+.editor-welcome-create .editor-welcome-create-message {
+  max-width: none;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--surdet-radius-control);
+  background: var(--surdet-surface-subtle);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.editor-welcome-create-message[data-tone=error] {
+  color: var(--surdet-state-danger);
+}
+
+.editor-welcome-create-message[data-tone=success] {
+  color: var(--surdet-state-success);
+}
+
+.editor-welcome-create-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 @media(max-width:1280px) {
   .editor-command-group[data-command-group=project] .editor-command-label {
     position: absolute;
