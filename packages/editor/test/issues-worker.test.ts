@@ -18,7 +18,7 @@ beforeEach(() => {
   vi.resetModules();
   ValidationWorker.instances = [];
   vi.stubGlobal('Worker', ValidationWorker);
-  vi.stubGlobal('document', { getElementById: () => null });
+  vi.stubGlobal('document', { getElementById: () => null, querySelector: () => null });
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -62,5 +62,41 @@ describe('validation Worker failure fallback', () => {
     expect(mainThreadValidation).toHaveBeenCalledOnce();
     await mainThreadValidation.mock.results[0]!.value;
     expect(state.lastValidation).toBeNull();
+  });
+});
+
+describe('debounced validation', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+  const reply = (worker: ValidationWorker, seq: number) =>
+    worker.onmessage?.({ data: { seq, ok: true, issues: [], edges: [], scenes: new Map() } });
+
+  it('lets an explicit run cover an edit still waiting for its debounce, so the result stays current', async () => {
+    const { issues, worker } = await openValidation();
+    issues.scheduleValidate();
+    issues.runValidate();
+    reply(worker, worker.messages.at(-1)!.seq);
+    expect(issues.isValidationCurrent()).toBe(true);
+    vi.advanceTimersByTime(300);
+    // No further request without a further edit: problem locations stay usable.
+    expect(worker.messages).toHaveLength(2);
+    expect(issues.isValidationCurrent()).toBe(true);
+  });
+
+  it('still validates an edit made after an explicit run and refuses the older reply', async () => {
+    const { issues, state, worker } = await openValidation();
+    const before = worker.messages[0]!.seq;
+    state.scenes.get('start')!.text = '@scene start\n@end';
+    issues.scheduleValidate();
+    reply(worker, before);
+    expect(state.lastValidation).toBeNull();
+    expect(issues.isValidationCurrent()).toBe(false);
+    vi.advanceTimersByTime(300);
+    expect(worker.messages).toHaveLength(2);
+    const latest = worker.messages[1] as { seq: number; sources?: Array<{ source: string }> };
+    expect(latest.sources?.[0]?.source).toBe('@scene start\n@end');
+    reply(worker, latest.seq);
+    expect(issues.isValidationCurrent()).toBe(true);
+    expect(state.lastValidation?.issues).toEqual([]);
   });
 });
