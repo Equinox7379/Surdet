@@ -33,10 +33,10 @@ npm run preview
 
 玩家入口来自 `@surdet/player`，与 Starter 共用同一份实现，不用复制菜单、状态机或保存算法。构建时 Vite 把所需代码打入本项目产物；`dist/` 可交给独立静态 HTTP 服务运行，不依赖源码仓库或原开发服务。`package.json` 的名称是存档身份，修改展示标题不应改变它。
 
-外部 Agent 按仓库 `docs/AI-GUIDE.md` 使用公开读取与窄字段修改入口。`@end` 结束场景，`@clear 结局ID` 记录通关，`player.endScenes` 决定何时返回标题，三者不能相互替代。
+外部 Agent 先读本项目自带的 [AGENTS.md](AGENTS.md)，按其中的能力发现、隔离创作、试玩与授权写回流程工作；[MCP 连接示例](.mcp.json.example) 需填写真实路径并由客户端启用，不自动提升写权限。开始创作不需要另外取得引擎仓库的指南。`@end` 结束场景，`@clear 结局ID` 记录通关，`player.endScenes` 决定何时返回标题，三者不能相互替代。
 
 需要立绘时，放入 `content/assets/portrait/<角色>_<服装>_<表情>.png`；例如 `lynn_coat_normal.png` 可以用 `@show lynn:coat normal @ right` 展示。需要音频时，再放入真实的 `bgm/`、`se/` 或 `voice/` 文件并在剧本引用。本模板没有指向不存在文件的音频指令。
 
-地图、商店、战斗等可选系统的完整范例见 `examples/starter` 的“自由探索”。这个初始项目可以先专注于讲完一个故事，再按实际需要启用系统。
+地图、商店、战斗等可选系统的完整范例在 Surdet 源码仓库 `examples/starter` 的“自由探索”中，不随本项目附带。这个初始项目可以先专注于讲完一个故事，再按实际需要启用系统。
 
 随附港口背景是 Surdet 模板提供的原创示例素材，并非每个新作品单独生成。可以替换它，素材不会改变剧情或存档的实现方式。
