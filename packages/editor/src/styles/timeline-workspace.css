@@ -79,10 +79,9 @@
 }
 
 .timeline-section-kicker {
-  color: var(--surdet-text-secondary);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  color: var(--surdet-text-muted);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .timeline-new {
@@ -202,8 +201,7 @@
   grid-template-columns: minmax(220px, 1fr) 148px auto;
   align-items: center;
   gap: 18px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--surdet-border-default);
+  padding: 20px 24px 16px;
   background: var(--surdet-surface-panel);
 }
 
@@ -291,15 +289,8 @@
   grid-template-columns: minmax(180px, 1fr) auto auto;
   align-items: center;
   gap: 18px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--surdet-border-default);
+  padding: 12px 24px;
   background: var(--surdet-surface-subtle);
-}
-
-.timeline-canvas-hint {
-  margin-top: 3px;
-  color: var(--surdet-text-secondary);
-  font-size: 10px;
 }
 
 .timeline-zoom-value {

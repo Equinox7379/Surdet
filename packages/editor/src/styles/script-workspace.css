@@ -840,17 +840,17 @@
 
 #editor-workspace button.issue {
   display: grid;
-  gap: 2px;
-  width: 100%;
-  margin: 0;
-  padding: 6px var(--surdet-space-8);
+  gap: var(--surdet-space-4);
+  /* Text lines up with the list heading; the hover surface reaches past it. */
+  width: calc(100% + 2 * var(--surdet-space-12));
+  margin: 0 calc(-1 * var(--surdet-space-12)) var(--surdet-space-4);
+  padding: var(--surdet-space-12);
   border: 0;
-  border-bottom: 1px solid var(--surdet-border-default);
-  border-radius: 0;
+  border-radius: var(--surdet-radius-control);
   background: transparent;
   font: inherit;
   font-size: var(--surdet-type-caption);
-  line-height: 1.5;
+  line-height: 1.6;
   text-align: left;
 }
 
@@ -861,8 +861,8 @@
 
 #editor-workspace .issue .loc { font-family: var(--surdet-font-mono); }
 #editor-workspace .issue .issue-code { margin-left: var(--surdet-space-8); color: var(--surdet-text-muted); }
-#editor-workspace .issue .issue-hint { color: var(--surdet-text-secondary); }
-#editor-workspace .issue-keys { margin: 0 0 var(--surdet-space-8); color: var(--surdet-text-muted); font-size: 0.6875rem; }
+#editor-workspace .issue .issue-hint { color: var(--surdet-text-muted); }
+#editor-workspace .issue-keys { margin: 0 0 var(--surdet-space-12); color: var(--surdet-text-muted); font-size: 0.6875rem; }
 
 #editor-workspace .issue:hover {
   border-color: var(--surdet-border-strong);

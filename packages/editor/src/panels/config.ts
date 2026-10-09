@@ -124,7 +124,6 @@ function renderConfigWorkspace(root: HTMLElement): void {
   index.setAttribute('aria-label', '配置目录');
   const indexHeading = h('div', 'config-index-header');
   indexHeading.append(h('h2', undefined, '配置目录'));
-  indexHeading.append(h('p', undefined, '按游戏系统查找和编辑项目配置。'));
   const technicalToggle = h('button', 'config-technical-toggle', showConfigTechnicalNames ? '隐藏字段标识' : '显示字段标识');
   technicalToggle.type = 'button';
   technicalToggle.setAttribute('aria-pressed', String(showConfigTechnicalNames));
@@ -1025,7 +1024,6 @@ function sectionShell(sectionId: ConfigSectionId): { sec: HTMLElement; ops: HTML
   const header = h('header', 'config-ledger-header');
   const heading = h('div', 'config-section-copy');
   heading.append(h('h1', 'config-section-heading', descriptor.label));
-  heading.append(h('p', 'config-section-description', descriptor.description));
   header.appendChild(heading);
   const technical = h('details', 'config-technical');
   technical.append(h('summary', undefined, '高级信息'));
@@ -1119,7 +1117,7 @@ function renderCharactersSection(): HTMLElement {
   idField.append(h('span', undefined, '角色标识'), newId);
   nameField.append(h('span', undefined, '显示名称'), newName);
   createFields.append(idField, nameField, addCharacter);
-  sec.append(createFields, h('p', 'hint', '添加后先保存在角色表草稿中；点击保存角色表才写入项目。已有角色标识不在这里改名或删除。'));
+  sec.append(createFields, h('p', 'hint', '新角色先进入草稿，保存角色表后写入项目。'));
   if (rows.length === 0) sec.appendChild(h('div', 'config-empty', '暂无角色。填写标识与显示名称后添加首个角色。'));
   const table = h('table', 'config-table') as HTMLTableElement;
   const thead = h('thead');

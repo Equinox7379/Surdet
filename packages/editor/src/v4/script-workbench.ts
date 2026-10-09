@@ -539,7 +539,6 @@ export class ScriptWorkbench {
       }
     };
     if (line.kind === 'text') {
-      this.inspector.append(h('p', 'v4-muted', '在正文中编辑说话人和台词。'));
       const source = this.scene.text;
       const lines = this.lines();
       const revealOrigin = (sourceLine: number): void => {

@@ -3,7 +3,6 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-top: 1px solid var(--surdet-border-default);
   background: var(--surdet-surface-app);
   color: var(--surdet-text-primary);
   font-family: var(--surdet-font-ui);
@@ -47,7 +46,8 @@
 .review-story-scene > .review-presentation-heading { display: none; }
 .review-story-action { display: block; margin-top: 18px; color: var(--surdet-text-secondary); font-size: 12px; }
 .review-story-line { margin: 8px 0; white-space: pre-wrap; }
-.review-readable-route { padding: 14px 0; border-top: 1px solid var(--surdet-border-default); }
+.review-readable-route { padding: 14px 0; }
+.review-readable-route + .review-readable-route { margin-top: 8px; }
 .review-readable-route p { margin: 8px 0; }
 .review-route-details { margin-top: 8px; color: var(--surdet-text-secondary); font-size: 12px; }
 .review-proposal-card > button { width: 100%; margin-top: 24px; min-height: 44px; }
@@ -87,8 +87,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: var(--surdet-space-24);
-  padding: var(--surdet-space-16) var(--surdet-space-24);
-  border-bottom: 1px solid var(--surdet-border-strong);
+  padding: var(--surdet-space-20) var(--surdet-space-32);
   background: var(--surdet-surface-panel);
 }
 
@@ -188,9 +187,7 @@
 }
 
 .review-task-list h3 {
-  margin-top: var(--surdet-space-24);
-  padding-top: var(--surdet-space-16);
-  border-top: 1px solid var(--surdet-border-default);
+  margin-top: var(--surdet-space-32);
   font-size: var(--surdet-type-control);
 }
 
@@ -212,9 +209,8 @@
 .review-criterion,
 .review-candidate {
   margin: 0;
-  padding: var(--surdet-space-10, 10px) 0;
-  border-bottom: 1px solid var(--surdet-border-default);
-  line-height: 1.5;
+  padding: var(--surdet-space-8) 0;
+  line-height: 1.6;
 }
 
 .review-candidate strong {
@@ -224,9 +220,8 @@
 
 .review-section {
   max-width: 1040px;
-  padding: 0 0 var(--surdet-space-32);
-  margin: 0 0 var(--surdet-space-32);
-  border-bottom: 1px solid var(--surdet-border-default);
+  padding: 0;
+  margin: 0 0 var(--surdet-space-48);
 }
 
 .review-section > h2,
@@ -279,13 +274,14 @@
 .review-safe-entry,
 .review-conflict {
   margin: 0;
-  padding: var(--surdet-space-16) 0;
-  border-top: 1px solid var(--surdet-border-default);
+  padding: var(--surdet-space-16) var(--surdet-space-20);
+  border-radius: var(--surdet-radius-control);
+  background: var(--surdet-surface-panel);
 }
 
-.review-safe-entry:last-child,
-.review-conflict:last-child {
-  border-bottom: 1px solid var(--surdet-border-default);
+.review-safe-entry + .review-safe-entry,
+.review-conflict + .review-conflict {
+  margin-top: var(--surdet-space-8);
 }
 
 .review-safe-entry {

@@ -1573,7 +1573,7 @@ export function renderReviewPanel(
     const empty = h('section', 'review-empty-state');
     empty.append(
       h('h2', undefined, '暂无审阅任务'),
-      h('p', undefined, '外部 Agent 交付的候选会在这里比较、试玩，确认后再决定是否写回项目。从顶栏的“打开审阅任务”开始。'),
+      h('p', undefined, '从顶栏的“打开审阅任务”开始。'),
     );
     container.appendChild(empty);
     return;

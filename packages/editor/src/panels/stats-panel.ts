@@ -12,13 +12,7 @@ export function bindStatsHooks(opts: { onJump: (sceneKey: string) => void }): vo
 
 function appendHeading(workspace: HTMLElement): void {
   const heading = h('header', 'project-health-heading');
-  const copy = h('div', 'project-health-heading-copy');
-  copy.append(
-    h('p', 'project-health-kicker', '项目体检'),
-    h('h1', undefined, '项目概览'),
-    h('p', 'project-health-description', '从内容体量和互动结构了解当前项目，不替代剧本校验。'),
-  );
-  heading.appendChild(copy);
+  heading.appendChild(h('h1', undefined, '项目概览'));
   workspace.appendChild(heading);
 }
 
@@ -27,7 +21,7 @@ function appendEmpty(workspace: HTMLElement): void {
   empty.setAttribute('data-stats-state', 'empty');
   empty.append(
     h('h2', undefined, '还没有可统计的场景'),
-    h('p', undefined, '打开项目或新建场景后，这里会自动汇总文字、选择与结局规模。'),
+    h('p', undefined, '新建场景后，字数、选项和结局会汇总在这里。'),
   );
   workspace.appendChild(empty);
 }
@@ -91,7 +85,7 @@ export function renderStatsPanel(container: HTMLElement): void {
   lead.append(
     h('p', 'project-health-lead-label', '预估通关时长'),
     h('p', 'project-health-lead-value', `${stats.estMinutes} 分钟`),
-    h('p', 'project-health-lead-note', '用于估算当前文字与演出规模，不代表玩家实际游玩时长。'),
+    h('p', 'project-health-lead-note', '按字数和演出时长估算'),
   );
   overview.appendChild(lead);
 

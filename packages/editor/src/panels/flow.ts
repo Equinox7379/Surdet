@@ -1121,7 +1121,7 @@ export function renderFlow(container: HTMLElement): void {
   const current = h(
     'p',
     'flow-current-scene',
-    `${currentSceneId ? `当前场景：${currentSceneId}` : '当前没有打开场景'} · 编辑视图，不代表唯一游玩路线`,
+    currentSceneId ? `当前场景 ${currentSceneId}` : '当前没有打开场景',
   );
   headingGroup.append(heading, current);
 
