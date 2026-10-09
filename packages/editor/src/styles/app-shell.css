@@ -911,6 +911,12 @@ body {
   opacity: .5;
 }
 
+/* Full paths and folder names may have no spaces; wrap them inside the form rather than cut them. */
+.editor-welcome-create-target,
+.editor-welcome-create-message {
+  overflow-wrap: anywhere;
+}
+
 /* Beats the start page's narrow paragraph measure. */
 .editor-welcome-create .editor-welcome-create-message {
   max-width: none;
