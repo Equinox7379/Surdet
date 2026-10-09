@@ -147,6 +147,7 @@ export function validateSnapshot(
         file: diagnostic.file,
         line: diagnostic.line,
         col: diagnostic.col,
+        ...(diagnostic.range ? { range: diagnostic.range } : {}),
         ...(diagnostic.hint === undefined ? {} : { hint: diagnostic.hint }),
       });
     }

@@ -5,7 +5,7 @@ import type {
   Token,
   TextToken,
 } from './token.js';
-import { SourceError, type SourcePos } from './token.js';
+import { SourceError, type SourcePos, type SourceRange } from './token.js';
 
 /** 由 lexer 抛出的语法错误（带行列定位） */
 export class LexError extends SourceError {
@@ -14,7 +14,7 @@ export class LexError extends SourceError {
   readonly line: number;
   readonly col: number;
 
-  constructor(code: string, message: string, file: string, line: number, col: number) {
+  constructor(code: string, message: string, file: string, line: number, col: number, readonly range?: SourceRange) {
     super(`${file}:${line}:${col}: ${message} (${code})`);
     this.name = 'LexError';
     this.code = code;
@@ -24,7 +24,7 @@ export class LexError extends SourceError {
   }
 
   override get pos(): SourcePos {
-    return { file: this.file, line: this.line, col: this.col };
+    return { file: this.file, line: this.line, col: this.col, ...(this.range ? { range: this.range } : {}) };
   }
 }
 
@@ -69,11 +69,11 @@ export class Lexer {
         if (/^@label($|\s)/.test(trimmed)) {
           const m = /^@label\s+([^\s@]+)\s*$/.exec(trimmed);
           if (!m) {
-            throw new LexError('L003', '@label 用法：@label name（标签名不能为空或含多余内容）', file, line, indent + 1);
+            throw new LexError('L003', '@label 用法：@label name（标签名不能为空或含多余内容）', file, line, indent + 1, lineRange(line, indent + 1, indent + trimmed.trimEnd().length + 1));
           }
           const name = m[1]!;
-          const col = indent + trimmed.indexOf(name) + 1;
-          tokens.push({ type: 'label', name, file, line, col });
+          const col = indent + trimmed.indexOf(name, '@label'.length) + 1;
+          tokens.push({ type: 'label', name, file, line, col, range: lineRange(line, col, col + name.length) });
           continue;
         }
         tokens.push(this.parseInstruction(trimmed, file, line, indent));
@@ -93,20 +93,21 @@ export class Lexer {
    *  未闭合引号抛 L004。 */
   private parseInstruction(trimmed: string, file: string, line: number, indent: number): InstructionToken {
     if (/^@\s/.test(trimmed)) {
-      throw new LexError('L001', '指令行 @ 后必须紧跟指令名（@name ...）', file, line, indent + 1);
+      throw new LexError('L001', '指令行 @ 后必须紧跟指令名（@name ...）', file, line, indent + 1, lineRange(line, indent + 1, indent + 2));
     }
     const segments = splitOutsideQuotes(trimmed, '@');
     // segments[0] === ''（以 @ 开头）；真正的内容从 index 1 起
     const first = segments[1];
     if (!first) {
-      throw new LexError('L001', '指令行缺少指令名（@name ...）', file, line, indent + 1);
+      throw new LexError('L001', '指令行缺少指令名（@name ...）', file, line, indent + 1, lineRange(line, indent + 1, indent + 2));
     }
     const firstParts = this.#tokenizeArgs(first, file, line, indent + 1);
-    const name = firstParts[0];
+    const name = firstParts[0]?.value;
     if (name === undefined || name.length === 0) {
       throw new LexError('L001', '指令行缺少指令名（@name ...）', file, line, indent + 1);
     }
-    const args = firstParts.slice(1);
+    const args = firstParts.slice(1).map(part => part.value);
+    const argRanges = firstParts.slice(1).map(part => lineRange(line, indent + 2 + part.start, indent + 2 + part.end));
     const modifiers = new Map<string, string>();
 
     let segmentOffset = 1 + first.length;
@@ -117,7 +118,7 @@ export class Lexer {
       const seg = rawSegment.trim();
       segmentOffset += rawSegment.length;
       if (seg.length === 0) continue;
-      const parts = this.#tokenizeArgs(seg, file, line, indent + argumentOffset);
+      const parts = this.#tokenizeArgs(seg, file, line, indent + argumentOffset).map(part => part.value);
       const keyToken = parts[0];
       if (keyToken === undefined || keyToken.length === 0) {
         throw new LexError('L002', '修饰符缺少键名（@key value）', file, line, indent + 1);
@@ -132,21 +133,23 @@ export class Lexer {
         key = keyToken;
         value = parts.slice(1).join(' ');
       }
-      if (!key) throw new LexError('L002', '修饰符缺少键名（@key value）', file, line, indent + argumentOffset + 1);
+      if (!key) throw new LexError('L002', '修饰符缺少键名（@key value）', file, line, indent + argumentOffset + 1,
+        lineRange(line, indent + argumentOffset + 1, indent + argumentOffset + 1 + keyToken.length));
       modifiers.set(key, value);
     }
 
     const col = indent + trimmed.indexOf('@') + 1;
-    return { type: 'instruction', name, args, modifiers, file, line, col };
+    return { type: 'instruction', name, args, argRanges, modifiers, file, line, col, range: lineRange(line, col, col + 1 + name.length) };
   }
 
   /** 引号感知参数切分；未闭合引号抛 L004（列定位到引号处） */
-  #tokenizeArgs(input: string, file: string, line: number, indent: number): string[] {
+  #tokenizeArgs(input: string, file: string, line: number, indent: number): ArgumentToken[] {
     try {
       return tokenizeArgs(input);
     } catch (err) {
       if (err instanceof UnclosedQuoteError) {
-        throw new LexError('L004', `参数引号未闭合（"…" 或 '…'）`, file, line, indent + 1 + err.offset);
+        throw new LexError('L004', `参数引号未闭合（"…" 或 '…'）`, file, line, indent + 1 + err.offset,
+          lineRange(line, indent + 1 + err.offset, indent + 1 + input.length));
       }
       throw err;
     }
@@ -157,7 +160,7 @@ export class Lexer {
     const speaker = extractSpeaker(trimmed);
     const value = speaker === null ? trimmed : trimmed.slice(speaker.length + 1).trimStart();
     const col = indent + 1;
-    return { type: 'text', raw, value, speaker, file, line, col };
+    return { type: 'text', raw, value, speaker, file, line, col, range: lineRange(line, col, raw.trimEnd().length + 1) };
   }
 }
 
@@ -174,21 +177,30 @@ export function parseInlineInstructions(
 ): InstructionToken[] {
   const result: InstructionToken[] = [];
   const segments = splitOutsideQuotes(text, '@');
+  let offset = segments[0]!.length;
   for (let s = 1; s < segments.length; s++) {
-    const seg = segments[s]!.trim();
+    const rawSegment = segments[s]!;
+    const instructionOffset = offset;
+    const argumentOffset = offset + 1 + rawSegment.length - rawSegment.trimStart().length;
+    offset += 1 + rawSegment.length;
+    const seg = rawSegment.trim();
     if (seg.length === 0) continue;
-    let parts: string[];
+    let parts: ArgumentToken[];
     try {
       parts = tokenizeArgs(seg);
     } catch (err) {
       if (err instanceof UnclosedQuoteError) {
-        throw new LexError('L004', `参数引号未闭合（"…" 或 '…'）`, file, line, col + err.offset);
+        throw new LexError('L004', `参数引号未闭合（"…" 或 '…'）`, file, line, col + argumentOffset + err.offset,
+          lineRange(line, col + argumentOffset + err.offset, col + argumentOffset + seg.length));
       }
       throw err;
     }
-    const name = parts[0];
+    const name = parts[0]?.value;
     if (name === undefined || name.length === 0) continue;
-    result.push({ type: 'instruction', name, args: parts.slice(1), modifiers: new Map(), file, line, col });
+    result.push({ type: 'instruction', name, args: parts.slice(1).map(part => part.value),
+      argRanges: parts.slice(1).map(part => lineRange(line, col + argumentOffset + part.start, col + argumentOffset + part.end)),
+      modifiers: new Map(), file, line, col,
+      range: lineRange(line, col + instructionOffset, col + argumentOffset + parts[0]!.end) });
   }
   return result;
 }
@@ -251,15 +263,22 @@ export function splitOutsideQuotes(input: string, sep: string): string[] {
   return out;
 }
 
-/** 引号感知参数切分：引号内空白/@ 不拆 token，但引号字符保留（供表达式字面量与通用值消费方处理）。
- *  引号内支持反斜杠转义：\" 不再提前闭合引号，转义序列原样保留在 token 中。 */
-function tokenizeArgs(input: string): string[] {
-  const out: string[] = [];
+interface ArgumentToken { value: string; start: number; end: number }
+
+function lineRange(line: number, start: number, end: number): SourceRange {
+  return { start: { line, col: start }, end: { line, col: end } };
+}
+
+/** 引号感知参数切分：保留引号、转义和物理偏移；引号内空白/@ 不拆 token。 */
+function tokenizeArgs(input: string): ArgumentToken[] {
+  const out: ArgumentToken[] = [];
   let cur = '';
+  let start = 0;
   let quote: '"' | "'" | null = null;
   let quoteStart = 0;
   for (let i = 0; i < input.length; i++) {
     const c = input[i]!;
+    if (cur.length === 0 && !/\s/.test(c)) start = i;
     if (quote !== null) {
       if (c === '\\' && i + 1 < input.length) {
         cur += c + input[i + 1]!;
@@ -274,7 +293,7 @@ function tokenizeArgs(input: string): string[] {
       quoteStart = i;
     } else if (/\s/.test(c)) {
       if (cur.length > 0) {
-        out.push(cur);
+        out.push({ value: cur, start, end: i });
         cur = '';
       }
     } else {
@@ -282,7 +301,7 @@ function tokenizeArgs(input: string): string[] {
     }
   }
   if (quote !== null) throw new UnclosedQuoteError(quoteStart);
-  if (cur.length > 0) out.push(cur);
+  if (cur.length > 0) out.push({ value: cur, start, end: input.length });
   return out;
 }
 
