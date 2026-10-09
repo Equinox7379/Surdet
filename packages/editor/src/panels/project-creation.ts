@@ -124,7 +124,7 @@ export function renderProjectCreation(creation: ProjectCreation, onClose: () => 
   choose.type = 'button';
   choose.onclick = () => { void creation.chooseLocation(); };
   locationRow.append(locationText, choose);
-  const locationHint = h('small');
+  const locationHint = h('small', 'editor-welcome-create-target');
   locationField.append(locationLabel, locationRow, locationHint);
 
   const message = h('p', 'editor-welcome-create-message');

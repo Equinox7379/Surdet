@@ -189,8 +189,20 @@ try {
   // New project: the start page hands over only the native location id, the title
   // and the template; the main process writes the folder and opens it in its own window.
   const parent = await fs.realpath(await fs.mkdtemp(path.join(output, 'new-projects-')));
-  await fs.mkdir(path.join(parent, '旧作'));
-  await app.evaluate(({ dialog }, parent) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [parent] }); }, parent);
+  // Folder and project names without spaces must wrap inside the form, not run past its edge.
+  const longParent = path.join(parent, 'LongDirectoryWithoutSpaces'.repeat(4));
+  const longName = 'LongProjectNameWithoutSpaces'.repeat(4);
+  await fs.mkdir(path.join(longParent, '旧作'), { recursive: true });
+  await fs.mkdir(path.join(parent, longName));
+  const pickFolder = folder => app.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] }); }, folder);
+  const outsideForm = selector => homeAgain.evaluate(selector => {
+    const form = document.querySelector('.editor-welcome-create-form').getBoundingClientRect();
+    const text = document.createRange();
+    text.selectNodeContents(document.querySelector(selector));
+    const box = text.getBoundingClientRect();
+    return box.width > 0 && (box.left < form.left - 0.5 || box.right > form.right + 0.5);
+  }, selector);
+  await pickFolder(longParent);
   await homeAgain.locator('[data-welcome-action="new-project"]').click();
   const projectName = homeAgain.getByLabel('项目名称');
   await projectName.waitFor();
@@ -202,12 +214,21 @@ try {
   await homeAgain.locator('[data-welcome-action="new-project"]').click();
   await projectName.fill('旧作');
   await homeAgain.getByRole('button', { name: '选择位置…' }).click();
-  await homeAgain.waitForFunction(parent => document.querySelector('.editor-welcome-create-path')?.textContent === parent, parent);
+  await homeAgain.waitForFunction(folder => document.querySelector('.editor-welcome-create-path')?.textContent === folder, longParent);
+  assert.match(await homeAgain.locator('.editor-welcome-create-target').innerText(), /LongDirectoryWithoutSpaces/);
+  assert.equal(await outsideForm('.editor-welcome-create-target'), false, 'the target folder preview wraps a long folder name');
   await createProject.click();
   await homeAgain.waitForFunction(() => document.querySelector('.editor-welcome-create-message')?.getAttribute('data-tone') === 'error');
   assert.equal(await homeAgain.locator('.editor-welcome-create-message').innerText(), '文件夹「旧作」已存在，请换一个项目名称。');
-  assert.deepEqual(await fs.readdir(path.join(parent, '旧作')), [], 'an existing folder is never written');
+  assert.deepEqual(await fs.readdir(path.join(longParent, '旧作')), [], 'an existing folder is never written');
   assert.equal(app.windows().length, 2, 'a refused creation opens nothing');
+  await pickFolder(parent);
+  await projectName.fill(longName);
+  await homeAgain.getByRole('button', { name: '更换位置…' }).click();
+  await homeAgain.waitForFunction(folder => document.querySelector('.editor-welcome-create-path')?.textContent === folder, parent);
+  await createProject.click();
+  await homeAgain.waitForFunction(name => document.querySelector('.editor-welcome-create-message')?.textContent.includes(name), longName);
+  assert.equal(await outsideForm('.editor-welcome-create-message'), false, 'a reason naming a long folder wraps inside the form');
   await projectName.fill('雾港 来信');
   await homeAgain.getByRole('radio', { name: /空白项目/ }).check();
   const homeAgainClosed = homeAgain.waitForEvent('close');
