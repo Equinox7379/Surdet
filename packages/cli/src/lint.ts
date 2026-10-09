@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import {
   compileScene,
   SourceError,
+  sourceErrorIssue,
   parseExpr,
   checkExprOperands,
   checkExprVars,
@@ -174,15 +175,7 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
       sceneSourceFiles.set(sceneId, file);
       // SourceError 统一携带位置与错误码（DslError/LexError/RuntimeError 皆继承自它）
       if (err instanceof SourceError) {
-        const p = err.pos;
-        issues.push({
-          severity: 'error',
-          text: err.message,
-          code: err.code ?? 'LINT',
-          file: p?.file ?? file,
-          line: p?.line ?? 0,
-          col: p?.col ?? 0,
-        });
+        issues.push(sourceErrorIssue(err, file));
       } else if (err instanceof Error) {
         issues.push({ severity: 'error', text: err.message, code: 'LINT', file, line: 0, col: 0 });
       } else {
