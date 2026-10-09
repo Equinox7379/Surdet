@@ -11,6 +11,7 @@ body {
   background: var(--surdet-surface-app);
   color: var(--surdet-text-primary);
   font: var(--surdet-type-body)/1.55 var(--surdet-font-ui);
+  -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
@@ -22,9 +23,9 @@ body {
 
 .workbench-icon {
   display: inline-flex;
-  width: 17px;
-  height: 17px;
-  flex: 0 0 17px;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
   align-items: center;
   justify-content: center;
 }
@@ -35,19 +36,21 @@ body {
   height: 100%;
 }
 
+/* ---------- title bar: identity · context · search · commands, one row ---------- */
 .editor-project-bar {
   position: relative;
   z-index: 2;
   flex: none;
   display: grid;
-  grid-template-columns: 136px minmax(140px,1fr) auto;
-  grid-template-areas: "identity context commands" "feedback feedback relay";
+  grid-template-columns: auto minmax(0, max-content) minmax(160px, 1fr) auto;
+  grid-template-areas: "identity context search commands";
   align-items: center;
-  column-gap: 18px;
-  padding: 9px 18px 0;
+  column-gap: 16px;
+  height: var(--surdet-shell-titlebar-height);
+  padding: 0 10px 0 12px;
   background: var(--surdet-shell-chrome-bg);
   color: var(--surdet-shell-chrome-text);
-  border-bottom: 0;
+  border-bottom: 1px solid var(--surdet-border-default);
 }
 
 .editor-product-identity {
@@ -56,58 +59,29 @@ body {
   align-items: center;
   gap: 9px;
   min-width: 0;
-}
-
-.editor-product-mark {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 28px;
-  flex: none;
-  background: var(--surdet-action-primary);
-  color: white;
-  border-radius: 2px;
-  font: 600 17px/1 var(--surdet-font-story);
-}
-
-.editor-product-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
+  padding-right: 16px;
+  border-right: 1px solid var(--surdet-border-default);
 }
 
 .editor-product-name {
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: -.04em;
-  line-height: 1.2;
-}
-
-.editor-product-kind {
-  font-size: 10px;
-  letter-spacing: .07em;
-  color: var(--surdet-text-secondary);
+  color: var(--surdet-text-primary);
+  font: 700 12px/1 var(--surdet-font-ui);
+  letter-spacing: .16em;
+  text-transform: uppercase;
 }
 
 .editor-project-context {
   grid-area: context;
   display: flex;
-  gap: 12px;
   align-items: center;
+  gap: 10px;
   min-width: 0;
-  border-left: 0;
-  padding-left: 18px;
 }
 
 .editor-context-item {
   display: flex;
   min-width: 0;
-  max-width: 100%;
-  flex-direction: column;
-}
-
-.editor-context-item+.editor-context-item {
-  max-width: 45%;
+  align-items: center;
 }
 
 .editor-context-label {
@@ -118,13 +92,17 @@ body {
   clip-path: inset(50%);
 }
 
-.editor-project-name,.editor-current-object {
+.editor-project-name,
+.editor-current-object {
   min-width: 0;
-  max-width: 38ch;
+  max-width: 32ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 13px;
+}
+
+.editor-project-name {
   font-weight: 600;
 }
 
@@ -135,14 +113,53 @@ body {
 
 .editor-current-object::before {
   content: '/';
-  padding-right: 12px;
-  color: var(--surdet-border-strong);
+  padding-right: 10px;
+  color: var(--surdet-text-muted);
+}
+
+.editor-project-search {
+  grid-area: search;
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+
+.editor-project-bar .editor-command[data-action=search-project] {
+  width: min(440px, 100%);
+  justify-content: flex-start;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-control);
+  background: var(--surdet-surface-panel);
+  color: var(--surdet-text-muted);
+  font-weight: 400;
+}
+
+.editor-project-bar .editor-command[data-action=search-project]:hover {
+  border-color: var(--surdet-border-strong);
+  background: var(--surdet-surface-panel);
+  color: var(--surdet-text-secondary);
+}
+
+.editor-command[data-action=search-project] .editor-command-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-command[data-action=search-project] kbd {
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-tight);
 }
 
 .editor-project-commands {
   grid-area: commands;
   display: flex;
-  gap: 12px;
+  gap: 6px;
   align-items: center;
   justify-content: flex-end;
   min-width: 0;
@@ -151,12 +168,12 @@ body {
 .editor-command-group {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
 }
 
 .editor-command-group+.editor-command-group {
-  border-left: 0;
-  padding-left: 10px;
+  padding-left: 6px;
+  border-left: 1px solid var(--surdet-border-default);
 }
 
 .editor-project-bar .editor-command {
@@ -164,42 +181,46 @@ body {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 5px 8px;
   min-height: 30px;
+  padding: 0 9px;
   background: transparent;
   border: 1px solid transparent;
-  color: var(--surdet-text-primary);
-  font-size: 12px;
+  color: var(--surdet-text-secondary);
+  font-size: 12.5px;
   font-weight: 500;
   white-space: nowrap;
 }
 
-.editor-project-bar .editor-command:hover {
+.editor-project-bar .editor-command:hover:not(:disabled) {
   background: var(--surdet-shell-chrome-selected);
   border-color: transparent;
+  color: var(--surdet-text-primary);
 }
 
 .editor-project-bar .editor-global-primary {
   background: var(--surdet-action-primary);
   border-color: var(--surdet-action-primary);
-  color: #fff;
-  padding-inline: 11px;
+  color: var(--surdet-text-on-accent);
+  font-weight: 600;
+  padding-inline: 12px;
 }
 
-.editor-project-bar .editor-global-primary:hover {
-  background: #425B84;
-  border-color: #425B84;
+.editor-project-bar .editor-global-primary:hover:not(:disabled) {
+  background: var(--surdet-action-primary-hover);
+  border-color: var(--surdet-action-primary-hover);
+  color: var(--surdet-text-on-accent);
 }
 
 .editor-command-shortcut {
-  font: 10px/1.3 var(--surdet-font-ui);
+  font: 10.5px/1.3 var(--surdet-font-mono);
   color: inherit;
-  opacity: .6;
+  opacity: .62;
   border: 0;
   background: transparent;
 }
 
-.editor-command[data-action=undo] .editor-command-label,.editor-command[data-action=redo] .editor-command-label {
+.editor-command[data-action=undo] .editor-command-label,
+.editor-command[data-action=redo] .editor-command-label {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -207,38 +228,43 @@ body {
   clip-path: inset(50%);
 }
 
-.editor-command[data-action=undo] kbd,.editor-command[data-action=redo] kbd {
+.editor-command[data-action=undo],
+.editor-command[data-action=redo] {
+  width: 30px;
+  padding: 0;
+}
+
+.editor-command[data-action=undo] kbd,
+.editor-command[data-action=redo] kbd {
   display: none;
 }
 
-.editor-command[data-action=search-project] {
-  order: -1;
-  border-color: transparent;
-  background: var(--surdet-surface-panel);
-  min-width: 135px;
-  justify-content: flex-start;
-}
-
-.editor-command[data-action=search-project] .workbench-icon {
-  order: -1;
-}
-
-.editor-command[data-action=search-project] kbd {
-  margin-left: auto;
+/* ---------- status bar: save state, operation messages, relay protection ---------- */
+.editor-status-bar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 18px;
+  min-height: var(--surdet-shell-statusbar-height);
+  padding: 3px 12px;
+  background: var(--surdet-shell-chrome-bg);
+  border-top: 1px solid var(--surdet-border-default);
+  color: var(--surdet-text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 
 .editor-operation-feedback {
-  grid-area: feedback;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
+  flex: 1 1 320px;
   min-width: 0;
-  min-height: 26px;
-  padding: 3px 0;
-  font-size: 11px;
 }
 
 .editor-save-state {
+  flex: none;
   white-space: nowrap;
   color: var(--surdet-text-secondary);
 }
@@ -246,11 +272,11 @@ body {
 .editor-save-state::before {
   content: '';
   display: inline-block;
-  width: 5px;
-  height: 5px;
-  margin-right: 6px;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
   border-radius: 50%;
-  vertical-align: 2px;
+  vertical-align: 0;
   background: var(--surdet-state-success);
 }
 
@@ -258,7 +284,8 @@ body {
   color: var(--surdet-state-warning);
 }
 
-.editor-save-state[data-save-state=dirty]::before {
+.editor-save-state[data-save-state=dirty]::before,
+.editor-save-state[data-save-state=partial-failure]::before {
   background: currentColor;
 }
 
@@ -267,32 +294,76 @@ body {
   font-weight: 600;
 }
 
-.editor-save-state[data-save-state=partial-failure]::before {
-  background: currentColor;
-}
-
-.editor-project-bar #status {
-  font-size: 11px;
-  color: var(--surdet-text-secondary);
+.editor-status-bar #status {
   min-width: 0;
+  color: var(--surdet-text-secondary);
   overflow-wrap: anywhere;
 }
 
-.editor-project-bar #status.err {
+.editor-status-bar #status.err {
   color: var(--surdet-state-danger);
 }
 
+.editor-status-problems {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: -2px 0;
+  padding: 1px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--surdet-radius-tight);
+  background: transparent;
+  color: var(--surdet-text-secondary);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.editor-status-problems::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--surdet-state-success);
+}
+
+.editor-status-problems[data-problem-state=pending]::before {
+  background: var(--surdet-text-muted);
+}
+
+.editor-status-problems[data-problem-state=warning] {
+  color: var(--surdet-state-warning);
+}
+
+.editor-status-problems[data-problem-state=error] {
+  color: var(--surdet-state-danger);
+  font-weight: 600;
+}
+
+.editor-status-problems[data-problem-state=warning]::before,
+.editor-status-problems[data-problem-state=error]::before {
+  background: currentColor;
+}
+
+.editor-status-problems:not(:disabled):hover {
+  border-color: var(--surdet-border-default);
+  background: var(--surdet-surface-hover);
+}
+
+.editor-status-problems:disabled {
+  cursor: default;
+}
+
 .editor-relay-status {
-  grid-area: relay;
   display: flex;
   gap: 8px;
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
+  margin-left: auto;
   min-width: 0;
-  padding: 3px 0;
-  font-size: 11px;
-  color: var(--surdet-text-secondary);
+  color: var(--surdet-text-muted);
 }
 
 .editor-relay-update {
@@ -307,8 +378,9 @@ body {
 
 .editor-relay-status .editor-command {
   font-size: 11px;
-  min-height: 24px;
-  padding: 2px 6px;
+  font-weight: 500;
+  min-height: 20px;
+  padding: 0 7px;
   border-color: var(--surdet-border-default);
 }
 
@@ -324,7 +396,7 @@ body {
   color: var(--surdet-text-primary);
   background: var(--surdet-surface-panel);
   border: 1px solid var(--surdet-border-strong);
-  border-radius: 6px;
+  border-radius: var(--surdet-radius-control);
 }
 
 .editor-project-changes-dialog li {
@@ -332,7 +404,7 @@ body {
 }
 
 .editor-project-changes-dialog::backdrop {
-  background: rgb(26 31 39 / 35%);
+  background: var(--surdet-backdrop);
 }
 
 .editor-command:active,.editor-mode-button:active {
@@ -340,32 +412,34 @@ body {
   box-shadow: none;
 }
 
+/* ---------- frame: activity rail beside the active work surface ---------- */
 .editor-application-frame {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(0,1fr);
-  grid-template-rows: auto auto minmax(0,1fr);
+  grid-template-columns: var(--surdet-shell-rail-width) minmax(0,1fr);
+  grid-template-rows: auto minmax(0,1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 
 .editor-mode-navigation {
+  grid-column: 1;
+  grid-row: 1 / -1;
   display: flex;
-  flex-direction: row;
-  grid-row: 1;
-  align-items: stretch;
-  min-width: 0;
-  gap: 16px;
-  padding: 0 18px;
-  overflow-x: auto;
-  overflow-y: hidden;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  padding: 8px 6px;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: var(--surdet-shell-chrome-bg);
-  border-bottom: 1px solid var(--surdet-border-default);
-  scrollbar-width: thin;
+  border-right: 1px solid var(--surdet-border-default);
+  scrollbar-width: none;
 }
 
-.editor-mode-navigation-title {
+.editor-mode-navigation-title,
+.editor-mode-group-label {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -377,49 +451,68 @@ body {
 .editor-mode-group {
   display: flex;
   flex: none;
-  gap: 4px;
-  align-items: stretch;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .editor-mode-group+.editor-mode-group {
-  position: relative;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--surdet-border-default);
 }
 
-.editor-mode-group+.editor-mode-group::before {
-  content: none;
-  position: absolute;
-  left: -8px;
-  height: 16px;
-  top: 12px;
-  border-left: 1px solid var(--surdet-border-default);
-}
-
-.editor-mode-group-label {
-  display: none;
+.editor-mode-group[data-mode-group=project] {
+  margin-top: auto;
 }
 
 .editor-mode-button {
-  position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 3px;
   flex: none;
-  min-height: 40px;
-  padding: 8px 14px;
+  min-height: 50px;
+  padding: 7px 2px 6px;
   border: 0;
-  border-radius: 0;
+  border-radius: var(--surdet-radius-control);
   background: transparent;
-  color: var(--surdet-text-secondary);
-  font: 500 13px/1.4 var(--surdet-font-ui);
+  color: var(--surdet-text-muted);
+  font: 500 11px/1.25 var(--surdet-font-ui);
   cursor: pointer;
+  transition: background-color var(--surdet-motion-fast) ease, color var(--surdet-motion-fast) ease;
+}
+
+.editor-mode-button:has(.editor-mode-badge) {
+  position: relative;
+}
+
+.editor-mode-badge {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--surdet-action-primary);
+  color: var(--surdet-text-on-accent);
+  font: 600 10px/16px var(--surdet-font-ui);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
 .editor-mode-button .workbench-icon {
-  order: -1;
-  width: 15px;
-  height: 15px;
-  flex-basis: 15px;
+  width: 20px;
+  height: 20px;
+  flex-basis: 20px;
+}
+
+.editor-mode-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editor-mode-button:hover {
@@ -428,35 +521,39 @@ body {
 }
 
 .editor-mode-button[aria-current=page] {
-  background: var(--surdet-surface-panel);
+  background: var(--surdet-editor-nav-active-bg);
   color: var(--surdet-text-primary);
   font-weight: 600;
 }
 
-.editor-mode-button[aria-current=page]::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 12px;
-  right: 12px;
-  height: 2px;
-  background: currentColor;
+.editor-mode-button[aria-current=page] .workbench-icon {
+  color: var(--surdet-action-primary);
 }
 
 .editor-mode-button:focus-visible {
-  outline: 2px solid var(--surdet-focus-ring);
-  outline-offset: -3px;
+  outline: var(--surdet-focus-width) solid var(--surdet-focus-ring);
+  outline-offset: -2px;
+}
+
+.timeline-autosave-conflict-host {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.timeline-autosave-conflict-host:empty {
+  display: none;
 }
 
 .editor-mode-surface {
   display: flex;
   flex: 1;
   flex-direction: column;
-  grid-row: 3;
+  grid-column: 2;
+  grid-row: 2;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--surdet-surface-panel);
+  background: var(--surdet-surface-app);
 }
 
 .editor-mode-surface>:first-child {
@@ -464,71 +561,117 @@ body {
   min-height: 0;
 }
 
-.timeline-autosave-conflict-host {
-  grid-row: 2;
-}
-
-.timeline-autosave-conflict-host:empty {
-  display: none;
-}
-
 #app>.banner {
   flex: none;
-  padding: 10px 18px;
+  padding: 8px 16px;
   border-bottom: 1px solid var(--surdet-border-default);
-  background: var(--surdet-surface-subtle);
+  background: var(--surdet-action-soft);
+  color: var(--surdet-text-primary);
   font-size: 12px;
 }
 
+/* ---------- start page (no project open) ---------- */
 .editor-welcome {
   display: grid;
-  grid-template-columns: minmax(240px,480px) minmax(220px,320px);
-  gap: 64px;
+  grid-template-columns: minmax(280px, 440px) minmax(320px, 520px);
+  gap: 56px;
   align-content: center;
   justify-content: center;
   height: 100%;
-  padding: 40px;
+  padding: 48px;
   overflow: auto;
-  background: var(--surdet-shell-chrome-bg);
+  background: var(--surdet-surface-app);
+}
+
+.editor-welcome-kicker {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--surdet-action-primary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .08em;
 }
 
 .editor-welcome h1 {
-  font-size: 32px;
-  letter-spacing: -.05em;
+  font-size: 30px;
+  letter-spacing: .01em;
   font-weight: 600;
-  margin: 0 0 14px;
+  margin: 0 0 12px;
 }
 
 .editor-welcome p {
+  margin: 0;
   color: var(--surdet-text-secondary);
-  line-height: 1.9;
-  max-width: 36em;
+  line-height: 1.85;
+  max-width: 34em;
+}
+
+.editor-welcome-shortcuts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 14px;
+  margin: 28px 0 0;
+  color: var(--surdet-text-secondary);
+  font-size: 12px;
+}
+
+.editor-welcome-shortcuts dt {
+  justify-self: start;
+  padding: 1px 7px;
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-tight);
+  color: var(--surdet-text-primary);
+  font: 11px/1.6 var(--surdet-font-mono);
+}
+
+.editor-welcome-shortcuts dd {
+  margin: 0;
+  align-self: center;
 }
 
 .editor-welcome-actions {
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 1px;
-  border-top: 1px solid var(--surdet-border-default);
-  padding-top: 12px;
+  gap: 12px;
 }
 
-.editor-welcome-actions button {
+.editor-welcome-actions > button {
   display: flex;
   align-items: center;
-  gap: 14px;
-  border: 0;
-  border-radius: 3px;
-  padding: 15px;
-  background: transparent;
+  gap: 16px;
+  padding: 18px 20px;
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-control);
+  background: var(--surdet-surface-panel);
   cursor: pointer;
   text-align: left;
   color: var(--surdet-text-primary);
+  transition: border-color var(--surdet-motion-fast) ease, background-color var(--surdet-motion-fast) ease;
 }
 
-.editor-welcome-actions button:hover {
-  background: var(--surdet-shell-chrome-selected);
+.editor-welcome-actions > button:hover {
+  border-color: var(--surdet-border-strong);
+  background: var(--surdet-surface-subtle);
+}
+
+.editor-welcome-actions > button:first-child {
+  border-color: var(--surdet-action-primary);
+}
+
+.editor-welcome-actions .workbench-icon {
+  width: 40px;
+  height: 40px;
+  flex-basis: 40px;
+  padding: 9px;
+  border-radius: var(--surdet-radius-control);
+  background: var(--surdet-action-soft);
+  color: var(--surdet-action-primary);
+}
+
+.editor-welcome-actions strong {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .editor-welcome small {
@@ -538,51 +681,71 @@ body {
   margin-top: 4px;
 }
 
-@media(max-width:1250px) {
-  .editor-project-context {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0;
-  }
-  .editor-context-item+.editor-context-item {
-    max-width: 100%;
-  }
-  .editor-current-object::before {
-    display: none;
-  }
-  .editor-project-name,.editor-current-object {
-    max-width: 100%;
-  }
-  .editor-project-bar {
-    grid-template-columns: 116px minmax(110px,1fr) auto;
-    gap: 0 12px;
-    padding-inline: 12px;
-  }
-  .editor-command[data-action=search-project] {
-    min-width: 32px;
-  }
-  .editor-command[data-action=search-project] :is(.editor-command-label,kbd) {
-    display: none;
-  }
-  .editor-project-bar .editor-global-primary kbd {
-    display: none;
-  }
+.editor-welcome-recent {
+  margin-top: 16px;
 }
 
-@media(max-width:800px) {
-  .editor-project-bar {
-    grid-template-columns: 100px minmax(0,1fr) auto;
-    padding: 8px 10px 0;
-  }
-  .editor-project-context {
-    padding-left: 10px;
-  }
-  .editor-project-commands {
-    gap: 4px;
-  }
-  .editor-command-group+.editor-command-group {
-    padding-left: 4px;
-  }
+.editor-welcome-recent h2 {
+  margin: 0 0 8px;
+  color: var(--surdet-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .06em;
+}
+
+.editor-welcome-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.editor-welcome-actions .editor-welcome-recent-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+}
+
+.editor-welcome-actions .editor-welcome-recent-item:hover {
+  border-color: var(--surdet-border-default);
+  background: var(--surdet-surface-panel);
+}
+
+.editor-welcome-recent-item strong {
+  font-size: 13.5px;
+}
+
+.editor-welcome-recent-item small {
+  grid-column: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--surdet-text-muted);
+  font: 11px/1.5 var(--surdet-font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-welcome-recent-item time {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  color: var(--surdet-text-muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.editor-welcome-recent-empty {
+  margin: 0;
+  padding: 6px 12px;
+  color: var(--surdet-text-muted);
+  font-size: 12px;
+}
+
+@media(max-width:1280px) {
   .editor-command-group[data-command-group=project] .editor-command-label {
     position: absolute;
     width: 1px;
@@ -590,60 +753,35 @@ body {
     overflow: hidden;
     clip-path: inset(50%);
   }
-  .editor-operation-feedback {
-    flex-wrap: wrap;
-    gap: 4px 10px;
-  }
-  .editor-relay-status {
-    font-size: 10px;
-  }
-  .editor-mode-navigation {
-    padding-inline: 8px;
-    gap: 12px;
-  }
-  .editor-mode-button {
-    padding-inline: 10px;
-    min-height: 42px;
+  .editor-project-bar .editor-global-primary kbd {
+    display: none;
   }
 }
 
-@media(max-width:540px) {
-  .editor-project-bar {
-    grid-template-columns: 85px minmax(0,1fr);
-    grid-template-areas: "identity context" "commands commands" "feedback feedback" "relay relay";
-    gap: 6px 10px;
-    padding-bottom: 4px;
-  }
-  .editor-product-name {
-    font-size: 16px;
-  }
-  .editor-product-kind {
+@media(max-width:1000px) {
+  .editor-context-item+.editor-context-item {
     display: none;
   }
-  .editor-project-commands {
-    justify-content: flex-start;
-    gap: 8px;
+  .editor-command[data-action=search-project] :is(.editor-command-label,kbd) {
+    display: none;
   }
-  .editor-project-commands .editor-command {
-    min-height: 34px;
-  }
-  .editor-command[data-action=search-project] {
-    margin-left: auto;
-    order: 1;
-  }
-  .editor-relay-status {
-    justify-content: flex-start;
-    padding: 0;
-  }
-  .editor-operation-feedback {
-    min-height: 18px;
+  .editor-project-bar .editor-command[data-action=search-project] {
+    width: 32px;
+    justify-content: center;
     padding: 0;
   }
   .editor-welcome {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-    padding: 28px;
+    grid-template-columns: minmax(0, 520px);
+    gap: 28px;
+  }
+}
+
+@media(max-width:640px) {
+  .editor-product-identity {
+    display: none;
+  }
+  .editor-project-bar {
+    column-gap: 8px;
   }
 }
 
@@ -662,12 +800,12 @@ body {
   border-radius: 6px;
   background: var(--surdet-surface-panel);
   color: var(--surdet-text-primary);
-  box-shadow: 0 16px 60px #19202b30;
+  box-shadow: var(--surdet-shadow-popover);
   font: 13px/1.6 var(--surdet-font-ui);
 }
 
 .project-search-dialog::backdrop {
-  background: #20293955;
+  background: var(--surdet-backdrop);
 }
 
 .project-search-header {
@@ -739,6 +877,28 @@ body {
 .project-search-result[aria-selected=true] {
   background: var(--surdet-surface-selected);
   color: var(--surdet-text-primary);
+}
+
+/* Commands read as one line: label, then shortcut or destination on the right. */
+.project-search-results[data-mode=commands] .project-search-result {
+  padding-block: 7px;
+}
+
+.project-search-results[data-mode=commands] .project-search-result>span:last-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.project-search-results[data-mode=commands] .project-search-result small {
+  margin-top: 0;
+  color: var(--surdet-text-muted);
+  white-space: nowrap;
+}
+
+.project-search-result[aria-disabled=true] {
+  opacity: .55;
 }
 
 .project-search-result:hover {

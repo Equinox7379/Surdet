@@ -36,7 +36,8 @@ describe('diagnostic freshness', () => {
     fixture.state.lastValidation = null;
     fixture.state.scenes = new Map([['start', { id: 'start', file: 'start.gal', text: '@scene start\n@call start.missing' }]]);
     const right = { querySelector: () => null, prepend: vi.fn() };
-    vi.stubGlobal('document', { getElementById: (id: string) => id === 'right' ? right : null });
+    // querySelector serves the status bar problem count, which finds nothing here.
+    vi.stubGlobal('document', { getElementById: (id: string) => id === 'right' ? right : null, querySelector: () => null });
   });
   afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
@@ -71,9 +72,32 @@ describe('diagnostic freshness', () => {
     oldRow.onclick!();
     expect(jump).not.toHaveBeenCalled();
     fixture.nodes.filter(node => node.className === 'issue error').at(-1)!.onclick!();
-    expect(jump).toHaveBeenLastCalledWith('start', 2);
+    expect(jump).toHaveBeenLastCalledWith('start', 2, { start: { line: 3, col: 7 }, end: { line: 3, col: 20 } });
     panel.invalidatePendingValidation();
     expect(panel.isValidationCurrent()).toBe(false);
+  });
+
+  it('keeps F8 from walking to a location in text that changed after validation', async () => {
+    let worker!: { onmessage?: (event: { data: unknown }) => void; requests: Array<{ seq: number }> };
+    vi.stubGlobal('Worker', class {
+      onmessage?: (event: { data: unknown }) => void;
+      requests: Array<{ seq: number }> = [];
+      constructor() { worker = this; }
+      postMessage(request: { seq: number }) { this.requests.push(request); }
+    });
+    const panel = await import('../src/panels/issues.js');
+    const jump = vi.fn();
+    panel.bindIssueNavigation({ onJump: jump });
+    panel.runValidate();
+    worker.onmessage!({ data: { seq: worker.requests[0]!.seq, ok: true, issues: [issue], edges: [], scenes: new Map() } });
+    panel.stepProblem(1);
+    expect(jump).toHaveBeenLastCalledWith('start', 1, issue.range);
+    jump.mockClear();
+    panel.scheduleValidate(); // An edit: the shown range no longer describes the text.
+    panel.stepProblem(1);
+    panel.stepProblem(-1);
+    expect(jump).not.toHaveBeenCalled();
+    expect(fixture.status).toHaveBeenLastCalledWith('内容已修改，请等待重新校验后再定位', false, 4000);
   });
 
   it('also rejects a delayed main-thread result after a new edit', async () => {

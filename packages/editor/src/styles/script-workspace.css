@@ -46,8 +46,8 @@
 }
 
 .outline-heading {
-  padding: 14px 14px 12px;
-  border-bottom: 1px solid var(--surdet-border-default);
+  padding: 12px 14px 8px;
+  border-bottom: 0;
 }
 
 .outline-heading h2,
@@ -59,8 +59,10 @@
 }
 
 .outline-heading h2 {
-  font-size: 13px;
-  font-weight: 720;
+  color: var(--surdet-text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .06em;
 }
 
 .outline-heading p {
@@ -73,21 +75,24 @@
 .side-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0;
-  margin: 0;
-  border: 0;
+  gap: 2px;
+  margin: 0 12px 8px;
+  padding: 2px;
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-control);
+  background: var(--surdet-surface-app);
 }
 
 .side-tabs button.tab {
-  min-height: 34px;
+  min-height: 26px;
   border: 0;
   border-right: 0;
-  border-radius: 0;
-  padding: var(--surdet-space-8) var(--surdet-space-12);
+  border-radius: var(--surdet-radius-tight);
+  padding: 2px var(--surdet-space-8);
   background: transparent;
   color: var(--surdet-text-secondary);
-  font-size: 0.8125rem;
-  font-weight: 650;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .side-tabs button.tab:last-child {
@@ -95,22 +100,36 @@
 }
 
 .side-tabs button.tab[aria-selected="true"] {
-  background: var(--surdet-surface-selected);
+  background: var(--surdet-surface-raised);
   border-color: var(--surdet-border-default);
   color: var(--surdet-text-primary);
+  font-weight: 600;
 }
 
 .outline-new-scene {
-  width: calc(100% - 24px);
-  min-height: 30px;
-  margin: 12px;
-  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(50% - 15px);
+  min-height: 28px;
+  margin: 0 0 6px 12px;
+  border: 1px solid var(--surdet-border-default);
   border-radius: var(--surdet-radius-tight);
-  background: transparent;
-  color: var(--surdet-action-primary);
-  font-weight: 650;
-  padding: 5px var(--surdet-space-12);
+  background: var(--surdet-surface-subtle);
+  color: var(--surdet-text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 3px var(--surdet-space-8);
   cursor: pointer;
+}
+
+.outline-new-scene:hover {
+  border-color: var(--surdet-border-strong);
+  background: var(--surdet-surface-raised);
+}
+
+.outline-new-scene + .outline-new-scene {
+  margin-left: 6px;
 }
 
 .scene-list {
@@ -124,18 +143,18 @@
 }
 
 .scene-group + .scene-group {
-  margin-top: 16px;
+  margin-top: 8px;
 }
 
 .scene-group-heading,
 .asset-group-heading {
   margin: 0;
-  padding: var(--surdet-space-12) var(--surdet-space-16) var(--surdet-space-8);
+  padding: var(--surdet-space-8) var(--surdet-space-16) var(--surdet-space-4);
   overflow: hidden;
-  color: var(--surdet-text-secondary);
+  color: var(--surdet-text-muted);
   font-family: var(--surdet-font-ui);
-  font-size: 0.6875rem;
-  font-weight: 750;
+  font-size: 11px;
+  font-weight: 600;
   letter-spacing: 0.06em;
   text-overflow: ellipsis;
   text-transform: none;
@@ -148,8 +167,8 @@
   grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
   gap: 0;
-  width: calc(100% - 20px);
-  margin: 0 10px 8px;
+  width: calc(100% - 16px);
+  margin: 0 8px 1px;
 }
 
 .scene-item {
@@ -158,9 +177,9 @@
   align-items: center;
   gap: var(--surdet-space-8);
   width: 100%;
-  min-height: 44px;
+  min-height: 32px;
   margin: 0;
-  padding: var(--surdet-space-8);
+  padding: 5px var(--surdet-space-8) 5px var(--surdet-space-12);
   border: 1px solid transparent;
   border-radius: var(--surdet-radius-tight);
   background: transparent;
@@ -176,7 +195,7 @@
 
 .scene-item:hover {
   border-color: transparent;
-  background: var(--surdet-surface-subtle);
+  background: var(--surdet-surface-hover);
   color: var(--surdet-text-primary);
   transform: none;
 }
@@ -210,8 +229,9 @@
 
 .scene-name {
   overflow: hidden;
-  font-size: 0.8125rem;
-  font-weight: 550;
+  font-family: var(--surdet-font-mono);
+  font-size: 12.5px;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -234,10 +254,14 @@
 }
 
 .scene-row-actions {
-  position: static;
-  min-height: 28px;
-  background: transparent;
-  padding: 0 4px 2px;
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  min-height: 0;
+  border-radius: var(--surdet-radius-tight);
+  background: var(--surdet-surface-raised);
+  padding: 2px;
   display: flex;
   align-items: stretch;
   flex-direction: row;
@@ -249,16 +273,31 @@
 .scene-row:hover .scene-row-actions, .scene-row:focus-within .scene-row-actions { opacity:1; pointer-events:auto; }
 
 .scene-row-action {
-  min-width: 36px;
-  min-height: 26px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 22px;
   margin: 0;
-  padding: 2px 5px;
+  padding: 0;
   border: 1px solid transparent;
   border-radius: var(--surdet-radius-tight);
   background: transparent;
   color: var(--surdet-text-secondary);
-  font-size: 0.6875rem;
   line-height: 1;
+}
+
+.scene-row-action .workbench-icon,
+.scene-row-action .workbench-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.scene-row:is(:hover, :focus-within) .scene-item {
+  padding-right: 88px;
+}
+
+.scene-row:is(:hover, :focus-within) .scene-facts {
+  visibility: hidden;
 }
 
 .scene-row-action:hover,
@@ -799,7 +838,31 @@
   cursor: pointer;
 }
 
+#editor-workspace button.issue {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  margin: 0;
+  padding: 6px var(--surdet-space-8);
+  border: 0;
+  border-bottom: 1px solid var(--surdet-border-default);
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--surdet-type-caption);
+  line-height: 1.5;
+  text-align: left;
+}
+
+#editor-workspace button.issue:hover {
+  border-color: var(--surdet-border-default);
+  background: var(--surdet-surface-hover);
+}
+
 #editor-workspace .issue .loc { font-family: var(--surdet-font-mono); }
+#editor-workspace .issue .issue-code { margin-left: var(--surdet-space-8); color: var(--surdet-text-muted); }
+#editor-workspace .issue .issue-hint { color: var(--surdet-text-secondary); }
+#editor-workspace .issue-keys { margin: 0 0 var(--surdet-space-8); color: var(--surdet-text-muted); font-size: 0.6875rem; }
 
 #editor-workspace .issue:hover {
   border-color: var(--surdet-border-strong);
@@ -810,7 +873,7 @@
 #editor-workspace .issue.error,
 #editor-workspace .issue.warning,
 #editor-workspace .issue.info {
-  border-left: 1px solid var(--surdet-border-default);
+  border-left: 0;
 }
 
 #editor-workspace .issue.error .loc {

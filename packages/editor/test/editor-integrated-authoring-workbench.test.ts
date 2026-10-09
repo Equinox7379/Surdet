@@ -186,9 +186,9 @@ describe('integrated authoring workbench contract', () => {
 
     expect(mainSource).toMatch(/bindSidebarHooks\(\{[\s\S]*?onSelectScene:\s*\(sceneKey\)\s*=>\s*jumpToScene\(sceneKey\)/);
     expect(mainSource).toMatch(/bindSearchHooks\(\{[\s\S]*?onJump:\s*\(sceneKey,\s*line\)\s*=>\s*jumpToScene\(sceneKey,\s*line\)/);
-    expect(mainSource).toMatch(/bindIssueNavigation\(\{[\s\S]*?onJump:\s*\(sceneKey,\s*line\)\s*=>\s*jumpToScene\(sceneKey,\s*line\)/);
+    expect(mainSource).toMatch(/bindIssueNavigation\(\{\s*onJump:\s*\(sceneKey,\s*line,\s*range\)\s*=>\s*jumpToScene\(sceneKey,\s*line,\s*range\)/);
     expect(mainSource).toMatch(/bindRightNavigation\(\{[\s\S]*?onJumpScene:\s*\(sceneKey\)\s*=>\s*jumpToScene\(sceneKey\)/);
-    expect(issueSource).toMatch(/onIssueJumpHook\(key\s*,\s*Math\.max\(0,\s*issue\.line\s*-\s*1\)\)/);
+    expect(issueSource).toMatch(/onIssueJumpHook\(key\s*,\s*Math\.max\(0,\s*issue\.line\s*-\s*1\)\s*,\s*issue\.range\)/);
     expect(issueSource).not.toMatch(/state\.current\s*=\s*key/);
     expect(rightSource).toMatch(/onSceneJumpHook\(/);
     expect(rightSource).not.toMatch(/state\.current\s*=\s*key/);
@@ -236,13 +236,13 @@ describe('integrated authoring workbench contract', () => {
     expect(compactRules).toMatch(/data-auxiliary-view="context"[^{]*#right\.authoring-context\s*\{[^}]*display\s*:\s*block/s);
   });
 
-  it('keeps the mode strip horizontal at every required desktop width', () => {
+  it('keeps the activity rail beside a single scrolling work surface', () => {
     const frameRules = ruleBodiesMatching(appShellCss, /\.editor-application-frame\s*$/i);
     expect(frameRules.length).toBeGreaterThan(0);
-    expect(frameRules[0]).toMatch(/grid-template-columns\s*:\s*minmax\(0\s*,\s*1fr\)/i);
     expect(frameRules[0]).toMatch(
-      /grid-template-rows\s*:\s*auto\s+auto\s+minmax\(0\s*,\s*1fr\)/i,
+      /grid-template-columns\s*:\s*var\(--surdet-shell-rail-width\)\s+minmax\(0\s*,\s*1fr\)/i,
     );
+    expect(frameRules[0]).toMatch(/grid-template-rows\s*:\s*auto\s+minmax\(0\s*,\s*1fr\)/i);
 
     const emptyConflictHostRules = ruleBodiesMatching(
       appShellCss,
@@ -251,12 +251,14 @@ describe('integrated authoring workbench contract', () => {
     expect(emptyConflictHostRules.join('\n')).toMatch(/display\s*:\s*none/i);
 
     const surfaceRules = ruleBodiesMatching(appShellCss, /\.editor-mode-surface\s*$/i);
-    expect(surfaceRules.join('\n')).toMatch(/grid-row\s*:\s*3/i);
+    expect(surfaceRules.join('\n')).toMatch(/grid-column\s*:\s*2/i);
+    expect(surfaceRules.join('\n')).toMatch(/grid-row\s*:\s*2/i);
 
     const navigationRules = ruleBodiesMatching(appShellCss, /\.editor-mode-navigation\s*$/i);
     expect(navigationRules.length).toBeGreaterThan(0);
-    expect(navigationRules[0]).toMatch(/flex-direction\s*:\s*row/i);
-    expect(navigationRules[0]).toMatch(/overflow-x\s*:\s*auto/i);
-    expect(navigationRules[0]).toMatch(/grid-row\s*:\s*1/i);
+    expect(navigationRules[0]).toMatch(/flex-direction\s*:\s*column/i);
+    expect(navigationRules[0]).toMatch(/grid-row\s*:\s*1\s*\/\s*-1/i);
+    // Ten modes must stay reachable on short windows instead of being clipped.
+    expect(navigationRules[0]).toMatch(/overflow-y\s*:\s*auto/i);
   });
 });

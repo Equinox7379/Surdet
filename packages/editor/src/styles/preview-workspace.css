@@ -91,15 +91,43 @@
   margin: 0;
 }
 
-.preview-replay-action {
-  border-color: var(--surdet-action-primary);
-  color: var(--surdet-action-primary);
+.preview-controls button {
+  min-height: 30px;
+  padding: 0 var(--surdet-space-12);
+  border: 1px solid var(--surdet-border-strong);
+  border-radius: var(--surdet-radius-tight);
+  background-color: var(--surdet-surface-subtle);
+  color: var(--surdet-text-primary);
+  font-size: var(--surdet-type-caption);
+  cursor: pointer;
 }
 
-.preview-replay-action:hover {
+.preview-controls button:hover:not(:disabled) {
+  background-color: var(--surdet-surface-raised);
+}
+
+.preview-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.preview-controls .preview-play-action {
   border-color: var(--surdet-action-primary);
-  background-color: var(--surdet-surface-subtle);
-  color: var(--surdet-action-primary);
+  background-color: var(--surdet-action-primary);
+  color: var(--surdet-text-on-accent);
+  font-weight: 600;
+}
+
+.preview-controls .preview-play-action:hover:not(:disabled) {
+  border-color: var(--surdet-action-primary-hover);
+  background-color: var(--surdet-action-primary-hover);
+}
+
+.preview-workspace > .preview-source-state {
+  margin: 0;
+  padding: var(--surdet-space-6) var(--surdet-space-16);
+  border-top: 1px solid var(--surdet-border-default);
+  background-color: var(--surdet-surface-panel);
 }
 
 .preview-stage {
@@ -395,5 +423,97 @@
   .preview-causal-header {
     min-height: 42px;
     padding-block: var(--surdet-space-4);
+  }
+}
+
+/* Wide preview workspace: the picture keeps the full height on the left; status,
+   debugger, stage adjustment and the causal record stack in a side column. */
+@media (min-width: 1200px) {
+  #preview-view .preview-workspace[data-preview-layout="standalone"] {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+    grid-template-rows: auto repeat(5, auto) minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  #preview-view .preview-workspace[data-preview-layout="standalone"] > * {
+    grid-column: 2;
+    min-width: 0;
+    border-left: 1px solid var(--surdet-border-default);
+  }
+
+  #preview-view .preview-workspace[data-preview-layout="standalone"] > .preview-toolbar {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    border-left: 0;
+  }
+
+  #preview-view .preview-workspace[data-preview-layout="standalone"] > .preview-stage {
+    grid-column: 1;
+    grid-row: 2 / -1;
+    border-left: 0;
+  }
+
+  #preview-view .preview-workspace[data-preview-layout="standalone"] > .preview-diagnostics,
+  #preview-view .preview-workspace[data-preview-layout="standalone"] > .preview-source-state {
+    padding: var(--surdet-space-8) var(--surdet-space-12);
+    border-top: 0;
+    border-bottom: 1px solid var(--surdet-border-default);
+  }
+
+  #preview-view .preview-workspace[data-preview-layout="standalone"] > .preview-debugger,
+  #preview-view .preview-workspace[data-preview-layout="standalone"] > .stage-adjustment-workspace {
+    max-height: 40vh;
+    overflow: auto;
+    padding-inline: var(--surdet-space-12);
+    border-top: 0;
+    border-bottom: 1px solid var(--surdet-border-default);
+  }
+
+  #preview-view .preview-workspace[data-preview-layout="standalone"] > .preview-causal-dock {
+    grid-row: -2 / -1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    border-top: 0;
+  }
+
+  #preview-view .preview-workspace[data-preview-layout="standalone"] .preview-causal-header {
+    min-height: 40px;
+    padding: var(--surdet-space-6) var(--surdet-space-12);
+  }
+
+  #preview-view .preview-workspace[data-preview-layout="standalone"] .preview-causal-list {
+    flex: 1 1 auto;
+    max-height: none;
+  }
+
+  /* Three lines per record: summary; result · source; muted technical detail. */
+  #preview-view .preview-workspace[data-preview-layout="standalone"] .preview-trace-event {
+    grid-template-columns: 28px auto minmax(0, 1fr);
+    min-height: 0;
+    gap: 1px var(--surdet-space-8);
+    padding: var(--surdet-space-6) var(--surdet-space-12);
+  }
+
+  #preview-view .preview-workspace[data-preview-layout="standalone"] .preview-trace-summary {
+    grid-column: 2 / -1;
+  }
+
+  #preview-view .preview-workspace[data-preview-layout="standalone"] .preview-trace-result {
+    grid-column: 2;
+  }
+
+  #preview-view .preview-workspace[data-preview-layout="standalone"] .preview-trace-source {
+    grid-column: 3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #preview-view .preview-workspace[data-preview-layout="standalone"] .preview-trace-technical {
+    grid-column: 2 / -1;
+    color: var(--surdet-text-muted);
+    font-size: 11px;
   }
 }

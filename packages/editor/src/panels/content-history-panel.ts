@@ -2,12 +2,17 @@ import type { ContentHistorySummary, ContentHistoryComparison } from '@surdet/au
 import { state, h } from '../state.js';
 import { editorHistoryClient } from '../editor-workspace.js';
 import { prepareHistoryFileDraft } from '../content-history-draft.js';
+import { changedLines, textLines } from '../line-diff.js';
 
 export function renderContentHistoryPanel(container: HTMLElement, options: { assertReady: () => void; onRestored: () => void }): void {
   container.className = 'content-history';
   container.append(h('h1', undefined, '内容历史'), h('p', 'dim', '为已保存的剧本、时间轴和配置记下一个版本，查看差异后恢复到草稿。素材文件不包含在这里。'));
   const client = editorHistoryClient(state.dirHandle);
-  if (client === null) { container.append(h('p', undefined, '请从项目启动器打开并连接项目，使用内容历史。')); return; }
+  if (client === null) {
+    const empty = h('section', 'content-history-empty');
+    empty.append(h('h2', undefined, '尚未连接内容历史'), h('p', undefined, '请从项目启动器打开并连接项目，使用内容历史。'));
+    container.append(empty); return;
+  }
   const root = state.dirHandle;
   const status = h('p'); status.setAttribute('role', 'status');
   const label = h('input'); label.placeholder = '版本名称，例如：第一章定稿'; label.setAttribute('aria-label', '版本名称'); label.maxLength = 200;
@@ -33,8 +38,11 @@ export function renderContentHistoryPanel(container: HTMLElement, options: { ass
     const file = full.files[0]!;
     target.replaceChildren();
     const before = h('section'), after = h('section');
-    before.append(h('h3', undefined, '当前已保存'), h('pre', undefined, file.currentText ?? '（当前没有这个文件）'));
-    after.append(h('h3', undefined, '历史版本'), h('pre', undefined, file.historicalText ?? '（此版本没有这个文件）'));
+    const currentLines = file.currentText == null ? null : textLines(file.currentText);
+    const historicalLines = file.historicalText == null ? null : textLines(file.historicalText);
+    const marks = changedLines(currentLines ?? [], historicalLines ?? []);
+    before.append(h('h3', undefined, '当前已保存'), numberedLines(currentLines, marks.left, '（当前没有这个文件）'));
+    after.append(h('h3', undefined, '历史版本'), numberedLines(historicalLines, marks.right, '（此版本没有这个文件）'));
     const columns = h('div', 'content-history-diff'); columns.append(before, after);
     const restore = h('button', 'v4-button v4-primary', '恢复这个文件为草稿');
     restore.disabled = file.historicalText === null || file.currentSha256 === file.historicalSha256;
@@ -55,7 +63,8 @@ export function renderContentHistoryPanel(container: HTMLElement, options: { ass
     };
     const cancel = h('button', 'v4-button', '取消');
     cancel.onclick = () => { requestSequence++; target.replaceChildren(); };
-    target.append(h('h2', undefined, path), columns, restore, cancel);
+    const actions = h('div', 'content-history-actions'); actions.append(restore, cancel);
+    target.append(h('h3', 'content-history-file-title', path), columns, actions);
   };
 
   const select = async (summary: ContentHistorySummary) => {
@@ -65,12 +74,22 @@ export function renderContentHistoryPanel(container: HTMLElement, options: { ass
     const comparison = await client.compare({ checkpointId: summary.checkpointId, expectedFingerprint: summary.fingerprint });
     if (!current() || sequence !== requestSequence) return;
     status.textContent = '';
-    detail.replaceChildren(h('h2', undefined, summary.label));
+    for (const item of list.querySelectorAll<HTMLButtonElement>('button')) item.setAttribute('aria-current', String(item.dataset.checkpointId === summary.checkpointId));
+    detail.replaceChildren(h('h2', undefined, summary.label),
+      h('p', 'dim content-history-meta', `${new Date(summary.createdAt).toLocaleString('zh-CN')} · ${summary.fileCount} 个文件`));
     const fileList = h('div', 'content-history-files'), fileDetail = h('div');
     for (const file of comparison.files) {
       if (file.currentSha256 === file.historicalSha256) continue;
-      const button = h('button', 'v4-button', `${file.path} — ${file.historicalSha256 === null ? '当前新增，保留' : file.currentSha256 === null ? '可找回' : '有修改'}`);
-      button.onclick = () => { if (!busy) void showFile(summary, comparison, file.path, fileDetail).catch(report); };
+      const change = file.historicalSha256 === null ? 'added' : file.currentSha256 === null ? 'removed' : 'modified';
+      const button = h('button', 'v4-button content-history-file');
+      button.setAttribute('aria-pressed', 'false');
+      button.append(h('span', 'content-history-file-path', file.path),
+        h('span', `content-history-file-status content-history-file-status--${change}`, { added: '当前新增，保留', removed: '可找回', modified: '有修改' }[change]));
+      button.onclick = () => {
+        if (busy) return;
+        for (const item of fileList.querySelectorAll('button')) item.setAttribute('aria-pressed', String(item === button));
+        void showFile(summary, comparison, file.path, fileDetail).catch(report);
+      };
       fileList.append(button);
     }
     if (fileList.childElementCount === 0) fileList.append(h('p', 'dim', '当前已保存内容与这个版本一致。'));
@@ -84,6 +103,8 @@ export function renderContentHistoryPanel(container: HTMLElement, options: { ass
     list.replaceChildren();
     for (const summary of index.checkpoints) {
       const button = h('button', 'v4-button');
+      button.dataset.checkpointId = summary.checkpointId;
+      button.setAttribute('aria-current', 'false');
       button.append(h('strong', undefined, summary.label), h('span', 'dim', `${new Date(summary.createdAt).toLocaleString('zh-CN')} · ${summary.fileCount} 个文件`));
       button.onclick = () => { void select(summary).catch(report); };
       list.append(button);
@@ -108,4 +129,16 @@ export function renderContentHistoryPanel(container: HTMLElement, options: { ass
   };
   refresh.onclick = () => { if (!busy) { requestSequence++; void load().catch(report); } };
   void load().catch(report);
+}
+
+/** Numbered lines; lines outside the order-preserving common part are marked. Display only. */
+function numberedLines(lines: readonly string[] | null, changed: readonly boolean[], missing: string): HTMLElement {
+  const pre = h('pre');
+  if (lines === null) { pre.textContent = missing; return pre; }
+  lines.forEach((line, index) => {
+    const row = h('span', changed[index] ? 'content-history-line is-changed' : 'content-history-line', line);
+    row.dataset.line = String(index + 1);
+    pre.append(row);
+  });
+  return pre;
 }

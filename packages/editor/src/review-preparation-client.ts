@@ -2,6 +2,7 @@ import {
   AuthoringOperationError, isReviewPreparationStatus, parseReviewPreparationRequest, samePreparationReference,
   type ReviewPreparationReference, type ReviewPreparationRequest, type ReviewPreparationStatus, type PreparedReviewContent,
 } from '@surdet/authoring';
+import { isPreparedReviewContent, readOnlyReviewDirectory } from './review-content-directory.js';
 
 export function preparationErrorMessage(error: unknown): string {
   if (!(error instanceof AuthoringOperationError)) return '暂时无法确认准备进度，请先检查状态；不会另建结果。';
@@ -37,14 +38,8 @@ export function createReviewPreparationClient(options: { token: string; endpoint
       if (!isReviewPreparationStatus(result) || !samePreparationReference(result.decision, parsed.decision)) {
         throw new AuthoringOperationError('REVIEW_IDENTITY_MISMATCH', '服务返回的准备状态不属于这份决定。');
       }
-    } else {
-      const value = result as PreparedReviewContent | undefined;
-      if (!value || (parsed.action === 'read-prepared-file' ? value.kind !== 'file' || typeof value.base64 !== 'string'
-        : value.kind !== 'directory' || !Array.isArray(value.entries) || value.entries.some((entry) =>
-          !entry || typeof entry.name !== 'string' || !entry.name || /[\\/:\x00-\x1f]/.test(entry.name)
-          || entry.name === '.' || entry.name === '..' || (entry.kind !== 'file' && entry.kind !== 'directory')))) {
-        throw new AuthoringOperationError('REVIEW_IDENTITY_MISMATCH', '服务返回的审阅内容无法核对。');
-      }
+    } else if (!isPreparedReviewContent(result, parsed.action === 'read-prepared-file' ? 'file' : 'directory')) {
+      throw new AuthoringOperationError('REVIEW_IDENTITY_MISMATCH', '服务返回的审阅内容无法核对。');
     }
     return result as ReviewPreparationStatus | PreparedReviewContent;
   };
@@ -53,48 +48,17 @@ export function createReviewPreparationClient(options: { token: string; endpoint
     await execute({ protocolVersion: '1.0.0', action, decision }) as ReviewPreparationStatus;
 
   /** Read-only File System Access shape consumed by the existing review/project loaders. */
-  const directory = (decision: ReviewPreparationReference, view: 'comparison' | 'result'): FileSystemDirectoryHandle => {
-    const identity = `${decision.projectIdentity}/${decision.reviewId}/${view}`;
-    const read = async (path: string, kind: 'file' | 'directory') => {
+  const directory = (decision: ReviewPreparationReference, view: 'comparison' | 'result'): FileSystemDirectoryHandle => readOnlyReviewDirectory({
+    key: `${decision.projectIdentity}/${decision.reviewId}/${view}`,
+    rootName: decision.reviewId,
+    readonlyMessage: '生成结果为只读，请明确写回来源项目后继续编辑。',
+    read: async (path, kind) => {
       try { return await execute({ protocolVersion: '1.0.0', action: kind === 'file' ? 'read-prepared-file' : 'read-prepared-directory', decision, view, path }) as PreparedReviewContent; }
       catch (error) {
         if (error instanceof AuthoringOperationError && error.code === 'OBJECT_NOT_FOUND') throw new DOMException('审阅内容不存在', 'NotFoundError');
         throw error;
       }
-    };
-    const readonly = () => { throw new DOMException('生成结果为只读，请明确写回来源项目后继续编辑。', 'NotAllowedError'); };
-    const permission = async (options?: { mode?: string }) => options?.mode === 'readwrite' ? 'denied' : 'granted';
-    const make = (path: string, kind: 'file' | 'directory'): FileSystemHandle => {
-      const key = `${identity}/${path}`;
-      const handle = { kind, name: path.split('/').pop() || decision.reviewId, reviewKey: key, queryPermission: permission, requestPermission: permission,
-        isSameEntry: async (other: unknown) => (other as { reviewKey?: string })?.reviewKey === key };
-      if (kind === 'file') return { ...handle, createWritable: readonly, getFile: async () => {
-        const content = await read(path, 'file');
-        if (content.kind !== 'file') throw new DOMException('不是文件', 'TypeMismatchError');
-        const bytes = Uint8Array.from(atob(content.base64), (char) => char.charCodeAt(0));
-        return new File([bytes], handle.name);
-      } } as unknown as FileSystemFileHandle;
-      const values = async function* () {
-        const content = await read(path, 'directory');
-        if (content.kind !== 'directory') throw new DOMException('不是目录', 'TypeMismatchError');
-        for (const entry of content.entries) yield make(path ? `${path}/${entry.name}` : entry.name, entry.kind);
-      };
-      const child = async (name: string, kind: 'file' | 'directory', options?: { create?: boolean }) => {
-        if (options?.create) return readonly();
-        for await (const entry of values()) if (entry.name === name) {
-          if (entry.kind !== kind) throw new DOMException('文件种类不匹配', 'TypeMismatchError');
-          return entry;
-        }
-        throw new DOMException('审阅内容不存在', 'NotFoundError');
-      };
-      return { ...handle, values, removeEntry: readonly,
-        entries: async function* () { for await (const entry of values()) yield [entry.name, entry]; },
-        getFileHandle: (name: string, options?: { create?: boolean }) => child(name, 'file', options),
-        getDirectoryHandle: (name: string, options?: { create?: boolean }) => child(name, 'directory', options),
-        resolve: async (other: { reviewKey?: string }) => other.reviewKey?.startsWith(`${key}/`) ? other.reviewKey.slice(key.length + 1).split('/') : null,
-      } as unknown as FileSystemDirectoryHandle;
-    };
-    return make('', 'directory') as FileSystemDirectoryHandle;
-  };
+    },
+  });
   return { execute, status, directory };
 }

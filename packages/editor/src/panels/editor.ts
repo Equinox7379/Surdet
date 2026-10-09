@@ -360,10 +360,9 @@ function renderBlock(line: LineModel, index: number, lineCount: number): HTMLEle
     fields.replaceChildren();
     const model = line;
     if (model.kind === 'text') {
-      const sp = h('input');
+      const sp = h('input', 'speaker-input');
       sp.placeholder = '说话人（可空）';
       sp.value = model.speaker;
-      sp.style.width = '110px';
       const val = h('input', 'wide');
       val.placeholder = '台词内容（支持 {变量} 插值与 基础字《注音》）';
       val.value = model.value;

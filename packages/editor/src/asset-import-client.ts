@@ -13,9 +13,11 @@ import type {
   PreviewPublishAck,
   PreviewContent, PreviewContentOption, PreviewContentTarget,
   ContentHistoryIndex, ContentHistorySummary, ContentHistoryComparison,
+  PreparedReviewContent,
 } from '@surdet/authoring';
 import { isPreviewSourcePath, isContentHistoryPath, parsePreviewContentTarget, stableStringify } from '@surdet/authoring';
 import type { ProjectDiskBaseline } from './project-disk-baseline';
+import { isPreparedReviewContent } from './review-content-directory.js';
 
 const AUTHORITY_HEADER = 'x-surdet-asset-import-authority';
 const BINDING_HEADER = 'x-surdet-project-binding';
@@ -26,6 +28,7 @@ const UPLOAD_IDLE_TIMEOUT_MS = 35_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
+const REVIEW_RECEIPT_FILES = new Set(['decision.json', 'final-approval.json', 'return-request.json']);
 type OperationKind = 'import' | 'relocation' | 'scene' | 'workspace';
 
 export type AssetImportOperationStatus =
@@ -376,8 +379,25 @@ export interface EditorWorkspaceSettlement {
   mutationNotice: { status: 'none' | 'written' | 'unavailable'; message?: string };
 }
 
+/** Discovery only: a receipt file being present is not a valid, approved or applied result. */
+export interface ReviewTaskSummary {
+  reviewId: string;
+  kind: 'comparison' | 'integration-result' | null;
+  status: 'pending' | 'receipt-present' | 'unavailable';
+  receiptFiles: string[];
+  errorCode?: string;
+}
+
+export interface ReviewTaskList {
+  projectIdentity: string;
+  tasks: ReviewTaskSummary[];
+  pendingCount: number;
+}
+
 export interface EditorWorkspaceClient {
   history(state: EditorWorkspaceState): Promise<ContentHistoryIndex>;
+  reviewTasks(state: EditorWorkspaceState): Promise<ReviewTaskList>;
+  reviewContent(state: EditorWorkspaceState & { request: { reviewId: string; kind: 'file' | 'directory'; path: string } }): Promise<PreparedReviewContent>;
   historyCheckpoint(state: EditorWorkspaceState & { request: { operationId: string; label: string; expectedContentRevision: string } }): Promise<ContentHistorySummary>;
   historyCompare(state: EditorWorkspaceState & { request: { checkpointId: string; expectedFingerprint?: string; path?: string } }): Promise<ContentHistoryComparison>;
   heartbeat(state: EditorWorkspaceState): Promise<void>;
@@ -1849,6 +1869,19 @@ export function createAssetImportAuthorityClient(
       || !Number.isSafeInteger(value.fileCount) || (value.fileCount as number) < 0) throw invalidResponse();
     return value as unknown as ContentHistorySummary;
   };
+  const parseReviewTask = (value: unknown): ReviewTaskSummary => {
+    if (!isRecord(value) || Object.keys(value).some(key => !['reviewId', 'kind', 'status', 'receiptFiles', 'errorCode'].includes(key))
+      || (value.kind !== null && value.kind !== 'comparison' && value.kind !== 'integration-result')
+      || !Array.isArray(value.receiptFiles) || !value.receiptFiles.every(file => REVIEW_RECEIPT_FILES.has(file as string))
+      || new Set(value.receiptFiles).size !== value.receiptFiles.length) throw invalidResponse();
+    const unavailable = value.status === 'unavailable';
+    // Damaged entries keep their directory name; readable ones carry a valid review id.
+    if (unavailable ? !isSafeText(value.reviewId, 255) || /[\\/]/.test(value.reviewId) || !isSafeText(value.errorCode, 96) || value.receiptFiles.length !== 0
+      : typeof value.reviewId !== 'string' || value.reviewId.length > 160 || !/^[A-Za-z0-9_-]+$/.test(value.reviewId) || value.errorCode !== undefined
+        || (value.status === 'pending' ? value.receiptFiles.length !== 0 : value.status !== 'receipt-present' || value.receiptFiles.length !== 1)) throw invalidResponse();
+    return { reviewId: value.reviewId as string, kind: value.kind, status: value.status as ReviewTaskSummary['status'],
+      receiptFiles: [...value.receiptFiles as string[]], ...(unavailable ? { errorCode: value.errorCode as string } : {}) };
+  };
   const workspace: EditorWorkspaceClient = {
     history: state => workspaceRequest('history', state, value => {
       if (!isRecord(value) || !isSha256(value.contentRevision) || !Array.isArray(value.checkpoints)) throw invalidResponse();
@@ -1874,6 +1907,18 @@ export function createAssetImportAuthorityClient(
       });
       if (state.request.path !== undefined && (files.length !== 1 || files[0]!.path !== state.request.path)) throw invalidResponse();
       return { checkpoint, contentRevision: value.contentRevision, files };
+    }),
+    reviewTasks: state => workspaceRequest('review-tasks', state, value => {
+      if (!isRecord(value) || !hasExactKeys(value, ['projectIdentity', 'tasks', 'pendingCount'])
+        || typeof value.projectIdentity !== 'string' || !/^[0-9a-f]{32}$/.test(value.projectIdentity) || !Array.isArray(value.tasks)) throw invalidResponse();
+      const tasks = value.tasks.map(parseReviewTask);
+      const pendingCount = tasks.filter(task => task.status === 'pending').length;
+      if (value.pendingCount !== pendingCount || new Set(tasks.map(task => task.reviewId)).size !== tasks.length) throw invalidResponse();
+      return { projectIdentity: value.projectIdentity, tasks, pendingCount };
+    }),
+    reviewContent: state => workspaceRequest('review-content', state, value => {
+      if (!isPreparedReviewContent(value, state.request.kind)) throw invalidResponse();
+      return value;
     }),
     heartbeat: state => workspaceRequest('heartbeat', state, value => {
       if (!isRecord(value) || !Number.isSafeInteger(value.workspaceGeneration) || !isTimestamp(value.heartbeatAt)) throw invalidResponse();
