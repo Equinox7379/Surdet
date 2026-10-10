@@ -43,6 +43,8 @@ Authoring合同2.34.0，能力仍为73项。`capabilities.describe.result.inline
 
 `showText(speaker, value, visibleUnits?)`现在传**完整标记字符串**与可见单元数量；不传数量表示整句显示。不要再传截断标签的字符串。整句先排版，进度只改变可见文字；句中等待仍处于typing而非剧情advance状态。投影`dialogText`始终为当前可见纯文字，Ruby不再返回空串。
 
+新ADV句使用`beginText(speaker, value, visibleUnits)`一次完成新行复位与初始投影；不先发布空句再发布原文。当前真实Stage、Facade与原有Legacy入口均传递同一原文及进度，因此初始化只协调一次立绘焦点，后续打字仍由`showText`更新。只传说话人的空句入口保持面板可见；纯标签句直接等待推进。
+
 ## 文字记录与NVL的保存合同
 
 `inlineStaticText(source)`移除w/speed/nw/shake/wave的开闭标签，保留b/i/color/size/em/ruby和字面文字。非法标记整句转义为静态字面。`BacklogEntry`仍有`speaker:string|null`、`text:string`和可选`voice:string`，新增可选`markup:string`；`text`是明文，`markup`是静态标记源文，两者必须显示同样正文。普通条目不必存markup，返回条目不可变。NVL的`appendNvlText(speaker,text,markup?)`遵守同一明文/静态源文分工。

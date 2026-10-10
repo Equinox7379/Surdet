@@ -55,8 +55,9 @@ class DialogueStageHarness implements AdvStage {
     this.texts.push({ speaker, value });
   }
 
-  beginText(speaker: string | null): void {
+  beginText(speaker: string | null, value = ''): void {
     this.begins.push(speaker);
+    if (value) this.showText(speaker, value);
   }
 
   clearText(): void {

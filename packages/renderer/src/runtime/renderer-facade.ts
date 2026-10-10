@@ -399,17 +399,17 @@ export class RendererFacade {
           this.#coordinateWorldFocus(this.#dialoguePort.activeSpeakerId);
         }
       },
-      beginText: (speaker) => {
+      beginText: (speaker, value = '', visibleUnits) => {
         if (!this.#dialoguePort) {
-          if (this.#stage.beginText) this.#callDialogue('beginText', undefined, this.#stage.beginText, speaker);
-          else this.#callDialogue('beginText', undefined, this.#stage.showText, speaker, '');
+          if (this.#stage.beginText) this.#callDialogue('beginText', undefined, this.#stage.beginText, speaker, value, visibleUnits);
+          else this.#callDialogue('beginText', undefined, this.#stage.showText, speaker, value, visibleUnits);
           return;
         }
         const before = this.#dialoguePort.projectionVersion;
         if (this.#dialoguePort.beginText) {
-          this.#callDialogue('beginText', this.#dialoguePort.beginText, this.#stage.beginText, speaker);
+          this.#callDialogue('beginText', this.#dialoguePort.beginText, this.#stage.beginText, speaker, value, visibleUnits);
         } else {
-          this.#callDialogue('beginText', this.#dialoguePort.showText, this.#stage.showText, speaker, '');
+          this.#callDialogue('beginText', this.#dialoguePort.showText, this.#stage.showText, speaker, value, visibleUnits);
         }
         if (this.#dialoguePort.projectionVersion !== before) {
           this.#coordinateWorldFocus(this.#dialoguePort.activeSpeakerId);
