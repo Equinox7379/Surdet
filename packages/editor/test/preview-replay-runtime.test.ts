@@ -161,6 +161,37 @@ describe('PreviewReplayController', () => {
     expect(statuses.at(-1)).toContain('保存的目标源点');
   });
 
+  it('records and replays an option whose shown label differs from its source by markup and interpolation', async () => {
+    const styled = replayScene().replace('  A -> @goto after', '  <color=accent>{hero}</color>先走 -> @goto after');
+    const declarations: VarDeclaration[] = [{ name: 'hero', type: 'string', initial: '<b>凛' }];
+    const shown: string[] = [];
+    const recordScenes = [{ id: 'intro', text: styled }];
+    const sources = await sourcesFor(recordScenes);
+    const recorder = makeRuntime(recordScenes, declarations);
+    recorder.bus.on('choice', (event) => shown.push(...event.options.map((option) => option.label)));
+    const recording = new PreviewReplayController({ sources, seed, sceneId: 'intro', label: 'start', onStatus: () => {} });
+    attach(recording, recorder.interpreter, recorder.bus);
+    recorder.interpreter.start('intro', 'start');
+    recorder.interpreter.advance();
+    recorder.interpreter.choose(0);
+    // The shown label is interpolated with the value escaped, so it never equals the source label.
+    expect(shown[0]).toBe('<color=accent>\\<b>凛</color>先走');
+    const checkpoint = recording.checkpoint();
+    expect(checkpoint.choices).toHaveLength(1);
+    expect(checkpoint.target).not.toBeNull();
+
+    const runtime = makeRuntime(recordScenes, declarations);
+    const statuses: string[] = [];
+    const texts: string[] = [];
+    runtime.bus.on('text', (event) => texts.push(event.value));
+    const replay = new PreviewReplayController({ sources, seed, sceneId: 'intro', label: 'start', replay: checkpoint, onStatus: (message) => statuses.push(message) });
+    attach(replay, runtime.interpreter, runtime.bus);
+    runtime.interpreter.start('intro', 'start');
+    await flushMicrotasks();
+    expect(texts).toEqual(['开场。', '目标对白。']);
+    expect(statuses.at(-1)).toContain('保存的目标源点');
+  });
+
   it('stops at a reordered choice group or a same-label option with a changed target', async () => {
     const original = await recordAReplayCheckpoint();
     const variants = [

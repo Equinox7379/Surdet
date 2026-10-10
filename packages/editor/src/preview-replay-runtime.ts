@@ -246,12 +246,14 @@ export class PreviewReplayController {
       return;
     }
 
+    // The source point and option index already pin the option; shown labels carry
+    // interpolation and markup, so they are never compared with the source label.
     const available = this.#availableOptions;
-    if (available !== null && !available.some((option) => option.index === selected.optionIndex && option.label === selected.label)) {
+    if (available !== null && !available.some((option) => option.index === selected.optionIndex)) {
       this.#invalidateRecording('引擎选择事件不在当前可见选项中，已停在真实选择肢。');
       return;
     }
-    const sourceOption = point.options?.filter((option) => option.index === selected.optionIndex && option.label === selected.label) ?? [];
+    const sourceOption = point.options?.filter((option) => option.index === selected.optionIndex) ?? [];
     if (sourceOption.length !== 1) {
       this.#invalidateRecording('无法用完整选项身份确认已选择项，已停在真实选择肢。');
       return;
