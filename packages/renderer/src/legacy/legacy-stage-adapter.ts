@@ -1,4 +1,4 @@
-import type { Application, Text as PixiText } from 'pixi.js';
+import type { Application } from 'pixi.js';
 import type { BattleHandlers, BattleView } from '../battle-view.js';
 import type { BacklogEntry } from '../backlog.js';
 import type { BasePanelView, MapView, SaveLoadView, SystemMenuItemView, TitleView } from '../ui-views.js';
@@ -63,6 +63,7 @@ export class LegacyStageAdapter implements AdvStage {
   setQuality(quality: RenderQuality): void { this.host.setQuality(quality); }
   getQuality(): RenderQuality { return this.host.getQuality(); }
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void { this.host.setPresentationPreferences(preferences); }
+  setReadingPreferences(preferences: Partial<import('../presentation.js').ReadingPreferences>): void { this.host.setReadingPreferences(preferences); }
   getPresentationPreferences(): PresentationPreferences { return this.host.getPresentationPreferences(); }
   setPostProcess(settings: Partial<PostProcessSettings>): void { this.host.setPostProcess(settings); }
   getPostProcess(): PostProcessSettings { return this.host.getPostProcess(); }
@@ -91,9 +92,9 @@ export class LegacyStageAdapter implements AdvStage {
   setBackground(key: string | null): void { this.host.setBackground(key); }
   setPortrait(key: string, opts: PortraitView): void { this.host.setPortrait(key, opts); }
   removePortrait(key: string): void { this.host.removePortrait(key); }
-  showText(speaker: string | null, value: string): void {
+  showText(speaker: string | null, value: string, visibleUnits?: number): void {
     const before = this.host.dialogueLayer.projectionVersion;
-    this.host.showText(speaker, value);
+    this.host.showText(speaker, value, visibleUnits);
     if (this.host.dialogueLayer.projectionVersion !== before) {
       this.setPortraitFocus(this.host.dialogueLayer.activeSpeakerId);
     }
@@ -142,9 +143,10 @@ export class LegacyStageAdapter implements AdvStage {
   stopParticles(): void { this.host.stopParticles(); }
   showBanner(text: string, variant: 'chapter' | 'tip'): void { this.host.showBanner(text, variant); }
   setNvlMode(on: boolean): void { this.host.setNvlMode(on); }
-  get nvlLines(): readonly PixiText[] { return this.host.nvlLines; }
-  appendNvlText(speaker: string | null, text: string): void {
-    this.host.appendNvlText(speaker, text);
+  get nvlLines(): RendererStageHost['nvlLines'] { return this.host.nvlLines; }
+  setTextSkipping(skipping: boolean): void { this.host.setTextSkipping(skipping); }
+  appendNvlText(speaker: string | null, text: string, markup?: string): void {
+    this.host.appendNvlText(speaker, text, markup);
     this.setPortraitFocus(this.host.dialogueLayer.activeSpeakerId);
   }
   clearNvlText(): void {

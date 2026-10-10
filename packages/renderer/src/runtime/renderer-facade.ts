@@ -425,9 +425,10 @@ export class RendererFacade {
       showBacklog: (entries, onReplayVoice, query) => this.#callDialogue('showBacklog', this.#dialoguePort?.showBacklog, this.#stage.showBacklog, entries.map((entry) => ({ ...entry })), onReplayVoice, query),
       hideBacklog: () => this.#callDialogue('hideBacklog', this.#dialoguePort?.hideBacklog, this.#stage.hideBacklog),
       setNvlMode: (on) => this.#callDialogue('setNvlMode', this.#dialoguePort?.setNvlMode, this.#stage.setNvlMode, on),
-      appendNvlText: (speaker, text) => {
+      setTextSkipping: (skipping) => this.#callDialogue('setTextSkipping', this.#dialoguePort?.setTextSkipping, this.#stage.setTextSkipping, skipping),
+      appendNvlText: (speaker, text, markup) => {
         const before = this.#dialoguePort?.projectionVersion;
-        this.#callDialogue('appendNvlText', this.#dialoguePort?.appendNvlText, this.#stage.appendNvlText, speaker, text);
+        this.#callDialogue('appendNvlText', this.#dialoguePort?.appendNvlText, this.#stage.appendNvlText, speaker, text, markup);
         if (this.#dialoguePort && this.#dialoguePort.projectionVersion !== before) this.#coordinateWorldFocus(this.#dialoguePort.activeSpeakerId);
       },
       clearNvlText: () => {

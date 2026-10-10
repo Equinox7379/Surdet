@@ -12,6 +12,8 @@ import type { RendererCommands } from './renderer-commands.js';
 import type { RendererQueries } from './renderer-queries.js';
 
 export interface ResetSessionOptions {
+  /** Rollback keeps current history until the replacement snapshot has passed preflight. */
+  preserveReadingHistory?: boolean;
   preserveWorld?: boolean;
   clearAssets?: boolean;
 }

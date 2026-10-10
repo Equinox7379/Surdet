@@ -110,7 +110,8 @@ export interface DialogueCommands {
   showBacklog(entries: readonly BacklogEntry[], onReplayVoice?: (voice: string) => void, query?: string): void;
   hideBacklog(): void;
   setNvlMode(on: boolean): void;
-  appendNvlText(speaker: string | null, text: string): void;
+  appendNvlText(speaker: string | null, text: string, markup?: string): void;
+  setTextSkipping(skipping: boolean): void;
   clearNvlText(): void;
   showBanner(text: string, variant: 'chapter' | 'tip'): void;
   setChoiceHighlight(position: number): void;

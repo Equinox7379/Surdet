@@ -2,6 +2,8 @@ import {
   EventBus,
   inlinePlainText,
   inlineTextLength,
+  inlineStaticText,
+  escapeInlineText,
   type CoreEventMap,
   type Unsubscribe,
   type TextEventPayload,
@@ -13,7 +15,7 @@ import {
   validateTimeline,
   stageCommandFromInstruction,
 } from '@surdet/core';
-import type { Backlog } from '../backlog.js';
+import { prepareBacklog, DEFAULT_BACKLOG_CAPACITY, type Backlog, type BacklogEntry } from '../backlog.js';
 import type { AudioPlaybackSnapshot } from '../rollback-buffer.js';
 import { dequote } from '../dequote.js';
 import { Typewriter } from '../text-buffer.js';
@@ -63,8 +65,10 @@ function prepareDialogueRestore(payload: unknown): {
   readonly nvlActive: boolean;
   readonly nvlEntries: readonly NvlPresentationEntry[];
   readonly advText: NvlPresentationEntry | null;
+  readonly backlog: readonly BacklogEntry[];
+  readonly backlogReplayCurrent: boolean;
 } {
-  if (payload === undefined) return { nvlActive: false, nvlEntries: [], advText: null };
+  if (payload === undefined) return { nvlActive: false, nvlEntries: [], advText: null, backlog: [], backlogReplayCurrent: false };
   if (!isRecord(payload)) throw invalidPresentation('Presentation dialogue is invalid');
   if (typeof payload.nvlActive !== 'boolean') {
     throw invalidPresentation('Presentation dialogue nvlActive must be boolean');
@@ -82,9 +86,11 @@ function prepareDialogueRestore(payload: unknown): {
     if (typeof entry.text !== 'string') {
       throw invalidPresentation('Presentation dialogue entry text must be string');
     }
+    if (entry.markup !== undefined && (typeof entry.markup !== 'string' || inlinePlainText(entry.markup) !== entry.text || inlineStaticText(entry.markup) !== entry.markup)) throw invalidPresentation('Presentation NVL markup is invalid');
     entries.push({
       speaker: speaker === '' ? null : speaker,
       text: entry.text,
+      ...(entry.markup === undefined ? {} : { markup: entry.markup as string }),
     });
   }
   if (!payload.nvlActive && entries.length > 0) {
@@ -99,7 +105,11 @@ function prepareDialogueRestore(payload: unknown): {
     if (payload.nvlActive) throw invalidPresentation('Presentation ADV text requires nvlActive=false');
     advText = { speaker: entry.speaker, text: entry.text };
   }
-  return { nvlActive: payload.nvlActive, nvlEntries: entries, advText };
+  let backlog: readonly BacklogEntry[];
+  try { backlog = prepareBacklog(payload.backlog); } catch (error) { throw invalidPresentation('Presentation backlog is invalid', error); }
+  if (payload.backlogReplayCurrent !== undefined && typeof payload.backlogReplayCurrent !== 'boolean') throw invalidPresentation('Presentation backlog replay flag must be boolean');
+  if (payload.backlogReplayCurrent === true && backlog.length === 0) throw invalidPresentation('Presentation replay flag requires a recorded current line');
+  return { nvlActive: payload.nvlActive, nvlEntries: entries, advText, backlog, backlogReplayCurrent: payload.backlogReplayCurrent === true };
 }
 
 function withoutReplayedCurrentNvlLine(
@@ -131,6 +141,8 @@ export interface PreparedPresentationRestore {
     readonly nvlActive: boolean;
     readonly nvlEntries: readonly NvlPresentationEntry[];
     readonly advText: NvlPresentationEntry | null;
+    readonly backlog: readonly BacklogEntry[];
+    readonly backlogReplayCurrent: boolean;
   };
 }
 
@@ -150,7 +162,7 @@ export function preparePresentationRestore(
       stage: null,
       timelines: [],
       timelineSequence: currentTimelineSequence + 1,
-      dialogue: { nvlActive: false, nvlEntries: [], advText: null },
+      dialogue: { nvlActive: false, nvlEntries: [], advText: null, backlog: [], backlogReplayCurrent: false },
     };
   }
   if (!isRecord(payload) || payload.version !== 1) {
@@ -292,6 +304,8 @@ export class PresentationController {
   #narrationLocale = '';
   #narrationVolume = 1;
   #currentVoice: string | null = null;
+  #autoContinueLine = false;
+  #skipBacklogReplay = false;
   #tw: Typewriter;
   #status: RenderStatus = 'idle';
   #current: { speaker: string | null; value: string } | null = null;
@@ -516,8 +530,10 @@ export class PresentationController {
   }
 
   /** 开始一轮新的剧情会话：清理渲染状态，但保留宿主注入的设置（如打字速度）。 */
-  resetSession(options: { preserveWorld?: boolean; clearAssets?: boolean } = {}): void {
+  resetSession(options: { preserveWorld?: boolean; clearAssets?: boolean; preserveReadingHistory?: boolean } = {}): void {
     this.#stopVoice(); this.#audio.setVoicePaused?.(false);
+    if (!options.preserveReadingHistory) this.#backlog?.clear();
+    this.#skipBacklogReplay = false; this.#autoContinueLine = false;
     this.#status = 'idle';
     this.#current = null;
     this.#advCurrent = null;
@@ -530,6 +546,7 @@ export class PresentationController {
     this.#choiceCursor = -1;
     this.#skipMode = false;
     this.#skipAll = false;
+    this.#commands.dialogue.setTextSkipping(false);
     this.#backlogOpen = false;
     this.#backlogSearch.clear();
     this.#backlogSearch.blur();
@@ -649,6 +666,8 @@ export class PresentationController {
         }
         break; // choice/idle（解释器已结束且无后续事件）：停止
       }
+    } else if (this.#autoContinueLine && this.#status === 'awaiting') {
+      this.#stopVoice(); this.#autoContinueLine = false; this.#status = 'idle'; this.#onAdvance?.();
     } else if (this.#autoPlay && this.#status === 'awaiting') {
       // 自动播放：文本显示完成后停留（基础 + 按长度）再推进；语音播放中先等语音
       // （isVoicePlaying 恒 false 的音频实现不受影响）。choice 挂起时不推进。
@@ -679,6 +698,7 @@ export class PresentationController {
       || this.#status === 'typing' && (!this.#tw.isWaiting || this.#autoPlay || this.#skipMode)
       || (this.#skipMode && this.#status === 'awaiting')
       || (this.#autoPlay && this.#status === 'awaiting')
+      || (this.#autoContinueLine && this.#status === 'awaiting')
       || this.#fade !== null;
   }
 
@@ -805,6 +825,7 @@ export class PresentationController {
   /** 切换快进（瞬时文本 + 连续推进；默认仅跳已读行） */
   toggleSkip(): boolean {
     this.#skipMode = !this.#skipMode;
+    this.#commands.dialogue.setTextSkipping(this.#skipMode);
     if (this.#skipMode) this.#stopVoice();
     this.#skipAll = false;
     this.#requestFrame();
@@ -815,6 +836,7 @@ export class PresentationController {
   toggleSkipAll(): boolean {
     this.#skipAll = !this.#skipAll;
     this.#skipMode = this.#skipAll;
+    this.#commands.dialogue.setTextSkipping(this.#skipMode);
     if (this.#skipMode) this.#stopVoice();
     this.#requestFrame();
     return this.#skipAll;
@@ -892,10 +914,12 @@ export class PresentationController {
       const entries = this.#queries.dialogue.nvlPresentationEntries();
       const prior = withoutReplayedCurrentNvlLine(entries, this.#current, true);
       this.#commands.dialogue.clearNvlText();
-      for (const entry of prior) this.#commands.dialogue.appendNvlText(entry.speaker, entry.text);
-      this.#commands.dialogue.appendNvlText(p.text.speaker, inlinePlainText(p.text.value));
+      for (const entry of prior) this.#commands.dialogue.appendNvlText(entry.speaker, entry.text, entry.markup);
+      const plain = inlinePlainText(p.text.value), markup = inlineStaticText(p.text.value);
+      this.#commands.dialogue.appendNvlText(p.text.speaker, plain, markup === escapeInlineText(plain) ? undefined : markup);
     } else {
       this.#tw.replaceText(p.text.value);
+      this.#autoContinueLine = this.#tw.noWait;
       this.#inlineAutoElapsed = 0;
       this.#commands.dialogue.showText(p.text.speaker, p.text.value, this.#tw.shown);
       if (this.#status === 'typing' && this.#tw.isDone) {
@@ -914,22 +938,27 @@ export class PresentationController {
     // 快进遇未读即停；"全部跳过"模式（skipAll）则无视已读状态一路到底
     if (this.#skipMode && !this.#skipAll && p.wasRead === false) this.#skipMode = false;
     this.#commands.world.setPortraitSkipping?.(this.#skipMode);
+    this.#commands.dialogue.setTextSkipping(this.#skipMode);
     // Backlog 语音关联：@voice 紧跟的文本行带上语音 key（回看可重播）
     const voice = p.voice !== undefined ? p.voice : this.#pendingVoice;
     if (p.voice !== undefined || this.#pendingVoice === null) this.#stopVoice();
     this.#currentVoice = voice ?? null;
     this.#audio.setVoicePaused?.(this.presentationPaused);
     if (p.voice && !this.#skipMode) this.#audio.playVoice(p.voice);
-    this.#backlog?.add(p.displaySpeaker ?? p.speaker, inlinePlainText(p.value), voice ?? undefined);
+    const plainText = inlinePlainText(p.value), markup = inlineStaticText(p.value);
+    if (!this.#skipBacklogReplay) this.#backlog?.add(p.displaySpeaker ?? p.speaker, plainText, voice ?? undefined,
+      markup === escapeInlineText(plainText) ? undefined : markup);
+    this.#skipBacklogReplay = false;
     if (this.#backlogOpen) this.#renderBacklog();
     this.#pendingVoice = null;
     this.#current = { speaker: p.speaker, value: p.value };
     this.#lineVisibleLength = inlineTextLength(p.value);
+    this.#autoContinueLine = false;
     this.#narrate(p.value);
     if (this.#nvl) {
       this.#commands.world.setPortraitSpeaking?.(false);
       // NVL 模式：整行瞬时追加到全屏文本页（不走打字机），等待推进
-      this.#commands.dialogue.appendNvlText(p.speaker, inlinePlainText(p.value));
+      this.#commands.dialogue.appendNvlText(p.speaker, plainText, markup === escapeInlineText(plainText) ? undefined : markup);
       this.#status = 'awaiting';
       this.#awaitSince = nowMs();
       return;
@@ -948,6 +977,7 @@ export class PresentationController {
     this.#status = 'typing';
     this.#commands.world.setPortraitSpeaking?.(!this.#skipMode);
     this.#tw.text = p.value;
+    this.#autoContinueLine = this.#tw.noWait;
     this.#commands.dialogue.showText(p.speaker, p.value, this.#tw.shown);
     this.#commands.world.setPortraitSpeaking?.(!this.#tw.isPaused && !this.#tw.isDone && !this.#skipMode);
     this.#syncAwaiting(this.#tw.isWaiting || this.#tw.isDone);
@@ -958,6 +988,7 @@ export class PresentationController {
     // 遇选择肢自动退出快进/自动播放：玩家必须做出选择，不应被连续推进越过
     this.#skipMode = false;
     this.#skipAll = false;
+    this.#commands.dialogue.setTextSkipping(false);
     this.#status = 'choice';
     this.#commands.world.setPortraitSkipping?.(false);
     this.#commands.world.setPortraitSpeaking?.(false);
@@ -1009,6 +1040,7 @@ export class PresentationController {
   #onStateReset(): void {
     this.#stopVoice(); this.#audio.setVoicePaused?.(false);
     this.#explicitPaused = false; this.#pausedSince = null;
+    this.#skipBacklogReplay = false; this.#autoContinueLine = false;
     this.#backlogOpen = false;
     this.#commands.dialogue.hideBacklog();
     this.#clearRestoreInteractiveTransients();
@@ -1032,6 +1064,7 @@ export class PresentationController {
    */
   #clearRestoreInteractiveTransients(): void {
     this.#skipMode = false; this.#skipAll = false;
+    this.#commands.dialogue.setTextSkipping(false);
     this.#commands.world.setPortraitSkipping?.(false);
     this.#commands.world.setPortraitSpeaking?.(false);
     this.#interfaceHidden = false;
@@ -1149,6 +1182,8 @@ export class PresentationController {
       })),
       dialogue: {
         nvlActive: this.#nvl,
+        backlog: this.#backlog?.latest(DEFAULT_BACKLOG_CAPACITY) ?? [],
+        backlogReplayCurrent: context?.replayCurrentText !== false && (this.#status === 'typing' || this.#status === 'awaiting') && (this.#backlog?.size ?? 0) > 0,
         nvlEntries: context?.replayCurrentText === false ? dialogueEntries
           : withoutReplayedCurrentNvlLine(dialogueEntries, this.#current, this.#nvl),
         ...(!this.#nvl && context?.replayCurrentText === false && this.#advCurrent
@@ -1182,7 +1217,7 @@ export class PresentationController {
     this.#commands.dialogue.setNvlMode(this.#nvl);
     this.#commands.dialogue.clearNvlText();
     for (const entry of prepared.dialogue.nvlEntries) {
-      this.#commands.dialogue.appendNvlText(entry.speaker, entry.text);
+      this.#commands.dialogue.appendNvlText(entry.speaker, entry.text, entry.markup);
     }
     if (prepared.dialogue.advText) {
       const entry = prepared.dialogue.advText;
@@ -1206,6 +1241,8 @@ export class PresentationController {
       if (timeline.blocking) this.#blockingTimelineId = timeline.id;
       this.#applyTimelineEvents(timeline.events.map(event => ({ ...event, runId: timeline.id })));
     }
+    this.#backlog?.restore(prepared.dialogue.backlog);
+    this.#skipBacklogReplay = prepared.dialogue.backlogReplayCurrent;
     this.#requestFrame();
     return { awaitingTimer: this.#blockingTimelineId !== null };
   }

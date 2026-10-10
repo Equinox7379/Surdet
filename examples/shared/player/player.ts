@@ -807,8 +807,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       runtime.controller.setPresentationPaused?.(false);
       if (renderer.autoPlay) renderer.dispatchInput({ type: 'auto.toggle' });
       interp.loadSnapshot(structuredClone(session.snapshot));
-      backlog.clear();
-      for (const line of session.history) backlog.add(line.speaker, line.text, line.voice);
+      backlog.restore(session.history);
       if (session.base === 'title') showTitleScreen();
       openGallery(session.base);
       if (session.auto) renderer.dispatchInput({ type: 'auto.toggle' });

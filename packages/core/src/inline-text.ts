@@ -1,11 +1,11 @@
 /** Fixed, non-HTML dialogue markup. Offsets are UTF-16 source offsets, end exclusive. */
 export type InlineTextContext = 'dialogue' | 'choice' | 'speaker';
 export type InlineColor = 'text' | 'textMuted' | 'accent' | 'accentSoft' | 'danger' | `#${string}`;
-export interface InlineStyle { bold?: boolean; italic?: boolean; color?: InlineColor; size?: number; speed?: number }
+export interface InlineStyle { bold?: boolean; italic?: boolean; color?: InlineColor; size?: number; speed?: number; emphasis?: boolean; effect?: 'shake' | 'wave' }
 export interface InlineUnit { text: string; start: number; end: number; style: InlineStyle; ruby?: string }
-export interface InlineControl { kind: 'pause' | 'wait'; at: number; durationMs?: number; start: number; end: number }
+export interface InlineControl { kind: 'pause' | 'wait' | 'no-wait'; at: number; durationMs?: number; start: number; end: number }
 export interface InlineTagSpan { name: string; closing: boolean; start: number; end: number; value?: string }
-export interface InlineTextIssue { code: 'M001' | 'M002' | 'M003' | 'M004' | 'M005'; severity: 'error' | 'warning'; message: string; start: number; end: number }
+export interface InlineTextIssue { code: 'M001' | 'M002' | 'M003' | 'M004' | 'M005' | 'M006'; severity: 'error' | 'warning'; message: string; start: number; end: number }
 export interface InlineTextDocument {
   source: string;
   units: InlineUnit[];
@@ -25,6 +25,10 @@ export const INLINE_TEXT_TAGS = [
   { name: 'speed', paired: true, value: '0.1–10', label: '打字速度倍率', example: '<speed=0.5>慢慢说</speed>' },
   { name: 'w', paired: false, value: '1–10000 ms / omitted', label: '停顿或等待点击', example: '等一下<w=500>……<w>继续' },
   { name: 'ruby', paired: true, value: 'reading', label: '注音', example: '<ruby=せかい>世界</ruby>' },
+  { name: 'em', paired: true, value: null, label: '着重号', example: '<em>重点</em>' },
+  { name: 'shake', paired: true, value: null, label: '逐字抖动', example: '<shake>震惊</shake>' },
+  { name: 'wave', paired: true, value: null, label: '逐字波浪', example: '<wave>轻声</wave>' },
+  { name: 'nw', paired: false, value: null, label: '句末自动继续', example: '不用等我。<nw>' },
 ] as const;
 
 type TagName = typeof INLINE_TEXT_TAGS[number]['name'];
@@ -81,11 +85,11 @@ export function parseInlineText(source: string, context: InlineTextContext = 'di
     if (!names.has(rawName!)) { issue('M001', `未知行内标签 <${rawName}>，按原文显示；可用标签：${INLINE_TEXT_TAGS.map(tag => tag.name).join('、')}`, at, end); at = end; continue; }
     const name = rawName as TagName;
     hasMarkup = true;
-    if (context === 'speaker' || context === 'choice' && (name === 'w' || name === 'speed')) {
-      issue('M005', context === 'speaker' ? '说话人不支持行内标签' : '选项文案不支持停顿或变速标签', at, end); at = end; continue;
+    if (context === 'speaker' || context === 'choice' && ['w', 'speed', 'nw', 'shake', 'wave'].includes(name)) {
+      issue('M005', context === 'speaker' ? '说话人不支持行内标签' : '选项文案不支持停顿、变速、自动继续或逐字动画标签', at, end); at = end; continue;
     }
     if (closing) {
-      if (value !== undefined || name === 'w' || stack.at(-1)?.name !== name) {
+      if (value !== undefined || name === 'w' || name === 'nw' || stack.at(-1)?.name !== name) {
         issue('M003', `</${name}> 没有对应的开标签或闭合顺序不正确`, at, end); at = end; continue;
       }
       tags.push({ name, closing: true, start: at, end });
@@ -93,7 +97,7 @@ export function parseInlineText(source: string, context: InlineTextContext = 'di
     }
     const number = value !== undefined && /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) ? Number(value) : NaN;
     const valid = (value === undefined || value.length >= 1 && value.length <= 32 && !/[\s<>：:{}]/u.test(value)) && (
-      name === 'b' || name === 'i' ? value === undefined
+      ['b', 'i', 'em', 'shake', 'wave', 'nw'].includes(name) ? value === undefined
         : name === 'w' ? value === undefined || Number.isInteger(number) && number >= 1 && number <= 10000
           : name === 'size' ? number >= 0.5 && number <= 2
             : name === 'speed' ? number >= 0.1 && number <= 10
@@ -102,7 +106,10 @@ export function parseInlineText(source: string, context: InlineTextContext = 'di
     if (!valid) { issue('M004', `<${name}> 的取值非法或含变量；请按标签说明填写`, at, end); at = end; continue; }
     tags.push({ name, closing: false, start: at, end, ...(value === undefined ? {} : { value }) });
     flush(at);
-    if (name === 'w') {
+    if (name === 'nw') {
+      if (source.slice(end).trim() !== '' || stack.length) issue('M006', '<nw> 必须放在句末、所有成对标签之外', at, end);
+      controls.push({ kind: 'no-wait', at: units.length, start: at, end });
+    } else if (name === 'w') {
       controls.push({ kind: value === undefined ? 'wait' : 'pause', at: units.length, ...(value === undefined ? {} : { durationMs: number }), start: at, end });
     } else if (name === 'ruby') {
       let close = source.indexOf('</ruby>', end);
@@ -121,7 +128,8 @@ export function parseInlineText(source: string, context: InlineTextContext = 'di
       at = literalStart = close + 7; continue;
     } else {
       stack.push({ name, style, start: at, end });
-      style = { ...style, ...(name === 'b' ? { bold: true } : name === 'i' ? { italic: true }
+      style = { ...style, ...(name === 'b' ? { bold: true } : name === 'i' ? { italic: true } : name === 'em' ? { emphasis: true }
+        : name === 'shake' || name === 'wave' ? { effect: name }
         : name === 'color' ? { color: value as InlineColor } : name === 'size' ? { size: number } : { speed: number }) };
     }
     at = literalStart = end;
@@ -133,6 +141,16 @@ export function parseInlineText(source: string, context: InlineTextContext = 'di
 }
 
 export function inlinePlainText(source: string, context: InlineTextContext = 'dialogue'): string { return parseInlineText(source, context).plainText; }
+/** Styled history/NVL keeps visible formatting but never replays timing or animation. */
+export function inlineStaticText(source: string): string {
+  const document = parseInlineText(source);
+  if (document.issues.some(issue => issue.severity === 'error')) return escapeInlineText(document.plainText);
+  let output = '', at = 0;
+  for (const tag of document.tags) if (['w', 'nw', 'speed', 'shake', 'wave'].includes(tag.name)) {
+    output += source.slice(at, tag.start); at = tag.end;
+  }
+  return output + source.slice(at);
+}
 /** Counts visible graphemes; a ruby group's base letters still contribute their visible count. */
 export function inlineTextLength(source: string, context: InlineTextContext = 'dialogue'): number {
   return textGraphemeCount(inlinePlainText(source, context));

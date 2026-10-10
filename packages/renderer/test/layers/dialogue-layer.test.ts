@@ -158,6 +158,23 @@ function boundsOverlap(
 }
 
 describe('DialogueLayer visual layout contracts', () => {
+  it('animates only live effect glyphs and freezes them for reduced motion/skip, while history and NVL retain static styles', () => {
+    const runtime = makeRuntime(), texts = (node: Container): PText[] => [...(node instanceof PText ? [node] : []), ...node.children.flatMap(texts)];
+    try {
+      runtime.layer.mountTextDisplays(); runtime.layer.showText(null, '<wave>甲乙</wave><em>丙</em>');
+      const first = texts(runtime.root).find(text => text.visible && text.text === '甲')!;
+      const origin = first.y; runtime.layer.update(100); expect(first.y).not.toBe(origin); expect(runtime.layer.needsUpdate()).toBe(true);
+      expect(texts(runtime.root).some(text => text.visible && text.text === '·')).toBe(true);
+      runtime.layer.setPresentationPreferences({ reducedMotion: true }); expect(first.y).toBe(origin); runtime.layer.update(200); expect(first.y).toBe(origin);
+      runtime.layer.setPresentationPreferences({ reducedMotion: false }); runtime.layer.setTextSkipping(true); runtime.layer.update(200); expect(first.y).toBe(origin);
+      const markup = '<color=#ff0000><ruby=うみ>海</ruby></color>';
+      runtime.layer.setNvlMode(true); runtime.layer.appendNvlText(null, '海', markup);
+      expect(runtime.layer.nvlPresentationEntries).toEqual([{ speaker: null, text: '海', markup }]);
+      expect(texts(runtime.root).some(text => text.visible && text.text === 'うみ')).toBe(true);
+      runtime.layer.showBacklog([{ speaker: '旁白', text: '海', markup }]);
+      expect(texts(backlogRoot(runtime.root)).some(text => text.text === '海' && text.style.fill === '#ff0000')).toBe(true);
+    } finally { disposeRuntime(runtime); }
+  });
   it('scales dialogue/ruby and choices relative to the work theme without compounding or changing UI text size', () => {
     const runtime = makeRuntime(), texts = (node: Container): PText[] => [...(node instanceof PText ? [node] : []), ...node.children.flatMap(texts)];
     try {

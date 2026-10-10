@@ -4,7 +4,7 @@
 
 ## 创作与开发
 
-行内文字后端及Claude前端接入：[第一批行内文字合同](inline-text-contract.md)。
+行内文字、文字记录后端及Claude前端接入：[行内文字合同](inline-text-contract.md)。
 阅读辅助后端及Claude设置页接入：[阅读辅助合同](reading-accessibility-contract.md)。
 
 | 需要做什么 | 阅读入口 |

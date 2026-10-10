@@ -124,6 +124,18 @@ function controllerFor(
 }
 
 describe('PresentationController', () => {
+  it('a completed nw line advances without voice/auto waits, but respects explicit pauses and does not skip NVL', () => {
+    const stage = stageHarness(), ports = createPresentationPorts(stage), advance = vi.fn();
+    const audio = { ...NULL_AUDIO, isVoicePlaying: () => true, stopVoice: vi.fn() };
+    const controller = new PresentationController(ports.commands, ports.queries, audio, { commands: ports.commands, queries: ports.queries, onAdvance: advance });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus); controller.setTextSpeed(100);
+    try {
+      bus.emit('text', { speaker: null, value: '甲<nw>', voice: 'long-voice' }); controller.setPresentationPaused(true); controller.update(1000);
+      expect(advance).not.toHaveBeenCalled(); controller.setPresentationPaused(false); controller.update(10); expect(advance).toHaveBeenCalledOnce();
+      bus.emit('instr', { name: 'nvl', args: ['on'], modifiers: new Map(), pos: { file: 'test.gal', line: 1, col: 1 } }); bus.emit('text', { speaker: null, value: '乙<nw>' }); controller.update(1000);
+      expect(advance).toHaveBeenCalledOnce(); expect(stage.nvlEntries.at(-1)!.text).toBe('乙');
+    } finally { controller.dispose(); }
+  });
   it('narrates only unvoiced visible text, waits in auto mode and cancels on menu, skip, reset and dispose', () => {
     const stage = stageHarness(), ports = createPresentationPorts(stage), advance = vi.fn();
     let busy = false;

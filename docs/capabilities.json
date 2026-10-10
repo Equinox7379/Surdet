@@ -105,7 +105,7 @@
         "README.md",
         "docs/dsl-spec.md"
       ],
-      "limitation": "文字记录为当前会话级数据，不跨存档持久化。"
+      "limitation": "完整最多200条记录随表现快照保存与恢复；默认回看显示最近120条，静态样式保留、节奏与动画不执行；不记录选项或横幅。"
     },
     {
       "id": "battle-formation",
