@@ -10,13 +10,20 @@
 | 项目 | 当前结论 |
 | --- | --- |
 | 仓库 | `Equinox7379/Surdet`，本机 `E:\surdet`，主线 `main`，远端名 `surdet`。PR #1—#7均已合入；最新PR #7合并点`79ecbde`与已验收`b15b764`内容一致。 |
-| 最近代码交付 | 主线/日常Editor仍为PR #7版本。行内第一批PR #8、阅读辅助PR #9已推送；`codex/text-history`完成第二批标签和文字记录后端验证，创作合同2.32.0（仍72能力），记录进入表现快照，准备独立提交。尚未合入主线。 |
+| 最近代码交付 | 主线/日常Editor仍为PR #7版本。行内第一批PR #8、阅读辅助PR #9、第二批文字记录PR #10已推送；`codex/preview-target-path`完成源行试玩后端验证，合同2.33.0（73能力），准备独立交付。均未合入主线。 |
 | 审核结论 | 2026-10-06 Owner 转达 `bcaef40` 复审 PASS，300-REV-01 已关闭。本轮未附新报告，不补写独立检查数量或范围。3FF-REV-01/03、字体及旧维护的有效结论保持原范围，不扩成全引擎或发行验收。 |
 | Editor | Claude 负责前端，本机负责后端、Git 整合和 Windows 验收。本次主线已包含深色工作台、最近项目、问题入口、命令面板、精确源码选区、诊断过期保护和自动待审数量；正式结果实时核对、来源返回及草稿保护保留。未开展 Player 新一轮改版；接口见 [AI-GUIDE](../../AI-GUIDE.md) 和[接力文档](../../human-agent-relay-wave-7.md#当前项目的审阅任务发现后端接口)。 |
 | 当前任务 | Owner 确认引擎 MIT，且明确开源前要真正优化前端、让 Editor 成为脱离外部浏览器的独立 Windows 应用；最终作品目标是原创商业 Gal 级完成度，而非小样例。已准备源码/随包许可、素材例外说明、短英文介绍和私人文件 ignore；仓库仍 PRIVATE。公开历史方式、作品授权及桌面化/前端验收待完成，详见 11.39。 |
 | 最近验证 | 行内后端相关Core/Authoring/Renderer定向用例、五个受影响模块类型检查/构建及能力文档检查通过；Windows Chromium真实共享Player已验证样式、注音、同句停顿、快进、等待点存读档与选择输入。不是Editor前端或新桌面包验收，未跑本地全仓；PR #7原证据继续有效。 |
-| 当前停止点 | Owner要求继续所有可独立推进的后端。第二批文字/记录验证完成后独立交付，随后继续光标试玩后端；接口见[文字合同](../../inline-text-contract.md)与[阅读辅助合同](../../reading-accessibility-contract.md)。Claude尚未开始前端，不能记为接入完成；本机不改其界面，不覆盖日常桌面。 |
+| 当前停止点 | Owner要求继续所有可独立推进的后端。源行试玩后端交付后继续流程图的结构化操作支持；接口见[目标路径合同](../../preview-target-path-contract.md)、[文字合同](../../inline-text-contract.md)与[阅读辅助合同](../../reading-accessibility-contract.md)。Claude尚未开始前端，不能记为接入完成；本机不改其界面，不覆盖日常桌面。 |
 | CI / 发行 | 旧PR #5/#6与`e1029ea`主线CI成功结论保留。PR #7 `b15b764` 的 [CI 38025530471](https://github.com/Equinox7379/Surdet/actions/runs/38025530471) Electron已成功、verify尚未结束；合并点`79ecbde`的 [主线CI 38026102851](https://github.com/Equinox7379/Surdet/actions/runs/38026102851) 正常自动运行，未代签整轮通过、未重复触发或绕过保护。桌面本地更新获准，公开、发行、部署仍须分别授权。 |
+
+### 从源行试玩后端（2026-10-10）
+
+- `project.preview-path`新增只读observe能力，支持search从入口找路、path沿实际选项index/重复访问次数重播、test从最近标签用临时初值。直接执行已有Core调试步骤，停止在目标之前；空行/注释拒绝，选项明确映射父choice。复用project/working读取，working无change拒绝，不写模拟通过证据或原配置。
+- 三模式、真实条件、路径失配、预算、循环和宿主边界8例通过；原模拟15与能力15例通过。真实MCP observe与working/project两例、CLI JSON合同两例通过，其余过滤用例明确跳过。Authoring/CLI构建和类型检查、能力文档检查通过；旧CLI版本断言钉2.30，按当前2.33修正，不放宽结构断言。
+- Windows真实共享Player跨场景并选择：背景harbor、实际立绘、BGM语义键theme和trust=3与正常游玩对照；test在新干净实例中从arrival标签用trust=8，暂停点trust=10、背景/立绘/BGM为空，源config不变，截图已检查。第一轮test夹具先跑入口再清舞台会残留BGM，按正确新会话规则补强，未改生产代码掩盖。语音使用静音WAV传输夹具，不代签人耳音质。Editor入口和过期路径提示由Claude接入后再在Windows复核。
+- 接口见[目标路径合同](../../preview-target-path-contract.md)。Core现有debug定位原样投影和现有断点保护继续使用，不新增摘要计算、比对或兼容层；本轮没有修改Editor、Player源码、日常桌面或正式存档。
 
 ### 第二批行内文字与记录后端（2026-10-10）
 

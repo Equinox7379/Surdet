@@ -74,6 +74,37 @@ async function connectedProject(projectRoot: string, policy: 'observe' | 'stage'
 }
 
 describe('Surdet Agent Port MCP tool projection', () => {
+  it('preview-path distinguishes a working draft from project without writing simulation evidence', async () => {
+    const { session, client, server } = await connected('stage');
+    try {
+      await client.callTool({ name: 'surdet_change_begin', arguments: { compositionMode: 'direct' } });
+      const created = await client.callTool({ name: 'surdet_scene_create', arguments: { operationId: 'preview-path-draft', sceneId: 'draft', blocks: [{ kind: 'text', value: '草稿正文' }] } });
+      expect(created.isError, textContent(created)).not.toBe(true);
+      const query = { sceneId: 'draft', line: 1, mode: 'test' };
+      const working = await client.callTool({ name: 'surdet_project_preview_path', arguments: { ...query, view: 'working' } });
+      expect(working.isError, textContent(working)).not.toBe(true);
+      expect((working.structuredContent as any).result).toMatchObject({ view: 'working', status: 'reached', partialStage: true });
+      const project = await client.callTool({ name: 'surdet_project_preview_path', arguments: { ...query, view: 'project' } });
+      expect((project.structuredContent as any).error.code).toBe('OBJECT_NOT_FOUND');
+      expect(fs.existsSync(path.join(session.projectRoot, 'content', 'scenario', 'draft.gal'))).toBe(false);
+      expect((await session.describe()).evidence.simulation?.status).toBe('missing');
+    } finally { await client.close(); await server.close(); await session.close(); }
+  });
+  it('preview-path reads through the public observe MCP tool without authoring or simulation evidence', async () => {
+    const { session, client, server } = await connected('observe');
+    try {
+      const root = session.projectRoot;
+      const script = path.join(root, 'content', 'scenario', 'start.gal');
+      const before = fs.readFileSync(script, 'utf8');
+      const result = await client.callTool({ name: 'surdet_project_preview_path', arguments: { sceneId: 'start', line: 2 } });
+      expect(result.isError).not.toBe(true);
+      expect((result.structuredContent as any).result).toMatchObject({ view: 'project', status: 'reached', choices: [], position: { sceneId: 'start', line: 2 } });
+      expect(session.activeChangeId).toBeUndefined();
+      expect(fs.readFileSync(script, 'utf8')).toBe(before);
+      const wrongView = await client.callTool({ name: 'surdet_project_preview_path', arguments: { sceneId: 'start', line: 2, view: 'working' } });
+      expect((wrongView.structuredContent as any).error.code).toBe('CHANGE_NOT_FOUND');
+    } finally { await client.close(); await server.close(); await session.close(); }
+  });
   it('accepts each advertised minimal example at the actual MCP schema boundary', async () => {
     for (const capability of AUTHORING_CAPABILITY_REGISTRY) {
       const result = await standardSchemaFromJson(capability.inputSchema)['~standard'].validate(capability.minimalExample.input);
@@ -425,7 +456,7 @@ describe('Surdet Agent Port MCP tool projection', () => {
     const capabilities = await client.callTool({ name: 'surdet_capabilities_describe', arguments: {} });
     expect(capabilities.isError).not.toBe(true);
     expect((capabilities.structuredContent as any).ok).toBe(true);
-    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(72);
+    expect((capabilities.structuredContent as any).result.capabilities).toHaveLength(73);
     expect(names).not.toContain('surdet_review_write_decision');
     expect(names).not.toContain('surdet_review_approve');
     if (policy === 'stage') {

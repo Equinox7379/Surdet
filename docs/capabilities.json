@@ -2,6 +2,17 @@
   "version": 1,
   "capabilities": [
     {
+      "id": "preview-target-path",
+      "kind": "tooling",
+      "core": "implemented",
+      "renderer": "n/a",
+      "editor": "planned",
+      "host": "implemented",
+      "tests": ["packages/authoring/test/preview-path.test.ts", "packages/cli/test/agent-port-tools.test.ts"],
+      "docs": ["docs/preview-target-path-contract.md", "docs/AI-GUIDE.md"],
+      "limitation": "后端只读查询search/path/test三种真实Core目标路径，停在源步骤执行前；预算或宿主接管未完成不能判不可达。测试初值与舞台仅属于本次预览，Editor入口待前端交付。"
+    },
+    {
       "id": "text-catalog-authoring",
       "kind": "tooling",
       "core": "n/a",
