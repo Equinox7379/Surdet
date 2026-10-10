@@ -143,6 +143,58 @@ try {
   if (outDir) await page.screenshot({ path: path.join(outDir, 'player-reading-narrow.png') });
   console.log('PASS narrow window: body inside the canvas, wheel reads back');
 
+  // 7. A body shorter than one line at 140% (48px) and one about a line high (57px): PageDown always
+  //    moves forward and PageUp back, by a non-zero step, without advancing the story.
+  for (const height of [48, 57]) {
+    const small = structuredClone(payload);
+    small.id = `reading-dialogue-e2e-${height}`;
+    small.config.ui.pages.dialogue.children.find((node) => node.id === 'body').frame.height = height;
+    const casePage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    casePage.setDefaultTimeout(20000);
+    casePage.on('pageerror', (error) => errors.push(error.message));
+    await casePage.addInitScript((value) => { if (window === window.top) window.readingPayload = value; }, small);
+    await casePage.goto(url);
+    await casePage.waitForFunction(() => document.getElementById('player')?.contentWindow?.__surdetDebug?.uiSession?.base === 'title');
+    const caseFrame = casePage.frames().find((candidate) => candidate.url().includes('ui-preview.html'));
+    await caseFrame.evaluate(() => window.__surdetDebug.titleSelect('new'));
+    await caseFrame.locator('[data-ui-node="scale"] input').focus();
+    await casePage.keyboard.press('End');
+    await caseFrame.locator('[data-ui-node="scale"] input').blur();
+    await caseFrame.waitForFunction(() => window.__surdetDebug.rendererStatus !== 'typing' && document.querySelector('[data-ui-node="body"]').textContent.endsWith('结束标记。'), undefined, { timeout: 60000 });
+    const read = () => caseFrame.evaluate(() => {
+      const node = document.querySelector('[data-ui-node="body"]');
+      return { top: node.scrollTop, max: node.scrollHeight - node.clientHeight, client: node.clientHeight, size: parseFloat(getComputedStyle(node).fontSize),
+        pc: window.__surdetDebug.position?.pc, text: node.textContent.slice(0, 5) };
+    });
+    await caseFrame.locator('[data-ui-node="body"]').focus();
+    await casePage.keyboard.press('Home');
+    const first = await read();
+    assert.equal(first.size, 39.2);
+    assert(first.client < first.size * 1.45 + 1, `the ${height}px body holds at most one line at 140%: ${JSON.stringify(first)}`);
+    assert.equal(first.top, 0);
+    const downs = [first.top];
+    for (let press = 0; press < 80 && downs.at(-1) < first.max - 1; press++) {
+      await casePage.keyboard.press('PageDown');
+      const next = (await read()).top;
+      assert(next > downs.at(-1), `${height}px PageDown moves forward: ${downs.at(-1)} → ${next}`);
+      downs.push(next);
+    }
+    assert(downs.at(-1) >= first.max - 1, `${height}px PageDown reaches the end`);
+    const ups = [downs.at(-1)];
+    for (let press = 0; press < 80 && ups.at(-1) > 0; press++) {
+      await casePage.keyboard.press('PageUp');
+      const next = (await read()).top;
+      assert(next < ups.at(-1), `${height}px PageUp moves back: ${ups.at(-1)} → ${next}`);
+      ups.push(next);
+    }
+    assert.equal(ups.at(-1), 0, `${height}px PageUp reaches the beginning`);
+    const last = await read();
+    assert.deepEqual({ pc: last.pc, text: last.text }, { pc: first.pc, text: first.text }, 'paging never advances the story');
+    if (outDir) await casePage.screenshot({ path: path.join(outDir, `player-reading-${height}px.png`) });
+    console.log(`PASS ${height}px body at 140%: PageDown ${downs.length - 1} steps forward, PageUp ${ups.length - 1} steps back`);
+    await casePage.close();
+  }
+
   assert.deepEqual(errors, [], 'page errors');
   console.log('PASS real Player long dialogue read-back');
 } finally {
