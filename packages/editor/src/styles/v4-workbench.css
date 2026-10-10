@@ -133,6 +133,35 @@
 .v4-authoring #editor .block-text .fields > input:not(.wide) { width: 100%; min-width: 0; height: 33px; min-height: 33px; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--speaker-color, var(--surdet-text-secondary)); font: 600 13px/33px var(--surdet-font-ui); letter-spacing: .02em; text-overflow: ellipsis; }
 .v4-authoring #editor .block .fields .v4-dialogue-input { display: block; width: 100%; min-height: 33px; margin: 0; padding: 2px 0; border: 0; border-radius: 0; resize: none; overflow: hidden; background: transparent; color: var(--surdet-text-primary); font: 450 16px/1.8 var(--surdet-font-story); letter-spacing: .02em; }
 .v4-authoring #editor .block-text .fields :is(.v4-dialogue-input,input:not(.wide)):focus-visible { outline: none; box-shadow: 0 1px 0 var(--surdet-action-primary); }
+/* Inline markup: the textarea stays the editor. Behind it, a transparent copy of the source marks tags and
+   problems; while it is not focused, a reading view shows the styled line in its place. */
+.v4-authoring #editor .block .fields .v4-inline-field { position: relative; display: grid; min-width: 0; }
+.v4-authoring #editor .block .fields .v4-inline-field > :is(.v4-inline-mirror, .v4-inline-view, .v4-dialogue-input) { grid-area: 1 / 1; min-width: 0; }
+.v4-authoring #editor .block .fields :is(.v4-inline-mirror, .v4-inline-view) { margin: 0; padding: 2px 0; border: 0; font: 450 16px/1.8 var(--surdet-font-story); letter-spacing: .02em; white-space: pre-wrap; overflow-wrap: break-word; }
+.v4-authoring #editor .block .fields .v4-inline-mirror { color: transparent; pointer-events: none; }
+.v4-inline-mirror .is-tag { border-radius: var(--surdet-radius-tight); background: color-mix(in srgb, var(--surdet-action-primary) 18%, transparent); }
+.v4-inline-mirror :is(.is-error, .is-warning) { text-decoration: underline wavy var(--surdet-state-danger); text-decoration-skip-ink: none; text-underline-offset: 4px; }
+.v4-inline-mirror .is-warning { text-decoration-color: var(--surdet-state-warning); }
+.v4-inline-mirror .v4-inline-caret { display: inline-block; width: 0; }
+.v4-authoring #editor .block .fields .v4-inline-view { display: none; color: var(--surdet-text-primary); }
+.v4-authoring #editor .block[data-speaker-tone=narration]:not(.v4-current) .fields .v4-inline-view { color: var(--surdet-text-secondary); }
+.v4-authoring #editor .block .fields .v4-inline-field.is-projected .v4-inline-view { display: block; }
+.v4-authoring #editor .block .fields .v4-inline-field.is-projected .v4-inline-mirror { visibility: hidden; }
+.v4-authoring #editor .block .fields .v4-inline-field.is-projected .v4-dialogue-input { color: transparent; caret-color: transparent; }
+.v4-inline-view ruby rt { color: var(--surdet-text-secondary); font: 400 .5em/1.2 var(--surdet-font-story); }
+.v4-inline-view .v4-inline-speed { text-decoration: underline dotted var(--surdet-text-muted); text-underline-offset: 5px; }
+.v4-inline-view .v4-inline-pause { display: inline-block; margin: 0 3px; padding: 0 5px; border-radius: var(--surdet-radius-tight); background: var(--surdet-surface-raised); color: var(--surdet-text-muted); font: 500 11px/1.6 var(--surdet-font-ui); vertical-align: 2px; }
+.v4-inline-completion { position: absolute; z-index: 40; display: grid; min-width: 240px; max-width: 320px; padding: 4px; border: 1px solid var(--surdet-border-strong); border-radius: var(--surdet-radius-control); background: var(--surdet-surface-raised); box-shadow: var(--surdet-shadow-popover); }
+.v4-inline-completion-option { display: grid; grid-template-columns: 96px 1fr; gap: 10px; padding: 5px 8px; border-radius: var(--surdet-radius-tight); color: var(--surdet-text-secondary); font: 12px/1.6 var(--surdet-font-ui); cursor: pointer; }
+.v4-inline-completion-option code { color: var(--surdet-text-primary); font: 12px/1.6 var(--surdet-font-mono); }
+.v4-inline-completion-option[aria-selected=true], .v4-inline-completion-option:hover { background: var(--surdet-surface-hover); color: var(--surdet-text-primary); }
+.v4-inline-toolbar { position: absolute; right: 0; bottom: calc(100% + 4px); z-index: 40; display: flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--surdet-border-strong); border-radius: var(--surdet-radius-control); background: var(--surdet-surface-raised); box-shadow: var(--surdet-shadow-popover); }
+.v4-inline-tool { min-width: 28px; height: 26px; padding: 0 7px; border: 0; border-radius: var(--surdet-radius-tight); background: transparent; color: var(--surdet-text-primary); font: 500 12px/1 var(--surdet-font-ui); cursor: pointer; }
+.v4-inline-tool:is(:hover, :focus-visible) { background: var(--surdet-surface-hover); outline: none; }
+.v4-inline-reading { width: 132px; height: 26px; padding: 0 8px; border: 1px solid var(--surdet-border-strong); border-radius: var(--surdet-radius-tight); background: var(--surdet-surface-app); color: var(--surdet-text-primary); font: 12px/1 var(--surdet-font-ui); }
+/* A row typed into from empty keeps the textarea's indent and, while still empty, its compact size. */
+.v4-authoring #editor .v4-empty-dialogue .fields :is(.v4-inline-mirror, .v4-inline-view) { padding-left: 106px; }
+.v4-authoring #editor .v4-empty-dialogue.block-blank .fields :is(.v4-inline-mirror, .v4-inline-view) { padding-block: 0; font: 400 13px/22px var(--surdet-font-ui); }
 .v4-authoring #editor .block[data-speaker-tone="1"] { --speaker-color: var(--surdet-speaker-1); }
 .v4-authoring #editor .block[data-speaker-tone="2"] { --speaker-color: var(--surdet-speaker-2); }
 .v4-authoring #editor .block[data-speaker-tone="3"] { --speaker-color: var(--surdet-speaker-3); }
@@ -431,6 +460,7 @@
   .v4-authoring .continuity-line-number { left: 2px; width: 30px; }
   .v4-authoring #editor .block-text .fields { grid-template-columns: minmax(0,1fr); }
   .v4-authoring #editor .v4-empty-dialogue .fields .v4-dialogue-input { padding-left: 0; }
+  .v4-authoring #editor .v4-empty-dialogue .fields :is(.v4-inline-mirror, .v4-inline-view) { padding-left: 0; }
   .v4-step-summary { gap: 8px; padding: 8px; flex-wrap: wrap; }
   .v4-authoring .ops { flex-wrap: wrap; }
   .v4-script-inspector { min-height: 0; overflow: auto; }

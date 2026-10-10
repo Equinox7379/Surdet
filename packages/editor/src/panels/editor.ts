@@ -14,6 +14,7 @@ import { installScriptV4, prepareScriptV4Render } from '../v4/script-workbench.j
 import { editSceneLabel } from '../label-editing.js';
 import { instructionLabel, PARTICLE_NAMES } from '../script-presentation.js';
 import { decodeInstructionArgument } from '@surdet/authoring';
+import { sceneTextCharacters } from '../stats.js';
 
 export function currentText(): string {
   return state.current ? state.scenes.get(state.current)?.text ?? '' : '';
@@ -188,7 +189,7 @@ export function refreshManuscriptFacts(): void {
   const characters = article.querySelector<HTMLElement>('[data-manuscript-fact="characters"]');
   const lines = article.querySelector<HTMLElement>('[data-manuscript-fact="lines"]');
   const saveState = article.querySelector<HTMLElement>('[data-manuscript-fact="save-state"]');
-  if (characters) characters.textContent = `${scene.text.replace(/\s+/g, '').length} 字`;
+  if (characters) characters.textContent = `${sceneTextCharacters(scene.text)} 字`;
   if (lines) lines.textContent = `${parseScript(scene.text).length} 行`;
   if (saveState) {
     saveState.textContent = scene.dirty ? '未保存' : '已保存';
@@ -224,7 +225,8 @@ export function renderEditor(): void {
   path.title = scene.file;
   headingIdentity.appendChild(path);
   const facts = h('div', 'manuscript-facts');
-  const characterFact = h('span', undefined, `${scene.text.replace(/\s+/g, '').length} 字`);
+  const characterFact = h('span', undefined, `${sceneTextCharacters(scene.text)} 字`);
+  characterFact.title = '台词与旁白的可见字数，与统计页同一口径：不含标签、指令和变量名';
   characterFact.dataset.manuscriptFact = 'characters';
   const lineFact = h('span', undefined, `${lines.length} 行`);
   lineFact.dataset.manuscriptFact = 'lines';
@@ -364,7 +366,7 @@ function renderBlock(line: LineModel, index: number, lineCount: number): HTMLEle
       sp.placeholder = '说话人（可空）';
       sp.value = model.speaker;
       const val = h('input', 'wide');
-      val.placeholder = '台词内容（支持 {变量} 插值与 基础字《注音》）';
+      val.placeholder = '台词内容（支持 {变量} 插值与 <b>、<ruby=读音>基础字</ruby> 等行内标签）';
       val.value = model.value;
       const sep = model.sep;
       const updateText = (): void => {
