@@ -151,6 +151,74 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     return typeof value === 'boolean' ? (value ? '是' : '否') : String(value ?? '');
   };
 
+  /** Reading bodies that are longer than their box, with how the reader scrolls each one. */
+  const readingScrollers = new Map<HTMLElement, (delta: number) => boolean>();
+
+  /**
+   * A body longer than its box: a new sentence starts at its top, growing text (typing) or a new
+   * text size keeps the tail in view only while the reader is at the end, and a refresh with the
+   * same text and size never moves the reader. The reader scrolls back with the wheel over the
+   * body or, once it is focused, with the arrow, Page and Home/End keys; clicks still reach the stage.
+   */
+  function followReading(element: HTMLElement, bindings: Array<() => void>): void {
+    element.style.overflow = 'hidden';
+    let text: string | null = null, size = '', atEnd = true;
+    const max = (): number => Math.max(0, element.scrollHeight - element.clientHeight);
+    const edges = (): void => {
+      const overflow = max() > 1, above = element.scrollTop > 1, below = element.scrollTop < max() - 1;
+      element.tabIndex = overflow ? 0 : -1;
+      const mask = overflow && (above || below)
+        ? `linear-gradient(to bottom, ${above ? 'transparent 0, #000 0.9em' : '#000 0'}, ${below ? '#000 calc(100% - 0.9em), transparent 100%' : '#000 100%'})` : '';
+      element.style.maskImage = mask;
+      element.style.setProperty('-webkit-mask-image', mask);
+    };
+    const scrollBy = (delta: number): boolean => {
+      const before = element.scrollTop;
+      element.scrollTop = Math.max(0, Math.min(max(), before + delta));
+      atEnd = element.scrollTop >= max() - 1;
+      edges();
+      return element.scrollTop !== before;
+    };
+    readingScrollers.set(element, scrollBy);
+    element.addEventListener('keydown', event => {
+      if (max() <= 1) return;
+      const line = parseFloat(getComputedStyle(element).fontSize) * 1.45, page = element.clientHeight - line;
+      const delta = { ArrowUp: -line, ArrowDown: line, PageUp: -page, PageDown: page, Home: -element.scrollHeight, End: element.scrollHeight }[event.key];
+      if (delta === undefined) return;
+      event.preventDefault(); event.stopPropagation();
+      scrollBy(delta);
+    });
+    element.addEventListener('focus', () => { element.style.outline = `2px solid ${hex(theme.colors.accent)}`; element.style.outlineOffset = '2px'; });
+    element.addEventListener('blur', () => { element.style.outline = ''; });
+    bindings.push(() => {
+      const nextText = element.textContent ?? '', nextSize = element.style.fontSize;
+      if (nextText === text && nextSize === size) return;
+      if (text === null || !nextText.startsWith(text)) {
+        // A new sentence: start from its top; follow it only if it does not overflow yet.
+        element.scrollTop = 0;
+        atEnd = max() <= 1;
+      }
+      text = nextText; size = nextSize;
+      if (atEnd) element.scrollTop = max();
+      edges();
+    });
+  }
+
+  // The body takes no pointer events, so the wheel over it is routed here before the stage sees it;
+  // it is consumed only when the body can still scroll that way.
+  const onWheel = (event: WheelEvent): void => {
+    for (const [element, scrollBy] of readingScrollers) {
+      if (!element.isConnected) { readingScrollers.delete(element); continue; }
+      if (element.closest('[hidden]')) continue;
+      const box = element.getBoundingClientRect();
+      if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) continue;
+      const unit = event.deltaMode === 1 ? parseFloat(getComputedStyle(element).fontSize) * 1.45 : event.deltaMode === 2 ? element.clientHeight : 1;
+      if (scrollBy(event.deltaY * unit)) { event.preventDefault(); event.stopPropagation(); }
+      return;
+    }
+  };
+  window.addEventListener('wheel', onWheel, { capture: true, passive: false });
+
   function applyStyle(element: HTMLElement, node: ProjectUiNode): void {
     const style = node.style;
     element.style.color = color(style?.color, theme.colors.text);
@@ -180,11 +248,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     if ((node.type === 'text' || node.type === 'button') && isReadingText(display.page, node, item)) {
       const base = node.style?.fontSize ?? theme.typography.uiSize;
       element.dataset.uiReadingScaled = 'true';
-      bindings.push(() => {
-        element.style.fontSize = `${base * readingScale(display.context)}px`;
-        // A longer body keeps its newest words in view, as the canvas dialogue box does.
-        if (node.type === 'text' && element.scrollHeight > element.clientHeight) element.scrollTop = element.scrollHeight;
-      });
+      bindings.push(() => { element.style.fontSize = `${base * readingScale(display.context)}px`; });
     }
     element.style.whiteSpace = 'pre-wrap';
     element.style.overflowWrap = 'anywhere';
@@ -224,9 +288,9 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     } else if (node.type === 'text') {
       element.textContent = visibleText(node.text, display.context, item, `ui:${node.id}`);
       element.style.lineHeight = '1.45';
-      if (element.dataset.uiReadingScaled) element.style.overflow = 'hidden';
       element.style.pointerEvents = 'none';
       if (node.text) bindings.push(() => { element.textContent = visibleText(node.text, display.context, item, `ui:${node.id}`); });
+      if (element.dataset.uiReadingScaled) followReading(element, bindings);
     } else if (node.type === 'image') {
       const url = options.imageUrl(node.asset!);
       if (!url) throw new Error(`界面图片未加载：${node.asset}`);
@@ -554,6 +618,8 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       disposed = true;
       confirmation?.finish(false);
       window.cancelAnimationFrame(frame);
+      window.removeEventListener('wheel', onWheel, { capture: true });
+      readingScrollers.clear();
       pages.clear();
       root.remove();
     },
