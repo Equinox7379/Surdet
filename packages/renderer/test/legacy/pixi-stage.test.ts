@@ -196,9 +196,9 @@ describe('PixiStage 素材注入', () => {
     const stage = new PixiStage();
     const before = destroySpy.mock.calls.length;
 
-    stage.showText('凛', '甲《こう》');
+    stage.showText('凛', '<ruby=こう>甲</ruby>');
     const afterFirst = destroySpy.mock.calls.length;
-    stage.showText('凛', '甲《こう》乙《おつ》');
+    stage.showText('凛', '<ruby=こう>甲</ruby><ruby=おつ>乙</ruby>');
     const afterLonger = destroySpy.mock.calls.length;
 
     expect(afterFirst).toBe(before);

@@ -377,13 +377,13 @@ export class RendererFacade {
     };
 
     const dialogue: DialogueCommands = {
-      showText: (speaker, value) => {
+      showText: (speaker, value, visibleUnits) => {
         if (!this.#dialoguePort) {
-          this.#callDialogue('showText', undefined, this.#stage.showText, speaker, value);
+          this.#callDialogue('showText', undefined, this.#stage.showText, speaker, value, visibleUnits);
           return;
         }
         const before = this.#dialoguePort.projectionVersion;
-        this.#callDialogue('showText', this.#dialoguePort.showText, this.#stage.showText, speaker, value);
+        this.#callDialogue('showText', this.#dialoguePort.showText, this.#stage.showText, speaker, value, visibleUnits);
         if (this.#dialoguePort.projectionVersion !== before) {
           this.#coordinateWorldFocus(this.#dialoguePort.activeSpeakerId);
         }

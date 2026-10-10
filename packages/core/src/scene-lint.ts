@@ -367,6 +367,10 @@ export function validateSceneVariables(
       case 'choice': {
         const ch = instr as ChoiceInstr;
         for (const opt of ch.options) {
+          for (const name of collectInterpolatedVars(opt.label)) if (!variables.has(name)) issues.push({
+            severity: 'error', code: 'V002', text: `选项插值 '{${name}}' 引用了未声明变量 '${name}'`,
+            file: opt.pos.file, line: opt.pos.line, col: opt.pos.col,
+          });
           if (opt.when !== null) {
             const p = at(opt.pos.file, opt.pos.line, opt.pos.col);
             const ast = checkExpr(opt.when, p, types, issues);

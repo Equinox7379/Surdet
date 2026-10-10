@@ -441,8 +441,8 @@ export class RendererStageHost {
     this.#world.removePortrait(key);
   }
 
-  showText(speaker: string | null, value: string): void {
-    this.#dialogue.showText(speaker, value);
+  showText(speaker: string | null, value: string, visibleUnits?: number): void {
+    this.#dialogue.showText(speaker, value, visibleUnits);
   }
 
   beginText(speaker: string | null): void {

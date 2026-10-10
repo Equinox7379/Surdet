@@ -1,4 +1,4 @@
-import { stagePinnedSourcePaths } from '@surdet/core';
+import { stagePinnedSourcePaths, INLINE_TEXT_TAGS } from '@surdet/core';
 import { inspectTextCatalog, exportTextCatalogCsv, exportVoiceCatalogCsv, previewTextCatalogImport, applyTextCatalogPatch, type TextCatalogPatchInput } from '@surdet/authoring';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
@@ -587,6 +587,7 @@ export class AuthoringService {
 
   async describeCapabilities(options: { ids?: readonly string[]; detail?: 'summary' | 'full' } = {}): Promise<ServiceResult<{
     contractVersion: typeof AUTHORING_CONTRACT_VERSION;
+    inlineText: { tags: typeof INLINE_TEXT_TAGS; ruby: 'explicit-only'; escape: string };
     capabilities: Array<Pick<(typeof AUTHORING_CAPABILITY_REGISTRY)[number], 'id' | 'title' | 'purpose' | 'minimumPolicy' | 'composable' | 'sideEffects' | 'idempotency'> & { mcpTool: string }>;
   }>> {
     const unknownIds = options.ids?.filter((id) => !AUTHORING_CAPABILITY_REGISTRY.some((definition) => definition.id === id)) ?? [];
@@ -597,6 +598,7 @@ export class AuthoringService {
       projectRevision: 'unbound',
       result: {
         contractVersion: AUTHORING_CONTRACT_VERSION,
+        inlineText: { tags: INLINE_TEXT_TAGS, ruby: 'explicit-only', escape: '\\< for literal <; \\\\ for literal \\' },
         capabilities: definitions.map((definition) => {
           const { id, title, purpose, minimumPolicy, composable, sideEffects, idempotency } = definition;
           return {

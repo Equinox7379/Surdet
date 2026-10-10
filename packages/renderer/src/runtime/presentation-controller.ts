@@ -1,5 +1,7 @@
 import {
   EventBus,
+  inlinePlainText,
+  inlineTextLength,
   type CoreEventMap,
   type Unsubscribe,
   type TextEventPayload,
@@ -14,7 +16,6 @@ import {
 import type { Backlog } from '../backlog.js';
 import type { AudioPlaybackSnapshot } from '../rollback-buffer.js';
 import { dequote } from '../dequote.js';
-import { stripRuby } from '../ruby.js';
 import { Typewriter } from '../text-buffer.js';
 import { FadeTween } from '../transitions.js';
 import type { AudioHandle, FrameRequestHandler, PortraitView } from '../types.js';
@@ -108,7 +109,7 @@ function withoutReplayedCurrentNvlLine(
   if (!nvlActive || !current || entries.length === 0) return entries;
   const expectedSpeaker = current.speaker !== null && current.speaker.length > 0 ? current.speaker : null;
   const last = entries.at(-1)!;
-  return last.speaker === expectedSpeaker && last.text === stripRuby(current.value)
+  return last.speaker === expectedSpeaker && last.text === inlinePlainText(current.value)
     ? entries.slice(0, -1)
     : entries;
 }
@@ -298,6 +299,8 @@ export class PresentationController {
   #autoPerCharMs: number;
   /** 进入 awaiting 的时刻（自动播放停留计时起点） */
   #awaitSince = 0;
+  #inlineAutoElapsed = 0;
+  #lineVisibleLength = 0;
   /** 文字记录（可选注入） */
   #backlog: Backlog | null;
   /** Backlog 覆盖层展示中 */
@@ -592,10 +595,18 @@ export class PresentationController {
         this.#onWaitEnd?.();
       }
     }
+    const wasInlineWaiting = this.#tw.isWaiting;
     this.#tw.update(deltaMs);
     if (this.#status === 'typing') {
       const c = this.#current;
-      this.#commands.dialogue.showText(c?.speaker ?? null, this.#tw.text);
+      if (this.#tw.isWaiting && this.#autoPlay) {
+        this.#inlineAutoElapsed = wasInlineWaiting ? this.#inlineAutoElapsed + deltaMs : 0;
+        if (this.#inlineAutoElapsed >= this.#autoBaseDelayMs + this.#autoPerCharMs * this.#tw.waitingLength) {
+          this.#tw.resumeWait(); this.#inlineAutoElapsed = 0;
+        }
+      } else this.#inlineAutoElapsed = 0;
+      this.#commands.world.setPortraitSpeaking?.(!this.#tw.isPaused && !this.#tw.isDone && !this.#skipMode);
+      this.#commands.dialogue.showText(c?.speaker ?? null, c?.value ?? '', this.#tw.shown);
     }
 
     if (this.#skipMode) {
@@ -620,14 +631,14 @@ export class PresentationController {
       // 自动播放：文本显示完成后停留（基础 + 按长度）再推进；语音播放中先等语音
       // （isVoicePlaying 恒 false 的音频实现不受影响）。choice 挂起时不推进。
       const waited = nowMs() - this.#awaitSince;
-      const need = this.#autoBaseDelayMs + this.#autoPerCharMs * (this.#current?.value.length ?? 0);
+      const need = this.#autoBaseDelayMs + this.#autoPerCharMs * this.#lineVisibleLength;
       if (waited >= need && !this.#audio.isVoicePlaying()) {
         this.#status = 'idle';
         this.#onAdvance?.();
       }
     }
     // 点击等待指示器投影（▼ 仅在文本等待推进时可见；fake stage 可未实现）
-    this.#syncAwaiting(this.#status === 'awaiting');
+    this.#syncAwaiting(this.#status === 'awaiting' || this.#status === 'typing' && this.#tw.isWaiting);
     // Projection time was advanced once, at timeline boundaries, above.
 
     const fade = this.#fade;
@@ -643,7 +654,7 @@ export class PresentationController {
   #hasRendererWork(): boolean {
     return this.#timelineRuns.size > 0
       || this.#waitDeadline !== null
-      || this.#status === 'typing'
+      || this.#status === 'typing' && (!this.#tw.isWaiting || this.#autoPlay || this.#skipMode)
       || (this.#skipMode && this.#status === 'awaiting')
       || (this.#autoPlay && this.#status === 'awaiting')
       || this.#fade !== null;
@@ -815,7 +826,11 @@ export class PresentationController {
       return this.choiceConfirm();
     }
     if (this.#status === 'typing') {
-      this.#tw.skip();
+      this.#inlineAutoElapsed = 0;
+      this.#tw.revealToNextWait();
+      if (this.#current) this.#commands.dialogue.showText(this.#current.speaker, this.#current.value, this.#tw.shown);
+      this.#commands.world.setPortraitSpeaking?.(!this.#tw.isPaused && !this.#tw.isDone);
+      this.#syncAwaiting(this.#tw.isWaiting || this.#tw.isDone);
       return true;
     }
     if (this.#status === 'awaiting') {
@@ -853,15 +868,17 @@ export class PresentationController {
       const prior = withoutReplayedCurrentNvlLine(entries, this.#current, true);
       this.#commands.dialogue.clearNvlText();
       for (const entry of prior) this.#commands.dialogue.appendNvlText(entry.speaker, entry.text);
-      this.#commands.dialogue.appendNvlText(p.text.speaker, stripRuby(p.text.value));
+      this.#commands.dialogue.appendNvlText(p.text.speaker, inlinePlainText(p.text.value));
     } else {
       this.#tw.replaceText(p.text.value);
-      this.#commands.dialogue.showText(p.text.speaker, this.#tw.text);
+      this.#inlineAutoElapsed = 0;
+      this.#commands.dialogue.showText(p.text.speaker, p.text.value, this.#tw.shown);
       if (this.#status === 'typing' && this.#tw.isDone) {
         this.#status = 'awaiting'; this.#awaitSince = this.#pausedSince ?? nowMs();
       }
     }
     this.#current = { speaker: p.text.speaker, value: p.text.value };
+    this.#lineVisibleLength = inlineTextLength(p.text.value);
     if (!this.#nvl) this.#advCurrent = this.#current;
   }
 
@@ -876,19 +893,21 @@ export class PresentationController {
     if (p.voice !== undefined || this.#pendingVoice === null) this.#audio.stopVoice?.();
     this.#audio.setVoicePaused?.(this.presentationPaused);
     if (p.voice && !this.#skipMode) this.#audio.playVoice(p.voice);
-    this.#backlog?.add(p.displaySpeaker ?? p.speaker, stripRuby(p.value), voice ?? undefined);
+    this.#backlog?.add(p.displaySpeaker ?? p.speaker, inlinePlainText(p.value), voice ?? undefined);
     if (this.#backlogOpen) this.#renderBacklog();
     this.#pendingVoice = null;
     this.#current = { speaker: p.speaker, value: p.value };
+    this.#lineVisibleLength = inlineTextLength(p.value);
     if (this.#nvl) {
       this.#commands.world.setPortraitSpeaking?.(false);
       // NVL 模式：整行瞬时追加到全屏文本页（不走打字机），等待推进
-      this.#commands.dialogue.appendNvlText(p.speaker, stripRuby(p.value));
+      this.#commands.dialogue.appendNvlText(p.speaker, inlinePlainText(p.value));
       this.#status = 'awaiting';
       this.#awaitSince = nowMs();
       return;
     }
     this.#advCurrent = this.#current;
+    this.#inlineAutoElapsed = 0;
     this.#beginText(p.speaker);
     if (p.value.length === 0) {
       this.#commands.world.setPortraitSpeaking?.(false);
@@ -901,6 +920,9 @@ export class PresentationController {
     this.#status = 'typing';
     this.#commands.world.setPortraitSpeaking?.(!this.#skipMode);
     this.#tw.text = p.value;
+    this.#commands.dialogue.showText(p.speaker, p.value, this.#tw.shown);
+    this.#commands.world.setPortraitSpeaking?.(!this.#tw.isPaused && !this.#tw.isDone && !this.#skipMode);
+    this.#syncAwaiting(this.#tw.isWaiting || this.#tw.isDone);
   }
 
   #onChoice(p: ChoiceEventPayload): void {

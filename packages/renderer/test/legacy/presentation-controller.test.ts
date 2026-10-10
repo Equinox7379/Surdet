@@ -124,6 +124,41 @@ function controllerFor(
 }
 
 describe('PresentationController', () => {
+  it('freezes an inline pause with the menu, consumes clicks within the same line, and never stops its voice at a click-wait', () => {
+    const stage = stageHarness(), ports = createPresentationPorts(stage), advance = vi.fn();
+    const projection = vi.spyOn(stage, 'showText');
+    const audio = { ...NULL_AUDIO, playVoice: vi.fn(), stopVoice: vi.fn() };
+    const controller = new PresentationController(ports.commands, ports.queries, audio, { commands: ports.commands, queries: ports.queries, onAdvance: advance });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus); controller.setTextSpeed(10);
+    try {
+      bus.emit('text', { speaker: null, value: '甲<w=500>乙<w>丙', voice: 'spoken' });
+      controller.update(100); expect(projection).toHaveBeenLastCalledWith(null, '甲<w=500>乙<w>丙', 1);
+      controller.setPresentationPaused(true); controller.update(10000);
+      controller.setPresentationPaused(false); controller.update(499);
+      expect(projection).toHaveBeenLastCalledWith(null, '甲<w=500>乙<w>丙', 1);
+      controller.update(101); expect(projection).toHaveBeenLastCalledWith(null, '甲<w=500>乙<w>丙', 2);
+      const stops = audio.stopVoice.mock.calls.length;
+      controller.advance(); expect(advance).not.toHaveBeenCalled(); expect(audio.stopVoice).toHaveBeenCalledTimes(stops);
+      controller.update(100); expect(controller.status).toBe('awaiting');
+      controller.advance(); expect(advance).toHaveBeenCalledTimes(1);
+    } finally { controller.dispose(); }
+  });
+
+  it('auto releases inline click-waits by visible segment length; skip ignores all inline controls', () => {
+    const stage = stageHarness(), controller = controllerFor(stage), bus = new EventBus<CoreEventMap>();
+    controller.connect(bus); controller.setTextSpeed(10); controller.setAutoWait(200, 50);
+    const projection = vi.spyOn(stage, 'showText');
+    try {
+      controller.toggleAuto(); bus.emit('text', { speaker: null, value: '<b>甲</b><w>乙' });
+      controller.update(100); controller.update(249);
+      expect(projection).toHaveBeenLastCalledWith(null, '<b>甲</b><w>乙', 1);
+      controller.update(1); controller.update(100); expect(controller.status).toBe('awaiting');
+      bus.emit('text', { speaker: null, value: '甲<w>乙<w=9999>丙', wasRead: true });
+      controller.toggleSkipAll(); controller.update(1);
+      expect(projection.mock.calls.some(call => call[1] === '甲<w>乙<w=9999>丙' && call[2] === undefined)).toBe(true);
+    } finally { controller.dispose(); }
+  });
+
   it('projects localized voices, waits for completion, keeps historical bindings, and stops on refresh/skip/reset/dispose', () => {
     const stage = stageHarness(), ports = createPresentationPorts(stage), backlog = new Backlog(), advance = vi.fn();
     let busy = false;
@@ -523,6 +558,7 @@ describe('PresentationController', () => {
 
   it('uses explicit begin-line and clear-text commands instead of empty showText for lifecycle boundaries', () => {
     const stage = stageHarness();
+    const projection = vi.spyOn(stage, 'showText');
     const controller = controllerFor(stage, { typewriter: undefined });
     const bus = new EventBus<CoreEventMap>();
     const off = controller.connect(bus);
@@ -530,7 +566,7 @@ describe('PresentationController', () => {
     try {
       bus.emit('text', { speaker: null, value: '第一句中文𠀀🙂' });
       expect(stage.begins).toEqual([null]);
-      expect(stage.texts).toEqual([]);
+      expect(projection).toHaveBeenLastCalledWith(null, '第一句中文𠀀🙂', 0);
 
       controller.update(1_000);
       expect(stage.texts.at(-1)).toBe('第一句中文𠀀🙂');
@@ -538,7 +574,7 @@ describe('PresentationController', () => {
 
       controller.resetSession({ preserveWorld: true });
       expect(stage.clears).toBe(1);
-      expect(stage.texts).toEqual(['第一句中文𠀀🙂']);
+      expect(stage.texts).toEqual(['第一句中文𠀀🙂', '第一句中文𠀀🙂']);
     } finally {
       off();
       controller.dispose();

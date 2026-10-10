@@ -192,7 +192,7 @@ export function createPresentationPorts(
     }
   };
   const dialogueCommands: RendererCommands['dialogue'] = {
-    showText: (speaker, value) => projectDialogue(() => stage.showText(speaker, value)),
+    showText: (speaker, value, visibleUnits) => projectDialogue(() => stage.showText(speaker, value, visibleUnits)),
     beginText: (speaker) => projectDialogue(() => {
       if (stage.beginText) stage.beginText(speaker);
       else stage.showText(speaker, '');

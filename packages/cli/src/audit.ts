@@ -12,6 +12,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
   compileScene,
+  inlineTextLength,
   parseVariableConfig,
   Interpreter,
   SceneRegistry,
@@ -146,7 +147,7 @@ export function auditStats(compiled: Map<string, CompiledScene>): { stats: Scene
     for (const instr of scene.instructions) {
       if (instr.op === 'text') {
         textLines++;
-        chars += instr.value.length;
+        chars += inlineTextLength(instr.value);
       } else if (instr.op === 'choice') {
         choices++;
       } else if ((instr.op === 'jump' && instr.kind === 'jump') || instr.op === 'call') {

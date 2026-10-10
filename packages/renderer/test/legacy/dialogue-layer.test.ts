@@ -196,7 +196,7 @@ afterEach(() => {
 function exerciseDialogueLayer(layer: DialogueLayer): void {
   layer.mountTextDisplays();
   layer.setSpeakerProfiles([{ id: 'lynn', name: '凛' }]);
-  layer.showText('凛', '同一句《どういつ》');
+  layer.showText('凛', '<ruby=どういつ>同一句</ruby>');
   layer.showChoices([{ index: 1, label: '继续' }, { index: 2, label: '返回' }]);
   layer.setChoiceHighlight(1);
   layer.setAwaiting(true);

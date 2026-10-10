@@ -10,6 +10,7 @@ import type {
 } from '../dsl/ast.js';
 import type { SourcePos } from '../dsl/token.js';
 import { SourceError } from '../dsl/token.js';
+import { interpolateInlineText, substituteTextVariables } from '../inline-text.js';
 import { evalExprBoolean, evalExprString } from './expr-eval.js';
 import type { VariableStore } from '../state/variable-store.js';
 import { EventBus, type EventMap } from './event-bus.js';
@@ -278,11 +279,11 @@ export class Interpreter {
     const speaker = instr.speaker === null ? null : interpolate(instr.speaker, this.#store);
     const displaySpeaker = speaker === null ? null : this.#displayText('speaker', speaker, instr.line);
     const voice = this.#voiceResolver?.({ sceneId: this.#scene!.sceneId, sceneVersion: this.#scene!.textSourceVersion, line: instr.line, kind: 'dialogue', text: instr.value });
-    return { speaker, value: interpolate(this.#displayText('dialogue', instr.value, instr.line), this.#store),
+    return { speaker, value: interpolateInlineText(this.#displayText('dialogue', instr.value, instr.line), name => this.#store.getRef(name), name => this.#store.has(name)),
       ...(displaySpeaker !== null && displaySpeaker !== speaker ? { displaySpeaker } : {}), ...(voice !== undefined ? { voice } : {}) };
   }
   #displayChoices(instr: ChoiceInstr, indices: readonly number[]): ChoiceEventPayload {
-    return { options: indices.map(index => ({ index, label: interpolate(this.#displayText('choice', instr.options[index]!.label, instr.options[index]!.pos.line), this.#store) })) };
+    return { options: indices.map(index => ({ index, label: interpolateInlineText(this.#displayText('choice', instr.options[index]!.label, instr.options[index]!.pos.line), name => this.#store.getRef(name), name => this.#store.has(name), 'choice') })) };
   }
   refreshDisplayedText(): void {
     if (this.#stepping || !this.#scene) return;
@@ -1339,11 +1340,7 @@ export class Interpreter {
  *  随后可含数字/点/$（{2x}、{.var} 这类非法名不插值，保留原文）。
  *  走 getRef 免拷贝热路径：每行文本逐字展示都会触发插值，返回值仅做 String 转换，只读安全。 */
 export function interpolate(text: string, store: VariableStore): string {
-  return text.replace(/\{\{|\}\}|\{([\p{L}_][\p{L}0-9_$.]*)\}/gu, (match, name: string | undefined) => {
-    if (match === '{{') return '{';
-    if (match === '}}') return '}';
-    return store.has(name!) ? String(store.getRef(name!)) : `{${name}}`;
-  });
+  return substituteTextVariables(text, name => store.getRef(name), name => store.has(name));
 }
 
 /** 提取文本内 {var} 插值变量名（与 interpolate 同一规则：{{ 转义跳过；非法名不匹配）。
