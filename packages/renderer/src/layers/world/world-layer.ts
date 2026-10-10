@@ -1250,9 +1250,9 @@ export class WorldLayer implements WorldProjectionPort {
     }
     this.#colorMatrix ??= new ColorMatrixFilter();
     this.#colorMatrix.reset();
-    this.#colorMatrix.saturate(this.#postProcess.saturation - 1, false);
-    this.#colorMatrix.brightness(this.#postProcess.brightness, false);
-    this.#colorMatrix.contrast(this.#postProcess.contrast, false);
+    this.#colorMatrix.saturate(this.#postProcess.saturation - 1, true);
+    this.#colorMatrix.brightness(this.#postProcess.brightness, true);
+    this.#colorMatrix.contrast(this.#postProcess.contrast - 1, true);
     this.worldContainer.filters = [this.#colorMatrix];
   }
 
