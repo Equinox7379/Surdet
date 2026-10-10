@@ -17,3 +17,18 @@ export function sourceRangeOffsets(
   const end = rowStart(range.end.line - 1) + range.end.col - 1;
   return end > start ? { start, end } : null;
 }
+
+/**
+ * Offsets inside the manuscript dialogue box for a one-row diagnostic range. The box edits
+ * only the dialogue after `speaker：`, so a range in the speaker prefix or outside it is not used.
+ */
+export function dialogueRangeOffsets(
+  line: { raw: string; value: string },
+  index: number,
+  range: SourceRange,
+): { start: number; end: number } | null {
+  if (range.start.line - 1 !== index || range.end.line !== range.start.line || !line.raw.endsWith(line.value)) return null;
+  const prefix = line.raw.length - line.value.length;
+  const start = range.start.col - 1 - prefix, end = range.end.col - 1 - prefix;
+  return Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end > start && end <= line.value.length ? { start, end } : null;
+}

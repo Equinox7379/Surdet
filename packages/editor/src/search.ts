@@ -2,7 +2,9 @@
  * 跨场景搜索/替换（M6 E5-1）：全文搜索（正则可选），替换走 history 可撤销，
  * 替换后由调用方重新调度校验。
  */
-import { parseSceneDocument } from '@surdet/authoring';
+import { parseSceneDocument, type SceneDocumentLine } from '@surdet/authoring';
+import { containsInlineTag, parseInlineText } from '@surdet/core';
+import { findInDialogue, replaceInDialogue, visibleReplacement } from './v4/inline-markup.js';
 
 export interface SceneText {
   /** 场景 Map key（相对路径） */
@@ -18,6 +20,14 @@ export interface SearchResult {
   /** 0 基行号（块编辑 data-line 同口径） */
   line: number;
   text: string;
+  /** Set when only the dialogue's visible text matched, e.g. across style tags. */
+  visible?: { text: string; start: number; end: number };
+}
+
+/** Speaker prefix and dialogue of a text row; null when the row is not plain `speaker：value`. */
+function dialogueParts(line: SceneDocumentLine): { prefix: string; value: string } | null {
+  if (line.kind !== 'text' || !line.raw.endsWith(line.value)) return null;
+  return { prefix: line.raw.slice(0, line.raw.length - line.value.length), value: line.value };
 }
 
 /** 构造匹配器（非法正则返回 null，由 UI 提示） */
@@ -38,12 +48,18 @@ export function searchScenes(scenes: Iterable<SceneText>, query: string, useRege
   const results: SearchResult[] = [];
   for (const sc of scenes) {
     const lines = parseSceneDocument(sc.text);
-    lines.forEach(({ raw: text }, i) => {
+    lines.forEach((line, i) => {
       if (results.length >= maxResults) return;
+      const text = line.raw;
       re.lastIndex = 0;
       if (re.test(text)) {
         results.push({ sceneKey: sc.key, sceneId: sc.id, line: i, text });
+        return;
       }
+      // Dialogue is also searched as the player sees it, so a phrase split by style tags is found.
+      const parts = dialogueParts(line);
+      const visible = parts && findInDialogue(parts.value, re);
+      if (visible) results.push({ sceneKey: sc.key, sceneId: sc.id, line: i, text, visible: { text: visible.plain, start: visible.start, end: visible.end } });
     });
     if (results.length >= maxResults) break;
   }
@@ -53,25 +69,61 @@ export function searchScenes(scenes: Iterable<SceneText>, query: string, useRege
 export interface ReplacementPreview {
   text: string;
   count: number;
+  /** Matches left alone because they cross or sit inside inline markup. */
+  skipped: number;
   changes: { line: number; before: string; after: string; count: number }[];
+}
+
+/** Literal replacement on a whole row that never edits inside a tag token; matches touching one are skipped. */
+function replaceOutsideTags(raw: string, re: RegExp, replacement: (offset: number) => string, tags: readonly { start: number; end: number }[] | null): { text: string; count: number; skipped: number } {
+  let count = 0, skipped = 0;
+  re.lastIndex = 0;
+  const text = raw.replace(re, (match: string, ...rest: unknown[]) => {
+    const offset = rest.find((value) => typeof value === 'number') as number;
+    if (tags === null || tags.some((tag) => tag.start < offset + match.length && tag.end > offset)) { skipped++; return match; }
+    count++;
+    return replacement(offset);
+  });
+  return { text, count, skipped };
 }
 
 /** Preview and application share one replacement pass; row numbers refer to the original source. */
 export function previewSceneReplacement(text: string, query: string, replacement: string, useRegex: boolean): ReplacementPreview | null {
   const re = buildMatcher(query, useRegex);
   if (!re) return null;
-  if (!query) return { text, count: 0, changes: [] };
-  let count = 0;
+  if (!query) return { text, count: 0, skipped: 0, changes: [] };
+  let count = 0, skipped = 0;
   const changes: ReplacementPreview['changes'] = [];
   const next = parseSceneDocument(text).map((line, index) => {
-    re.lastIndex = 0;
-    let rowCount = 0;
-    const after = line.raw.replace(re, () => { rowCount++; return replacement; });
+    let after = line.raw, rowCount = 0;
+    const parts = dialogueParts(line);
+    const literal = (): string => replacement;
+    if (parts && (parseInlineText(parts.value).hasMarkup || parts.value.includes('\\'))) {
+      // Styled dialogue is replaced on its visible text; the speaker name stays plain text.
+      const speaker = replaceOutsideTags(parts.prefix, re, literal, []);
+      const dialogue = replaceInDialogue(parts.value, re, replacement);
+      after = speaker.text + dialogue.value;
+      rowCount = speaker.count + dialogue.count;
+      skipped += dialogue.skipped;
+    } else if (parts) {
+      // Unstyled rows keep whole-row matching; text written into the dialogue cannot become markup.
+      const written = visibleReplacement(replacement);
+      const result = replaceOutsideTags(line.raw, re, (offset) => offset >= parts.prefix.length ? written : replacement, []);
+      after = result.text; rowCount = result.count;
+    } else if (line.kind === 'choice-option' && containsInlineTag(line.raw)) {
+      const document = parseInlineText(line.raw, 'choice');
+      const broken = document.issues.some((issue) => issue.severity === 'error');
+      const result = replaceOutsideTags(line.raw, re, literal, broken ? null : document.tags);
+      after = result.text; rowCount = result.count; skipped += result.skipped;
+    } else {
+      const result = replaceOutsideTags(line.raw, re, literal, []);
+      after = result.text; rowCount = result.count;
+    }
     count += rowCount;
     if (after !== line.raw) changes.push({ line: index, before: line.raw, after, count: rowCount });
     return after + line.eol;
   }).join('');
-  return { text: next, count, changes };
+  return { text: next, count, skipped, changes };
 }
 
 /** 与查找相同的逐行匹配，保留原行结束符；count=0 时调用方不应写入。 */
