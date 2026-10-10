@@ -9,7 +9,7 @@ const mono = {
 
 describe('layoutRuby', () => {
   it('respects hard breaks around ruby and does not attach the preceding paragraph as its base', () => {
-    const layout = layoutRuby(parseRuby('前文\n\n海《うみ》へ\n帰る'), 100, mono, 40);
+    const layout = layoutRuby(parseRuby('前文\n\n<ruby=うみ>海</ruby>へ\n帰る'), 100, mono, 40);
     expect(layout.map(({ base, ruby, line }) => ({ base, ruby, line }))).toEqual([
       { base: '前文', ruby: undefined, line: 0 },
       { base: '海', ruby: 'うみ', line: 2 },
@@ -18,16 +18,16 @@ describe('layoutRuby', () => {
     ]);
   });
   it('keeps ruby segments together and wraps them as units', () => {
-    expect(layoutRuby(parseRuby('甲《こう》乙《おつ》'), 15, mono, 40).map((item) => item.line))
+    expect(layoutRuby(parseRuby('<ruby=こう>甲</ruby><ruby=おつ>乙</ruby>'), 15, mono, 40).map((item) => item.line))
       .toEqual([0, 1]);
   });
 
   it('allows one oversized ruby segment without looping or truncating', () => {
-    expect(layoutRuby(parseRuby('超长语《ちょうちょうご》'), 5, mono, 40)).toHaveLength(1);
+    expect(layoutRuby(parseRuby('<ruby=ちょうちょうご>超长语</ruby>'), 5, mono, 40)).toHaveLength(1);
   });
 
   it('keeps plain text lossless around ruby segments', () => {
-    expect(layoutRuby(parseRuby('甲《こう》乙'), 100, mono).map((item) => item.base).join(''))
+    expect(layoutRuby(parseRuby('<ruby=こう>甲</ruby>乙'), 100, mono).map((item) => item.base).join(''))
       .toBe('甲乙');
   });
 

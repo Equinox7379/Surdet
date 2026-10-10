@@ -3,6 +3,7 @@ import { DslError, type AstBlock, type CompiledScene, type CondJumpInstr, type D
 import { validateExpr } from './expr-parser.js';
 import { Lexer } from './lexer.js';
 import { Parser } from './parser.js';
+import { parseInlineText, type InlineTextContext } from '../inline-text.js';
 import { rangeOfArguments, type SourcePos, type SourceRange } from './token.js';
 
 /**
@@ -69,6 +70,7 @@ function hashSource(source: string): string {
 
 /** 指令发射器：维护指令数组、标签索引、待回填跳转 */
 class Emitter {
+  constructor(readonly sourceLines: readonly string[]) {}
   instructions: DslInstr[] = [];
   labels = new Map<string, number>();
   diagnostics: DslDiagnostic[] = [];
@@ -120,7 +122,7 @@ export class SceneCompiler {
     const tokens = lexer.tokenize(source, file);
     const parser = new Parser();
     const ast = parser.parse(tokens, sceneId);
-    const emitter = new Emitter();
+    const emitter = new Emitter(source.split(/\r\n|\n|\r/));
 
     this.#emitBlocks(emitter, ast.blocks);
 
@@ -154,6 +156,7 @@ export class SceneCompiler {
         return;
       }
       case 'text': {
+        this.#checkInlineText(emitter, block.value, block.pos, 'dialogue', block.speaker === null ? 0 : block.speaker.length + 1);
         emitter.emit<DslInstr>({
           op: 'text', speaker: block.speaker, value: block.value, index: -1,
           file: block.pos.file, line: block.pos.line, col: block.pos.col,
@@ -172,6 +175,18 @@ export class SceneCompiler {
         this.#emitChoice(emitter, block);
         return;
       }
+    }
+  }
+
+  /** 行内标记的位置仍指向原文件，不指向去标记后的显示文字。 */
+  #checkInlineText(emitter: Emitter, text: string, pos: SourcePos, context: InlineTextContext, prefix = 0): void {
+    const line = emitter.sourceLines[pos.line - 1] ?? '';
+    const start = line.indexOf(text, pos.col - 1 + prefix);
+    for (const issue of parseInlineText(text, context).issues) {
+      const col = (start >= 0 ? start : pos.col - 1) + issue.start + 1;
+      const location = { file: pos.file, line: pos.line, col, range: { start: { line: pos.line, col }, end: { line: pos.line, col: col + issue.end - issue.start } } };
+      if (issue.severity === 'error') throw new DslError(issue.code, issue.message, location);
+      emitter.addDiagnostic({ ...location, code: issue.code, message: issue.message });
     }
   }
 
@@ -305,6 +320,7 @@ export class SceneCompiler {
     const pendingAfter = new Map<number, JumpInstr>();
 
     for (const opt of options) {
+      this.#checkInlineText(emitter, opt.label, opt.pos, 'choice');
       // W008：选项内多个 @goto/@jump 只保留第一个（审计修复：显式告警，不再静默丢弃）
       if ((opt.extraJumps ?? 0) > 0) {
         emitter.addDiagnostic({

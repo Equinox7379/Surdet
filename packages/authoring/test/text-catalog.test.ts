@@ -32,6 +32,23 @@ async function fixture(assets: { path: string }[] = []) {
 }
 
 describe('text catalog authoring', () => {
+  it('exports marked dialogue as plain recording text while retaining exact source and binding text', async () => {
+    const assets = [{ path: 'content/assets/voice/hello.ogg' }], f = await fixture(assets);
+    const marked = '<color=accent>你好</color><w=500>，{name}。';
+    f.change.record.workingFiles['content/scenario/intro.gal'] = scene.replace('你好，{name}。', marked);
+    await f.bind();
+    const view = await inspectTextCatalog(await snapshot(f.change.record.workingFiles), hasher, 'zh-CN', assets);
+    const rows = csvRecords(exportVoiceCatalogCsv(view).replace(/^\uFEFF/, '')).records.map(row => row.cells);
+    expect(rows[1]![5]).toBe(marked); expect(rows[1]![6]).toBe('你好，{name}。');
+    rows[1]![7] = 'hello'; rows[1]![8] = 'bind';
+    const csv = rows.map(row => row.map(value => `"${value.replaceAll('"', '""')}"`).join(',')).join('\r\n');
+    const preview = await previewTextCatalogImport(await snapshot(f.change.record.workingFiles), hasher, 'zh-CN', csv, assets);
+    expect(preview.issues).toEqual([]); expect(preview.rows[0]!.spokenText).toBe(marked);
+    await f.apply({ type: 'import', locale: 'zh-CN', csv, previewFingerprint: preview.previewFingerprint });
+    const rebound = await inspectTextCatalog(await snapshot(f.change.record.workingFiles), hasher, 'zh-CN', assets);
+    expect(rebound.entries[0]!.voices?.['zh-CN']?.text).toBe(marked);
+  });
+
   it('round-trips source/translated voice manifests, preserves stale recordings, and explicitly removes bindings', async () => {
     const assets = [{ path: 'content/assets/voice/hello.wav' }], f = await fixture(assets); await f.bind();
     const inspect = async (locale: string) => inspectTextCatalog(await snapshot(f.change.record.workingFiles), hasher, locale, assets);
@@ -165,7 +182,7 @@ describe('text catalog authoring', () => {
       if (kind === 'source') rows[1]![5] = 'wrong';
       if (kind === 'locale') rows[1]![1] = 'ja';
       if (kind === 'placeholder') rows[1]![6] = 'Hello';
-      if (kind === 'ruby') rows[1]![6] = 'Hello {name} 世《せ';
+      if (kind === 'ruby') rows[1]![6] = 'Hello {name} <ruby=せ>世';
     });
     if (kind === 'quote') csv += '\n"unterminated';
     const before = JSON.stringify(f.change.record), preview = await previewTextCatalogImport(await snapshot(f.change.record.workingFiles), hasher, 'en', csv);

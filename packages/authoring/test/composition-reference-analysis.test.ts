@@ -7,6 +7,11 @@ import {
 } from '../src/composition-reference-analysis.js';
 
 describe('raw composition reference analysis', () => {
+  it('collects interpolated text/choice variables through markup and ignores escaped braces', () => {
+    const refs = analyzeSceneCompositionReferences({ sceneId: 'entry', path: 'content/scenario/entry.gal', characters: {},
+      text: '<b>{正文变量}</b> {{不是变量}}\n@choice\n  <color=accent>{选项变量}</color> -> @goto end\n@label end' });
+    expect(refs.filter(ref => ref.kind === 'variable').map(ref => ref.objectRef)).toEqual(['variable:正文变量', 'variable:选项变量']);
+  });
   it.each(['"', "'"])('does not let an unclosed %s in prose consume media and scene dependencies', quote => {
     const refs = analyzeSceneCompositionReferences({ sceneId: 'entry', path: 'content/scenario/entry.gal', characters: {},
       text: `@scene entry\n@choice\n  未闭合的 ${quote}文案 [if:flag && " -> " == " -> "] -> @bg ${quote}night${quote} @jump accepted.entry @jump ignored\n@end` });

@@ -1218,8 +1218,11 @@ const definitions = {
       ids: { type: 'array', items: stringSchema, minItems: 1, uniqueItems: true, description: 'Select exact native capability IDs. Omit to include all; unknown IDs are rejected.' },
       detail: { enum: ['summary', 'full'], description: 'Defaults to full. Summary omits schemas, examples and repair details. Definitions do not grant permission; session.describe reports actual availability.' },
     }),
-    outputSchema: strictObject({ contractVersion: stringSchema, capabilities: arrayOf({ oneOf: [capabilitySummarySchema, capabilityBriefSchema] }) }, ['contractVersion', 'capabilities']),
-    example: { input: {}, expectedResultShape: { contractVersion: '1.0.0', capabilities: [] } },
+    outputSchema: strictObject({ contractVersion: stringSchema, capabilities: arrayOf({ oneOf: [capabilitySummarySchema, capabilityBriefSchema] }),
+      inlineText: strictObject({ tags: arrayOf(strictObject({ name: stringSchema, paired: booleanSchema, value: { type: ['string', 'null'] }, label: stringSchema, example: stringSchema }, ['name', 'paired', 'value', 'label', 'example'])),
+        ruby: { const: 'explicit-only' }, escape: stringSchema }, ['tags', 'ruby', 'escape']),
+    }, ['contractVersion', 'capabilities', 'inlineText']),
+    example: { input: {}, expectedResultShape: { contractVersion: '2.31.0', capabilities: [], inlineText: { tags: [], ruby: 'explicit-only', escape: '\\< for literal <; \\\\ for literal \\' } } },
   },
   inspect: {
     inputSchema: readViewInputSchema,

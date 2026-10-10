@@ -169,7 +169,7 @@ describe('Pass 8 active dialogue presentation', () => {
       body.emit('wheel', { deltaY: 10000, stopPropagation: () => undefined } as never);
       expect(body.y + body.height).toBeLessThanOrEqual(650);
       expect(body.text).toBe(content);
-      r.layer.showText('读者', '读音《du yin》的正文。');
+      r.layer.showText('读者', '<ruby=duyin>读音</ruby>的正文。');
       const rubyBase = r.texts().find((text) => text.visible && text.text === '读音');
       expect(rubyBase).toBeDefined();
       expect(rubyBase!.style.fontSize).toBe(36);

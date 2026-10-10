@@ -1,6 +1,7 @@
 import { compareCanonicalText } from './canonical-order.js';
 import {
   collectVars,
+  collectInterpolatedVars,
   findChoiceArrow,
   parseExpr,
   parseInlineInstructions,
@@ -218,6 +219,7 @@ function analyzeChoiceOption(
   const labelPart = arrowIndex >= 0 ? trimmed.slice(0, arrowIndex) : trimmed;
   const inlinePart = arrowEnd >= 0 ? trimmed.slice(arrowEnd).trim() : '';
   const labelText = labelPart.trim();
+  for (const name of collectInterpolatedVars(labelText.replace(/\[if:.+?\]\s*$/, ''))) addVariableReference(references, name, source);
   const whenMatch = /\[if:(.+?)\]\s*$/.exec(labelText);
   if (whenMatch !== null) addExpressionVariables(references, whenMatch[1]!.trim(), source);
 
@@ -311,6 +313,7 @@ export function analyzeSceneCompositionReferences(input: {
       if ((line.kind === 'blank' || line.kind === 'comment') && choiceOptionIndex !== null) continue;
       choiceOptionIndex = null;
       if (line.kind !== 'text') continue;
+      for (const name of collectInterpolatedVars(line.value + '\n' + line.speaker)) addVariableReference(references, name, lineSource);
       const speaker = line.speaker.trim();
       if (speaker.length === 0) continue;
       const characterRef = speakerRefs.get(speaker);

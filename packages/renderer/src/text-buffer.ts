@@ -1,94 +1,98 @@
-/**
- * 打字机文本缓冲：管理逐字显示进度。
- * 与渲染解耦，可 headless 测试。
- */
-export interface TypewriterOptions {
-  /** 每秒显示字符数 */
-  charsPerSecond?: number;
-}
+import { parseInlineText, textGraphemeCount } from '@surdet/core';
 
+/** Frame-time dialogue cursor. Markup never consumes a character or wall-clock timer. */
+export interface TypewriterOptions { charsPerSecond?: number }
 export class Typewriter {
-  #full = '';
+  #document = parseInlineText('');
   #shown = 0;
   #done = true;
   #cps: number;
-  /** 小数字符进位累积：避免低帧率下每帧推进 0 字符导致文本停滞 */
-  #carry = 0;
+  #carryMs = 0;
+  #control = 0;
+  #pauseMs = 0;
+  #waiting = false;
+  #segmentStart = 0;
+  #waitingLength = 0;
   onComplete: (() => void) | null = null;
 
-  constructor(options: TypewriterOptions = {}) {
-    this.#cps = options.charsPerSecond ?? 24;
-  }
+  constructor(options: TypewriterOptions = {}) { this.#cps = options.charsPerSecond ?? 24; }
+  setSpeed(value: number): void { if (Number.isFinite(value) && value > 0) this.#cps = value; }
+  get speed(): number { return this.#cps; }
+  get full(): string { return this.#document.source; }
+  get text(): string { return this.#document.units.slice(0, this.#shown).map(unit => unit.text).join(''); }
+  get shown(): number { return this.#shown; }
+  get isDone(): boolean { return this.#done; }
+  get isWaiting(): boolean { return this.#waiting; }
+  get isPaused(): boolean { return this.#waiting || this.#pauseMs > 0; }
+  get waitingLength(): number { return this.#waitingLength; }
+  get visibleLength(): number { return textGraphemeCount(this.#document.plainText); }
 
-  /** 运行时调整打字速度（每秒字符数；设置界面接入用） */
-  setSpeed(charsPerSecond: number): void {
-    if (Number.isFinite(charsPerSecond) && charsPerSecond > 0) {
-      this.#cps = charsPerSecond;
-    }
-  }
-
-  get speed(): number {
-    return this.#cps;
-  }
-
-  /** 设置新文本（重置进度）。空文本视为立即完成并触发 onComplete。 */
   set text(value: string) {
-    this.#full = value;
-    this.#shown = 0;
-    this.#carry = 0;
-    if (value.length === 0) {
-      this.#done = true;
-      this.onComplete?.();
-    } else {
-      this.#done = false;
-    }
+    this.#document = parseInlineText(value); this.#shown = 0;
+    this.#done = false; this.#carryMs = 0; this.#control = 0;
+    this.#pauseMs = 0; this.#waiting = false; this.#segmentStart = 0; this.#waitingLength = 0;
+    this.update(0);
   }
 
-  get full(): string {
-    return this.#full;
-  }
-
-  /** Language reprojection preserves progress without completing/advancing the story. */
+  /** Reproject a language without replaying earlier pauses or completing/advancing the line. */
   replaceText(value: string): void {
-    const progress = this.#full.length ? this.#shown / this.#full.length : 1;
-    this.#full = value;
-    this.#done = this.#done || value.length === 0;
-    this.#shown = this.#done ? value.length : Math.floor(value.length * progress);
+    const progress = this.#document.units.length ? this.#shown / this.#document.units.length : 1;
+    this.#document = parseInlineText(value);
+    this.#done ||= this.#document.units.length === 0;
+    this.#shown = this.#done ? this.#document.units.length : Math.floor(this.#document.units.length * progress);
+    this.#carryMs = 0; this.#pauseMs = 0; this.#waiting = false;
+    this.#control = this.#document.controls.findIndex(control => control.at > this.#shown);
+    if (this.#control < 0) this.#control = this.#document.controls.length;
+    this.#segmentStart = this.#shown; this.#waitingLength = 0;
   }
 
-  /** 当前已显示的文本 */
-  get text(): string {
-    return this.#full.slice(0, this.#shown);
-  }
-
-  get shown(): number {
-    return this.#shown;
-  }
-
-  get isDone(): boolean {
-    return this.#done;
-  }
-
-  /** 按流逝时间推进（毫秒）；小数部分进位累积 */
   update(deltaMs: number): void {
-    if (this.#done) return;
-    this.#carry += (deltaMs / 1000) * this.#cps;
-    const chars = Math.floor(this.#carry);
-    if (chars <= 0) return;
-    this.#carry -= chars;
-    this.#shown = Math.min(this.#full.length, this.#shown + chars);
-    if (this.#shown >= this.#full.length) {
-      this.#done = true;
-      this.#carry = 0;
-      this.onComplete?.();
+    if (this.#done || this.#waiting) return;
+    let budget = Number.isFinite(deltaMs) ? Math.max(0, deltaMs) : 0;
+    for (;;) {
+      if (this.#pauseMs > 0) {
+        const elapsed = Math.min(budget, this.#pauseMs);
+        budget -= elapsed; this.#pauseMs -= elapsed;
+        if (this.#pauseMs > 0) return;
+      }
+      const control = this.#document.controls[this.#control];
+      if (control?.at === this.#shown) {
+        this.#control++;
+        if (control.kind === 'pause') { this.#pauseMs = control.durationMs!; continue; }
+        this.#wait(); return;
+      }
+      if (this.#shown >= this.#document.units.length) { this.#complete(); return; }
+      const need = 1000 / (this.#cps * (this.#document.units[this.#shown]!.style.speed ?? 1)) - this.#carryMs;
+      if (budget < need) { this.#carryMs += budget; return; }
+      budget -= need; this.#carryMs = 0; this.#shown++;
     }
   }
 
-  /** 瞬时完成全部显示 */
+  /** A click during typing reveals to the next click-wait, not beyond it. */
+  revealToNextWait(): void {
+    if (this.#done) return;
+    if (this.#waiting) { this.resumeWait(); return; }
+    this.#carryMs = 0; this.#pauseMs = 0;
+    while (this.#control < this.#document.controls.length) {
+      const control = this.#document.controls[this.#control++]!;
+      if (control.kind === 'wait') { this.#shown = control.at; this.#wait(); return; }
+    }
+    this.skip();
+  }
+  resumeWait(): void {
+    if (!this.#waiting) return;
+    this.#waiting = false; this.#carryMs = 0; this.update(0);
+  }
+  /** Fast-forward deliberately ignores all pauses and click-waits. */
   skip(): void {
     if (this.#done) return;
-    this.#shown = this.#full.length;
-    this.#done = true;
-    this.onComplete?.();
+    this.#shown = this.#document.units.length; this.#control = this.#document.controls.length;
+    this.#pauseMs = 0; this.#waiting = false; this.#complete();
   }
+  #wait(): void {
+    this.#waiting = true;
+    this.#waitingLength = textGraphemeCount(this.#document.units.slice(this.#segmentStart, this.#shown).map(unit => unit.text).join(''));
+    this.#segmentStart = this.#shown; this.#carryMs = 0;
+  }
+  #complete(): void { this.#done = true; this.#carryMs = 0; this.onComplete?.(); }
 }

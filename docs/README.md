@@ -4,6 +4,8 @@
 
 ## 创作与开发
 
+行内文字后端及Claude前端接入：[第一批行内文字合同](inline-text-contract.md)。
+
 | 需要做什么 | 阅读入口 |
 | --- | --- |
 | 安装、启动、创建或试玩项目 | [仓库 README](../README.md)、[Starter 指南](../examples/starter/README.md) |

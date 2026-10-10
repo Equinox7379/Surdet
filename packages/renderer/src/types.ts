@@ -48,7 +48,7 @@ export interface AdvStage {
    *  纯 `角色`（文档规范写法 @hide lynn）移除该角色的全部立绘。 */
   removePortrait(key: string): void;
   /** 显示对话框文本（speaker 为 null 表示旁白） */
-  showText(speaker: string | null, value: string): void;
+  showText(speaker: string | null, value: string, visibleUnits?: number): void;
   /** 显示选择肢 */
   showChoices(options: ChoiceOptionView[]): void;
   /** 隐藏选择肢 */

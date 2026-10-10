@@ -4,6 +4,7 @@
  */
 import {
   compileScene,
+  inlinePlainText,
   readGalleryUnlockPolicy, effectiveGalleryUnlocks, readGalleryReplayEntries, readGalleryEndings, effectiveEndingUnlocks, readGalleryDossiers,
   collectProjectTextRows, projectTextSources, createProjectTextResolver, readTextCatalog, parseTerminology,
   type TextSceneSource,
@@ -1176,7 +1177,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
           id: String(index), label: entry.speaker ? `${entry.speaker}：${entry.text}` : entry.text,
           description: entry.voice ? '点击重播语音' : undefined, disabled: !entry.voice,
         }));
-        if (source === 'choices') return renderer.status === 'choice' ? currentChoiceOptions.map(option => ({ id: String(option.index), label: option.label })) : [];
+        if (source === 'choices') return renderer.status === 'choice' ? currentChoiceOptions.map(option => ({ id: String(option.index), label: inlinePlainText(option.label, 'choice') })) : [];
         if (source === 'settings') return settingsView().rows.map(row => ({ id: row.id, label: row.label, description: row.display, value: row.display }));
         const views = galleryView();
         const items = source === 'gallery-cgs' ? views.cgs : source === 'gallery-music' ? views.music : source === 'gallery-endings' ? views.endings

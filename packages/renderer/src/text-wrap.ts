@@ -121,3 +121,29 @@ export function wrapCjkMeasure(text: string, maxWidth: number, measure: (s: stri
   }
   return lines;
 }
+
+/** The same punctuation/word boundaries for styled graphemes and indivisible ruby groups. */
+export function wrapCjkUnits<T>(units: readonly T[], maxWidth: number, text: (unit: T) => string, measure: (units: readonly T[]) => number): T[][] {
+  const limit = normalizeMaxWidth(maxWidth);
+  const lines: T[][] = [];
+  let start = 0;
+  for (let boundary = 0; boundary <= units.length; boundary++) {
+    if (boundary !== units.length && !/^[\r\n]+$/.test(text(units[boundary]!))) continue;
+    const paragraph = units.slice(start, boundary), words = paragraph.map(text);
+    if (!paragraph.length) lines.push([]);
+    for (let i = 0; i < paragraph.length;) {
+      let end = i;
+      while (end < paragraph.length && measure(paragraph.slice(i, end + 1)) <= limit) end++;
+      if (end <= i) end = i + 1;
+      if (end < paragraph.length) {
+        if (end > i + 1 && NO_LINE_END.has(words[end - 1]!.at(-1)!)) end--;
+        else while (end < paragraph.length && (NO_LINE_START.has(words[end]![0]!)
+          || UNBREAKABLE_RUN.has(words[end]![0]!) && words[end]![0] === words[end - 1]!.at(-1))) end++;
+      }
+      end = wordBoundary(words, i, end);
+      lines.push(paragraph.slice(i, end)); i = end;
+    }
+    start = boundary + 1;
+  }
+  return lines;
+}
