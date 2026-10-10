@@ -107,8 +107,11 @@ describe('跨标签查找与替换', () => {
 describe('输入 < 时的标签补全', () => {
   it('列出标签表中的标签，w 分成等待与停顿', () => {
     const keys = inlineCompletions('').map((entry) => entry.key);
-    expect(keys).toEqual(['b', 'i', 'color', 'size', 'speed', 'w', 'w=', 'ruby']);
+    expect(keys).toEqual(['b', 'i', 'color', 'size', 'speed', 'w', 'w=', 'ruby', 'em', 'shake', 'wave', 'nw']);
     expect(inlineCompletions('co').map((entry) => entry.snippet)).toEqual(['<color=accent></color>']);
+    // Paired tags insert both ends; the single <nw> inserts itself only.
+    expect(inlineCompletions('em').map((entry) => [entry.snippet, entry.select])).toEqual([['<em></em>', [4, 4]]]);
+    expect(inlineCompletions('nw').map((entry) => [entry.snippet, entry.select])).toEqual([['<nw>', [4, 4]]]);
   });
 
   it('只在未转义的 < 后触发', () => {
@@ -135,5 +138,22 @@ describe('选项文字范围与 Core 一致', () => {
   it('Core 读不出选项文字时返回 null', () => {
     expect(choiceLabelSpan('   ')).toBeNull();
     expect(choiceLabelSpan('  [if:flag] -> @goto a')).toBeNull();
+  });
+});
+
+describe('第二批标签', () => {
+  it('着重号和逐字效果可以包裹，<nw> 不包裹文字', () => {
+    expect(wrapInlineSelection('别动', 0, 2, 'shake')).toMatchObject({ ok: true, text: '<shake>别动</shake>' });
+    expect(wrapInlineSelection('重点', 0, 2, 'em')).toMatchObject({ ok: true, text: '<em>重点</em>' });
+    expect(wrapInlineSelection('不用等我。', 0, 2, 'nw')).toEqual({ ok: false, reason: '<nw> 不包裹文字，请放在句末' });
+  });
+  it('句末 <nw> 不影响包裹与拆分，拆分后留在后半句末尾', () => {
+    const tail = '<em>重点</em>说完<nw>', at = tail.indexOf('说完');
+    expect(wrapInlineSelection(tail, at, at + 2, 'b')).toMatchObject({ ok: true, text: '<em>重点</em><b>说完</b><nw>' });
+    const line = '<wave>轻声</wave>说完了。<nw>', cut = line.indexOf('了');
+    const split = splitInlineDialogue(line, cut, cut);
+    expect(split).toEqual({ ok: true, left: '<wave>轻声</wave>说完', right: '了。<nw>', reopened: 0 });
+    valid('<wave>轻声</wave>说完');
+    valid('了。<nw>');
   });
 });

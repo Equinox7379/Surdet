@@ -150,6 +150,10 @@
 .v4-authoring #editor .block .fields .v4-inline-field.is-projected .v4-dialogue-input { color: transparent; caret-color: transparent; }
 .v4-inline-view ruby rt { color: var(--surdet-text-secondary); font: 400 .5em/1.2 var(--surdet-font-story); }
 .v4-inline-view .v4-inline-speed { text-decoration: underline dotted var(--surdet-text-muted); text-underline-offset: 5px; }
+.v4-inline-view .v4-inline-emphasis { text-emphasis: filled dot currentColor; text-emphasis-position: under right; }
+.v4-inline-view :is(.v4-inline-shake, .v4-inline-wave) { text-decoration-line: underline; text-decoration-color: var(--surdet-text-muted); text-underline-offset: 6px; }
+.v4-inline-view .v4-inline-shake { text-decoration-style: dashed; }
+.v4-inline-view .v4-inline-wave { text-decoration-style: wavy; }
 .v4-inline-view .v4-inline-pause { display: inline-block; margin: 0 3px; padding: 0 5px; border-radius: var(--surdet-radius-tight); background: var(--surdet-surface-raised); color: var(--surdet-text-muted); font: 500 11px/1.6 var(--surdet-font-ui); vertical-align: 2px; }
 .v4-inline-completion { position: absolute; z-index: 40; display: grid; min-width: 240px; max-width: 320px; padding: 4px; border: 1px solid var(--surdet-border-strong); border-radius: var(--surdet-radius-control); background: var(--surdet-surface-raised); box-shadow: var(--surdet-shadow-popover); }
 .v4-inline-completion-option { display: grid; grid-template-columns: 96px 1fr; gap: 10px; padding: 5px 8px; border-radius: var(--surdet-radius-tight); color: var(--surdet-text-secondary); font: 12px/1.6 var(--surdet-font-ui); cursor: pointer; }

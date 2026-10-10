@@ -12,13 +12,16 @@ export type InlineEdit =
 
 interface PairedSpan { name: string; open: InlineTagSpan; close: InlineTagSpan }
 
+/** Single tags (`<w>`, `<nw>`) mark a point; only paired tags enclose text. */
+const UNPAIRED = new Set<string>(INLINE_TEXT_TAGS.filter((tag) => !tag.paired).map((tag) => tag.name));
+
 const hasErrors = (document: InlineTextDocument): boolean => document.issues.some((issue) => issue.severity === 'error');
 
 /** Open/close pairs in source order. Invalid lines have no tags, so they yield no pairs. */
 export function pairedSpans(document: InlineTextDocument): PairedSpan[] {
   const stack: InlineTagSpan[] = [], pairs: PairedSpan[] = [];
   for (const tag of document.tags) {
-    if (tag.name === 'w') continue;
+    if (UNPAIRED.has(tag.name)) continue;
     if (!tag.closing) { stack.push(tag); continue; }
     const open = stack.pop();
     if (open?.name === tag.name) pairs.push({ name: tag.name, open, close: tag });
@@ -46,6 +49,7 @@ function invalidLine(source: string, document: InlineTextDocument): string | nul
 export function wrapInlineSelection(source: string, start: number, end: number, name: InlineTagName, value?: string): InlineEdit {
   if (!(Number.isInteger(start) && Number.isInteger(end) && 0 <= start && start < end && end <= source.length)) return { ok: false, reason: '先选中要加标签的文字' };
   if (name === 'w') return { ok: false, reason: '停顿标签不包裹文字，请在光标处插入' };
+  if (UNPAIRED.has(name)) return { ok: false, reason: `<${name}> 不包裹文字，请放在句末` };
   const document = parseInlineText(source);
   const invalid = invalidLine(source, document);
   if (invalid) return { ok: false, reason: invalid };
@@ -188,7 +192,7 @@ export function inlineCompletions(prefix: string): InlineCompletion[] {
     }
     const placeholder = tag.name === 'color' ? 'accent' : tag.name === 'size' ? '0.8' : tag.name === 'speed' ? '0.5' : tag.name === 'ruby' ? '读音' : '';
     const open = `<${tag.name}${tag.value === null ? '' : `=${placeholder}`}>`;
-    const snippet = `${open}</${tag.name}>`;
+    const snippet = tag.paired ? `${open}</${tag.name}>` : open;
     const select: [number, number] = tag.value === null ? [open.length, open.length] : [tag.name.length + 2, tag.name.length + 2 + placeholder.length];
     entries.push({ key: tag.name, name: tag.name, label: `<${tag.name}${tag.value === null ? '' : '=…'}>`, detail: tag.label, snippet, select });
   }

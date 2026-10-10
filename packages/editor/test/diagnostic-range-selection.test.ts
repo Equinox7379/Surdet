@@ -52,6 +52,17 @@ describe('diagnostic range selection in a manuscript dialogue box', () => {
     expect(line.value.slice(offsets.start, offsets.end)).toBe('<color=red>');
   });
 
+  it('selects a misplaced <nw> that Core reports as M006', () => {
+    const text = '@scene s\n凛：<b>先走<nw></b>吧';
+    let code = '';
+    try { compileScene(text, 's.gal', 's'); } catch (error) { code = (error as { code?: string }).code ?? ''; }
+    expect(code).toBe('M006');
+    const line = parseScript(text)[1]!;
+    if (line.kind !== 'text') throw new Error('expected dialogue');
+    const offsets = dialogueRangeOffsets(line, 1, compiledRange(text))!;
+    expect(line.value.slice(offsets.start, offsets.end)).toBe('<nw>');
+  });
+
   it('works for narration and does not use ranges outside the dialogue', () => {
     const narration = '@scene s\n门外<size=9>响了</size>';
     const line = parseScript(narration)[1]!;
