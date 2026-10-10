@@ -124,6 +124,25 @@ function controllerFor(
 }
 
 describe('PresentationController', () => {
+  it('marks world mutation batches at text, choice and wait through the production ports', () => {
+    const stage = stageHarness(), boundary = vi.fn(); stage.markStageBoundary = boundary;
+    const ports = createPresentationPorts(stage), controller = new PresentationController(ports.commands, ports.queries, NULL_AUDIO, { commands: ports.commands, queries: ports.queries });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus);
+    try {
+      bus.emit('text', { speaker: null, value: '停顿' });
+      bus.emit('choice', { options: [{ index: 0, label: '继续' }] });
+      bus.emit('wait', { ms: 400 }); expect(boundary).toHaveBeenCalledTimes(3);
+    } finally { controller.dispose(); }
+  });
+  it('uses the documented 600ms wipe default and preserves explicit durations', () => {
+    const stage = stageHarness(), wipe = vi.fn(); stage.wipe = wipe;
+    const ports = createPresentationPorts(stage), controller = new PresentationController(ports.commands, ports.queries, NULL_AUDIO, { commands: ports.commands, queries: ports.queries });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus);
+    try {
+      for (const args of [[], ['900']]) bus.emit('instr', { name: 'wipe', args, modifiers: new Map(), pos: { file: 'scene.gal', line: 1, col: 1 } });
+      expect(wipe.mock.calls).toEqual([[600], [900]]);
+    } finally { controller.dispose(); }
+  });
   it('a completed nw line advances without voice/auto waits, but respects explicit pauses and does not skip NVL', () => {
     const stage = stageHarness(), ports = createPresentationPorts(stage), advance = vi.fn();
     const audio = { ...NULL_AUDIO, isVoicePlaying: () => true, stopVoice: vi.fn() };

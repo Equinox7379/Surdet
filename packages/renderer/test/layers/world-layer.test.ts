@@ -21,7 +21,7 @@ interface WorldRuntime {
   readonly requests: { count: number };
 }
 
-function makeRuntime(stageGeometry?: ReturnType<typeof createStageGeometryPolicy>): WorldRuntime {
+function makeRuntime(stageGeometry?: ReturnType<typeof createStageGeometryPolicy>, captureWorld?: () => Texture): WorldRuntime {
   const root = new Container();
   const lifecycle = new RenderLifecycle();
   const assets = new RenderAssetRegistry({ lifecycle });
@@ -34,6 +34,7 @@ function makeRuntime(stageGeometry?: ReturnType<typeof createStageGeometryPolicy
     stageGeometry,
     requestFrame: () => { requests.count += 1; },
     captureThumbnail: () => 'thumbnail',
+    captureWorld,
   });
   root.addChild(
     layer.worldContainer,
@@ -80,6 +81,43 @@ function disposeRuntime(runtime: WorldRuntime): void {
   runtime.assets.dispose();
   runtime.lifecycle.dispose();
 }
+
+it('captures before the first background/portrait change and restores an in-flight dissolve as finished', async () => {
+  const captured: { background: string | null; portraits: number }[] = [], textures: Texture[] = [];
+  const runtime = makeRuntime(undefined, () => {
+    captured.push({ background: runtime.layer.backgroundKey, portraits: runtime.layer.snapshotPresentation().portraits.length });
+    const texture = new Texture({ source: new TextureSource({ width: 1280, height: 720 }) }); textures.push(texture); return texture;
+  });
+  try {
+    await registerWorldAssets(runtime.assets);
+    runtime.layer.setBackground('hall'); runtime.layer.setPortrait('lynn', { charId: 'lynn', costume: 'armor', expression: 'normal', pos: 'left' });
+    runtime.layer.markStageBoundary(); captured.length = 0;
+    runtime.layer.setBackground('night'); runtime.layer.removePortrait('lynn');
+    expect(captured).toEqual([{ background: 'hall', portraits: 1 }]);
+    runtime.layer.transition('dissolve', 1000); runtime.layer.update(500);
+    expect(runtime.layer.screenContainer.children.at(-1)).toMatchObject({ alpha: .5 });
+    const saved = runtime.layer.snapshotPresentation();
+    expect(saved).toMatchObject({ backgroundKey: 'night', portraits: [] });
+    runtime.layer.restorePresentation(saved);
+    expect(textures.at(-1)!.destroyed).toBe(true);
+    expect(runtime.layer.screenContainer.children).toHaveLength(1); // only the tint layer
+    expect(runtime.layer.needsUpdate).toBe(false);
+    runtime.layer.transition('dissolve', 1000); expect(runtime.layer.needsUpdate).toBe(false);
+  } finally { disposeRuntime(runtime); }
+});
+
+it('stage clear keeps its old frame and reduced motion ends a dissolve immediately', async () => {
+  const runtime = makeRuntime(createStageGeometryPolicy(), () => new Texture({ source: new TextureSource({ width: 1280, height: 720 }) }));
+  try {
+    await registerWorldAssets(runtime.assets); runtime.layer.setBackground('hall'); runtime.layer.markStageBoundary();
+    runtime.layer.applyStage({ type: 'clear' }); runtime.layer.transition('dissolve', 1000);
+    expect(runtime.layer.screenContainer.children).toHaveLength(2);
+    runtime.layer.setPresentationPreferences({ reducedMotion: true });
+    expect(runtime.layer.screenContainer.children).toHaveLength(1); expect(runtime.layer.needsUpdate).toBe(false);
+    runtime.layer.markStageBoundary(); runtime.layer.setBackground('night'); runtime.layer.transition('dissolve', 1000);
+    expect(runtime.layer.screenContainer.children).toHaveLength(1); expect(runtime.layer.needsUpdate).toBe(false);
+  } finally { disposeRuntime(runtime); }
+});
 
 function findPortrait(root: Container): Sprite {
   const visit = (container: Container): Sprite | undefined => {

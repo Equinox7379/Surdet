@@ -86,6 +86,7 @@ export interface AdvStage {
   /** 画面震动（@shake；二次衰减，方向可为 both/horizontal/vertical/diagonal） */
   shake?(durMs: number, strength: number, direction?: ShakeDirection): void;
   /** 注册表驱动的转场；未知名称返回 false。 */
+  markStageBoundary?(): void;
   transition?(name: TransitionName | string, durMs: number): boolean;
   /** 白闪（@flash；线性衰减） */
   flash?(durMs: number): void;

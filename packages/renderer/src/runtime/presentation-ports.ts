@@ -160,6 +160,8 @@ export function createPresentationPorts(
   };
 
   const worldCommands: RendererCommands['world'] = {
+    markStageBoundary: options.worldLayer?.markStageBoundary
+      ? () => options.worldLayer!.markStageBoundary!() : stage.markStageBoundary?.bind(stage),
     setBackground: (key) => { if (options.worldLayer) options.worldLayer.setBackground(key); else stage.setBackground(key); },
     setPortrait: (key, view) => { if (options.worldLayer) options.worldLayer.setPortrait(key, view); else stage.setPortrait(key, view); },
     removePortrait: (key) => { if (options.worldLayer) options.worldLayer.removePortrait(key); else stage.removePortrait(key); },

@@ -65,6 +65,7 @@ export interface WorldLayerOptions {
   readonly lifecycle?: RenderLifecycle;
   readonly requestFrame?: FrameRequestHandler;
   readonly captureThumbnail?: () => string | null;
+  readonly captureWorld?: () => Texture | null;
   readonly createBackgroundTexture?: (key: string, width: number, height: number) => Texture;
 }
 
@@ -327,6 +328,7 @@ export class WorldLayer implements WorldProjectionPort {
       setWorldPosition: (x, y) => this.worldContainer.position.set(x, y),
       duration: (durationMs) => presentationDuration(durationMs, this.#presentation),
       requestFrame: () => this.#requestFrame(),
+      captureWorld: options.captureWorld,
     });
 
     this.#registerDisplay('world-container', this.worldContainer);
@@ -472,6 +474,7 @@ export class WorldLayer implements WorldProjectionPort {
 
   setBackground(key: string | null): void {
     if (this.#disposed) return;
+    this.#worldEffects.beforeStageMutation();
     this.#invalidatePreparation();
     this.#requestFrame();
     this.#stopBackgroundTransition();
@@ -547,7 +550,8 @@ export class WorldLayer implements WorldProjectionPort {
     if (command.type === 'finish-timeline') { this.#stageMotions.releaseTimeline(command.runId); return; }
     if (command.type === 'skip-motions') { this.#stageMotions.skip(); this.#requestFrame(); return; }
     if (command.type === 'clear') {
-      this.#invalidatePreparation(); this.#clearVisibleState(true); this.#requestFrame(); return;
+      this.#worldEffects.beforeStageMutation();
+      this.#invalidatePreparation(); this.#clearVisibleState(true, true); this.#requestFrame(); return;
     }
     const stage = this.#effectiveStage();
     if (command.source && !this.#geometry().validStageSource(command.source)) throw new Error('Invalid stage source');
@@ -587,6 +591,7 @@ export class WorldLayer implements WorldProjectionPort {
       });
       const duration = command.durationMs ?? 0;
       if (!Number.isFinite(duration) || duration < 0 || duration > 600_000) throw new Error('舞台时长超出范围');
+      this.#worldEffects.beforeStageMutation();
       for (const item of prepared) {
         this.#promoteMove(item.key);
         this.#stageMotions.start(`portrait:${item.key}`, item.values, duration === 0 ? 0 : presentationDuration(duration, this.#presentation), command.easing ?? 'linear', command.source);
@@ -603,8 +608,10 @@ export class WorldLayer implements WorldProjectionPort {
         values[name === 'alpha' ? 'opacity' : name as StageProperty] = raw.trim() ? Number(raw) : NaN;
       }
       this.#geometry().parseStageLayer({ ...entry.definition, ...values });
+      this.#worldEffects.beforeStageMutation();
       this.#stageMotions.start(`layer:${command.id}`, values, !command.durationMs ? 0 : presentationDuration(command.durationMs, this.#presentation), command.easing ?? 'linear', command.source);
     } else if (command.type === 'remove-layer') {
+      if (this.#stageLayers.has(command.id)) this.#worldEffects.beforeStageMutation();
       this.#removeStageLayer(command.id);
     } else if (command.type === 'composition') {
       const composition = Object.prototype.hasOwnProperty.call(stage.compositions, command.id) ? stage.compositions[command.id] : undefined;
@@ -612,6 +619,7 @@ export class WorldLayer implements WorldProjectionPort {
       if (composition.background != null && !this.#assets.resolveBackground(composition.background)) throw new Error(`构图背景未注册：${composition.background}`);
       for (const layer of composition.layers ?? []) if (!this.#assets.resolveBackground(layer.key)) throw new Error(`构图图层素材未注册：${layer.key}`);
       // Every referenced image is checked before replacing current visible state.
+      this.#worldEffects.beforeStageMutation();
       if (composition.layers !== undefined) this.#clearStageLayers();
       if (!(command.keepActors ?? composition.keepActors)) this.#clearPortraits();
       if (composition.background !== undefined) this.setBackground(composition.background);
@@ -627,6 +635,7 @@ export class WorldLayer implements WorldProjectionPort {
     const texture = this.#assets.resolveBackground(definition.key);
     if (!texture) throw new Error(`图层素材未注册：${definition.key}`);
     if (!this.#stageLayers.has(definition.id) && this.#stageLayers.size >= 64) throw new Error('同时显示的独立图层不能超过 64 个');
+    this.#worldEffects.beforeStageMutation();
     const sprite = new Sprite(texture);
     const entry = { definition: { ...definition }, sprite };
     this.#removeStageLayer(definition.id);
@@ -744,6 +753,7 @@ export class WorldLayer implements WorldProjectionPort {
       this.#promotePortrait(key);
       previous = this.#portraitViews.get(key);
     }
+    this.#worldEffects.beforeStageMutation();
     this.#invalidatePreparation();
     this.#requestFrame();
     const { animation: _animation, pose: _pose, frame: _frame, ...liveView } = view;
@@ -795,6 +805,7 @@ export class WorldLayer implements WorldProjectionPort {
       ? [key]
       : [...this.#portraitSprites.keys()].filter((candidate) => candidate === key || candidate.startsWith(`${key}:`));
     const removed = new Set<PortraitDisplay>();
+    if (keys.length) this.#worldEffects.beforeStageMutation();
     for (const candidate of keys) {
       const sprite = this.#portraitSprites.get(candidate);
       if (sprite) removed.add(sprite);
@@ -848,6 +859,8 @@ export class WorldLayer implements WorldProjectionPort {
     return started;
   }
 
+  markStageBoundary(): void { if (!this.#disposed) this.#worldEffects.markStageBoundary(); }
+
   flash(durationMs = 300): void {
     if (this.#presentation.reducedMotion) { this.#flashRemain = 0; this.flashOverlay.alpha = 0; return; }
     this.#flashDur = presentationDuration(durationMs, this.#presentation);
@@ -858,6 +871,7 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   zoom(scale = 1, durationMs = 400): void {
+    this.#worldEffects.beforeStageMutation();
     if (this.#stage || this.#stageMotions.hasSpatialState) {
       this.#zoomRemain = 0;
       this.#stageMotions.start('camera', { scale: Math.max(.25, Math.min(4, scale)) }, presentationDuration(durationMs, this.#presentation));
@@ -891,6 +905,7 @@ export class WorldLayer implements WorldProjectionPort {
       ? [key]
       : [...this.#portraitSprites.keys()].filter((candidate) => candidate.startsWith(`${key}:`));
     const duration = presentationDuration(durationMs, this.#presentation);
+    if (keys.length) this.#worldEffects.beforeStageMutation();
     for (const candidate of keys) {
       const sprite = this.#portraitSprites.get(candidate);
       if (!sprite) continue;
@@ -1043,6 +1058,7 @@ export class WorldLayer implements WorldProjectionPort {
 
   applyTimelineFrame(event: TimelineFrameEvent): void {
     if (this.#disposed) return;
+    if (event.track === 'background' || event.track === 'portrait' || event.track === 'camera' || event.track === 'layer') this.#worldEffects.beforeStageMutation();
     // Keep the timeline clock and event ownership intact; only visual interpolation completes immediately.
     if (this.#presentation.reducedMotion) event = { ...event, progress: 1 };
     if (event.runId !== undefined && this.#applyOwnedTimelineFrame(event)) {
@@ -1526,7 +1542,7 @@ export class WorldLayer implements WorldProjectionPort {
     this.#backgroundKey = null;
   }
 
-  #clearEffects(options: { preserveWorld: boolean; cancelActiveTimelines?: boolean }): void {
+  #clearEffects(options: { preserveWorld: boolean; cancelActiveTimelines?: boolean; preserveOldFrame?: boolean }): void {
     this.#stageMotions.clear(options.cancelActiveTimelines);
     this.#timelineMoveStarts.clear();
     this.#timelineValueStarts.clear();
@@ -1536,7 +1552,7 @@ export class WorldLayer implements WorldProjectionPort {
     this.#cameraPanY = 0;
     this.worldContainer.position.set(0, 0);
     this.worldContainer.scale.set(1);
-    this.#worldEffects.reset();
+    this.#worldEffects.reset({ preserveOldFrame: options.preserveOldFrame });
     this.#flashRemain = 0;
     this.#flashDur = 1;
     this.flashOverlay.alpha = 0;
@@ -1554,12 +1570,12 @@ export class WorldLayer implements WorldProjectionPort {
     this.#syncEffectRegistration();
   }
 
-  #clearVisibleState(cancelActiveTimelines = false): void {
+  #clearVisibleState(cancelActiveTimelines = false, preserveOldFrame = false): void {
     this.#speaking = false; this.#portraitSkipping = false;
     this.#clearStageLayers();
     this.#clearPortraits();
     this.#clearBackground();
-    this.#clearEffects({ preserveWorld: false, cancelActiveTimelines });
+    this.#clearEffects({ preserveWorld: false, cancelActiveTimelines, preserveOldFrame });
     this.#syncEffectRegistration();
   }
 
@@ -1731,6 +1747,7 @@ export class WorldLayer implements WorldProjectionPort {
     if (snapshot.particleKind !== null) this.startParticles(snapshot.particleKind);
     if (snapshot.motions) this.#stageMotions.restore(snapshot.motions);
     this.#objectSources.clear(); for (const [key, source] of snapshot.objectSources ?? []) this.#objectSources.set(key, source);
+    this.#worldEffects.markStageBoundary();
     if (this.#presentation.reducedMotion) this.#finishVisualMotions();
     this.#syncEffectRegistration();
   }

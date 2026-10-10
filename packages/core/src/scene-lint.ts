@@ -220,9 +220,9 @@ export function collectSceneSpeakers(scene: CompiledScene): Set<string> {
 }
 
 /** 引擎内置转场名称；未知名称必须在内容校验阶段报错，禁止运行时静默回退。 */
-export const BUILTIN_TRANSITIONS: ReadonlySet<string> = new Set([
-  'fade', 'slide-left', 'slide-right', 'circle',
-]);
+export const BUILTIN_TRANSITION_NAMES = ['fade', 'slide-left', 'slide-right', 'circle', 'dissolve'] as const;
+export type BuiltinTransitionName = typeof BUILTIN_TRANSITION_NAMES[number];
+export const BUILTIN_TRANSITIONS: ReadonlySet<string> = new Set(BUILTIN_TRANSITION_NAMES);
 
 export function validateTransitionInstructions(scene: CompiledScene, issues: LintIssue[]): void {
   for (const instr of scene.instructions) {
@@ -232,11 +232,11 @@ export function validateTransitionInstructions(scene: CompiledScene, issues: Lin
     issues.push({
       severity: 'error',
       code: 'T010',
-      text: `${instr.file}:${instr.line}:${instr.col}: @transition 未知转场 '${name}'（支持 fade/slide-left/slide-right/circle）`,
+      text: `${instr.file}:${instr.line}:${instr.col}: @transition 未知转场 '${name}'（支持 ${BUILTIN_TRANSITION_NAMES.join('/')}）`,
       file: instr.file,
       line: instr.line,
       col: instr.col,
-      hint: '改用 fade、slide-left、slide-right 或 circle；如需扩展，请先在引擎注册转场。',
+      hint: `改用 ${BUILTIN_TRANSITION_NAMES.join('、')}；如需扩展，请先在引擎注册转场。`,
     });
   }
 }

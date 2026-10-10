@@ -355,6 +355,8 @@ export class RendererFacade {
     };
 
     const world: WorldCommands = {
+      markStageBoundary: this.#worldPort?.markStageBoundary || this.#stage.markStageBoundary
+        ? () => this.#callWorld('markStageBoundary', this.#worldPort?.markStageBoundary, this.#stage.markStageBoundary) : undefined,
       applyStage: (command) => this.#callWorld('applyStage', this.#worldPort?.applyStage, this.#stage.applyStage, command),
       setBackground: (key) => this.#callWorld('setBackground', this.#worldPort?.setBackground, this.#stage.setBackground, key),
       setPortrait: (key, view) => this.#callWorld('setPortrait', this.#worldPort?.setPortrait, this.#stage.setPortrait, key, view),

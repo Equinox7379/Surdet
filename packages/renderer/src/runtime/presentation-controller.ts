@@ -933,6 +933,7 @@ export class PresentationController {
   }
 
   #onText(p: TextEventPayload): void {
+    this.#commands.world.markStageBoundary?.();
     // 遇未读即停：快进中遇到从未播放过的文本（wasRead === false）时自动退出快进，
     // 按正常打字显示给玩家。旧载荷缺 wasRead（undefined）时保持旧行为（连续推进），向后兼容。
     // 快进遇未读即停；"全部跳过"模式（skipAll）则无视已读状态一路到底
@@ -984,6 +985,7 @@ export class PresentationController {
   }
 
   #onChoice(p: ChoiceEventPayload): void {
+    this.#commands.world.markStageBoundary?.();
     this.#stopVoice(); this.#pendingVoice = null;
     // 遇选择肢自动退出快进/自动播放：玩家必须做出选择，不应被连续推进越过
     this.#skipMode = false;
@@ -1032,6 +1034,7 @@ export class PresentationController {
   /** @wait：记录截止时间，update 到点后回调 onWaitEnd（宿主连 Interpreter.finishWait）。
    *  快进中不等待：下一帧 update 立即结束（也可由玩家 advance 点击跳过）。 */
   #onWait(p: { ms: number }): void {
+    this.#commands.world.markStageBoundary?.();
     this.#waitDeadline = nowMs() + Math.max(0, p.ms);
   }
 
@@ -1371,7 +1374,7 @@ export class PresentationController {
         break;
       }
       case 'wipe': {
-        this.#commands.world.wipe(parseDur(args[0]));
+        this.#commands.world.wipe(args[0] === undefined ? 600 : parseDur(args[0]));
         break;
       }
       case 'mov': {

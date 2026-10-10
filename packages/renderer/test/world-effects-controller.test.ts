@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Container, Graphics } from 'pixi.js';
+import { Container, Graphics, Sprite, Texture, TextureSource } from 'pixi.js';
 import { WorldEffectsController } from '../src/world-effects-controller.js';
 
-function makeController() {
+function makeController(captureWorld?: () => Texture | null) {
   const world = new Container();
   const screen = new Container();
   const base = { x: 10, y: 20 };
@@ -16,11 +16,43 @@ function makeController() {
     setWorldPosition: (x, y) => { position = { x, y }; },
     duration: (ms) => ms,
     requestFrame: vi.fn(),
+    captureWorld,
   });
   return { controller, world, screen, getPosition: () => position };
 }
 
 describe('WorldEffectsController', () => {
+  it('dissolves one old frame per mutation batch and releases it on completion', () => {
+    const texture = new Texture({ source: new TextureSource({ width: 1280, height: 720 }) });
+    const capture = vi.fn(() => texture), f = makeController(capture);
+    expect(f.controller.transition('dissolve', 100)).toBe(true);
+    expect(f.controller.needsUpdate).toBe(false); // no change, no animation
+    f.controller.beforeStageMutation(); f.controller.beforeStageMutation();
+    expect(capture).toHaveBeenCalledTimes(1);
+    f.controller.transition('dissolve', 100);
+    const overlay = f.screen.children[0] as Sprite;
+    expect(overlay.texture).toBe(texture); expect(overlay.alpha).toBe(1);
+    f.controller.markStageBoundary(); // next dialogue must not remove the active old frame
+    f.controller.beforeStageMutation(); // changes while active remain below it
+    expect(capture).toHaveBeenCalledTimes(1);
+    f.controller.update(50); expect(overlay.alpha).toBe(.5);
+    f.controller.update(50); expect(f.screen.children).toHaveLength(0);
+    expect(texture.destroyed).toBe(true); expect(f.controller.needsUpdate).toBe(false);
+    f.controller.destroy();
+  });
+
+  it('releases unused captures at a pause and pending or active captures on teardown', () => {
+    const textures: Texture[] = [];
+    const f = makeController(() => { const t = new Texture({ source: new TextureSource({ width: 8, height: 8 }) }); textures.push(t); return t; });
+    f.controller.beforeStageMutation(); f.controller.markStageBoundary();
+    expect(textures[0]!.destroyed).toBe(true);
+    f.controller.beforeStageMutation(); f.controller.transition('dissolve', 100);
+    f.controller.reset(); expect(textures[1]!.destroyed).toBe(true);
+    f.controller.markStageBoundary(); f.controller.beforeStageMutation(); f.controller.destroy();
+    expect(textures.every(t => t.destroyed)).toBe(true);
+    expect(f.screen.children).toHaveLength(0);
+    expect(() => f.controller.destroy()).not.toThrow();
+  });
   it('directional shake uses quadratic decay and restores the exact base position', () => {
     const { controller, getPosition } = makeController();
     vi.spyOn(Math, 'random').mockReturnValue(0);

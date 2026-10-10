@@ -46,6 +46,8 @@ export interface AssetCommands {
 }
 
 export interface WorldCommands {
+  /** Releases unused old-frame capture and starts the next mutation batch. */
+  markStageBoundary?(): void;
   /** Finite stage commands; legacy adapters without this port must reject new stage content. */
   applyStage?(command: import('@surdet/core').StageCommand): void;
   setBackground(key: string | null): void;

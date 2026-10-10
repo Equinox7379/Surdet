@@ -132,6 +132,7 @@ export class LegacyStageAdapter implements AdvStage {
   clearPresentation(): void { this.host.clearPresentation(); }
   shake(durMs = 400, strength = 8, direction: ShakeDirection = 'both'): void { this.host.shake(durMs, strength, direction); }
   transition(name: TransitionName | string, durMs = 600): boolean { return this.host.transition(name, durMs); }
+  markStageBoundary(): void { this.host.markStageBoundary(); }
   flash(durMs = 300): void { this.host.flash(durMs); }
   zoom(scale = 1, durMs = 400): void { this.host.zoom(scale, durMs); }
   updateEffects(deltaMs: number): void { this.host.updateEffects(deltaMs); }

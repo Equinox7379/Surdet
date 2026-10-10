@@ -1,8 +1,9 @@
-import { Container, Graphics } from 'pixi.js';
+import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
+import type { BuiltinTransitionName } from '@surdet/core';
 import { presentationDuration } from './presentation.js';
 import { TransitionRegistry, type StageTransition } from './transition-registry.js';
 
-export type TransitionName = 'fade' | 'slide-left' | 'slide-right' | 'circle';
+export type TransitionName = BuiltinTransitionName;
 export type ShakeDirection = 'both' | 'horizontal' | 'vertical' | 'diagonal';
 
 export interface WorldEffectsControllerOptions {
@@ -14,6 +15,8 @@ export interface WorldEffectsControllerOptions {
   setWorldPosition: (x: number, y: number) => void;
   duration: (durationMs: number) => number;
   requestFrame: () => void;
+  /** A newly owned texture of the world, excluding dialogue and menus. */
+  captureWorld?: () => Texture | null;
 }
 
 interface TimedOptions {
@@ -93,6 +96,35 @@ class FadeTransition extends TimedTransition {
 
   protected override onCancel(): void {
     this.#world.alpha = 1;
+  }
+}
+
+class DissolveTransition extends TimedTransition {
+  override readonly name = 'dissolve';
+  #overlay: Sprite | null = null;
+  constructor(private readonly options: TimedOptions & {
+    screen: Container; width: number; height: number; takeOldFrame: () => Texture | null;
+  }) { super(options); }
+
+  protected override onStart(): void {
+    const texture = this.options.takeOldFrame();
+    if (!texture) return;
+    this.#overlay = new Sprite(texture);
+    this.#overlay.width = this.options.width; this.#overlay.height = this.options.height;
+    this.options.screen.addChild(this.#overlay);
+  }
+
+  protected override onUpdate(progress: number): void {
+    if (this.#overlay) this.#overlay.alpha = 1 - progress;
+  }
+
+  protected override onFinish(): void { this.#release(); }
+  protected override onCancel(): void { this.#release(); }
+  #release(): void {
+    const sprite = this.#overlay; this.#overlay = null;
+    if (!sprite) return;
+    const texture = sprite.texture;
+    sprite.parent?.removeChild(sprite); sprite.destroy(); texture.destroy(true);
   }
 }
 
@@ -192,6 +224,9 @@ class CircleTransition extends TimedTransition {
 export class WorldEffectsController {
   readonly registry = new TransitionRegistry();
   readonly #circle: CircleTransition;
+  #captureWorld?: () => Texture | null;
+  #oldFrame: Texture | null = null;
+  #captureNextChange = true;
   #world: Container;
   #getBasePosition: () => { x: number; y: number };
   #setWorldPosition: (x: number, y: number) => void;
@@ -206,16 +241,34 @@ export class WorldEffectsController {
     this.#getBasePosition = options.getBasePosition;
     this.#setWorldPosition = options.setWorldPosition;
     this.#requestFrame = options.requestFrame;
+    this.#captureWorld = options.captureWorld;
     const timed = { duration: options.duration(600), requestFrame: options.requestFrame };
     this.registry.register(new FadeTransition(options.world, timed));
     this.registry.register(new SlideTransition('slide-left', -1, { ...options, ...timed }));
     this.registry.register(new SlideTransition('slide-right', 1, { ...options, ...timed }));
     this.#circle = new CircleTransition(options.world, options.screen, options.width, options.height, timed);
     this.registry.register(this.#circle);
+    this.registry.register(new DissolveTransition({ ...timed, screen: options.screen, width: options.width, height: options.height,
+      takeOldFrame: () => { const frame = this.#oldFrame; this.#oldFrame = null; return frame; } }));
+  }
+
+  /** First author/world mutation after a pause owns exactly one old frame. */
+  beforeStageMutation(): void {
+    if (!this.#captureNextChange || this.registry.active) return;
+    this.#captureNextChange = false;
+    this.#oldFrame = this.#captureWorld?.() ?? null;
+  }
+
+  markStageBoundary(): void {
+    this.#oldFrame?.destroy(true); this.#oldFrame = null;
+    this.#captureNextChange = true;
   }
 
   transition(name: string, durationMs = 600): boolean {
-    return this.registry.start(name, Math.max(1, durationMs));
+    if (name === 'dissolve' && !this.#oldFrame) return true;
+    const started = this.registry.start(name, Math.max(1, durationMs));
+    if (started && name !== 'dissolve') { this.#oldFrame?.destroy(true); this.#oldFrame = null; }
+    return started;
   }
 
   shake(durationMs = 400, strength = 8, direction: ShakeDirection = 'both'): void {
@@ -227,7 +280,9 @@ export class WorldEffectsController {
   }
 
   update(deltaMs: number): void {
+    const active = this.registry.active;
     this.registry.update(deltaMs);
+    if (active && !this.registry.active) this.markStageBoundary();
     if (this.#shakeRemain <= 0) return;
     this.#shakeRemain = Math.max(0, this.#shakeRemain - Math.max(0, deltaMs));
     if (this.#shakeRemain === 0) {
@@ -246,8 +301,9 @@ export class WorldEffectsController {
     this.#requestFrame();
   }
 
-  reset(): void {
-    this.registry.cancelActive();
+  reset(options: { preserveOldFrame?: boolean } = {}): void {
+    if (!options.preserveOldFrame || this.registry.active?.name !== 'dissolve') this.registry.cancelActive();
+    if (!options.preserveOldFrame) { this.#oldFrame?.destroy(true); this.#oldFrame = null; this.#captureNextChange = false; }
     this.#shakeRemain = 0;
     this.#world.alpha = 1;
     const base = this.#getBasePosition();
