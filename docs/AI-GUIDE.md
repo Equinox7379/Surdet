@@ -2,9 +2,11 @@
 
 本指南面向编写剧情、配置与演出的内容作者。默认使用正式 Agent Port 工具，在隔离草稿中修改、验证和试玩；不需要先读引擎源码、长期台账或重新接线播放器。已有项目保持原位，新项目使用现有模板。
 
-本批公开创作合同为 **2.32.0**（72 项公开能力），`project.simulate` 新增源位置与版本关联的 `coverage`，失败和预算耗尽的部分报告保留在错误 `details.report`；保留作品界面变量条件、只读数值条、数组列表/数量、有限赋值按钮，以及人物档案、用语辞典、结局册、可选永久收藏、多语言、已有配音、主题、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+本批公开创作合同为 **2.33.0**（73 项公开能力），`project.simulate` 新增源位置与版本关联的 `coverage`，失败和预算耗尽的部分报告保留在错误 `details.report`；保留作品界面变量条件、只读数值条、数组列表/数量、有限赋值按钮，以及人物档案、用语辞典、结局册、可选永久收藏、多语言、已有配音、主题、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
 
 ## 0. 准备项目与会话
+
+需要找到源行的真实到达路径时，调用`project.preview-path`，传`sceneId`、一基`line`和当前`view`。缺省search从入口找路，path按真实选项index重播，test只用本次临时初值；预算耗尽或宿主接管未完成不能判不可达，不产生项目模拟通过证据。结果停在目标执行前。参见[目标路径合同](preview-target-path-contract.md)。Editor“从这里试玩”入口仍待前端接入。
 
 本批行内文字：`capabilities.describe.result.inlineText.tags`提供实际支持表，使用既有`scene.patch`编写。示例：`凛：<em><color=accent>等一下</color></em><w=500>……<w>继续。`。ADV支持`w/speed/nw/shake/wave`，`nw`仅句末；选项只用样式/注音，NVL和文字记录保留静态样式。注音写`<ruby=せかい>世界</ruby>`，旧`世界《せかい》`现在是普通文字，不作兼容解释。需要字面尖括号时按[行内文字合同](inline-text-contract.md)转义。标签错误通过M类诊断和精确范围修正；变量填入的内容不会成为标签。文字记录完整最多200条进入表现快照，存读档/回退不重复当前句；Editor补全/高亮仍由前端独立接入，不能把后端可用等同于前端已交付。
 

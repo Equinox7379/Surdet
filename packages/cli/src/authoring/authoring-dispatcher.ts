@@ -89,6 +89,8 @@ export async function dispatchAuthoringCapability(
       return { value: await service.projectUi(requireProject(context), readChange(context, payload, false)) };
     case 'project.texts':
       return { value: await service.projectTexts(requireProject(context), payload, readChange(context, payload, false)) };
+    case 'project.preview-path':
+      return { value: await service.previewPath(requireProject(context), payload as unknown as Parameters<AuthoringService['previewPath']>[1], readChange(context, payload, false)) };
     case 'project.texts.import.preview':
       return { value: await service.textsImportPreview(requireProject(context), payload as unknown as Parameters<AuthoringService['textsImportPreview']>[1], readChange(context, payload, false)) };
     case 'project.texts.patch':

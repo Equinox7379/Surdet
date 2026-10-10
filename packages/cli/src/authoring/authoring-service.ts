@@ -82,6 +82,8 @@ import {
   rollbackChange,
   runExplicitPath,
   simulateSnapshot,
+  findPreviewPath,
+  type PreviewPathOptions,
   inspectTransactionRecovery,
   timelineFingerprint,
   validateSnapshot,
@@ -764,6 +766,15 @@ export class AuthoringService {
       projectRevision: snapshot.revision,
       result: { view: 'project', ok: validation.ok, issues: validation.issues },
     };
+  }
+
+  async previewPath(projectRoot: string, input: PreviewPathOptions, changeId?: string): Promise<ServiceResult<ReturnType<typeof findPreviewPath> & { view: 'project' | 'working' }>> {
+    const { snapshot, metadata, view } = await this.readProjectView(projectRoot, changeId);
+    try { return { ...metadata, result: { ...findPreviewPath(snapshot, input), view } }; }
+    catch (error) {
+      if (error instanceof AuthoringOperationError) throw error;
+      throw new AuthoringOperationError('PROJECT_INVALID', error instanceof Error ? error.message : String(error));
+    }
   }
 
   async simulateProject(projectRoot: string, input?: SimulationInput): Promise<ServiceResult<{
