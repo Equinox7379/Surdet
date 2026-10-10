@@ -23,6 +23,7 @@ import { editorPreviewPublisher, editorWorkspaceStatus } from '../editor-workspa
 import { inspectConfigDraftState, previewStageConfigText, previewThemeConfigText, previewUiConfigText, readUiConfigDraft, readStageConfigDraft, readThemeConfigDraft } from './config.js';
 import { previewTextHash, projectPreviewContent } from '../preview-content.js';
 import { previewCheckpointKey, readPreviewCheckpoint, writePreviewCheckpoint } from '../preview-checkpoints.js';
+import { NO_READING_TRIAL, readingTrialScales, type ReadingTrial } from '../preview-reading-trial.js';
 import type { FontRole } from '@surdet/renderer';
 import { assertUniquePortraitBindings, portraitSourcePaths, resolveProjectPortraits, resolveProjectFontPaths, type PortraitVisualDefinition } from '@surdet/core';
 import { normalizePreviewDiagnostic, type PreviewDiagnostic } from '../preview-diagnostics.js';
@@ -48,6 +49,8 @@ let debugProjectRoot: typeof state.dirHandle | undefined;
 let debugging = false;
 let breakpoints: PreviewBreakpoint[] = [];
 let debugContentKey = '';
+/** Toolbar try-out of text size and motion; kept for this Editor session only. */
+let readingTrial: ReadingTrial = NO_READING_TRIAL;
 
 /** One actual runtime owner across script, standalone preview and result review. */
 export function disposePreviewPanel(): void {
@@ -580,6 +583,28 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   fastChk.checked = true;
   fastWrap.append(fastChk, document.createTextNode(' 跳过逐字显示'));
   controls.appendChild(fastWrap);
+
+  const trialControl = h('label', 'preview-entry-control preview-trial-control');
+  trialControl.title = '只改变本次预览画面，不改作品配置，也不改玩家的设置';
+  const trialScale = h('select');
+  trialScale.setAttribute('aria-label', '试看文字大小');
+  const scaleDefault = h('option', undefined, '字号按设置'); scaleDefault.value = '';
+  trialScale.appendChild(scaleDefault);
+  for (const scale of readingTrialScales()) {
+    const option = h('option', undefined, `字号 ${Math.round(scale * 100)}%`); option.value = String(scale); trialScale.appendChild(option);
+  }
+  trialScale.value = readingTrial.textScale === null ? '' : String(readingTrial.textScale);
+  const trialMotion = h('select');
+  trialMotion.setAttribute('aria-label', '试看动态效果');
+  for (const [value, label] of [['', '动态按设置'], ['reduce', '减少动态'], ['full', '正常动态']] as const) {
+    const option = h('option', undefined, label); option.value = value; trialMotion.appendChild(option);
+  }
+  trialMotion.value = readingTrial.reducedMotion === null ? '' : readingTrial.reducedMotion ? 'reduce' : 'full';
+  trialControl.append(h('span', 'preview-control-label', '临时试看'), trialScale, trialMotion);
+  controls.appendChild(trialControl);
+  const sendReadingTrial = (): void => { frame.contentWindow?.postMessage({ type: 'surdet-preview-reading-trial', ...readingTrial }, '*'); };
+  trialScale.onchange = () => { readingTrial = { ...readingTrial, textScale: trialScale.value ? Number(trialScale.value) : null }; sendReadingTrial(); };
+  trialMotion.onchange = () => { readingTrial = { ...readingTrial, reducedMotion: trialMotion.value ? trialMotion.value === 'reduce' : null }; sendReadingTrial(); };
 
   const playBtn = h('button', 'preview-replay-action preview-play-action', '重新播放');
   playBtn.setAttribute('data-action', 'reload-preview');
@@ -1170,6 +1195,8 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     if (mountRevision !== previewPanelMountRevision || container.isConnected === false) return;
     if (!isCurrentPreviewFrameSource(source, frame.contentWindow)) return;
     ready = true;
+    // A fresh preview starts without a try-out; only an active one is sent again.
+    if (readingTrial.textScale !== null || readingTrial.reducedMotion !== null) sendReadingTrial();
     void send(); // 就绪即播放当前场景
   };
   bindPreviewReadyListenerOnce();
