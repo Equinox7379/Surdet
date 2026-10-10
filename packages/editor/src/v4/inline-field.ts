@@ -32,6 +32,9 @@ const WRAPS: readonly { name: InlineTagName; value?: string; label: string; titl
   { name: 'size', value: '0.8', label: '小', title: '字号 0.8 倍' },
   { name: 'size', value: '1.3', label: '大', title: '字号 1.3 倍' },
   { name: 'speed', value: '0.5', label: '慢', title: '打字速度 0.5 倍' },
+  { name: 'em', label: '着重', title: '着重号' },
+  { name: 'shake', label: '抖动', title: '逐字抖动' },
+  { name: 'wave', label: '波浪', title: '逐字波浪' },
 ];
 
 /** Replace [start, end) through the browser's editing path so Ctrl+Z restores it. */
@@ -52,6 +55,9 @@ function styleSpan(text: string, style: InlineStyle): HTMLElement {
   if (style.color) span.style.color = THEME_COLORS[style.color] ?? style.color;
   if (style.size) span.style.fontSize = `${style.size}em`;
   if (style.speed) { span.classList.add('v4-inline-speed'); span.title = `打字速度 ×${style.speed}`; }
+  if (style.emphasis) span.classList.add('v4-inline-emphasis');
+  // Motion belongs to the real preview; the reading view only marks where it applies.
+  if (style.effect) { span.classList.add(`v4-inline-${style.effect}`); span.title = style.effect === 'shake' ? '逐字抖动' : '逐字波浪'; }
   return span;
 }
 
@@ -60,8 +66,8 @@ function renderReading(view: HTMLElement, parsed: InlineTextDocument): void {
   view.replaceChildren();
   const marks = new Map<number, HTMLElement[]>();
   for (const control of parsed.controls) {
-    const mark = h('span', 'v4-inline-pause', control.kind === 'wait' ? '▸' : `停${(control.durationMs ?? 0) / 1000}秒`);
-    mark.title = control.kind === 'wait' ? '等待点击后继续本句' : `停顿 ${control.durationMs} 毫秒`;
+    const mark = h('span', 'v4-inline-pause', control.kind === 'wait' ? '▸' : control.kind === 'no-wait' ? '↦' : `停${(control.durationMs ?? 0) / 1000}秒`);
+    mark.title = control.kind === 'wait' ? '等待点击后继续本句' : control.kind === 'no-wait' ? '句末自动继续，不等点击' : `停顿 ${control.durationMs} 毫秒`;
     marks.set(control.at, [...marks.get(control.at) ?? [], mark]);
   }
   parsed.units.forEach((unit, index) => {
