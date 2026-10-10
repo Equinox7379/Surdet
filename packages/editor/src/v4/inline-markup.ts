@@ -3,7 +3,7 @@
  * parser (`parseInlineText`); this module only maps its source ranges onto edits,
  * so a refused case is reported instead of guessing what the author meant.
  */
-import { INLINE_TEXT_TAGS, containsInlineTag, escapeInlineText, parseInlineText, type InlineTagSpan, type InlineTextDocument } from '@surdet/core';
+import { INLINE_TEXT_TAGS, containsInlineTag, escapeInlineText, findChoiceArrow, parseInlineText, type InlineTagSpan, type InlineTextContext, type InlineTextDocument } from '@surdet/core';
 
 export type InlineTagName = typeof INLINE_TEXT_TAGS[number]['name'];
 export type InlineEdit =
@@ -131,8 +131,8 @@ export function visibleReplacement(replacement: string): string {
  * when it covers whole visible units whose source has no tag and no ruby; otherwise it is
  * counted as skipped. Replacement text is written as visible text (see `visibleReplacement`).
  */
-export function replaceInDialogue(source: string, matcher: RegExp, replacement: string): DialogueReplacement {
-  const document = parseInlineText(source);
+export function replaceInDialogue(source: string, matcher: RegExp, replacement: string, context: InlineTextContext = 'dialogue'): DialogueReplacement {
+  const document = parseInlineText(source, context);
   const ranges: { start: number; end: number }[] = [];
   let skipped = 0;
   const re = new RegExp(matcher.source, matcher.flags.includes('g') ? matcher.flags : `${matcher.flags}g`);
@@ -152,11 +152,28 @@ export function replaceInDialogue(source: string, matcher: RegExp, replacement: 
 }
 
 /** First visible-text match in a dialogue, for search excerpts. */
-export function findInDialogue(source: string, matcher: RegExp): { plain: string; start: number; end: number } | null {
-  const document = parseInlineText(source);
+export function findInDialogue(source: string, matcher: RegExp, context: InlineTextContext = 'dialogue'): { plain: string; start: number; end: number } | null {
+  const document = parseInlineText(source, context);
   const re = new RegExp(matcher.source, matcher.flags.replace('g', ''));
   const match = re.exec(document.plainText);
   return match && match[0].length > 0 ? { plain: document.plainText, start: match.index, end: match.index + match[0].length } : null;
+}
+
+/**
+ * Source range of an option's shown text in a choice row, read the way Core's parser reads it:
+ * after the indent, before the `->` Core finds and before a trailing `[if:…]`. Null when Core
+ * would not read an option text from the row.
+ */
+export function choiceLabelSpan(raw: string): { start: number; end: number } | null {
+  const indent = raw.length - raw.trimStart().length, trimmed = raw.slice(indent);
+  let arrow: ReturnType<typeof findChoiceArrow>;
+  try { arrow = findChoiceArrow(trimmed); } catch { return null; }
+  const part = arrow ? trimmed.slice(0, arrow.index) : trimmed;
+  const start = indent + part.length - part.trimStart().length;
+  let label = part.trim();
+  const when = /\[if:(.+?)\]\s*$/.exec(label);
+  if (when) label = label.slice(0, when.index).trim();
+  return label.length > 0 ? { start, end: start + label.length } : null;
 }
 
 /** Tag table entries offered while typing `<`. `w` appears twice: click wait and timed pause. */

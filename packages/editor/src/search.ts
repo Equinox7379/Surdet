@@ -4,7 +4,7 @@
  */
 import { parseSceneDocument, type SceneDocumentLine } from '@surdet/authoring';
 import { containsInlineTag, parseInlineText } from '@surdet/core';
-import { findInDialogue, replaceInDialogue, visibleReplacement } from './v4/inline-markup.js';
+import { choiceLabelSpan, findInDialogue, replaceInDialogue, visibleReplacement } from './v4/inline-markup.js';
 
 export interface SceneText {
   /** 场景 Map key（相对路径） */
@@ -29,6 +29,7 @@ function dialogueParts(line: SceneDocumentLine): { prefix: string; value: string
   if (line.kind !== 'text' || !line.raw.endsWith(line.value)) return null;
   return { prefix: line.raw.slice(0, line.raw.length - line.value.length), value: line.value };
 }
+
 
 /** 构造匹配器（非法正则返回 null，由 UI 提示） */
 export function buildMatcher(query: string, useRegex: boolean): RegExp | null {
@@ -110,11 +111,27 @@ export function previewSceneReplacement(text: string, query: string, replacement
       const written = visibleReplacement(replacement);
       const result = replaceOutsideTags(line.raw, re, (offset) => offset >= parts.prefix.length ? written : replacement, []);
       after = result.text; rowCount = result.count;
-    } else if (line.kind === 'choice-option' && containsInlineTag(line.raw)) {
-      const document = parseInlineText(line.raw, 'choice');
-      const broken = document.issues.some((issue) => issue.severity === 'error');
-      const result = replaceOutsideTags(line.raw, re, literal, broken ? null : document.tags);
-      after = result.text; rowCount = result.count; skipped += result.skipped;
+    } else if (line.kind === 'choice-option') {
+      // Only the option's shown text is visible text; the indent, `[if:…]` and the arrow's
+      // instructions keep their own meaning and get the replacement as written.
+      const span = choiceLabelSpan(line.raw);
+      const label = span ? line.raw.slice(span.start, span.end) : '';
+      if (span && (parseInlineText(label, 'choice').hasMarkup || label.includes('\\'))) {
+        const head = replaceOutsideTags(line.raw.slice(0, span.start), re, literal, []);
+        const shown = replaceInDialogue(label, re, replacement, 'choice');
+        const tail = replaceOutsideTags(line.raw.slice(span.end), re, literal, []);
+        after = head.text + shown.value + tail.text;
+        rowCount = head.count + shown.count + tail.count;
+        skipped += shown.skipped;
+      } else if (span) {
+        const written = visibleReplacement(replacement);
+        const result = replaceOutsideTags(line.raw, re, (offset) => offset >= span.start && offset < span.end ? written : replacement, []);
+        after = result.text; rowCount = result.count;
+      } else {
+        // Core reads no option text here; markup-like text is left alone rather than guessed at.
+        const result = replaceOutsideTags(line.raw, re, literal, containsInlineTag(line.raw) ? null : []);
+        after = result.text; rowCount = result.count; skipped += result.skipped;
+      }
     } else {
       const result = replaceOutsideTags(line.raw, re, literal, []);
       after = result.text; rowCount = result.count;

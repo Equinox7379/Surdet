@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { parseInlineText } from '@surdet/core';
-import { completionPrefix, findInDialogue, inlineCompletions, insertInlineMarker, replaceInDialogue, sourceRangeOfPlain, splitInlineDialogue, wrapInlineSelection } from '../src/v4/inline-markup.js';
+import { compileScene, parseInlineText } from '@surdet/core';
+import { choiceLabelSpan, completionPrefix, findInDialogue, inlineCompletions, insertInlineMarker, replaceInDialogue, sourceRangeOfPlain, splitInlineDialogue, wrapInlineSelection } from '../src/v4/inline-markup.js';
 
 const valid = (text: string): void => {
   expect(parseInlineText(text).issues.filter((issue) => issue.severity === 'error')).toEqual([]);
@@ -115,5 +115,25 @@ describe('输入 < 时的标签补全', () => {
     expect(completionPrefix('文字<co', 5)).toEqual({ start: 2, prefix: 'co' });
     expect(completionPrefix('文字\\<co', 6)).toBeNull();
     expect(completionPrefix('文字<b>', 5)).toBeNull();
+  });
+});
+
+describe('选项文字范围与 Core 一致', () => {
+  it('取出的选项文字等于 Core 编译出的选项文本', () => {
+    const rows = [
+      '  <b>危</b>险 -> @goto a',
+      '\t留下 [if:trust > 2] -> @goto a',
+      '  <ruby=よる>夜</ruby>深   ->   @goto a',
+      '  只有文字',
+      '  "带->引号" -> @goto a',
+      '  条件后有空格 [if:flag]   -> @goto a',
+    ];
+    const text = `@scene s\n@choice\n${rows.join('\n')}\n@label a\n@end\n`;
+    const choice = compileScene(text, 's.gal', 's').instructions.find((instr) => instr.op === 'choice') as unknown as { options: { label: string }[] };
+    expect(rows.map((row) => { const span = choiceLabelSpan(row)!; return row.slice(span.start, span.end); })).toEqual(choice.options.map((option) => option.label));
+  });
+  it('Core 读不出选项文字时返回 null', () => {
+    expect(choiceLabelSpan('   ')).toBeNull();
+    expect(choiceLabelSpan('  [if:flag] -> @goto a')).toBeNull();
   });
 });
