@@ -44,12 +44,14 @@ export interface SettingsRowView {
   label: string;
   /** 当前值的格式化展示 */
   display: string;
+  /** Set on on/off rows only: the confirmed value, so the panel can draw a switch. */
+  checked?: boolean;
 }
 
 export function createSettingsRows(settings: GameSettings): SettingsRowView[] {
   return [...SETTING_STEPS.map(definition => ({ id: definition.key, label: definition.label, display: definition.format(settings[definition.key]) })),
     ...Object.entries(GAME_SETTING_DEFINITIONS).flatMap(([key, definition]) => definition.type === 'boolean'
-      ? [{ id: key, label: definition.label, display: settings[key as 'reducedMotion' | 'readAloud'] ? '开启' : '关闭' }] : [])];
+      ? [{ id: key, label: definition.label, display: settings[key as 'reducedMotion' | 'readAloud'] ? '开启' : '关闭', checked: settings[key as 'reducedMotion' | 'readAloud'] }] : [])];
 }
 
 /** Both shipped Players use the same device-preference projection; save data is not involved. */
