@@ -81,6 +81,7 @@
 | `@timeline` | `@timeline intro_arrival @ blocking` | ✅ | 播放 `content/timelines/<id>.json` 中的多轨演出；默认非阻塞，追加 `@ blocking` 后等待演出完成 |
 | `@ambience` | `@ambience rain` / `@ambience off` | ✅ | 播放或停止独立环境音轨，与 BGM 分开 |
 | `@transition` | `@bg harbor` 后 `@transition dissolve 800` | ✅ | 支持 fade、slide-left、slide-right、circle、dissolve；dissolve 混合上一停顿后首次修改之前的旧世界与新世界，不含对白/UI。未修改则不演出，中途读档/回退视为完成。见[演出合同](presentation-effects-contract.md) |
+| `@filter` | `@filter grayscale 600` / `@filter off 400` | ✅ | 作者世界滤镜blur/grayscale/sepia/vignette/off，缺省立即、时长0–600000ms；状态/剩余过渡随存档与回退，低画质不关闭剧情颜色，不影响对白和菜单。见[演出合同](presentation-effects-contract.md) |
 
 ### 时间轴演出
 

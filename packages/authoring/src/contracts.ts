@@ -240,7 +240,7 @@ export const REPLACEABLE_SCENE_INSTRUCTIONS = [
   'bg', 'show', 'hide', 'pose', 'layer', 'stage', 'wait',
   'set', 'mod', 'goto', 'jump', 'call',
   'fadein', 'fadeout', 'shake', 'flash', 'zoom', 'wipe', 'transition',
-  'particle', 'mov', 'tint', 'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'timeline',
+  'particle', 'mov', 'tint', 'filter', 'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'timeline',
 ] as const;
 
 export type ScenePatchOperation =

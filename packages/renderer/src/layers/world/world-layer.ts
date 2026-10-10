@@ -24,6 +24,8 @@ import type { FrameRequestHandler, PortraitView } from '../../types.js';
 import type { ProjectStage, StageCommand, StageLayerDefinition, StagePose, StageGeometryPolicy, StageSource, StageInspection } from '../../stage-geometry.js';
 import { StageMotionController, prepareStageMotions, lerpColor, type StageMotionSnapshot, type StageProperty, type StageValues } from '../../stage-motion.js';
 import { PortraitVisualPlayer, PortraitVisualRoot, validatePortraitAnimation } from '../../portrait-visual-player.js';
+import { StoryFilter, type StoryFilterSnapshot } from '../../story-filter.js';
+import { parseStoryFilter, type StoryFilterName } from '@surdet/core';
 type PortraitDisplay = Sprite | PortraitVisualRoot;
 
 export interface WorldPresentationSnapshot {
@@ -47,6 +49,7 @@ export interface WorldPresentationSnapshot {
   fadeAlpha: number;
   tint: { color: number; alpha: number };
   particleKind: string | null;
+  storyFilters?: StoryFilterSnapshot;
 }
 
 /** Read-only evidence emitted for the local renderer acceptance harness. */
@@ -258,6 +261,7 @@ export class WorldLayer implements WorldProjectionPort {
     (target, patch) => this.#writeStageProperties(target, patch));
   readonly #tintOverlay: Graphics;
   readonly #worldEffects: WorldEffectsController;
+  readonly #storyFilter: StoryFilter;
   #backgroundSprite: Sprite | null = null;
   #backgroundKey: string | null = null;
   #backgroundTransition: { old: Sprite | null; oldKey: string | null; neu: Sprite; remain: number; dur: number } | null = null;
@@ -319,6 +323,7 @@ export class WorldLayer implements WorldProjectionPort {
     this.#tintOverlay.alpha = 0;
     this.#tintOverlay.visible = false;
     this.screenContainer.addChild(this.#tintOverlay);
+    this.#storyFilter = new StoryFilter(this.screenContainer, this.#w, this.#h);
     this.#worldEffects = new WorldEffectsController({
       world: this.worldContainer,
       screen: this.screenContainer,
@@ -368,6 +373,7 @@ export class WorldLayer implements WorldProjectionPort {
     }
     this.#stageMotions.update(deltaMs);
     this.#worldEffects.update(deltaMs);
+    if (this.#storyFilter.active) { this.#storyFilter.update(deltaMs); this.#applyPostProcess(); }
     if (this.#flashRemain > 0) {
       this.#flashRemain = Math.max(0, this.#flashRemain - deltaMs);
       this.flashOverlay.alpha = this.#flashRemain / this.#flashDur;
@@ -861,6 +867,14 @@ export class WorldLayer implements WorldProjectionPort {
 
   markStageBoundary(): void { if (!this.#disposed) this.#worldEffects.markStageBoundary(); }
 
+  setStoryFilter(name: StoryFilterName, durationMs = 0): void {
+    if (this.#disposed) return;
+    parseStoryFilter([name, String(durationMs)]);
+    this.#worldEffects.beforeStageMutation();
+    this.#storyFilter.set(name, durationMs === 0 ? 0 : Math.min(600_000, presentationDuration(durationMs, this.#presentation)));
+    this.#applyPostProcess(); this.#syncEffectRegistration(); this.#requestFrame();
+  }
+
   flash(durationMs = 300): void {
     if (this.#presentation.reducedMotion) { this.#flashRemain = 0; this.flashOverlay.alpha = 0; return; }
     this.#flashDur = presentationDuration(durationMs, this.#presentation);
@@ -1181,6 +1195,7 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   snapshotPresentation(): WorldPresentationSnapshot {
+    const storyFilters = this.#storyFilter.snapshot();
     const extended = this.#stage !== null || this.#stageLayers.size > 0 || this.#stageMotions.hasState || this.#portraitPlayers.size > 0 || [...this.#portraitViews.values()].some(view => view.pose !== undefined);
     return {
       version: extended ? 2 : 1,
@@ -1202,6 +1217,7 @@ export class WorldLayer implements WorldProjectionPort {
       fadeAlpha: this.fadeOverlay.alpha,
       tint: { color: Number(this.#tintOverlay.tint ?? 0), alpha: this.#tintOverlay.alpha },
       particleKind: this.#particleKind,
+      ...(storyFilters ? { storyFilters } : {}),
     };
   }
 
@@ -1250,6 +1266,7 @@ export class WorldLayer implements WorldProjectionPort {
     this.#generation.dispose();
     this.#clearVisibleState();
     this.#worldEffects.destroy();
+    this.#storyFilter.destroy();
     this.#frameRequest = null;
     try {
       this.#lifecycle.releaseOwner('world');
@@ -1259,9 +1276,10 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   #applyPostProcess(): void {
+    const filters = this.#storyFilter.project(this.#quality.quality === 'low');
     const enabled = this.#postProcess.enabled && this.#quality.settings.postProcess;
     if (!enabled || typeof document === 'undefined') {
-      this.worldContainer.filters = null;
+      this.worldContainer.filters = filters.length ? filters : null;
       return;
     }
     this.#colorMatrix ??= new ColorMatrixFilter();
@@ -1269,7 +1287,7 @@ export class WorldLayer implements WorldProjectionPort {
     this.#colorMatrix.saturate(this.#postProcess.saturation - 1, true);
     this.#colorMatrix.brightness(this.#postProcess.brightness, true);
     this.#colorMatrix.contrast(this.#postProcess.contrast - 1, true);
-    this.worldContainer.filters = [this.#colorMatrix];
+    this.worldContainer.filters = [...filters, this.#colorMatrix];
   }
 
   #resolveBackground(key: string): Texture {
@@ -1379,6 +1397,7 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   #finishVisualMotions(): void {
+    this.#storyFilter.settle(); this.#applyPostProcess();
     this.#stageMotions.skip(); this.#stageMotions.settleTimelines(); this.#worldEffects.reset();
     this.#flashRemain = 0; this.flashOverlay.alpha = 0;
     if (this.#zoomRemain > 0) { this.worldContainer.scale.set(this.#zoomTo); this.#zoomRemain = 0; this.#setWorldBasePosition(); }
@@ -1469,7 +1488,7 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   #hasEffectWork(): boolean {
-    return this.#stageMotions.active || this.#worldEffects.needsUpdate
+    return this.#stageMotions.active || this.#worldEffects.needsUpdate || this.#storyFilter.active
       || [...this.#portraitPlayers.values()].some(player => player.active)
       || this.#flashRemain > 0
       || this.#zoomRemain > 0
@@ -1553,6 +1572,7 @@ export class WorldLayer implements WorldProjectionPort {
     this.worldContainer.position.set(0, 0);
     this.worldContainer.scale.set(1);
     this.#worldEffects.reset({ preserveOldFrame: options.preserveOldFrame });
+    this.#storyFilter.clear(); this.#applyPostProcess();
     this.#flashRemain = 0;
     this.#flashDur = 1;
     this.flashOverlay.alpha = 0;
@@ -1582,6 +1602,9 @@ export class WorldLayer implements WorldProjectionPort {
   #prepareSnapshot(snapshot: unknown): WorldPresentationSnapshot {
     if (typeof snapshot !== 'object' || snapshot === null || Array.isArray(snapshot)) throw invalidSnapshot('Presentation snapshot must be an object');
     const raw = snapshot as Record<string, unknown>;
+    let storyFilters: StoryFilterSnapshot | undefined;
+    try { storyFilters = StoryFilter.prepare(raw.storyFilters); }
+    catch (error) { throw invalidSnapshot(error instanceof Error ? error.message : String(error)); }
     if (raw.version !== 1 && raw.version !== 2) throw invalidSnapshot('Presentation snapshot version must be 1 or 2');
     const extended = raw.version === 2;
     if (extended) {
@@ -1702,6 +1725,7 @@ export class WorldLayer implements WorldProjectionPort {
       fadeAlpha: raw.fadeAlpha,
       tint: { color: tint.color, alpha: tint.alpha },
       particleKind: raw.particleKind,
+      ...(storyFilters ? { storyFilters } : {}),
     };
   }
 
@@ -1747,6 +1771,7 @@ export class WorldLayer implements WorldProjectionPort {
     if (snapshot.particleKind !== null) this.startParticles(snapshot.particleKind);
     if (snapshot.motions) this.#stageMotions.restore(snapshot.motions);
     this.#objectSources.clear(); for (const [key, source] of snapshot.objectSources ?? []) this.#objectSources.set(key, source);
+    this.#storyFilter.restore(snapshot.storyFilters); this.#applyPostProcess();
     this.#worldEffects.markStageBoundary();
     if (this.#presentation.reducedMotion) this.#finishVisualMotions();
     this.#syncEffectRegistration();

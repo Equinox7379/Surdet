@@ -320,6 +320,17 @@
       ]
     },
     {
+      "id": "filter",
+      "kind": "dsl",
+      "core": "implemented",
+      "renderer": "implemented",
+      "editor": "planned",
+      "host": "n/a",
+      "tests": ["packages/core/test/story-filter.test.ts", "packages/renderer/test/story-filter.test.ts", "packages/renderer/test/layers/world-layer.test.ts"],
+      "docs": ["docs/dsl-spec.md", "docs/presentation-effects-contract.md"],
+      "limitation": "四种作者世界滤镜与当前强度/剩余过渡快照已交付；Editor专用中文选择表单待Claude接入，时间轴filter cue未开放。"
+    },
+    {
       "id": "transition-registry",
       "kind": "ui",
       "core": "n/a",
@@ -336,7 +347,7 @@
         "docs/dsl-spec.md",
         "docs/AI-GUIDE.md"
       ],
-      "limitation": "五种内置转场含旧世界溶解dissolve；rule遮罩、作者滤镜和时间轴转场尚未交付，自定义插件转场不在本批范围。"
+      "limitation": "五种内置转场含旧世界溶解dissolve；rule遮罩和时间轴转场尚未交付，自定义插件转场不在本批范围。"
     },
     {
       "id": "player-shell-coordination",

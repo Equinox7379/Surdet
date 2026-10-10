@@ -9,6 +9,7 @@ export * from './gallery.js';
 export * from './gamepad.js';
 export * from './text-buffer.js';
 export * from './transitions.js';
+export type { StoryFilterSnapshot } from './story-filter.js';
 export * from './timeline-player.js';
 export * from './types.js';
 export * from './audio-manager.js';

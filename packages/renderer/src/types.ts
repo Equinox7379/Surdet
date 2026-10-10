@@ -87,6 +87,7 @@ export interface AdvStage {
   shake?(durMs: number, strength: number, direction?: ShakeDirection): void;
   /** 注册表驱动的转场；未知名称返回 false。 */
   markStageBoundary?(): void;
+  setStoryFilter?(name: import('@surdet/core').StoryFilterName, durationMs?: number): void;
   transition?(name: TransitionName | string, durMs: number): boolean;
   /** 白闪（@flash；线性衰减） */
   flash?(durMs: number): void;

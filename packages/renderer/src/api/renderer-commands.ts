@@ -64,6 +64,7 @@ export interface WorldCommands {
   movePortrait(key: string, pos: string, durationMs?: number): void;
   setTint(color: number, alpha: number, durationMs?: number): void;
   clearTint(durationMs?: number): void;
+  setStoryFilter?(name: import('@surdet/core').StoryFilterName, durationMs?: number): void;
   startParticles(kind: string): void;
   stopParticles(): void;
   applyTimelineFrame(event: TimelineFrameEvent): void;

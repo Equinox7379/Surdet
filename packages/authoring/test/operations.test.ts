@@ -86,6 +86,20 @@ describe('typed authoring operations', () => {
     const replay = await loadProjectSnapshot(fixtureStorage(config, change.record.workingFiles['content/scenario/prologue.gal'], undefined, extra), hasher);
     expect(await runExplicitPath(replay, { sceneId: 'prologue', choices: [] })).toMatchObject({ status: 'passed', finalVariables: { visited: 12 } });
   });
+  it('replaces a filter through the public typed operation while preserving unrelated CRLF text', async () => {
+    const source = '@scene prologue\r\n@filter sepia 300\r\n凛：保留这句。\r\n@end\r\n';
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, source), hasher);
+    const target = buildObjectIndex(snapshot).objects.find(object => object.source?.raw.trim() === '@filter sepia 300')!;
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    await applyScenePatch(change, { operationId: 'replace-filter', patch: { kind: 'replaceInstruction', target: target.objectRef, expectedFingerprint: target.fingerprint!,
+      instruction: { kind: 'instruction', name: 'filter', args: ['grayscale', '900'] } } }, hasher);
+    expect(change.record.workingFiles['content/scenario/prologue.gal']).toBe(source.replace('sepia 300', 'grayscale 900'));
+    const before = structuredClone(change.record);
+    const fresh = buildObjectIndex(await loadProjectSnapshot(fixtureStorage(undefined, change.record.workingFiles['content/scenario/prologue.gal']), hasher)).objects.find(object => object.source?.raw.trim() === '@filter grayscale 900')!;
+    await expect(applyScenePatch(change, { operationId: 'bad-filter', patch: { kind: 'replaceInstruction', target: fresh.objectRef, expectedFingerprint: fresh.fingerprint!,
+      instruction: { kind: 'instruction', name: 'filter', args: ['not-supported'] } } }, hasher)).rejects.toMatchObject({ code: 'INVALID_REQUEST', message: expect.stringContaining('滤镜须为') });
+    expect(change.record).toEqual(before);
+  });
   it('protects gallery text replay entries when deleting or renaming their label', async () => {
     const gallery = '\uFEFF{\r\n  "texts": [{"id":"memory","scene":"prologue","label":"memory","name":"memory","custom":42}], "custom":{"label":"memory"}\r\n}\r\n';
     const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, '@scene prologue\r\n@label memory\r\n回想。\r\n@end\r\n', undefined, { 'content/config/gallery.json': gallery, 'content/scenario/caller.gal': '@scene caller\n@call prologue.memory\n@end\n' }), hasher);
