@@ -108,12 +108,16 @@ export function renderSearchPanel(container: HTMLElement): void {
       const scene = state.scenes.get(match.sceneKey)!;
       item.append(h('span', 'search-location', `${scene.file} · ${match.line + 1}${scene.dirty ? ' · 未保存' : ''}`));
       const excerpt = h('span', 'search-excerpt');
-      const matchText = buildMatcher(view.query, view.regex)!.exec(match.text);
-      const start = matchText?.index ?? 0, length = matchText?.[0].length ?? 0;
-      const from = Math.max(0, start - 28), to = Math.min(match.text.length, Math.max(start + length, from + 100));
-      excerpt.append(document.createTextNode((from ? '…' : '') + match.text.slice(from, start)));
-      excerpt.append(length ? h('mark', undefined, match.text.slice(start, start + length)) : document.createTextNode(''));
-      excerpt.append(document.createTextNode(match.text.slice(start + length, to) + (to < match.text.length ? '…' : '')));
+      // A match found only in the visible text (across style tags) is shown as the player reads it.
+      const shown = match.visible?.text ?? match.text;
+      const matchText = match.visible ? null : buildMatcher(view.query, view.regex)!.exec(match.text);
+      const start = match.visible?.start ?? matchText?.index ?? 0;
+      const length = match.visible ? match.visible.end - match.visible.start : matchText?.[0].length ?? 0;
+      const from = Math.max(0, start - 28), to = Math.min(shown.length, Math.max(start + length, from + 100));
+      excerpt.append(document.createTextNode((from ? '…' : '') + shown.slice(from, start)));
+      excerpt.append(length ? h('mark', undefined, shown.slice(start, start + length)) : document.createTextNode(''));
+      excerpt.append(document.createTextNode(shown.slice(start + length, to) + (to < shown.length ? '…' : '')));
+      if (match.visible) excerpt.title = '按显示文字匹配（跨过了样式标签）';
       item.append(excerpt); results.append(item);
     }
     if (matches.length > 200) results.append(h('p', 'search-empty', matches.length > 500
@@ -147,14 +151,17 @@ export function renderSearchPanel(container: HTMLElement): void {
     const request = { query: view.query, replacement: view.replacement, regex: view.regex, scope: view.scope, current: state.current };
     // Include unchanged scoped documents, so adding/removing a scene cannot silently widen a preview.
     const originals = sceneEntries().map(scene => ({ ...scene, entry: state.scenes.get(scene.key)!, file: state.scenes.get(scene.key)!.file }));
-    const changes = originals.map(scene => ({ ...scene, result: previewSceneReplacement(scene.text, request.query, request.replacement, request.regex) }))
-      .filter(scene => scene.result !== null && scene.result.changes.length > 0);
-    if (!changes.length) { setStatus('没有需要替换的内容', true, 2500); refresh(); return; }
+    const previews = originals.map(scene => ({ ...scene, result: previewSceneReplacement(scene.text, request.query, request.replacement, request.regex) }));
+    const skipped = previews.reduce((sum, scene) => sum + (scene.result?.skipped ?? 0), 0);
+    const changes = previews.filter(scene => scene.result !== null && scene.result.changes.length > 0);
+    const skippedNote = skipped ? `另有 ${skipped} 处跨过或位于行内标签内，不能安全替换，已保持原样，请手动修改。` : '';
+    if (!changes.length) { setStatus(skippedNote || '没有需要替换的内容', !skipped, skipped ? 6000 : 2500); refresh(); return; }
     const total = changes.reduce((sum, scene) => sum + scene.result!.changes.reduce((count, line) => count + line.count, 0), 0);
     const dialog = h('dialog', 'v4-insert-dialog search-replace-dialog'); dialog.setAttribute('aria-label', '替换预览');
     const summary = request.scope === 'scene' ? `当前场景 ${originals[0]?.file ?? ''}` : `整个项目（检查 ${originals.length} 个场景）`;
     dialog.append(h('h2', undefined, '替换预览'), h('p', undefined, `${summary}；将修改 ${changes.length} 个场景、${total} 处。确认后仅改变草稿，可逐场景撤销。`),
       h('p', undefined, `${request.regex ? '正则' : '查找'}：${request.query} → ${request.replacement || '（清空）'}`));
+    if (skippedNote) dialog.append(h('p', 'search-replace-skipped', skippedNote));
     for (const [index, scene] of changes.entries()) {
       const section = h('details'); section.open = index === 0;
       section.append(h('summary', undefined, `${scene.file} · ${scene.result!.changes.length} 行`));
@@ -183,7 +190,7 @@ export function renderSearchPanel(container: HTMLElement): void {
       for (const scene of changes) setSceneText(scene.key, scene.result!.text);
       close();
       onEditedHook(); renderSidebar(); renderEditor();
-      setStatus(`已替换 ${total} 处（${changes.length} 个场景，可逐场景撤销；尚未保存）`, true, 5000);
+      setStatus(`已替换 ${total} 处（${changes.length} 个场景，可逐场景撤销；尚未保存）${skipped ? `；${skipped} 处跨标签未替换` : ''}`, true, 5000);
       view.active = null; refresh();
     });
     const footer = h('footer'); footer.append(button('取消', '取消替换', close), confirm);

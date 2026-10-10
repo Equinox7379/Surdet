@@ -2,8 +2,9 @@ import { state, h, setStatus, type SceneEntry } from '../state.js';
 import { setCurrentText } from '../history.js';
 import { parseScript, splitInstr, type LineModel } from '../model.js';
 import { decodeInstructionArgument, parseProjectConfigDocument } from '@surdet/authoring';
-import type { SourceRange } from '@surdet/core';
-import { sourceRangeOffsets } from './source-range.js';
+import { inlinePlainText, type SourceRange } from '@surdet/core';
+import { dialogueRangeOffsets, sourceRangeOffsets } from './source-range.js';
+import { attachInlineField } from './inline-field.js';
 import { portraitDisplayName, projectPortraitAssets } from '../assets.js';
 import { disposePreviewPanel, renderPreviewPanel, refreshPreviewSourceState } from '../panels/preview-panel.js';
 import { allowedToEdit, button, disclosure, field, ImageScope, navigateMode } from './ui.js';
@@ -393,7 +394,7 @@ export class ScriptWorkbench {
       this.fitTextarea(textarea);
     };
     this.bindDialogueEnter(block, textarea);
-    original.before(textarea);
+    original.before(attachInlineField(textarea, { editable: () => this.editable(), signal: this.abort.signal }));
     this.fitTextarea(textarea);
   }
 
@@ -405,7 +406,11 @@ export class ScriptWorkbench {
         const index = Number(block.dataset.line);
         const current = this.lines()[index];
         if (current?.kind !== 'text' || current.value !== textarea.value) return;
-        this.structural((text) => splitDialogue(text, index, textarea.selectionStart, textarea.selectionEnd), true);
+        try {
+          this.structural((text) => splitDialogue(text, index, textarea.selectionStart, textarea.selectionEnd), true);
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : String(error), false, 5000);
+        }
       }
     };
   }
@@ -505,7 +510,7 @@ export class ScriptWorkbench {
   }
 
   /** Main's search/issues/trace navigation must not focus hidden legacy rows in source view. */
-  /** In the source view a diagnostic range selects its exact text; otherwise the whole row. */
+  /** A diagnostic range selects its exact text in the source view or in a manuscript dialogue box; otherwise the whole row. */
   revealLine(index: number, range?: SourceRange): boolean {
     const rows = this.lines();
     const line = rows[index];
@@ -537,6 +542,13 @@ export class ScriptWorkbench {
     const block = this.block(index);
     if (!block) return false;
     block.scrollIntoView({ block: 'center' });
+    const dialogue = range !== undefined && line.kind === 'text' ? block.querySelector<HTMLTextAreaElement>('.v4-dialogue-input') : null;
+    const exact = dialogue && range !== undefined && line.kind === 'text' ? dialogueRangeOffsets(line, index, range) : null;
+    if (dialogue && exact && line.kind === 'text' && dialogue.value === line.value) {
+      dialogue.focus({ preventScroll: true });
+      dialogue.setSelectionRange(exact.start, exact.end);
+      return true;
+    }
     block.focus({ preventScroll: true });
     return true;
   }
@@ -775,7 +787,8 @@ export class ScriptWorkbench {
     }
     if (projection.dialogue) {
       const text = h('div', 'v4-stage-dialogue');
-      text.append(h('strong', undefined, projection.dialogue.speaker), h('p', undefined, projection.dialogue.value));
+      // Static layout is not a run: it shows Core's plain text; styles and pauses belong to the real preview.
+      text.append(h('strong', undefined, projection.dialogue.speaker), h('p', undefined, inlinePlainText(projection.dialogue.value)));
       stage.append(text);
     }
     if (!projection.background && !projection.actors.length && !projection.dialogue) stage.append(h('p', 'v4-stage-empty', '此片段尚未明确设置画面'));
@@ -832,7 +845,7 @@ export class ScriptWorkbench {
       if (focusDialogue) {
         const target = block?.querySelector<HTMLTextAreaElement>('.v4-dialogue-input, .fields textarea')
           ?? this.inspector.querySelector<HTMLTextAreaElement>('.fields textarea');
-        target?.focus(); target?.setSelectionRange(0, 0);
+        target?.focus(); target?.setSelectionRange(result.caret ?? 0, result.caret ?? 0);
       }
     });
     return true;

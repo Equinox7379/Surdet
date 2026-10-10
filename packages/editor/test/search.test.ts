@@ -103,3 +103,28 @@ describe('replaceInSceneText', () => {
     expect(replaceInSceneText('abc', '[bad', 'q', true)).toBeNull();
   });
 });
+
+describe('带行内标签的查找替换', () => {
+  const text = '@scene s\n凛：<color=accent>危</color>险，真的危险。\n  <b>危险</b>的路 -> @goto a\n@label a';
+  it('台词按玩家看到的文字查找，跨样式标签也能找到', () => {
+    const [result] = searchScenes([{ key: 's', id: 's', text }], '色险', false).concat(searchScenes([{ key: 's', id: 's', text }], '危险，', false));
+    expect(result).toEqual({ sceneKey: 's', sceneId: 's', line: 1, text: '凛：<color=accent>危</color>险，真的危险。', visible: { text: '危险，真的危险。', start: 0, end: 3 } });
+  });
+  it('替换只写回不跨标签的位置，其余计入跳过且不改动', () => {
+    const preview = previewSceneReplacement(text, '危险', '安全', false)!;
+    expect(preview.changes).toEqual([
+      { line: 1, before: '凛：<color=accent>危</color>险，真的危险。', after: '凛：<color=accent>危</color>险，真的安全。', count: 1 },
+      { line: 2, before: '  <b>危险</b>的路 -> @goto a', after: '  <b>安全</b>的路 -> @goto a', count: 1 },
+    ]);
+    // The match crossing </color> is left alone; text inside a span is replaced without touching its tags.
+    expect(preview.skipped).toBe(1);
+  });
+  it('不替换标签取值', () => {
+    expect(previewSceneReplacement(text, 'accent', 'danger', false)!.changes).toEqual([]);
+  });
+  it('普通台词仍按整行匹配，写进台词的标签文字被转义', () => {
+    const preview = previewSceneReplacement('凛：你好', '你好', '<b>好', false)!;
+    expect(preview.text).toBe('凛：\\<b>好');
+    expect(previewSceneReplacement('凛：你好', '凛', '<b>林', false)!.text).toBe('<b>林：你好');
+  });
+});
