@@ -198,6 +198,7 @@ function presentationForOperation(operation: CompositionOperation, full = false)
           const visible = inlinePlainText(value);
           return result('修改场景', [speaker === undefined ? `替换台词：${visible}` : `${speaker}：${visible}`]);
         }
+        case 'insertBefore':
         case 'insertAfter': {
           const facts = sceneBlockFacts(arrayAt(patch, 'blocks'));
           return result('修改场景', facts.length === 0 ? [] : facts, facts.length === 0 ? 'metadata-only' : 'content');

@@ -2,9 +2,11 @@
 
 本指南面向编写剧情、配置与演出的内容作者。默认使用正式 Agent Port 工具，在隔离草稿中修改、验证和试玩；不需要先读引擎源码、长期台账或重新接线播放器。已有项目保持原位，新项目使用现有模板。
 
-本批公开创作合同为 **2.33.0**（73 项公开能力），`project.simulate` 新增源位置与版本关联的 `coverage`，失败和预算耗尽的部分报告保留在错误 `details.report`；保留作品界面变量条件、只读数值条、数组列表/数量、有限赋值按钮，以及人物档案、用语辞典、结局册、可选永久收藏、多语言、已有配音、主题、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+本批公开创作合同为 **2.34.0**（73 项公开能力），`project.simulate` 新增源位置与版本关联的 `coverage`，失败和预算耗尽的部分报告保留在错误 `details.report`；保留作品界面变量条件、只读数值条、数组列表/数量、有限赋值按钮，以及人物档案、用语辞典、结局册、可选永久收藏、多语言、已有配音、主题、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
 
 ## 0. 准备项目与会话
+
+流程连接仍用`scene.patch`：`insertBefore`可以在真实结束/跳转指令前插入typed blocks，避免追加到结束之后成为死代码；空标签段可锚定下一个规范label。`replaceInstruction`支持call改目标，选择肢继续用已有choice变体。复制现有对象前置事实，不自行算摘要；参见[流程编辑合同](flow-operations-contract.md)。Editor图上交互仍待前端。
 
 需要找到源行的真实到达路径时，调用`project.preview-path`，传`sceneId`、一基`line`和当前`view`。缺省search从入口找路，path按真实选项index重播，test只用本次临时初值；预算耗尽或宿主接管未完成不能判不可达，不产生项目模拟通过证据。结果停在目标执行前。参见[目标路径合同](preview-target-path-contract.md)。Editor“从这里试玩”入口仍待前端接入。
 

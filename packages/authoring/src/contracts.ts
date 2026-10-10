@@ -235,10 +235,10 @@ export type SceneBlockInput =
   | { kind: 'choice'; options: SceneChoiceOptionInput[] }
   | SceneConditionBlockInput;
 
-/** 单行可替换的场景指令；结构入口、音频/视频及 call/return 等流程边界不在此列。 */
+/** 单行可替换的场景指令；结构入口、音频/视频及 return 边界不在此列。 */
 export const REPLACEABLE_SCENE_INSTRUCTIONS = [
   'bg', 'show', 'hide', 'pose', 'layer', 'stage', 'wait',
-  'set', 'mod', 'goto', 'jump',
+  'set', 'mod', 'goto', 'jump', 'call',
   'fadein', 'fadeout', 'shake', 'flash', 'zoom', 'wipe', 'transition',
   'particle', 'mov', 'tint', 'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'timeline',
 ] as const;
@@ -250,6 +250,7 @@ export type ScenePatchOperation =
   | { kind: 'replaceText'; target: string; expectedFingerprint: string; speaker?: string; value: string }
   | { kind: 'replaceInstruction'; target: string; expectedFingerprint: string; instruction: Extract<SceneBlockInput, { kind: 'instruction' }> & { name: typeof REPLACEABLE_SCENE_INSTRUCTIONS[number] } }
   | { kind: 'insertAfter'; anchor: string; expectedFingerprint: string; blocks: SceneBlockInput[] }
+  | { kind: 'insertBefore'; anchor: string; expectedFingerprint: string; blocks: SceneBlockInput[] }
   | { kind: 'replaceChoiceOption'; target: string; expectedFingerprint: string; option: SceneChoiceOptionInput }
   | { kind: 'replaceChoiceGroup'; target: string; expectedFingerprint: string; choice: Extract<SceneBlockInput, { kind: 'choice' }> }
   | { kind: 'replaceConditionBlock'; target: string; expectedFingerprint: string; condition: { kind: 'condition'; branches: SceneConditionPatchBranchInput[] } }

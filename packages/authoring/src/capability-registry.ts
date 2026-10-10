@@ -246,6 +246,12 @@ const scenePatchSchema: JsonSchema = {
       blocks: arrayOf(sceneBlockSchema),
     }, ['kind', 'anchor', 'expectedFingerprint', 'blocks']),
     strictObject({
+      kind: { const: 'insertBefore' },
+      anchor: stringSchema,
+      expectedFingerprint: stringSchema,
+      blocks: arrayOf(sceneBlockSchema),
+    }, ['kind', 'anchor', 'expectedFingerprint', 'blocks']),
+    strictObject({
       kind: { const: 'replaceChoiceOption' },
       target: stringSchema,
       expectedFingerprint: stringSchema,
@@ -1222,7 +1228,7 @@ const definitions = {
       inlineText: strictObject({ tags: arrayOf(strictObject({ name: stringSchema, paired: booleanSchema, value: { type: ['string', 'null'] }, label: stringSchema, example: stringSchema }, ['name', 'paired', 'value', 'label', 'example'])),
         ruby: { const: 'explicit-only' }, escape: stringSchema }, ['tags', 'ruby', 'escape']),
     }, ['contractVersion', 'capabilities', 'inlineText']),
-    example: { input: {}, expectedResultShape: { contractVersion: '2.33.0', capabilities: [], inlineText: { tags: [], ruby: 'explicit-only', escape: '\\< for literal <; \\\\ for literal \\' } } },
+    example: { input: {}, expectedResultShape: { contractVersion: '2.34.0', capabilities: [], inlineText: { tags: [], ruby: 'explicit-only', escape: '\\< for literal <; \\\\ for literal \\' } } },
   },
   inspect: {
     inputSchema: readViewInputSchema,

@@ -10,13 +10,19 @@
 | 项目 | 当前结论 |
 | --- | --- |
 | 仓库 | `Equinox7379/Surdet`，本机 `E:\surdet`，主线 `main`，远端名 `surdet`。PR #1—#7均已合入；最新PR #7合并点`79ecbde`与已验收`b15b764`内容一致。 |
-| 最近代码交付 | 主线/日常Editor仍为PR #7版本。行内第一批PR #8、阅读辅助PR #9、第二批文字记录PR #10已推送；`codex/preview-target-path`完成源行试玩后端验证，合同2.33.0（73能力），准备独立交付。均未合入主线。 |
+| 最近代码交付 | 主线/日常Editor仍为PR #7。后端PR #8—#11已推送；codex/flow-operations补齐结构化前插与call改目标，合同2.34.0（73能力），验证完成准备交付。均未合入主线。 |
 | 审核结论 | 2026-10-06 Owner 转达 `bcaef40` 复审 PASS，300-REV-01 已关闭。本轮未附新报告，不补写独立检查数量或范围。3FF-REV-01/03、字体及旧维护的有效结论保持原范围，不扩成全引擎或发行验收。 |
 | Editor | Claude 负责前端，本机负责后端、Git 整合和 Windows 验收。本次主线已包含深色工作台、最近项目、问题入口、命令面板、精确源码选区、诊断过期保护和自动待审数量；正式结果实时核对、来源返回及草稿保护保留。未开展 Player 新一轮改版；接口见 [AI-GUIDE](../../AI-GUIDE.md) 和[接力文档](../../human-agent-relay-wave-7.md#当前项目的审阅任务发现后端接口)。 |
 | 当前任务 | Owner 确认引擎 MIT，且明确开源前要真正优化前端、让 Editor 成为脱离外部浏览器的独立 Windows 应用；最终作品目标是原创商业 Gal 级完成度，而非小样例。已准备源码/随包许可、素材例外说明、短英文介绍和私人文件 ignore；仓库仍 PRIVATE。公开历史方式、作品授权及桌面化/前端验收待完成，详见 11.39。 |
 | 最近验证 | 行内后端相关Core/Authoring/Renderer定向用例、五个受影响模块类型检查/构建及能力文档检查通过；Windows Chromium真实共享Player已验证样式、注音、同句停顿、快进、等待点存读档与选择输入。不是Editor前端或新桌面包验收，未跑本地全仓；PR #7原证据继续有效。 |
-| 当前停止点 | Owner要求继续所有可独立推进的后端。源行试玩后端交付后继续流程图的结构化操作支持；接口见[目标路径合同](../../preview-target-path-contract.md)、[文字合同](../../inline-text-contract.md)与[阅读辅助合同](../../reading-accessibility-contract.md)。Claude尚未开始前端，不能记为接入完成；本机不改其界面，不覆盖日常桌面。 |
+| 当前停止点 | Owner要求继续可独立推进的后端。流程操作交付后继续演出后端；各批合同见文档索引，Claude负责前端。未签前端接入通过，不覆盖日常桌面；G4导出/安装与安全策略边界保留。 |
 | CI / 发行 | 旧PR #5/#6与`e1029ea`主线CI成功结论保留。PR #7 `b15b764` 的 [CI 38025530471](https://github.com/Equinox7379/Surdet/actions/runs/38025530471) Electron已成功、verify尚未结束；合并点`79ecbde`的 [主线CI 38026102851](https://github.com/Equinox7379/Surdet/actions/runs/38026102851) 正常自动运行，未代签整轮通过、未重复触发或绕过保护。桌面本地更新获准，公开、发行、部署仍须分别授权。 |
+
+### 流程图结构化操作后端（2026-10-10）
+
+- 新增scene.patch insertBefore，支持真实首行、规范label及终结指令前插入；拒绝拆choice或插在scene声明前。call允许通过原replaceInstruction改目标；审阅内容/选择投影同步，无第二条源写盘路径或新增摘要机制。
+- 首行@end场景连接后真实可达，LF/CRLF、无末行换行、空标签段、choice边界拒绝与call返回续句7例通过；55项过滤跳过不代签。BOM反例最初红灯，已使首位插行保持BOM在新首行，不推到第二行。其他初失败为夹具选错场景/scene根对象，已筛实际instruction源对象。
+- 真实MCP候选1例通过（29项过滤跳过），readiness.ready且操作事实包含scene:destination候选依赖，原文件不变；注册15与CLI JSON1、Authoring/CLI/Editor类型及相关构建通过。没执行组合结果正式审批/写回或Editor拖动。Claude依[流程合同](../../flow-operations-contract.md)接图上交互、差异、高亮与原撤销/保存链，本机继续演出后端。
 
 ### 从源行试玩后端（2026-10-10）
 
