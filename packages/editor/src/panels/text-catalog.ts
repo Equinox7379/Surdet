@@ -197,7 +197,7 @@ export function renderTextCatalogSection(options: {
     csv.value = value; options.editCsv(value); preview = undefined; differences.replaceChildren(); say('表格已读取，尚未修改项目；请预览导入差异。');
   });
   const header = h('header', 'config-ledger-header'), copy = h('div', 'config-section-copy');
-  copy.append(h('h1', 'config-section-heading', '文本与译稿'), h('p', 'config-section-description', '管理正文、选项、人物显示名、界面文字和词条的译稿。固定文本键不随行号改变；播放语言在游戏设置中切换。'));
+  copy.append(h('h1', 'config-section-heading', '文本与译稿'), h('p', 'config-section-description', '播放语言在游戏设置中切换。'));
   header.append(copy);
   const field = (name: string, input: HTMLElement, wide = false): HTMLElement => {
     const label = h('label', wide ? 'config-field text-catalog-wide' : 'config-field'); label.append(h('span', undefined, name), input); return label;

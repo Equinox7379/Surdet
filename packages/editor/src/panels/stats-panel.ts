@@ -12,13 +12,7 @@ export function bindStatsHooks(opts: { onJump: (sceneKey: string) => void }): vo
 
 function appendHeading(workspace: HTMLElement): void {
   const heading = h('header', 'project-health-heading');
-  const copy = h('div', 'project-health-heading-copy');
-  copy.append(
-    h('p', 'project-health-kicker', '项目体检'),
-    h('h1', undefined, '项目概览'),
-    h('p', 'project-health-description', '从内容体量和互动结构了解当前项目，不替代剧本校验。'),
-  );
-  heading.appendChild(copy);
+  heading.appendChild(h('h1', undefined, '项目概览'));
   workspace.appendChild(heading);
 }
 
@@ -27,7 +21,7 @@ function appendEmpty(workspace: HTMLElement): void {
   empty.setAttribute('data-stats-state', 'empty');
   empty.append(
     h('h2', undefined, '还没有可统计的场景'),
-    h('p', undefined, '打开项目或新建场景后，这里会自动汇总文字、选择与结局规模。'),
+    h('p', undefined, '新建场景后，字数、选项和结局会汇总在这里。'),
   );
   workspace.appendChild(empty);
 }
@@ -88,10 +82,12 @@ export function renderStatsPanel(container: HTMLElement): void {
   const overview = h('section', 'project-health-overview');
   const lead = h('div', 'project-health-lead');
   lead.setAttribute('data-stat-key', 'estimated-duration');
+  const leadValue = h('p', 'project-health-lead-value');
+  leadValue.append(h('span', undefined, String(stats.estMinutes)), h('span', 'project-health-lead-unit', '分钟'));
   lead.append(
     h('p', 'project-health-lead-label', '预估通关时长'),
-    h('p', 'project-health-lead-value', `${stats.estMinutes} 分钟`),
-    h('p', 'project-health-lead-note', '用于估算当前文字与演出规模，不代表玩家实际游玩时长。'),
+    leadValue,
+    h('p', 'project-health-lead-note', '按字数和演出时长估算'),
   );
   overview.appendChild(lead);
 
@@ -136,6 +132,7 @@ export function renderStatsPanel(container: HTMLElement): void {
   table.appendChild(thead);
 
   const tbody = h('tbody');
+  const longest = Math.max(1, ...stats.perScene.map((per) => per.chars));
   stats.perScene.forEach((per, index) => {
     const entry = entries[index];
     const row = h('tr');
@@ -147,9 +144,19 @@ export function renderStatsPanel(container: HTMLElement): void {
     jump.title = `打开场景 ${per.id}`;
     jump.onclick = () => onJumpHook(sceneKey);
     sceneCell.appendChild(jump);
+    // A quiet bar beside each count shows how long the scene is next to the longest one.
+    const chars = h('span', 'project-health-chars');
+    const share = h('span', 'project-health-share');
+    share.setAttribute('aria-hidden', 'true');
+    const fill = h('span');
+    fill.style.width = `${Math.round(per.chars / longest * 100)}%`;
+    share.appendChild(fill);
+    chars.append(share, h('span', undefined, String(per.chars)));
+    const charsCell = h('td');
+    charsCell.appendChild(chars);
     row.append(
       sceneCell,
-      h('td', undefined, String(per.chars)),
+      charsCell,
       h('td', undefined, String(per.dialogueLines)),
       h('td', undefined, String(per.choices)),
     );

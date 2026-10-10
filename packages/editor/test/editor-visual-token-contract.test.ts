@@ -103,7 +103,11 @@ describe('editor visual token contract', () => {
     expect(tokenValues.get('--surdet-font-ui')).toBe(
       '"microsoft yahei ui", "microsoft yahei", "segoe ui variable", "segoe ui", "pingfang sc", "noto sans cjk sc", sans-serif',
     );
-    expect(tokenValues.get('--surdet-font-story')).toBe('var(--surdet-font-ui)');
+    // Titles and story text use the bundled serif the starter game is read in.
+    expect(tokenValues.get('--surdet-font-display')).toBe(
+      '"noto serif sc variable", "noto serif sc", "source han serif sc", serif',
+    );
+    expect(tokenValues.get('--surdet-font-story')).toBe('var(--surdet-font-display)');
     expect(tokenValues.get('--surdet-font-mono')).toBe(
       '"cascadia mono", "sarasa mono sc", consolas, monospace',
     );

@@ -884,7 +884,7 @@
 /* ---- Text and translation workflow ---- */
 
 #config-view .text-catalog .text-catalog-languages { max-width: 460px; }
-#config-view .text-catalog .text-catalog-step { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--surdet-border-default); }
+#config-view .text-catalog .text-catalog-step { margin-top: 48px; }
 #config-view .text-catalog .text-catalog-step > h2 { margin: 0 0 4px; font-size: 14px; }
 #config-view .text-catalog .text-catalog-step > p { max-width: 720px; margin: 0 0 14px; }
 #config-view .text-catalog .text-catalog-wide { grid-column: 1 / -1; }
@@ -899,6 +899,6 @@
 #config-view .text-catalog .text-catalog-status:empty { display: none; }
 #config-view .text-catalog :is(.text-catalog-entries, .text-catalog-bindings, .text-catalog-differences):not(:empty) { margin-top: 12px; padding: 6px 0; border: 1px solid var(--surdet-border-default); border-radius: var(--surdet-radius-tight); background: var(--surdet-surface-panel); }
 #config-view .text-catalog :is(.text-catalog-entries, .text-catalog-bindings, .text-catalog-differences) > p { margin: 0; padding: 5px 12px; font-size: 12.5px; line-height: 1.6; overflow-wrap: anywhere; }
-#config-view .text-catalog :is(.text-catalog-entries, .text-catalog-bindings, .text-catalog-differences) > p + p { border-top: 1px solid var(--surdet-border-default); }
+#config-view .text-catalog :is(.text-catalog-entries, .text-catalog-bindings, .text-catalog-differences) > p + p { margin-top: 6px; }
 #config-view .text-catalog textarea { font: 12.5px/1.7 var(--surdet-font-mono); }
 #config-view .text-catalog .text-catalog-step > .config-field { margin-top: 16px; }

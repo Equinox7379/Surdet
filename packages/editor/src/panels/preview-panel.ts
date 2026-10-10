@@ -1107,7 +1107,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       : isolated !== undefined ? `${isolated.title}；未写回来源，智能体可读取本次实际播放记录。${isolated.target.kind === 'candidate' || isolated.target.kind === 'integration-result' ? '返修请切回原工作变更，完成后重新封装或组合。' : ''}`
       : formal !== null ? '已载入保存的内容；智能体可读取本次实际播放记录。'
       : reviewResultLabel !== null ? `${reviewResultLabel}；本页展示当前审阅结果及其实际轨迹。`
-      : '载入的是本次内存内容；运行结果以画面和实际轨迹为准。';
+      : '正在播放编辑中的内容，包括未保存的修改。';
     options.onSourceStateChange?.();
   };
 

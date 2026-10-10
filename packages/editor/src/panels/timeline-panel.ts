@@ -925,7 +925,7 @@ function renderWorkbench(parent: HTMLElement, definition: TimelineDefinition): v
   const toolbar = h('div', 'timeline-toolbar');
   const canvasTitle = h('div');
   canvasTitle.append(h('div', 'timeline-section-kicker', '演出轨道'));
-  canvasTitle.append(h('div', 'timeline-canvas-hint', '拖动片段调整开始时间 · 拖动右端调整时长'));
+  canvasTitle.title = '拖动片段调整开始时间，拖动右端调整时长';
   toolbar.appendChild(canvasTitle);
   const viewControls = h('div', 'timeline-view-controls');
   const fit = h('button', undefined, '适应窗口');

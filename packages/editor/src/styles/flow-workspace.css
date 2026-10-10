@@ -23,8 +23,7 @@
   align-items: center;
   gap: var(--surdet-space-16);
   min-width: 0;
-  padding: var(--surdet-space-12) var(--surdet-space-16);
-  border-bottom: 1px solid var(--surdet-border-default);
+  padding: var(--surdet-space-16) var(--surdet-space-24) var(--surdet-space-12);
   background-color: var(--surdet-surface-panel);
 }
 
@@ -34,9 +33,8 @@
 
 .flow-heading {
   margin: 0;
-  font-size: 1rem;
-  font-weight: 700;
-  line-height: 1.25;
+  font: 600 20px/1.3 var(--surdet-font-display);
+  letter-spacing: .03em;
 }
 
 .flow-current-scene {
@@ -122,9 +120,7 @@
   align-items: center;
   gap: var(--surdet-space-8);
   min-width: 0;
-  padding-block-start: var(--surdet-space-8);
-  border-top: 1px solid var(--surdet-border-default);
-  color: var(--surdet-text-secondary);
+  color: var(--surdet-text-muted);
   font-size: 0.75rem;
 }
 
@@ -237,9 +233,9 @@
 
 .flow-component-heading {
   fill: var(--surdet-text-primary);
-  font-family: var(--surdet-font-ui);
-  font-size: 13px;
-  font-weight: 700;
+  font-family: var(--surdet-font-display);
+  font-size: 14px;
+  font-weight: 600;
   letter-spacing: 0.04em;
   pointer-events: none;
 }
@@ -276,8 +272,10 @@
 
 .flow-scene-frame-title {
   fill: var(--surdet-text-primary);
+  font-family: var(--surdet-font-display);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .flow-scene-frame-status {

@@ -6,11 +6,11 @@ import { changedLines, textLines } from '../line-diff.js';
 
 export function renderContentHistoryPanel(container: HTMLElement, options: { assertReady: () => void; onRestored: () => void }): void {
   container.className = 'content-history';
-  container.append(h('h1', undefined, '内容历史'), h('p', 'dim', '为已保存的剧本、时间轴和配置记下一个版本，查看差异后恢复到草稿。素材文件不包含在这里。'));
+  container.append(h('h1', undefined, '内容历史'), h('p', 'dim content-history-scope', '剧本、时间轴和配置的已保存版本，不含素材文件。'));
   const client = editorHistoryClient(state.dirHandle);
   if (client === null) {
     const empty = h('section', 'content-history-empty');
-    empty.append(h('h2', undefined, '尚未连接内容历史'), h('p', undefined, '请从项目启动器打开并连接项目，使用内容历史。'));
+    empty.append(h('h2', undefined, '还没有连接内容历史'), h('p', undefined, '从项目启动器打开项目后，就能在这里记录和恢复版本。'));
     container.append(empty); return;
   }
   const root = state.dirHandle;

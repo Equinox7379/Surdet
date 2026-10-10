@@ -86,10 +86,10 @@ import { renderPreviewPanel, disposePreviewPanel, refreshPreviewSourceState } fr
 import { disposeScriptV4, revealScriptV4Line } from './v4/script-workbench.js';
 import { bindV4Navigation, navigateMode, navigateTimeline } from './v4/ui.js';
 import { openProjectSearch } from './shell/project-search.js';
-import { workbenchIcon } from './shell/icons.js';
 import { renderAssetInsights, disposeV4SurfaceViews } from './v4/surfaces.js';
 import { disposeUiDesigner } from './ui-designer.js';
 import { disposeUiPlayerPreview } from './ui-player-preview.js';
+import '@fontsource-variable/noto-serif-sc';
 import './styles/v4-workbench.css';
 import { clearTimelineViewState, clearTimelineViewStates, renderTimelinePanel, selectTimelineCue, bindTimelineHooks } from './panels/timeline-panel.js';
 import { renderStatsPanel, bindStatsHooks } from './panels/stats-panel.js';
@@ -2133,10 +2133,13 @@ function renderMainArea(): void {
       for (const [key, label] of [['Ctrl+K', '搜索场景、台词、角色和素材'], ['Ctrl+S', '保存全部修改'], ['Ctrl+Z / Ctrl+Y', '撤销与重做']]) {
         shortcuts.append(h('dt', undefined, key), h('dd', undefined, label));
       }
+      // The title is set vertically like a book spine; the seal under it is decoration only.
+      const seal = h('span', 'editor-welcome-seal', '稿');
+      seal.setAttribute('aria-hidden', 'true');
       introduction.append(
-        h('span', 'editor-welcome-kicker', 'Surdet 剧情创作'),
         h('h1', undefined, '开始创作'),
-        h('p', undefined, `${creation ? '新建或打开' : '打开'}一个游戏项目文件夹，继续编写剧情、安排演出；或打开外部 Agent 交付的审阅任务，比较候选后再决定是否采用。`),
+        seal,
+        h('p', undefined, creation ? '新建一个作品，或打开已有的项目文件夹。' : '打开一个游戏项目文件夹继续写作。'),
         shortcuts,
       );
       const actions = h('div', 'editor-welcome-actions');
@@ -2147,18 +2150,18 @@ function renderMainArea(): void {
       }
       if (creation) {
         const control = h('button'); control.type = 'button'; control.dataset['welcomeAction'] = 'new-project'; const label = h('span');
-        label.append(h('strong', undefined, '新建项目'), h('small', undefined, '从示例或空白模板开始，选好位置后在新窗口中打开'));
-        control.append(workbenchIcon('blank'), label);
+        label.append(h('strong', undefined, '新建项目'), h('small', undefined, '示例或空白模板'));
+        control.append(label);
         control.onclick = () => setProjectCreationOpen(true);
         actions.append(control);
       }
-      for (const [action, icon, title, description] of [
-        [state.fsSupported ? 'open-project' : 'load-demo', 'folder', state.fsSupported ? '打开项目文件夹' : '加载演示项目', state.fsSupported ? '选择包含 game.config.json 的游戏项目目录' : '当前浏览器不能直接读写本地目录，可先体验编辑与校验'],
-        ...(state.fsSupported ? [['open-review', 'open-review', '打开审阅任务', '比较候选、试玩结果，再决定是否写回项目']] : []),
+      for (const [action, title, description] of [
+        [state.fsSupported ? 'open-project' : 'load-demo', state.fsSupported ? '打开项目文件夹' : '加载演示项目', state.fsSupported ? '包含 game.config.json 的目录' : '当前浏览器不能直接读写本地目录，可先体验编辑与校验'],
+        ...(state.fsSupported ? [['open-review', '打开审阅任务', '比较 Agent 交付的候选']] : []),
       ]) {
         const control = h('button'); control.type = 'button'; const label = h('span');
         label.append(h('strong', undefined, title), h('small', undefined, description));
-        control.append(workbenchIcon(icon!), label);
+        control.append(label);
         control.onclick = () => document.querySelector<HTMLButtonElement>(`.editor-project-bar [data-action="${action}"]`)?.click();
         actions.append(control);
       }

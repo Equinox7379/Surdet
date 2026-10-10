@@ -1,4 +1,4 @@
-import { validateTimeline, type TimelineCue, type TimelineDefinition, type TimelineEasing, type TimelineTrack, type TimelineTrackKind, type TimelineValue } from '@surdet/core';
+import { resolveTimelineDefinition, validateTimeline, type TimelineCue, type TimelineDefinition, type TimelineEasing, type TimelineTrack, type TimelineTrackKind, type TimelineValue } from '@surdet/core';
 import type { TimelineAssetChoice } from './timeline-presentation.js';
 
 export const TIMELINE_TRACKS: readonly TimelineTrackKind[] = [
@@ -21,6 +21,30 @@ export const TIMELINE_EASINGS: readonly TimelineEasing[] = [
 
 export function cloneTimeline(definition: TimelineDefinition): TimelineDefinition {
   return JSON.parse(JSON.stringify(definition)) as TimelineDefinition;
+}
+
+/**
+ * The background a timeline puts on screen first. Cues are not sorted by time in the file, so this
+ * takes the earliest background set after resolving clips; when several land on the same moment the
+ * player applies them in track order, then cue order, and the last one applied stays visible.
+ */
+export function firstTimelineBackground(
+  definition: TimelineDefinition,
+  lookup: (id: string) => TimelineDefinition | undefined,
+): string | null {
+  let resolved: TimelineDefinition;
+  try { resolved = resolveTimelineDefinition(definition, lookup); } catch { return null; }
+  let first: { atMs: number; key: string } | null = null;
+  for (const track of resolved.tracks) {
+    if (track.kind !== 'background') continue;
+    for (const cue of track.cues) {
+      const key = cue['key'];
+      if (cue.action !== 'set' || typeof key !== 'string') continue;
+      // Iteration follows the player's order, so `<=` lets a later cue at the same moment win.
+      if (first === null || cue.atMs <= first.atMs) first = { atMs: cue.atMs, key };
+    }
+  }
+  return first?.key ?? null;
 }
 
 export function stringifyTimeline(definition: TimelineDefinition, eol: '\r\n' | '\n' = '\n'): string {

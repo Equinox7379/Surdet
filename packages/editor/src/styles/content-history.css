@@ -1,11 +1,12 @@
 .content-history { box-sizing: border-box; width: min(100%, 1280px); margin: 0 auto; padding: 28px 40px 64px; }
-.content-history h1 { margin: 0 0 12px; }
-.content-history-empty { max-width: 640px; margin-top: 32px; padding: 28px 32px; border: 1px solid var(--surdet-border-default); border-radius: var(--surdet-radius-control); background: var(--surdet-surface-panel); }
-.content-history-empty h2 { margin: 0 0 8px; font-size: 16px; }
-.content-history-empty p { margin: 0; color: var(--surdet-text-secondary); line-height: 1.65; }
-.content-history-toolbar { display: flex; align-items: center; gap: 12px; margin: 24px 0 12px; }
+.content-history h1 { margin: 0 0 10px; font: 600 32px/1.3 var(--surdet-font-display); letter-spacing: .03em; }
+.content-history-scope { margin: 0; color: var(--surdet-text-muted); }
+.content-history-empty { max-width: 560px; margin-top: 48px; }
+.content-history-empty h2 { margin: 0 0 10px; font: 600 20px/1.4 var(--surdet-font-display); letter-spacing: .03em; }
+.content-history-empty p { margin: 0; color: var(--surdet-text-secondary); line-height: 1.7; }
+.content-history-toolbar { display: flex; align-items: center; gap: 12px; margin: 32px 0 12px; }
 .content-history-toolbar input { flex: 1; max-width: 480px; font: inherit; padding: 8px 10px; color: var(--surdet-text-primary); background: var(--surdet-surface-panel); border: 1px solid var(--surdet-border-default); border-radius: 3px; }
-.content-history-workspace { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 32px; margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--surdet-border-default); }
+.content-history-workspace { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 40px; margin-top: 32px; }
 .content-history-versions { display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
 .content-history-versions button { text-align: left; padding: 10px 12px; border: 1px solid transparent; border-radius: var(--surdet-radius-tight); background: transparent; }
 .content-history-versions button:hover { background: var(--surdet-surface-hover); }
@@ -13,7 +14,7 @@
 .content-history-versions button[aria-current="true"] strong { color: var(--surdet-action-primary); }
 .content-history-versions span { display: block; font-size: 12px; margin-top: 4px; font-variant-numeric: tabular-nums; }
 .content-history-detail { min-width: 0; }
-.content-history-detail h2 { margin: 0; font-size: 18px; }
+.content-history-detail h2 { margin: 0; font: 600 22px/1.4 var(--surdet-font-display); letter-spacing: .02em; }
 .content-history-meta { margin: 4px 0 16px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .content-history-files { display: flex; flex-direction: column; align-items: stretch; gap: 2px; margin-bottom: 20px; }
 .content-history-file { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 12px; text-align: left; border: 1px solid transparent; background: transparent; }
