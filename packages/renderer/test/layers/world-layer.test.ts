@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { Container, Sprite, Texture, TextureSource } from 'pixi.js';
+import { ColorMatrixFilter, Container, Sprite, Texture, TextureSource } from 'pixi.js';
 import { isJsonSafeValue } from '@surdet/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
@@ -45,6 +45,27 @@ function makeRuntime(stageGeometry?: ReturnType<typeof createStageGeometryPolicy
   );
   return { root, layer, lifecycle, assets, requests };
 }
+
+it('post-process keeps neutral RGB unchanged and composes saturation, brightness and contrast', () => {
+  vi.stubGlobal('document', { createElement: () => ({ getContext: () => null }) });
+  const runtime = makeRuntime();
+  const apply = (rgb: number[]): number[] => {
+    const matrix = (runtime.layer.worldContainer.filters![0] as ColorMatrixFilter).matrix;
+    return [0, 1, 2].map(row => matrix[row * 5]! * rgb[0]! + matrix[row * 5 + 1]! * rgb[1]! + matrix[row * 5 + 2]! * rgb[2]! + matrix[row * 5 + 4]!);
+  };
+  try {
+    const rgb = [.7, .2, .1];
+    runtime.layer.setPostProcess({ enabled: true, saturation: 1, brightness: 1, contrast: 1 });
+    expect(apply(rgb)).toEqual(rgb);
+    runtime.layer.setPostProcess({ saturation: 0 }); const gray = apply(rgb);
+    expect(gray[0]).toBeCloseTo(gray[1]!); expect(gray[1]).toBeCloseTo(gray[2]!);
+    runtime.layer.setPostProcess({ brightness: .5 }); const dim = apply(rgb);
+    dim.forEach((channel, i) => expect(channel).toBeCloseTo(gray[i]! * .5));
+    runtime.layer.setPostProcess({ brightness: 1, saturation: 1, contrast: 0 });
+    apply(rgb).forEach(channel => expect(channel).toBeCloseTo(.5));
+    runtime.layer.setPostProcess({ enabled: false }); expect(runtime.layer.worldContainer.filters).toBeNull();
+  } finally { runtime.layer.dispose(); runtime.assets.dispose(); runtime.lifecycle.dispose(); runtime.root.destroy({ children: true }); }
+});
 
 async function registerWorldAssets(assets: RenderAssetRegistry): Promise<void> {
   await assets.registerBackground('hall', Texture.EMPTY);
