@@ -267,7 +267,14 @@ export function createPresentationPorts(
   let theme: RendererTheme = createRendererTheme();
   const preferenceCommands: RendererCommands['preferences'] = {
     setQuality: (quality) => { if (options.worldLayer) options.worldLayer.setQuality(quality); else stage.setQuality?.(quality); },
-    setPresentationPreferences: (preferences) => { if (options.worldLayer) options.worldLayer.setPresentationPreferences(preferences); else stage.setPresentationPreferences?.(preferences); },
+    setPresentationPreferences: (preferences) => {
+      // The composition root also projects dialogue preferences, not only World.
+      if (stage.setPresentationPreferences) stage.setPresentationPreferences(preferences);
+      else options.worldLayer?.setPresentationPreferences(preferences);
+    },
+    setReadingPreferences: (preferences) => {
+      stage.setReadingPreferences?.(preferences);
+    },
     setPostProcess: (settings) => { if (options.worldLayer) options.worldLayer.setPostProcess(settings); else stage.setPostProcess?.(settings); },
     setTheme: (overrides) => {
       theme = createRendererTheme(overrides);

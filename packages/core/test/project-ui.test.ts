@@ -5,6 +5,16 @@ const text = { id: 'value', type: 'text', frame: { x: 640, y: 360, width: 240, h
 const config = { variables: { trust: { type: 'number', initial: 3 }, readonlyFlag: { type: 'flag', initial: false, readonly: true } } };
 
 describe('declarative project UI', () => {
+  it('accepts registered reading controls but refuses toggles/sliders with the wrong value type', () => {
+    const frame = { x: 0, y: 0, width: 300, height: 40 };
+    const control = (name: string, type: string) => readProjectUi({ ui: { version: 1, pages: { settings: {
+      id: 'control', type, frame, binding: { kind: 'setting', name },
+    } } } });
+    for (const name of ['textScale', 'dialogueOpacity']) expect(control(name, 'slider')).not.toBeNull();
+    for (const name of ['readAloud', 'reducedMotion']) expect(control(name, 'toggle')).not.toBeNull();
+    expect(() => control('readAloud', 'slider')).toThrow('数值');
+    expect(() => control('textScale', 'toggle')).toThrow('布尔');
+  });
   it('reads conditional HUD, readonly progress and array displays from declared variables', () => {
     const frame = { x: 0, y: 0, width: 200, height: 40 };
     const variables = { ...config.variables, energy: { type: 'number', initial: 5, min: 0, max: 10, readonly: true }, panelOpen: { type: 'flag', initial: false }, bag: { type: 'string[]', initial: ['车票'] } };

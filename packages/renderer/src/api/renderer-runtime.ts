@@ -57,6 +57,7 @@ export interface PresentationController extends FrameLoopTarget {
   backlogSearchQuery(): string;
   setTextSpeed(charsPerSecond: number): void;
   setAutoWait(baseDelayMs: number, perCharMs: number): void;
+  setReadAloud(enabled: boolean, locale?: string, volume?: number): void;
   dispose(): void;
 }
 
@@ -82,6 +83,7 @@ export interface RendererRuntimeOptions {
   onSelect?: (index: number) => void;
   onWaitEnd?: () => void;
   typewriter?: Typewriter;
+  narrator?: Pick<import('../system-narrator.js').SystemNarrator, 'speak' | 'stop' | 'busy' | 'onError'>;
   backlog?: Backlog;
   pluginHost?: RendererPluginHost;
   onBacklogClose?: () => void;

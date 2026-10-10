@@ -124,6 +124,24 @@ function controllerFor(
 }
 
 describe('PresentationController', () => {
+  it('narrates only unvoiced visible text, waits in auto mode and cancels on menu, skip, reset and dispose', () => {
+    const stage = stageHarness(), ports = createPresentationPorts(stage), advance = vi.fn();
+    let busy = false;
+    const narrator = { get busy() { return busy; }, speak: vi.fn(() => { busy = true; }), stop: vi.fn(() => { busy = false; }), onError: null };
+    const controller = new PresentationController(ports.commands, ports.queries, NULL_AUDIO, { commands: ports.commands, queries: ports.queries, narrator, onAdvance: advance });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus); controller.setReadAloud(true, 'zh-CN', .5);
+    bus.emit('text', { speaker: '凛', value: '<b>《书》</b><w>继续' });
+    expect(narrator.speak).toHaveBeenLastCalledWith('《书》继续', 'zh-CN', .5);
+    controller.advance(); controller.advance(); controller.advance(); controller.toggleAuto(); controller.update(1);
+    expect(advance).not.toHaveBeenCalled();
+    busy = false; controller.update(1); expect(advance).toHaveBeenCalledOnce();
+    bus.emit('text', { speaker: null, value: '有配音', voice: 'voice-key' }); expect(narrator.speak).toHaveBeenCalledOnce();
+    bus.emit('text', { speaker: null, value: '打开菜单' }); expect(busy).toBe(true);
+    controller.setPresentationPaused(true); expect(busy).toBe(false); controller.setPresentationPaused(false);
+    bus.emit('text', { speaker: null, value: '快进' }); controller.toggleSkipAll(); expect(busy).toBe(false);
+    controller.toggleSkipAll(); bus.emit('text', { speaker: null, value: '读档' }); bus.emit('stateReset', { reason: 'load' }); expect(busy).toBe(false);
+    bus.emit('text', { speaker: null, value: '退出' }); controller.dispose(); expect(busy).toBe(false);
+  });
   it('freezes an inline pause with the menu, consumes clicks within the same line, and never stops its voice at a click-wait', () => {
     const stage = stageHarness(), ports = createPresentationPorts(stage), advance = vi.fn();
     const projection = vi.spyOn(stage, 'showText');

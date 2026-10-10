@@ -158,6 +158,37 @@ function boundsOverlap(
 }
 
 describe('DialogueLayer visual layout contracts', () => {
+  it('scales dialogue/ruby and choices relative to the work theme without compounding or changing UI text size', () => {
+    const runtime = makeRuntime(), texts = (node: Container): PText[] => [...(node instanceof PText ? [node] : []), ...node.children.flatMap(texts)];
+    try {
+      runtime.layer.mountTextDisplays(); runtime.layer.setTheme(createRendererTheme({ typography: { bodySize: 30 } }));
+      runtime.layer.showText('名字', '<size=2>正文</size><ruby=よみ>字</ruby>');
+      runtime.layer.showChoices([{ index: 0, label: '<b>选项</b>' }]);
+      runtime.layer.setReadingPreferences({ textScale: 1.4, dialogueOpacity: 0 });
+      const visible = texts(runtime.root).filter(text => text.visible);
+      expect(visible.find(text => text.text === '正文')?.style.fontSize).toBe(84);
+      expect(visible.find(text => text.text === '选项')?.style.fontSize).toBe(42);
+      expect(visible.find(text => text.text === '名字')?.style.fontSize).toBe(DEFAULT_RENDERER_THEME.typography.uiSize);
+      runtime.layer.setReadingPreferences({ textScale: 1.4 });
+      expect(texts(runtime.root).find(text => text.visible && text.text === '正文')?.style.fontSize).toBe(84);
+      runtime.layer.setReadingPreferences({ textScale: 1 });
+      expect(texts(runtime.root).find(text => text.visible && text.text === '正文')?.style.fontSize).toBe(60);
+    } finally { disposeRuntime(runtime); }
+  });
+  it('reduced motion makes choices/tips immediately visible and freezes the continue indicator', () => {
+    const runtime = makeRuntime();
+    try {
+      runtime.layer.setPresentationPreferences({ reducedMotion: true });
+      runtime.layer.showChoices([{ index: 0, label: '继续' }]);
+      expect(runtime.layer.debugSnapshot().visibleChoiceCount).toBe(1);
+      runtime.layer.setAwaiting(true); runtime.layer.hideChoices();
+      expect(runtime.layer.needsUpdate()).toBe(false);
+      runtime.layer.showBanner('提示', 'tip');
+      const texts = (node: Container): PText[] => [...(node instanceof PText ? [node] : []), ...node.children.flatMap(texts)];
+      const tip = texts(runtime.root).find(text => text.text === '提示')!;
+      expect(tip.parent!.alpha).toBe(1); runtime.layer.update(1500); expect(tip.parent!.alpha).toBe(1);
+    } finally { disposeRuntime(runtime); }
+  });
   it('renders style runs and explicit ruby, keeps reveal positions fixed, and exposes plain dialogue/choice labels', () => {
     const runtime = makeRuntime();
     const texts = (node: Container): PText[] => [...(node instanceof PText ? [node] : []), ...node.children.flatMap(texts)];

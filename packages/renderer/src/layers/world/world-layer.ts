@@ -411,6 +411,7 @@ export class WorldLayer implements WorldProjectionPort {
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void {
     this.#presentation = normalizePresentationPreferences({ ...this.#presentation, ...preferences });
     if (!this.#presentation.particleEnabled) this.stopParticles();
+    if (this.#presentation.reducedMotion) this.#finishVisualMotions();
     for (const player of this.#portraitPlayers.values()) player.project(!this.#presentation.reducedMotion, this.#portraitSkipping);
     this.#syncEffectRegistration();
     this.#requestFrame();
@@ -824,20 +825,22 @@ export class WorldLayer implements WorldProjectionPort {
     if (!Number.isFinite(from) || !Number.isFinite(to) || !Number.isFinite(durationMs) || durationMs < 0) {
       throw new Error('Invalid screen fade values or timing');
     }
-    this.#stageMotions.start('screen:fade', { opacity: Math.max(0, Math.min(1, from)) });
-    this.#stageMotions.start('screen:fade', { opacity: Math.max(0, Math.min(1, to)) }, durationMs, 'inOutQuad');
+    if (!this.#presentation.reducedMotion) this.#stageMotions.start('screen:fade', { opacity: Math.max(0, Math.min(1, from)) });
+    this.#stageMotions.start('screen:fade', { opacity: Math.max(0, Math.min(1, to)) }, this.#presentation.reducedMotion ? 0 : durationMs, 'inOutQuad');
     this.#ensureEffectRegistration(); this.#requestFrame();
   }
 
   isFadeActive(): boolean { return this.#stageMotions.isActive('screen:fade'); }
 
   shake(durationMs = 400, strength = 8, direction: ShakeDirection = 'both'): void {
+    if (this.#presentation.reducedMotion) return;
     this.#worldEffects.shake(presentationDuration(durationMs, this.#presentation), strength, direction);
     this.#ensureEffectRegistration();
   }
 
   transition(name: TransitionName | string, durationMs = 600): boolean {
     const started = this.#worldEffects.transition(name, presentationDuration(durationMs, this.#presentation));
+    if (this.#presentation.reducedMotion && started) this.#worldEffects.update(1);
     if (started) {
       this.#ensureEffectRegistration();
       this.#requestFrame();
@@ -846,6 +849,7 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   flash(durationMs = 300): void {
+    if (this.#presentation.reducedMotion) { this.#flashRemain = 0; this.flashOverlay.alpha = 0; return; }
     this.#flashDur = presentationDuration(durationMs, this.#presentation);
     this.#flashRemain = this.#flashDur;
     this.flashOverlay.alpha = 1;
@@ -868,6 +872,7 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   wipe(durationMs = 600): void {
+    if (this.#presentation.reducedMotion) { this.#wipeRemain = 0; this.wipeOverlay.visible = false; return; }
     this.#wipeDur = presentationDuration(durationMs, this.#presentation);
     this.#wipeRemain = this.#wipeDur;
     this.wipeOverlay.visible = true;
@@ -1038,7 +1043,10 @@ export class WorldLayer implements WorldProjectionPort {
 
   applyTimelineFrame(event: TimelineFrameEvent): void {
     if (this.#disposed) return;
+    // Keep the timeline clock and event ownership intact; only visual interpolation completes immediately.
+    if (this.#presentation.reducedMotion) event = { ...event, progress: 1 };
     if (event.runId !== undefined && this.#applyOwnedTimelineFrame(event)) {
+      if (this.#presentation.reducedMotion) this.#stageMotions.settleTimelines();
       this.#syncEffectRegistration(); this.#requestFrame(); return;
     }
     const cue = event.cue;
@@ -1354,6 +1362,15 @@ export class WorldLayer implements WorldProjectionPort {
     }
   }
 
+  #finishVisualMotions(): void {
+    this.#stageMotions.skip(); this.#stageMotions.settleTimelines(); this.#worldEffects.reset();
+    this.#flashRemain = 0; this.flashOverlay.alpha = 0;
+    if (this.#zoomRemain > 0) { this.worldContainer.scale.set(this.#zoomTo); this.#zoomRemain = 0; this.#setWorldBasePosition(); }
+    if (this.#backgroundTransition) { this.#backgroundTransition.neu.alpha = 1; this.#stopBackgroundTransition(); }
+    // Reduced-motion particles stay frozen; complete only move/portrait/wipe interpolators.
+    this.#updateTransient(Number.MAX_SAFE_INTEGER);
+  }
+
   #updateTransient(deltaMs: number): void {
     if (this.#moveTweens.length > 0) {
       for (let index = this.#moveTweens.length - 1; index >= 0; index--) {
@@ -1370,7 +1387,7 @@ export class WorldLayer implements WorldProjectionPort {
         }
       }
     }
-    if (this.#particles.length > 0) {
+    if (this.#particles.length > 0 && !this.#presentation.reducedMotion) {
       const frames = deltaMs / 16.667;
       for (const particle of this.#particles) {
         particle.phase += 0.02 * frames;
@@ -1442,7 +1459,7 @@ export class WorldLayer implements WorldProjectionPort {
       || this.#zoomRemain > 0
       || this.#backgroundTransition !== null
       || this.#moveTweens.length > 0
-      || this.#particles.length > 0
+      || this.#particles.length > 0 && !this.#presentation.reducedMotion
       || this.#portraitTweens.length > 0
       || this.#wipeRemain > 0;
   }
@@ -1714,6 +1731,7 @@ export class WorldLayer implements WorldProjectionPort {
     if (snapshot.particleKind !== null) this.startParticles(snapshot.particleKind);
     if (snapshot.motions) this.#stageMotions.restore(snapshot.motions);
     this.#objectSources.clear(); for (const [key, source] of snapshot.objectSources ?? []) this.#objectSources.set(key, source);
+    if (this.#presentation.reducedMotion) this.#finishVisualMotions();
     this.#syncEffectRegistration();
   }
 }

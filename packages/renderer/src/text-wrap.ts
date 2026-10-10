@@ -135,10 +135,18 @@ export function wrapCjkUnits<T>(units: readonly T[], maxWidth: number, text: (un
       let end = i;
       while (end < paragraph.length && measure(paragraph.slice(i, end + 1)) <= limit) end++;
       if (end <= i) end = i + 1;
+      const fitted = end;
       if (end < paragraph.length) {
         if (end > i + 1 && NO_LINE_END.has(words[end - 1]!.at(-1)!)) end--;
         else while (end < paragraph.length && (NO_LINE_START.has(words[end]![0]!)
           || UNBREAKABLE_RUN.has(words[end]![0]!) && words[end]![0] === words[end - 1]!.at(-1))) end++;
+      }
+      // Styled text is clipped to its reading viewport. Move the preceding character
+      // with closing punctuation instead of hanging a large glyph outside that mask.
+      if (end > fitted && measure(paragraph.slice(i, end)) > limit) {
+        end = fitted;
+        while (end > i + 1 && (NO_LINE_START.has(words[end]![0]!) || NO_LINE_END.has(words[end - 1]!.at(-1)!)
+          || UNBREAKABLE_RUN.has(words[end]![0]!) && words[end]![0] === words[end - 1]!.at(-1))) end--;
       }
       end = wordBoundary(words, i, end);
       lines.push(paragraph.slice(i, end)); i = end;

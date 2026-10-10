@@ -45,8 +45,9 @@ import {
   Backlog,
   Typewriter,
   SettingsStore,
+  createSettingsRows,
+  applyReadingSettings,
   createSettingsUpdateHandler,
-  SETTING_STEPS,
   stepSetting,
   SKIP_STRATEGY_ALL,
   buildGalleryViews,
@@ -255,7 +256,7 @@ async function main(): Promise<void> {
   } | null = null;
 
   const browserPrefix = gameStoragePrefix(gamePackage.name);
-  const settings = new SettingsStore(createSettingsStorage('zero', browserPrefix));
+  const settings = new SettingsStore(createSettingsStorage('zero', browserPrefix), { reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches });
   await settings.load();
 
   // Backlog + Renderer v2 Runtime（设置投影：文本速度/自动停留/音量）
@@ -324,6 +325,7 @@ async function main(): Promise<void> {
     },
   });
   commands.preferences.setTheme(createRendererTheme());
+  applyReadingSettings(settings.settings, commands, renderer, 'zh-CN');
   dialogue.setSpeakerProfiles(speakerProfiles);
   settings.apply(typewriter, audio);
   bus.on('video', () => { uiSession.setVideoActive(true); });
@@ -1012,7 +1014,7 @@ async function main(): Promise<void> {
   function settingsView() {
     const s = settings.settings;
     return {
-      rows: SETTING_STEPS.map((d) => ({ id: d.key, label: d.label, display: d.format(s[d.key]) })),
+      rows: createSettingsRows(s),
       onChange: onSettingsChange,
       onClose: closeSettings,
     };
@@ -1427,6 +1429,7 @@ async function main(): Promise<void> {
     apply: confirmed => {
       settings.apply(typewriter, audio);
       renderer.setAutoWait(confirmed.autoBaseDelayMs, confirmed.autoPerCharMs);
+      applyReadingSettings(confirmed, commands, renderer, 'zh-CN');
       refreshSettingsPanel();
     },
     onError: error => dialogue.showBanner(`设置保存失败，已保留原设置：${error instanceof Error ? error.message : String(error)}`, 'tip'),
@@ -1434,6 +1437,7 @@ async function main(): Promise<void> {
 
   function onSettingsChange(id: string, dir: -1 | 1): void {
     playerShell!.commands.consumePointer();
+    if (id === 'reducedMotion' || id === 'readAloud') { void updateSettings(confirmed => ({ [id]: !confirmed[id] })); return; }
     void updateSettings(confirmed => stepSetting(confirmed, id as NumericSettingKey, dir));
   }
 
