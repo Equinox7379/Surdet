@@ -8,7 +8,7 @@ import { portraitDisplayName, projectPortraitAssets } from '../assets.js';
 import { disposePreviewPanel, renderPreviewPanel, refreshPreviewSourceState } from '../panels/preview-panel.js';
 import { allowedToEdit, button, disclosure, field, ImageScope, navigateMode } from './ui.js';
 import { renderTimelineSummary } from './timeline-summary.js';
-import { parseTimelineText } from '../timeline-model.js';
+import { firstTimelineBackground, parseTimelineText } from '../timeline-model.js';
 import { toggleAuthoringOutline } from '../shell/authoring-workbench.js';
 import { editSceneLabel } from '../label-editing.js';
 import { instructionLabel, instructionArgumentSummary } from '../script-presentation.js';
@@ -51,19 +51,24 @@ export function installScriptV4(editor: HTMLElement, rerender: () => void): void
   active.decorate();
 }
 
-/** The first background a scene shows: its first @bg, or the first one a timeline it calls sets. */
+function projectTimeline(id: string) {
+  const entry = state.timelines.find((timeline) => timeline.id === id);
+  return entry ? parseTimelineText(entry.text).definition ?? undefined : undefined;
+}
+
+/**
+ * The background for the scene heading, which is decoration only: the first `@bg` in source order,
+ * or the background shown first by the first timeline that sets one. It does not replay the stage,
+ * so a non-blocking timeline running alongside a later `@bg` is not interleaved.
+ */
 function firstSceneBackground(lines: readonly LineModel[]): string {
   for (const line of lines) {
     if (line.kind !== 'instr' || (line.name !== 'bg' && line.name !== 'timeline')) continue;
     const argument = decodeInstructionArgument(splitInstr(line.raw).args[0] ?? '');
     if (line.name === 'bg') return argument;
-    const entry = state.timelines.find((timeline) => timeline.id === argument);
-    const definition = entry ? parseTimelineText(entry.text).definition : null;
-    for (const track of definition?.tracks ?? []) {
-      if (track.kind !== 'background') continue;
-      const key = track.cues.find((cue) => cue.action === 'set' && typeof cue['key'] === 'string')?.['key'];
-      if (typeof key === 'string') return key;
-    }
+    const definition = projectTimeline(argument);
+    const key = definition ? firstTimelineBackground(definition, projectTimeline) : null;
+    if (key !== null) return key;
   }
   return '';
 }
