@@ -26,6 +26,7 @@ export class Typewriter {
   get isPaused(): boolean { return this.#waiting || this.#pauseMs > 0; }
   get waitingLength(): number { return this.#waitingLength; }
   get visibleLength(): number { return textGraphemeCount(this.#document.plainText); }
+  get noWait(): boolean { return this.#document.controls.some(control => control.kind === 'no-wait'); }
 
   set text(value: string) {
     this.#document = parseInlineText(value); this.#shown = 0;
@@ -59,6 +60,7 @@ export class Typewriter {
       if (control?.at === this.#shown) {
         this.#control++;
         if (control.kind === 'pause') { this.#pauseMs = control.durationMs!; continue; }
+        if (control.kind === 'no-wait') continue;
         this.#wait(); return;
       }
       if (this.#shown >= this.#document.units.length) { this.#complete(); return; }

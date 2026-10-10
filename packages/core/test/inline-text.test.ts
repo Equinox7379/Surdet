@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { containsInlineTag, escapeInlineText, inlinePlainText, inlineTextLength, interpolateInlineText, parseInlineText } from '../src/inline-text.js';
+import { containsInlineTag, escapeInlineText, inlinePlainText, inlineStaticText, inlineTextLength, interpolateInlineText, parseInlineText } from '../src/inline-text.js';
 
 describe('固定行内标签合同', () => {
+  it('parses emphasis/effects and final no-wait while removing motion/timing from static history', () => {
+    const source = '<em><wave>甲</wave></em><speed=2><b>乙</b></speed><w=5><nw>';
+    const doc = parseInlineText(source); expect(doc.issues).toEqual([]);
+    expect(doc.units[0]!.style).toEqual({ emphasis: true, effect: 'wave' });
+    expect(doc.controls.at(-1)!.kind).toBe('no-wait');
+    expect(inlineStaticText(source)).toBe('<em>甲</em><b>乙</b>');
+    expect(parseInlineText('甲<nw>乙').issues.some(issue => issue.code === 'M006')).toBe(true);
+    expect(parseInlineText('<b>甲<nw></b>').issues.some(issue => issue.code === 'M006')).toBe(true);
+    for (const source of ['<shake>甲</shake>', '甲<nw>']) expect(parseInlineText(source, 'choice').issues.some(issue => issue.code === 'M005')).toBe(true);
+  });
   it('嵌套样式、原文范围和节奏只作用于可见文字', () => {
     const doc = parseInlineText('甲<b>乙<size=2>丙</size></b><w=500><w><speed=0.5>丁</speed>');
     expect(doc.issues).toEqual([]);

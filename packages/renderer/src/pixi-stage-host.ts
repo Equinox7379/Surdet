@@ -647,14 +647,15 @@ export class RendererStageHost {
   }
 
   /** NVL 页条目列表（只读引用；测试断言与宿主持久化巡检用） */
-  get nvlLines(): readonly PText[] {
+  get nvlLines(): DialogueLayer['nvlLines'] {
     return this.#dialogue.nvlLines;
   }
 
   /** NVL 页追加一条（wrapCjk 预断行；按折行数累计排布；超出屏幕底边淘汰最旧） */
-  appendNvlText(speaker: string | null, text: string): void {
-    this.#dialogue.appendNvlText(speaker, text);
+  appendNvlText(speaker: string | null, text: string, markup?: string): void {
+    this.#dialogue.appendNvlText(speaker, text, markup);
   }
+  setTextSkipping(skipping: boolean): void { this.#dialogue.setTextSkipping(skipping); }
 
   /** NVL 页清空（@nvl clear） */
   clearNvlText(): void {

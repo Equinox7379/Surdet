@@ -199,7 +199,8 @@ describe('Pass 8 active dialogue presentation', () => {
       r.layer.setNvlMode(true);
       r.layer.appendNvlText('旁白', '真实的全屏文字，继续使用原 NVL 模式。');
       const nvl = r.layer.nvlLines[0]!;
-      expect(nvl.style.fontSize).toBe(32);
+      expect(nvl).toBeInstanceOf(PText);
+      expect((nvl as PText).style.fontSize).toBe(32);
       expect(nvl.x).toBeCloseTo(1280 * 0.16, 0);
       expect(r.layer.nvlPresentationEntries).toEqual([{ speaker: '旁白', text: '真实的全屏文字，继续使用原 NVL 模式。' }]);
       r.layer.setNvlMode(false);

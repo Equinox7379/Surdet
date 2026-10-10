@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Assets, Sprite, Text as PText, TextStyle, Texture } from 'pixi.js';
 import { PixiStage } from '../../src/pixi-stage.js';
+import { DialogueLayer } from '../../src/layers/dialogue/dialogue-layer.js';
 
 const defaultFontFamily = TextStyle.defaultTextStyle.fontFamily;
 
@@ -197,6 +198,10 @@ describe('PixiStage 素材注入', () => {
     const before = destroySpy.mock.calls.length;
 
     stage.showText('凛', '<ruby=こう>甲</ruby>');
+    stage.showText('凛', '<ruby=こう>甲</ruby>', 0);
+    expect((stage.dialogueLayer as DialogueLayer).debugSnapshot().dialogText).toBe('');
+    stage.showText('凛', '<ruby=こう>甲</ruby>', 1);
+    expect((stage.dialogueLayer as DialogueLayer).debugSnapshot().dialogText).toBe('甲');
     const afterFirst = destroySpy.mock.calls.length;
     stage.showText('凛', '<ruby=こう>甲</ruby><ruby=おつ>乙</ruby>');
     const afterLonger = destroySpy.mock.calls.length;

@@ -13,7 +13,7 @@ export function layoutInlineText(document: InlineTextDocument, width: number, bo
     const out: InlineUnit[][] = [];
     for (const unit of units) {
       const previous = out.at(-1);
-      if (!unit.ruby && previous && !previous[0]!.ruby && previous[0]!.style === unit.style) previous.push(unit);
+      if (!unit.ruby && !unit.style.emphasis && !unit.style.effect && previous && !previous[0]!.ruby && previous[0]!.style === unit.style) previous.push(unit);
       else out.push([unit]);
     }
     return out;
@@ -28,7 +28,7 @@ export function layoutInlineText(document: InlineTextDocument, width: number, bo
   const runs: InlineLayoutRun[] = [];
   for (const line of lines) {
     const size = Math.max(bodySize, ...line.map(unit => measureHeight(unit.style, false)));
-    const rubyInset = Math.max(0, ...line.filter(unit => unit.ruby).map(unit => measureHeight(unit.style, true) + 2));
+    const rubyInset = Math.max(0, ...line.map(unit => (unit.ruby ? measureHeight(unit.style, true) + 2 : 0) + (unit.style.emphasis ? measureHeight(unit.style, true) + 2 : 0)));
     let x = 0;
     for (const group of groups(line)) {
       const unit = group[0]!, runWidth = groupWidth(group);

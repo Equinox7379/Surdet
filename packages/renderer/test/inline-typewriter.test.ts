@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { Typewriter } from '../src/text-buffer.js';
 
 describe('行内标签的帧时间打字进度', () => {
+  it('no-wait is a final control, not a click wait or visible glyph', () => {
+    const tw = new Typewriter({ charsPerSecond: 10 }); tw.text = '<em>甲</em><nw>';
+    tw.update(100); expect(tw.isDone).toBe(true); expect(tw.isWaiting).toBe(false); expect(tw.noWait).toBe(true); expect(tw.text).toBe('甲');
+  });
   it('按字素簇、样式速度与定时停顿推进，标签不占时间', () => {
     const tw = new Typewriter({ charsPerSecond: 10 });
     tw.text = '<b>👩‍🚀</b><w=500><speed=2>甲乙</speed>';

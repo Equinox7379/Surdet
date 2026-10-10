@@ -74,7 +74,7 @@
 | `@tip/@note` | `@tip 提示：右键打开菜单` | ✅ | 右上角小字提示横幅（约 1.8 秒淡出） |
 | `@nvl` | `@nvl` / `@nvl off` / `@nvl clear` | ✅ | NVL 全屏小说模式：开启后文本整行追加到全屏文本页（不走打字机）；`off` 回到 ADV 对话框；`clear` 清空页面 |
 | ruby 注音（文本标记） | `凛：这个<ruby=せかい>世界</ruby>…` | ✅ | 只识别显式标签；裸《》为普通书名号，不兼容旧隐式注音。主文字不嵌套标签、不跨行 |
-| 行内样式与节奏 | `<b>重点</b><w=500><w><speed=0.5>慢慢说</speed>` | ✅ | 固定标签b/i/color/size/speed/w/ruby，不是HTML；ADV支持样式与节奏，选项仅样式，NVL/文字记录本批为纯文字。见[行内文字合同](inline-text-contract.md) |
+| 行内样式与节奏 | `<em>重点</em><wave>轻声</wave><w=500><w><speed=0.5>慢慢说</speed><nw>` | ✅ | 固定标签b/i/color/size/speed/w/ruby/em/shake/wave/nw，不是HTML；nw仅句末，选项不支持节奏/动画，NVL/文字记录保留静态样式。见[行内文字合同](inline-text-contract.md) |
 | `@particle` | `@particle sakura` | ✅ | 粒子特效层（预设：snow/rain/sakura/sparkle/fireflies）；`@particle off` 清除 |
 | `@mov` | `@mov lynn left` / `@mov lynn 400 600` | ✅ | 立绘位置平移（角色 位置 [时长毫秒]；位置 = left/center/right 或裸数字 X 坐标；缺省 400ms） |
 | `@tint` | `@tint #ff6600 0.3` / `@tint #ff6600 0.3 800` | ✅ | 全屏调色叠加（颜色 hex + 透明度 [过渡毫秒]；`@tint off` 清除） |

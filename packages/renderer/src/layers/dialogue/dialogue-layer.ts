@@ -9,7 +9,7 @@ import {
   type TextStyleOptions,
 } from 'pixi.js';
 import type { BacklogEntry } from '../../backlog.js';
-import { parseInlineText, inlinePlainText, type InlineTextDocument } from '@surdet/core';
+import { parseInlineText, inlinePlainText, escapeInlineText, type InlineTextDocument } from '@surdet/core';
 import { InlineTextView } from './inline-text-view.js';
 import type { ReadingDiagnostic } from '../../reading-diagnostics.js';
 import { DEFAULT_READING_PREFERENCES, normalizeReadingPreferences, type ReadingPreferences } from '../../presentation.js';
@@ -206,7 +206,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   #nvlLayer: Container;
   #nvlTextLayer: Container;
   #nvlBackground: Graphics;
-  #nvlLines: PText[] = [];
+  #nvlLines: (PText | InlineTextView)[] = [];
   #nvlLineCounts: number[] = [];
   #nvlEntries: NvlPresentationEntry[] = [];
   #nvlActive = false;
@@ -232,6 +232,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   #speakerAvatar: Sprite | null = null;
   #interfaceHidden = false;
   #preferences: PresentationPreferences = { ...DEFAULT_PRESENTATION_PREFERENCES };
+  #textSkipping = false;
   #theme: RendererTheme = DEFAULT_RENDERER_THEME;
   #workTheme: RendererTheme = DEFAULT_RENDERER_THEME;
   #reading: ReadingPreferences = { ...DEFAULT_READING_PREFERENCES };
@@ -389,7 +390,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#onPointerConsumed = handler;
   }
 
-  get nvlLines(): readonly PText[] {
+  get nvlLines(): readonly (PText | InlineTextView)[] {
     return this.#nvlLines;
   }
 
@@ -587,6 +588,7 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void {
     this.#preferences = { ...this.#preferences, ...preferences };
+    this.#dialogRubyLayer.setAnimationEnabled(!this.#textSkipping && !this.#preferences.reducedMotion);
     if (this.#preferences.reducedMotion) {
       this.#choiceFadeRemain = 0;
       for (const view of this.#choiceViews) view.holder.alpha = 1;
@@ -594,6 +596,12 @@ export class DialogueLayer implements DialogueProjectionPort {
       this.#continueIndicator.y = this.#continueIndicatorAnchorY; this.#continueIndicator.alpha = 1;
       if (this.#bannerRemain > 0) this.#bannerLayer.alpha = 1;
     }
+    this.#requestFrame();
+  }
+
+  setTextSkipping(skipping: boolean): void {
+    this.#textSkipping = skipping;
+    this.#dialogRubyLayer.setAnimationEnabled(!skipping && !this.#preferences.reducedMotion);
     this.#requestFrame();
   }
 
@@ -666,10 +674,11 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   needsUpdate(): boolean {
-    return this.#continueIndicator.visible && !this.#preferences.reducedMotion || this.#hasEffectWork();
+    return this.#continueIndicator.visible && !this.#preferences.reducedMotion || this.#dialogRubyLayer.needsUpdate || this.#hasEffectWork();
   }
 
   update(deltaMs: number): void {
+    if (this.#dialogRubyLayer.needsUpdate) this.#dialogRubyLayer.updateAnimation(deltaMs);
     if (!this.#hasEffectWork()) return;
     if (this.#choiceFadeRemain > 0 && this.#choiceViews.length > 0) {
       this.#choiceFadeRemain = Math.max(0, this.#choiceFadeRemain - deltaMs);
@@ -766,7 +775,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       const bg = bindThemeGraphicsProjection(new Graphics(), ['surface', 'line']);
       const bar = bindThemeGraphicsProjection(new Graphics(), ['line']);
       holder.addChild(bg, bar, label);
-      const rich = document.units.some(unit => unit.ruby || unit.style.bold || unit.style.italic || unit.style.size || unit.style.color) ? new InlineTextView() : null;
+      const rich = document.units.some(unit => unit.ruby || unit.style.bold || unit.style.italic || unit.style.size || unit.style.color || unit.style.emphasis) ? new InlineTextView() : null;
       if (rich) { holder.addChild(rich); label.visible = false; }
       const view = { holder, bg, bar, label, document, rich, width: 0, height: 0 };
       this.#choiceViews.push(view);
@@ -895,6 +904,16 @@ export class DialogueLayer implements DialogueProjectionPort {
     const perLine = Math.max(10, Math.floor(this.#w * 0.68 / this.#theme.typography.bodySize));
     let y = 0;
     for (const entry of entries.slice(-120)) {
+      if (entry.markup !== undefined) {
+        const view = new InlineTextView(); view.setAnimationEnabled(false);
+        const name = entry.speaker ? `<color=accent>${escapeInlineText(`${entry.speaker}：`)}</color>` : '';
+        view.setContent(parseInlineText((entry.voice ? '▶ ' : '') + name + entry.markup), this.#w * .68, this.#theme, this.#assets.fontFamily('body'), Infinity, 'textMuted');
+        view.position.set(this.#w * .16, this.#backlogViewportTop + y);
+        if (entry.voice && onReplayVoice) { view.eventMode = 'static'; view.cursor = 'pointer'; view.on('pointerdown', event => {
+          this.#onPointerConsumed?.(); event.stopPropagation(); onReplayVoice(entry.voice!);
+        }); }
+        entriesLayer.addChild(view); y += view.contentHeight; continue;
+      }
       const text = entry.text.length > 0 ? entry.text : '（无文本）';
       let first = true;
       for (const line of wrapCjk(text, perLine)) {
@@ -1091,27 +1110,34 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#requestFrame();
   }
 
-  appendNvlText(speaker: string | null, text: string): void {
+  appendNvlText(speaker: string | null, text: string, markup?: string): void {
     const normalizedSpeaker = speaker !== null && speaker.length > 0 ? speaker : null;
     const profile = normalizedSpeaker ? this.#speakerProfiles.get(normalizedSpeaker.trim()) : undefined;
     this.setActiveSpeaker(profile?.id ?? null);
     this.#projectionVersion += 1;
     const wrapped = this.#wrapNvlText(normalizedSpeaker, text);
-    const textNode = bindThemeTextProjection(new PText({
-      text: wrapped.join('\n'),
-      style: { fontSize: this.#theme.typography.bodySize, lineHeight: this.#theme.typography.bodySize * 1.6, fill: this.#theme.colors.text, fontFamily: this.#assets.fontFamily('body') } satisfies TextStyleOptions,
-    }), { fill: 'text' });
+    let textNode: PText | InlineTextView;
+    if (markup !== undefined) {
+      textNode = new InlineTextView(); textNode.setAnimationEnabled(false);
+      const name = normalizedSpeaker ? this.#speakerProfiles.get(normalizedSpeaker.trim())?.name ?? normalizedSpeaker : null;
+      textNode.setContent(parseInlineText((name ? escapeInlineText(`${name}：`) : '') + markup), this.#w * .68, this.#theme, this.#assets.fontFamily('body'));
+    } else {
+      textNode = bindThemeTextProjection(new PText({
+        text: wrapped.join('\n'),
+        style: { fontSize: this.#theme.typography.bodySize, lineHeight: this.#theme.typography.bodySize * 1.6, fill: this.#theme.colors.text, fontFamily: this.#assets.fontFamily('body') } satisfies TextStyleOptions,
+      }), { fill: 'text' });
+    }
     this.#nvlTextLayer.addChild(textNode);
     this.#nvlLines.push(textNode);
-    this.#nvlLineCounts.push(Math.max(1, wrapped.length));
-    this.#nvlEntries.push({ speaker: normalizedSpeaker, text });
+    this.#nvlLineCounts.push(textNode instanceof InlineTextView ? textNode.contentHeight / (this.#theme.typography.bodySize * 1.6) : Math.max(1, wrapped.length));
+    this.#nvlEntries.push({ speaker: normalizedSpeaker, text, ...(markup === undefined ? {} : { markup }) });
     const budget = this.#h - 120;
     while (this.#nvlTotalHeight() > budget && this.#nvlLines.length > 1) {
       const old = this.#nvlLines.shift()!;
       this.#nvlLineCounts.shift();
       this.#nvlEntries.shift();
       this.#nvlTextLayer.removeChild(old);
-      old.destroy();
+      old.destroy({ children: true });
     }
     this.#nvlScroll = 0;
     this.#layoutNvl();
@@ -1122,7 +1148,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#nvlScroll = 0;
     for (const line of this.#nvlLines) {
       this.#nvlTextLayer.removeChild(line);
-      line.destroy();
+      line.destroy({ children: true });
     }
     this.#nvlLines = [];
     this.#nvlLineCounts = [];
@@ -1188,7 +1214,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#clearChoices();
     for (const line of this.#nvlLines) {
       this.#nvlTextLayer.removeChild(line);
-      line.destroy();
+      line.destroy({ children: true });
     }
     this.#nvlLines = [];
     this.#nvlLineCounts = [];
@@ -1361,12 +1387,13 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#visibleDialogText = doc.units.slice(0, this.#visibleUnits).map(unit => unit.text).join('');
     const family = this.#dialogText.style.fontFamily;
     const familyText = Array.isArray(family) ? family.join(', ') : String(family);
-    const rich = doc.units.some(unit => unit.ruby || unit.style.bold || unit.style.italic || unit.style.color || unit.style.size);
+    const rich = doc.units.some(unit => unit.ruby || unit.style.bold || unit.style.italic || unit.style.color || unit.style.size || unit.style.effect || unit.style.emphasis);
     this.#dialogText.visible = !rich;
     this.#dialogRubyLayer.visible = rich;
     if (rich) {
       this.#dialogText.text = '';
       this.#dialogRubyLayer.setContent(doc, this.#dialogWidth(), this.#theme, familyText, this.#visibleUnits);
+      this.#dialogRubyLayer.setAnimationEnabled(!this.#preferences.reducedMotion && !this.#textSkipping);
       this.#dialogContentHeight = this.#dialogRubyLayer.contentHeight;
       return;
     }
@@ -1453,6 +1480,11 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#nvlEntries.forEach((entry, index) => {
       const wrapped = this.#wrapNvlText(entry.speaker, entry.text);
       const node = this.#nvlLines[index]!;
+      if (node instanceof InlineTextView) {
+        const name = entry.speaker ? this.#speakerProfiles.get(entry.speaker.trim())?.name ?? entry.speaker : null;
+        node.setContent(parseInlineText((name ? escapeInlineText(`${name}：`) : '') + (entry.markup ?? escapeInlineText(entry.text))), this.#w * .68, this.#theme, this.#assets.fontFamily('body'));
+        this.#nvlLineCounts[index] = node.contentHeight / (this.#theme.typography.bodySize * 1.6); return;
+      }
       node.text = wrapped.join('\n');
       node.style.fontFamily = this.#assets.fontFamily('body');
       node.style.fontSize = this.#theme.typography.bodySize;
