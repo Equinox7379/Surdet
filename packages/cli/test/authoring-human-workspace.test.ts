@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AUTHORING_CONTRACT_VERSION } from '@surdet/authoring';
 import { AuthoringService } from '../src/authoring/authoring-service.js';
 import { HumanWorkspaceStore } from '../src/authoring/human-workspace-store.js';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
@@ -57,7 +58,7 @@ describe('Agent commit and real human workspace state', () => {
     const session = await openAgentPortSession({ projectRoot: project, policy: 'apply', resumeChangeId: changeId });
     try {
       const described = await session.describe();
-      expect(described.contractVersion).toBe('2.30.0');
+      expect(described.contractVersion).toBe(AUTHORING_CONTRACT_VERSION);
       expect(described.humanWorkspace).toMatchObject({ availability: 'dirty', dirtyScopes: ['config'] });
       expect(described.capabilities.find(capability => capability.id === 'change.commit')?.availability).toBe('state-blocked');
       expect(described.capabilities.find(capability => capability.id === 'project.inspect')?.availability).toBe('available');

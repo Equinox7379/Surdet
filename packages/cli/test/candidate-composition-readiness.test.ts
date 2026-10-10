@@ -522,8 +522,12 @@ describe('Wave 8 candidate readiness through Agent Port', () => {
     await session.close();
   });
 
-  it('validates strict mode/status and nested readiness fields under contract 2.26', async () => {
-    expect(AUTHORING_CONTRACT_VERSION).toBe('2.30.0');
+  it('validates strict mode/status and nested readiness fields under the published authoring contract', async () => {
+    const { root } = fixture();
+    const session = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
+    try {
+      expect((await session.describe()).contractVersion).toBe(AUTHORING_CONTRACT_VERSION);
+    } finally { await session.close(); }
     const schema = standardSchemaFromJson(CANDIDATE_COMPOSITION_READINESS_SCHEMA);
     const readiness = { mode: 'candidate', status: 'ready', operationFactsVersion: '1.0.0', operationCount: 0, issueCount: 0, issues: [], truncated: false };
     expect((await schema['~standard'].validate(readiness)).issues).toBeUndefined();

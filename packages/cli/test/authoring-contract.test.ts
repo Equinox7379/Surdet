@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { AUTHORING_CAPABILITY_IDS, AUTHORING_CONTRACT_VERSION } from '@surdet/authoring';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const cliEntry = path.join(repoRoot, 'packages/cli/dist/index.js');
@@ -36,7 +37,7 @@ describe('agent authoring CLI JSON contract', () => {
     expect(success.status).toBe(0);
     expect(success.stderr).toBe('');
     expect(success.stdout.length).toBeGreaterThan(65536);
-    expect(JSON.parse(success.stdout).result.capabilities).toHaveLength(73);
+    expect(JSON.parse(success.stdout).result.capabilities).toHaveLength(AUTHORING_CAPABILITY_IDS.length);
     const failure = run(['lint', '--not-a-valid-option']);
     expect(failure.status).toBe(1);
     expect(failure.stdout).toBe('');
@@ -52,8 +53,9 @@ describe('agent authoring CLI JSON contract', () => {
     expect(result.stdout.trim().endsWith('}')).toBe(true);
     expect(result.stderr).toBe('');
     const body = JSON.parse(result.stdout);
-    expect(body.contractVersion).toBe('2.35.0');
-    expect(body.result.capabilities).toHaveLength(73);
+    expect(body.contractVersion).toBe(AUTHORING_CONTRACT_VERSION);
+    expect(body.result.capabilities).toHaveLength(AUTHORING_CAPABILITY_IDS.length);
+    expect(body.result.capabilities.map((capability: { id: string }) => capability.id)).toEqual([...AUTHORING_CAPABILITY_IDS]);
     expect(body.result.capabilities).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'gallery.text.create', mcpTool: 'surdet_gallery_text_create', composable: false }),
       expect.objectContaining({ id: 'gallery.text.patch', mcpTool: 'surdet_gallery_text_patch', composable: false }),

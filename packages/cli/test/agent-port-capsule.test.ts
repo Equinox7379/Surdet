@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadProjectSnapshot } from '@surdet/authoring';
+import { AUTHORING_CONTRACT_VERSION, loadProjectSnapshot } from '@surdet/authoring';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
 import { ChangeRecordProjectStorage } from '../src/authoring/working-project-storage.js';
 import { generateDeliveryCapsule } from '../src/agent-port/delivery-capsule.js';
@@ -183,7 +183,7 @@ describe('Surdet Agent Port invocation ledger and delivery capsule', () => {
     expect(capsule.runtime.status).toBe('stale');
     expect((capsule.objectDiff as any).freshness?.status ?? capsule.warnings).toBeDefined();
     expect(capsule.capsuleVersion).toBe('2.0.0');
-    expect(capsule.contractVersion).toBe('2.30.0');
+    expect(capsule.contractVersion).toBe(AUTHORING_CONTRACT_VERSION);
     expect(capsule.composition.eligibility).toBe('ready');
     const manifest = capsule.composition.manifest as { operations: unknown[] } | undefined;
     expect(manifest?.operations.length).toBeGreaterThan(0);
