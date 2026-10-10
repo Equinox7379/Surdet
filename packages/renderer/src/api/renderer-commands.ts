@@ -36,6 +36,7 @@ export interface AssetCommands {
   registerPortraitVisual(charId: string, costume: string, expression: string, definition: import('@surdet/core').PortraitVisualDefinition,
     sources: Readonly<Record<string, { source: RendererAssetSource; format?: string }>>): Promise<void>;
   registerAvatar(key: string, source: RendererAssetSource, format?: string): Promise<void>;
+  registerRule(key: string, source: RendererAssetSource, format?: string): Promise<void>;
   /** URL ownership stays with the host; decoding occurs when the video is played. */
   registerVideo(key: string, source: RendererAssetSource, sourcePath?: string): Promise<void>;
   registerFontRole(role: RendererFontRole, url: string, family?: string, timeoutMs?: number): Promise<boolean>;
@@ -57,7 +58,7 @@ export interface WorldCommands {
   /** Atomic, snapshot-backed fade; optional only for existing setFade-only hosts. */
   fade?(from: number, to: number, durationMs: number): void;
   shake(durationMs?: number, strength?: number, direction?: ShakeDirection): void;
-  transition(name: TransitionName | string, durationMs: number): boolean;
+  transition(name: TransitionName | string, durationMs: number, options?: import('@surdet/core').RuleTransitionOptions): boolean;
   flash(durationMs?: number): void;
   zoom(scale?: number, durationMs?: number): void;
   wipe(durationMs?: number): void;

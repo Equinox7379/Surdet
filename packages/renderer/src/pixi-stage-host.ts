@@ -352,6 +352,7 @@ export class RendererStageHost {
     await this.#world.refreshBackgroundAsset(key);
     this.#requestFrame();
   }
+  async registerRule(key: string, src: RenderAssetSource, format?: string): Promise<void> { await this.#assetRegistry.registerRule(key, src, format); this.#requestFrame(); }
 
   /** 当前某个字体角色实际使用的字体族，供宿主诊断与测试使用。 */
   getFontFamily(role: FontRole): string {
@@ -578,8 +579,8 @@ export class RendererStageHost {
   /** 注册表驱动的场景转场；未知名称返回 false，交由宿主/校验层报告。 */
   markStageBoundary(): void { this.#world.markStageBoundary(); }
   setStoryFilter(name: import('@surdet/core').StoryFilterName, durationMs = 0): void { this.#world.setStoryFilter(name, durationMs); }
-  transition(name: TransitionName | string, durMs = 600): boolean {
-    return this.#world.transition(name, durMs);
+  transition(name: TransitionName | string, durMs = 600, options?: import('@surdet/core').RuleTransitionOptions): boolean {
+    return this.#world.transition(name, durMs, options);
   }
 
   /** 白闪：全屏白色叠加 alpha 从 1 线性衰减到 0 */

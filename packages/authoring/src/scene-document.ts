@@ -1,4 +1,4 @@
-import { extractSpeaker, Lexer, Parser, type AstBlock, type AstIfBlock } from '@surdet/core';
+import { extractSpeaker, Lexer, Parser, splitOutsideQuotes, type AstBlock, type AstIfBlock } from '@surdet/core';
 import type { SceneDocumentLine, SceneDocumentLineInput, SceneEol } from './contracts.js';
 
 /**
@@ -375,10 +375,27 @@ function encodeInstructionArgument(value: string, previous?: string): string {
   const previousQuote = previous?.[0];
   const quote = previousQuote === '"' || previousQuote === "'"
     ? previousQuote
-    : /\s|["'\\]/.test(value) ? '"' : null;
+    : /\s|["'\\@]/.test(value) ? '"' : null;
   if (quote === null) return value;
   const escaped = value.replace(/\\/g, '\\\\').replace(new RegExp(`\\${quote}`, 'g'), `\\${quote}`);
   return `${quote}${escaped}${quote}`;
+}
+
+/** Rewrite the effective (last) modifier without changing surrounding syntax. */
+export function rewriteInstructionModifierRaw(raw: string, key: string, value: string): string {
+  const parts = splitOutsideQuotes(raw, '@');
+  const keyPattern = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`^(\\s*${keyPattern}(?:=\\s*|\\s+))(.*?)(\\s*)$`);
+  let offset = parts[0]!.length + 1;
+  let replacement: { start: number; end: number; previous: string } | undefined;
+  for (let index = 1; index < parts.length; index += 1) {
+    const part = parts[index]!;
+    const match = index > 1 ? pattern.exec(part) : null;
+    if (match) replacement = { start: offset + match[1]!.length, end: offset + part.length - match[3]!.length, previous: match[2]! };
+    offset += part.length + 1;
+  }
+  if (!replacement) throw new Error(`INSTRUCTION_MODIFIER_MISSING: ${key}`);
+  return raw.slice(0, replacement.start) + encodeInstructionArgument(value, replacement.previous) + raw.slice(replacement.end);
 }
 
 /**

@@ -37,6 +37,17 @@ afterEach(() => {
 });
 
 describe('RenderAssetRegistry', () => {
+  it('keeps rule ownership separate, preserves a failed replacement and unloads only loaded sources', async () => {
+    const { registry, unload } = registryHarness();
+    const caller = fakeTexture('caller-rule');
+    await registry.registerRule('mask', caller);
+    await expect(registry.registerRule('mask', 'bad')).rejects.toThrow('load failed');
+    expect(registry.resolveRule('mask')).toBe(caller);
+    await registry.registerRule('loaded', 'blob:rule');
+    expect(registry.diagnosticSnapshot().rules).toEqual(['loaded', 'mask']);
+    await registry.releaseRegisteredAssetSources(); registry.dispose();
+    expect(unload).toHaveBeenCalledWith(['blob:rule']); expect(caller.destroy).not.toHaveBeenCalled();
+  });
   it('allows a valid large font to finish beyond the old three-second total budget', async () => {
     vi.useFakeTimers();
     vi.spyOn(coverageReader, 'readFontCoverage').mockResolvedValue({ characters: new Set([0x6d77]) });
@@ -237,6 +248,7 @@ describe('RenderAssetRegistry', () => {
       backgrounds: [],
       portraits: ['lynn:uniform:happy', 'lynn:uniform:normal'],
       avatars: ['lynn-face'],
+      rules: [],
       fontFamilies: expect.any(Object),
       sources: [],
     });

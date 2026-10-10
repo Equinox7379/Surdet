@@ -1,8 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Container, Graphics, Sprite, Texture, TextureSource } from 'pixi.js';
 import { WorldEffectsController } from '../src/world-effects-controller.js';
 
-function makeController(captureWorld?: () => Texture | null) {
+function makeController(captureWorld?: () => Texture | null, resolveRule?: (key: string) => Texture | null) {
   const world = new Container();
   const screen = new Container();
   const base = { x: 10, y: 20 };
@@ -17,11 +17,56 @@ function makeController(captureWorld?: () => Texture | null) {
     duration: (ms) => ms,
     requestFrame: vi.fn(),
     captureWorld,
+    resolveRule,
   });
   return { controller, world, screen, getPosition: () => position };
 }
 
 describe('WorldEffectsController', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it('reveals through a borrowed rule and releases only its old image on completion', () => {
+    vi.stubGlobal('document', { createElement: () => ({ getContext: () => null }) });
+    const old = new Texture({ source: new TextureSource({ width: 1280, height: 720 }) });
+    const mask = new Texture({ source: new TextureSource({ width: 2, height: 2 }) });
+    const f = makeController(() => old, key => key === 'mask' ? mask : null);
+    const options = { rule: 'mask', soft: .15, reverse: false };
+    expect(f.controller.transition('rule', 100, options)).toBe(true);
+    expect(f.controller.needsUpdate).toBe(false);
+    f.controller.beforeStageMutation();
+    expect(f.controller.transition('rule', 100, options)).toBe(true);
+    const overlay = f.screen.children[0] as Sprite;
+    expect(overlay.texture).toBe(old); expect(overlay.filters).toHaveLength(1);
+    f.controller.update(50); expect(overlay.alpha).toBe(1);
+    f.controller.markStageBoundary(); expect(f.screen.children).toHaveLength(1);
+    f.controller.update(50); expect(f.screen.children).toHaveLength(0);
+    expect(old.destroyed).toBe(true); expect(mask.destroyed).toBe(false);
+    expect(f.controller.needsUpdate).toBe(false); f.controller.destroy(); mask.destroy(true);
+  });
+  it('refuses an absent rule and settles an active rule if its asset is released', () => {
+    const old = new Texture({ source: new TextureSource({ width: 8, height: 8 }) });
+    const mask = new Texture({ source: new TextureSource({ width: 2, height: 2 }) });
+    let available = false;
+    const f = makeController(() => old, () => available ? mask : null);
+    const options = { rule: 'mask', soft: 0, reverse: true };
+    f.controller.beforeStageMutation(); expect(f.controller.transition('rule', 100, options)).toBe(false);
+    available = true; expect(f.controller.transition('rule', 100, options)).toBe(true);
+    available = false; const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    f.controller.update(10); f.controller.update(10);
+    expect(warning).toHaveBeenCalledTimes(1); warning.mockRestore();
+    expect(old.destroyed).toBe(true); expect(mask.destroyed).toBe(false);
+    expect(f.screen.children).toHaveLength(0); expect(f.controller.needsUpdate).toBe(false);
+    f.controller.destroy(); mask.destroy(true);
+  });
+  it('cancels rule resources on reset without destroying the registered mask', () => {
+    const old = new Texture({ source: new TextureSource({ width: 8, height: 8 }) });
+    const mask = new Texture({ source: new TextureSource({ width: 2, height: 2 }) });
+    const f = makeController(() => old, () => mask);
+    f.controller.beforeStageMutation(); f.controller.transition('rule', 100, { rule: 'mask', soft: .15, reverse: false });
+    f.controller.update(40); f.controller.reset();
+    expect(old.destroyed).toBe(true); expect(mask.destroyed).toBe(false);
+    expect(f.screen.children).toHaveLength(0); expect(f.controller.needsUpdate).toBe(false);
+    f.controller.destroy(); mask.destroy(true);
+  });
   it('dissolves one old frame per mutation batch and releases it on completion', () => {
     const texture = new Texture({ source: new TextureSource({ width: 1280, height: 720 }) });
     const capture = vi.fn(() => texture), f = makeController(capture);

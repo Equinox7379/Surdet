@@ -6,6 +6,7 @@ import { Parser } from './parser.js';
 import { parseInlineText, type InlineTextContext } from '../inline-text.js';
 import { rangeOfArguments, type SourcePos, type SourceRange } from './token.js';
 import { parseStoryFilter } from '../story-filter.js';
+import { parseRuleTransition } from '../transition.js';
 
 /**
  * 指令白名单（lint/编译期校验用），分两档：
@@ -542,6 +543,10 @@ export class SceneCompiler {
   }
 
   #makeGeneric(name: string, args: string[], modifiers: Map<string, string>, p: SourcePos): GenericInstr {
+    if (name === 'transition' && decodeStageToken(args[0] ?? '') === 'rule') {
+      try { parseRuleTransition(new Map([...modifiers].map(([key, value]) => [key, decodeStageToken(value)]))); }
+      catch (error) { throw new DslError('TRANSITION_INVALID', error instanceof Error ? error.message : String(error), p); }
+    }
     if (name === 'filter') {
       try { parseStoryFilter(args.map(decodeStageToken)); }
       catch (error) { throw new DslError('FILTER_INVALID', error instanceof Error ? error.message : String(error), p); }

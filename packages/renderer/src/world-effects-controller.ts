@@ -1,5 +1,6 @@
 import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
-import type { BuiltinTransitionName } from '@surdet/core';
+import type { BuiltinTransitionName, RuleTransitionOptions } from '@surdet/core';
+import { RuleTransitionFilter } from './rule-transition-filter.js';
 import { presentationDuration } from './presentation.js';
 import { TransitionRegistry, type StageTransition } from './transition-registry.js';
 
@@ -17,6 +18,7 @@ export interface WorldEffectsControllerOptions {
   requestFrame: () => void;
   /** A newly owned texture of the world, excluding dialogue and menus. */
   captureWorld?: () => Texture | null;
+  resolveRule?: (key: string) => Texture | null;
 }
 
 interface TimedOptions {
@@ -100,8 +102,8 @@ class FadeTransition extends TimedTransition {
 }
 
 class DissolveTransition extends TimedTransition {
-  override readonly name = 'dissolve';
-  #overlay: Sprite | null = null;
+  override readonly name: string = 'dissolve';
+  protected overlay: Sprite | null = null;
   constructor(private readonly options: TimedOptions & {
     screen: Container; width: number; height: number; takeOldFrame: () => Texture | null;
   }) { super(options); }
@@ -109,23 +111,46 @@ class DissolveTransition extends TimedTransition {
   protected override onStart(): void {
     const texture = this.options.takeOldFrame();
     if (!texture) return;
-    this.#overlay = new Sprite(texture);
-    this.#overlay.width = this.options.width; this.#overlay.height = this.options.height;
-    this.options.screen.addChild(this.#overlay);
+    this.overlay = new Sprite(texture);
+    this.overlay.width = this.options.width; this.overlay.height = this.options.height;
+    this.options.screen.addChild(this.overlay);
   }
 
   protected override onUpdate(progress: number): void {
-    if (this.#overlay) this.#overlay.alpha = 1 - progress;
+    if (this.overlay) this.overlay.alpha = 1 - progress;
   }
 
   protected override onFinish(): void { this.#release(); }
   protected override onCancel(): void { this.#release(); }
   #release(): void {
-    const sprite = this.#overlay; this.#overlay = null;
+    const sprite = this.overlay; this.overlay = null;
     if (!sprite) return;
     const texture = sprite.texture;
     sprite.parent?.removeChild(sprite); sprite.destroy(); texture.destroy(true);
   }
+}
+
+class RuleTransition extends DissolveTransition {
+  override readonly name = 'rule';
+  #options: RuleTransitionOptions | null = null;
+  #filter: RuleTransitionFilter | null = null;
+  constructor(options: ConstructorParameters<typeof DissolveTransition>[0], private readonly resolve: (key: string) => Texture | null) { super(options); }
+  configure(options: RuleTransitionOptions): void { this.#options = { ...options }; }
+  protected override onStart(): void {
+    super.onStart();
+    const texture = this.#options && this.resolve(this.#options.rule);
+    if (texture && this.overlay) { this.#filter = new RuleTransitionFilter(texture, this.#options!); this.overlay.filters = [this.#filter]; }
+  }
+  protected override onUpdate(progress: number): void {
+    const texture = this.#options && this.resolve(this.#options.rule);
+    if (texture) this.#filter?.setProgress(progress, texture);
+  }
+  override update(deltaMs: number): boolean {
+    if (!this.#options || !this.resolve(this.#options.rule)) { this.cancel(); console.warn('[surdet] 活动遮罩已释放，转场结束'); return true; }
+    return super.update(deltaMs);
+  }
+  protected override onFinish(): void { this.#filter?.destroy(); this.#filter = null; super.onFinish(); }
+  protected override onCancel(): void { this.#filter?.destroy(); this.#filter = null; super.onCancel(); }
 }
 
 class SlideTransition extends TimedTransition {
@@ -224,6 +249,8 @@ class CircleTransition extends TimedTransition {
 export class WorldEffectsController {
   readonly registry = new TransitionRegistry();
   readonly #circle: CircleTransition;
+  readonly #rule: RuleTransition;
+  #resolveRule: (key: string) => Texture | null;
   #captureWorld?: () => Texture | null;
   #oldFrame: Texture | null = null;
   #captureNextChange = true;
@@ -242,14 +269,17 @@ export class WorldEffectsController {
     this.#setWorldPosition = options.setWorldPosition;
     this.#requestFrame = options.requestFrame;
     this.#captureWorld = options.captureWorld;
+    this.#resolveRule = options.resolveRule ?? (() => null);
     const timed = { duration: options.duration(600), requestFrame: options.requestFrame };
     this.registry.register(new FadeTransition(options.world, timed));
     this.registry.register(new SlideTransition('slide-left', -1, { ...options, ...timed }));
     this.registry.register(new SlideTransition('slide-right', 1, { ...options, ...timed }));
     this.#circle = new CircleTransition(options.world, options.screen, options.width, options.height, timed);
     this.registry.register(this.#circle);
-    this.registry.register(new DissolveTransition({ ...timed, screen: options.screen, width: options.width, height: options.height,
-      takeOldFrame: () => { const frame = this.#oldFrame; this.#oldFrame = null; return frame; } }));
+    const oldFrameOptions = { ...timed, screen: options.screen, width: options.width, height: options.height,
+      takeOldFrame: () => { const frame = this.#oldFrame; this.#oldFrame = null; return frame; } };
+    this.registry.register(new DissolveTransition(oldFrameOptions));
+    this.#rule = new RuleTransition(oldFrameOptions, key => this.#resolveRule(key)); this.registry.register(this.#rule);
   }
 
   /** First author/world mutation after a pause owns exactly one old frame. */
@@ -264,10 +294,14 @@ export class WorldEffectsController {
     this.#captureNextChange = true;
   }
 
-  transition(name: string, durationMs = 600): boolean {
-    if (name === 'dissolve' && !this.#oldFrame) return true;
+  transition(name: string, durationMs = 600, options?: RuleTransitionOptions): boolean {
+    if ((name === 'dissolve' || name === 'rule') && !this.#oldFrame) return true;
+    if (name === 'rule') {
+      if (!options || !this.#resolveRule(options.rule)) return false;
+      this.#rule.configure(options);
+    }
     const started = this.registry.start(name, Math.max(1, durationMs));
-    if (started && name !== 'dissolve') { this.#oldFrame?.destroy(true); this.#oldFrame = null; }
+    if (started && name !== 'dissolve' && name !== 'rule') { this.#oldFrame?.destroy(true); this.#oldFrame = null; }
     return started;
   }
 
@@ -302,7 +336,7 @@ export class WorldEffectsController {
   }
 
   reset(options: { preserveOldFrame?: boolean } = {}): void {
-    if (!options.preserveOldFrame || this.registry.active?.name !== 'dissolve') this.registry.cancelActive();
+    if (!options.preserveOldFrame || !['dissolve', 'rule'].includes(this.registry.active?.name ?? '')) this.registry.cancelActive();
     if (!options.preserveOldFrame) { this.#oldFrame?.destroy(true); this.#oldFrame = null; this.#captureNextChange = false; }
     this.#shakeRemain = 0;
     this.#world.alpha = 1;

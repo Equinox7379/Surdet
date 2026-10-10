@@ -1,6 +1,6 @@
 import { staleTextCatalogKeys } from './text-catalog.js';
 import { validateProjectStageContent } from './stage-validation.js';
-import { resolveProjectTheme, resolveProjectTitleLogo, readProjectUi, readTextCatalog, textCatalogEntryText } from '@surdet/core';
+import { decodeStageToken, resolveProjectTheme, resolveProjectTitleLogo, readProjectUi, readTextCatalog, textCatalogEntryText } from '@surdet/core';
 import { validateThemeAssetBindings } from './theme-operations.js';
 import { validateUiAssets } from './ui-operations.js';
 import {
@@ -375,6 +375,7 @@ export function validateSnapshot(
     const resolvedBackgrounds = new Map(
       assetCatalog.backgrounds.filter((entry) => entry.resolved).map((entry) => [entry.key, entry]),
     );
+    const resolvedRules = new Set(assetCatalog.rules.filter(entry => entry.resolved).map(entry => entry.key));
     const resolvedPortraits = new Map(
       assetCatalog.portraits
         .filter((entry) => entry.resolved)
@@ -385,6 +386,11 @@ export function validateSnapshot(
       && (value[0] === '"' || value[0] === "'") && value.at(-1) === value[0] ? value.slice(1, -1) : value;
     for (const scene of scenes.values()) {
       for (const instruction of scene.instructions) {
+        if (instruction.op === 'instr' && unquote(instruction.args[0] ?? '') === 'rule' && instruction.name === 'transition') {
+          const rule = decodeStageToken(instruction.modifiers.get('rule') ?? '');
+          if (!resolvedRules.has(rule)) rawIssues.push({ severity: 'error', code: 'RULE_ASSET_UNRESOLVED',
+            text: `${instruction.file}:${instruction.line}: 转场遮罩 '${rule}' 未解析`, file: instruction.file, line: instruction.line, col: instruction.col });
+        }
         if (instruction.op !== 'instr' || !['bg', 'show'].includes(instruction.name)) continue;
         const key = unquote(instruction.args[0] ?? '');
         if (!key) continue;

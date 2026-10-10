@@ -42,6 +42,7 @@ export interface PresentationStage extends
   registerBackground?: (key: string, source: string, format?: string) => Promise<void>;
   registerPortrait?: (charId: string, costume: string, expression: string, source: string, format?: string, sourcePath?: string) => Promise<void>;
   registerAvatar?: (key: string, source: string, format?: string) => Promise<void>;
+  registerRule?: (key: string, source: string, format?: string) => Promise<void>;
   registerFontRole?: (role: RendererFontRole, url: string, family?: string, timeoutMs?: number) => Promise<boolean>;
   registerFont?: (url: string, family?: string, timeoutMs?: number) => Promise<boolean>;
   resetFonts?: () => void;
@@ -114,6 +115,11 @@ export function createPresentationPorts(
   options: PresentationPortOptions = {},
 ): PresentationPorts {
   const assetCommands: RendererCommands['assets'] = {
+    registerRule: async (key, source, format) => {
+      if (options.assetRegistry) await options.assetRegistry.registerRule(key, source, format);
+      else if (stage.registerRule) await stage.registerRule(key, source, format);
+      else throw new Error('当前宿主未接入转场遮罩素材');
+    },
     registerBackground: async (key, source, format) => {
       if (options.assetRegistry) {
         await options.assetRegistry.registerBackground(key, source, format);
@@ -171,7 +177,7 @@ export function createPresentationPorts(
     fade: options.worldLayer?.fade ? (from, to, durationMs) => options.worldLayer!.fade!(from, to, durationMs)
       : stage.fade ? (from, to, durationMs) => stage.fade!(from, to, durationMs) : undefined,
     shake: (durationMs = 400, strength = 8, direction = 'both') => { if (options.worldLayer) options.worldLayer.shake(durationMs, strength, direction); else stage.shake?.(durationMs, strength, direction); },
-    transition: (name, durationMs) => options.worldLayer?.transition(name, durationMs) ?? stage.transition?.(name, durationMs) ?? false,
+    transition: (name, durationMs, rule) => options.worldLayer?.transition(name, durationMs, rule) ?? stage.transition?.(name, durationMs, rule) ?? false,
     flash: (durationMs = 300) => { if (options.worldLayer) options.worldLayer.flash(durationMs); else stage.flash?.(durationMs); },
     zoom: (scale = 1, durationMs = 400) => { if (options.worldLayer) options.worldLayer.zoom(scale, durationMs); else stage.zoom?.(scale, durationMs); },
     wipe: (durationMs = 600) => { if (options.worldLayer) options.worldLayer.wipe(durationMs); else stage.wipe?.(durationMs); },

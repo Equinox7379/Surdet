@@ -6,6 +6,7 @@ import { validateSnapshot } from '../src/validation.js';
 import { compileScene } from '@surdet/core';
 import { parseSceneDocument } from '../src/scene-document.js';
 import type { ProjectSnapshot } from '../src/project-snapshot.js';
+import { buildAssetCatalog } from '../src/asset-catalog.js';
 
 function digest(text: string): string {
   let hash = 0x811c9dc5;
@@ -44,6 +45,22 @@ function fixtureStorage(): ProjectStorage {
 }
 
 describe('validateSnapshot', () => {
+  it.each([
+    { paths: ['content/assets/rule/遮罩 @左.png'], valid: true },
+    { paths: [], valid: false },
+    { paths: ['content/assets/rule/遮罩 @左.png', 'content/assets/rule/sub/遮罩 @左.webp'], valid: false },
+    { paths: ['content/assets/rule/遮罩 @左.psd'], valid: false },
+  ])('reports rule resolution according to actual unique physical assets: $valid $paths', ({ paths, valid }) => {
+    const text = '@scene main\n@transition rule 800 @rule="遮罩 @左"\n@end';
+    const snapshot: ProjectSnapshot = { rootIdentity: 'rule-validation', revision: 'r', files: [], configFile: null,
+      config: {}, variables: {}, timelines: [], scenes: [{ id: 'main', path: 'content/scenario/main.gal',
+        file: { path: 'content/scenario/main.gal', text, bytes: text.length, sha256: 'fixture' },
+        document: parseSceneDocument(text), compiled: compileScene(text, 'content/scenario/main.gal', 'main') }] };
+    const result = validateSnapshot(snapshot, undefined, { assetCatalog: buildAssetCatalog(paths, snapshot) });
+    const rules = result.issues.filter(issue => issue.code === 'RULE_ASSET_UNRESOLVED');
+    expect(rules).toHaveLength(valid ? 0 : 1); expect(result.ok).toBe(valid);
+    if (!valid) expect(rules[0]).toMatchObject({ severity: 'error', line: 2 });
+  });
   it.each([
     { name: 'absent without unlocks', source: '@scene main\n凛：继续。\n@end', lines: [] },
     { name: 'absent with dossiers', source: '@scene main\n@unlock_profile "first"\n@unlock_term port\n@end', lines: [2, 3] },

@@ -278,6 +278,12 @@ export class RendererFacade {
     this.#projectionSnapshot = options.projectionSnapshot;
 
     const assets: AssetCommands = {
+      registerRule: async (key, source, format) => {
+        this.#ensureActive('assets', 'registerRule');
+        if (this.#assetRegistry) await this.#assetRegistry.registerRule(key, source, format);
+        else if (this.#stage.registerRule) await this.#stage.registerRule(key, source, format);
+        else this.#missing('assets', 'registerRule');
+      },
       registerVideo: async (key, source, sourcePath) => {
         this.#ensureActive('assets', 'registerVideo');
         if (!this.#assetRegistry) this.#missing('assets', 'registerVideo');
@@ -366,7 +372,7 @@ export class RendererFacade {
       setFade: (alpha) => this.#callWorld('setFade', this.#worldPort?.setFade, this.#stage.setFade, alpha),
       fade: this.#worldPort?.fade || this.#stage.fade ? (from, to, durationMs) => this.#callWorld('fade', this.#worldPort?.fade, this.#stage.fade, from, to, durationMs) : undefined,
       shake: (durationMs = 400, strength = 8, direction = 'both') => this.#callWorld('shake', this.#worldPort?.shake, this.#stage.shake, durationMs, strength, direction),
-      transition: (name, durationMs) => this.#callWorld('transition', this.#worldPort?.transition, this.#stage.transition, name, durationMs),
+      transition: (name, durationMs, rule) => this.#callWorld('transition', this.#worldPort?.transition, this.#stage.transition, name, durationMs, rule),
       flash: (durationMs = 300) => this.#callWorld('flash', this.#worldPort?.flash, this.#stage.flash, durationMs),
       zoom: (scale = 1, durationMs = 400) => this.#callWorld('zoom', this.#worldPort?.zoom, this.#stage.zoom, scale, durationMs),
       wipe: (durationMs = 600) => this.#callWorld('wipe', this.#worldPort?.wipe, this.#stage.wipe, durationMs),

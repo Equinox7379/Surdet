@@ -2,7 +2,7 @@
 
 本指南面向编写剧情、配置与演出的内容作者。默认使用正式 Agent Port 工具，在隔离草稿中修改、验证和试玩；不需要先读引擎源码、长期台账或重新接线播放器。已有项目保持原位，新项目使用现有模板。
 
-本批公开创作合同为 **2.35.0**（73 项公开能力），`project.simulate` 新增源位置与版本关联的 `coverage`，失败和预算耗尽的部分报告保留在错误 `details.report`；保留作品界面变量条件、只读数值条、数组列表/数量、有限赋值按钮，以及人物档案、用语辞典、结局册、可选永久收藏、多语言、已有配音、主题、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+本批公开创作合同为 **2.36.0**（73 项公开能力），`project.simulate` 新增源位置与版本关联的 `coverage`，失败和预算耗尽的部分报告保留在错误 `details.report`；保留作品界面变量条件、只读数值条、数组列表/数量、有限赋值按钮，以及人物档案、用语辞典、结局册、可选永久收藏、多语言、已有配音、主题、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
 
 ## 0. 准备项目与会话
 
@@ -329,6 +329,8 @@ Editor「配置 → 文本与译稿」使用同一操作：读取目录→填写
 多结局作品验收时，除确认模拟未报错、未耗尽预算，还要核对 `endings` 是否包含所有预期结局，逐项检查 `deadEndScenes` 是否为遗漏的跳转或通关指令。`status: "passed"` 只表示运行检查通过，不替代这些作品目标；最后仍须真实试玩。浏览器存读档检查应复用同一站点地址和浏览器数据环境，新建临时/无痕环境看不到旧档不等于存档丢失。
 
 ### 从已有素材做一段有演出的剧情
+
+遮罩图片放在 `content/assets/rule/`。读取 `project.assets.rules` 核对唯一可用条目，从 `intelligence.items` 的 rule 条目复制 `usage.scene`，在修改背景/人物之后使用 `@transition rule 800 @rule="实际遮罩键" @soft=.15 @reverse=false`；减少动态立即显示新画面。缺图/重名/不支持格式校验报错，候选只接受基线已解析的 `asset:rule:键`。本批没有时间轴遮罩动作，别编造cue；详见[演出合同](presentation-effects-contract.md)。
 
 先读取 `project.assets({ "view": "working" })`（未建草稿时用 project）。背景和立绘的可用条目带有 `usage.scene` 与 `usage.timeline`：前者是可直接放进 scene.create 的 blocks 或 scene.patch 的 insertAfter.blocks 的指令对象，后者是可放进 timeline.create 的 definition.tracks 的轨道。示例已经使用当前项目的真实键，并处理场景参数的引号，不要把 sourcePath 当成素材键，也不要去掉示例 args 内的引号。
 
