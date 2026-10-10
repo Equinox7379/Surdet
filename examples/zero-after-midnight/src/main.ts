@@ -753,6 +753,9 @@ async function main(): Promise<void> {
       } else if (kind === 'avatar' && IMG.test(fname)) {
         await assets.registerAvatar(fname.replace(IMG, ''), url, fname.split('.').pop());
         return true;
+      } else if (kind === 'rule' && IMG.test(fname)) {
+        await assets.registerRule(fname.replace(IMG, ''), url, fname.split('.').pop());
+        return true;
       } else if (kind === 'video' && VID.test(fname)) {
         await assets.registerVideo(fname.replace(VID, ''), url, `content/assets/${rel}`);
         return true;
@@ -765,7 +768,7 @@ async function main(): Promise<void> {
     };
     const priorityFor = (rel: string): AssetPriority => {
       if (rel === 'bg/title_bg.png' || rel.startsWith('fonts/')) return 'critical';
-      if (rel.startsWith('bg/') || rel.startsWith('portrait/') || rel.startsWith('avatar/')) return 'scene';
+      if (rel.startsWith('bg/') || rel.startsWith('portrait/') || rel.startsWith('avatar/') || rel.startsWith('rule/')) return 'scene';
       return 'background';
     };
     const loadAndRegister = async (rel: string, url: string, revoke?: () => void, retain?: () => void): Promise<void> => {

@@ -25,7 +25,7 @@ import type { ProjectStage, StageCommand, StageLayerDefinition, StagePose, Stage
 import { StageMotionController, prepareStageMotions, lerpColor, type StageMotionSnapshot, type StageProperty, type StageValues } from '../../stage-motion.js';
 import { PortraitVisualPlayer, PortraitVisualRoot, validatePortraitAnimation } from '../../portrait-visual-player.js';
 import { StoryFilter, type StoryFilterSnapshot } from '../../story-filter.js';
-import { parseStoryFilter, type StoryFilterName } from '@surdet/core';
+import { parseStoryFilter, parseRuleTransition, type RuleTransitionOptions, type StoryFilterName } from '@surdet/core';
 type PortraitDisplay = Sprite | PortraitVisualRoot;
 
 export interface WorldPresentationSnapshot {
@@ -334,6 +334,7 @@ export class WorldLayer implements WorldProjectionPort {
       duration: (durationMs) => presentationDuration(durationMs, this.#presentation),
       requestFrame: () => this.#requestFrame(),
       captureWorld: options.captureWorld,
+      resolveRule: key => this.#assets.resolveRule(key),
     });
 
     this.#registerDisplay('world-container', this.worldContainer);
@@ -855,8 +856,9 @@ export class WorldLayer implements WorldProjectionPort {
     this.#ensureEffectRegistration();
   }
 
-  transition(name: TransitionName | string, durationMs = 600): boolean {
-    const started = this.#worldEffects.transition(name, presentationDuration(durationMs, this.#presentation));
+  transition(name: TransitionName | string, durationMs = 600, options?: RuleTransitionOptions): boolean {
+    const rule = name === 'rule' ? parseRuleTransition(new Map([['rule', options?.rule ?? ''], ['soft', String(options?.soft ?? .15)], ['reverse', String(options?.reverse ?? false)]])) : undefined;
+    const started = this.#worldEffects.transition(name, presentationDuration(durationMs, this.#presentation), rule);
     if (this.#presentation.reducedMotion && started) this.#worldEffects.update(1);
     if (started) {
       this.#ensureEffectRegistration();

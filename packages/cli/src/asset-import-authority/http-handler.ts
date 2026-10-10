@@ -52,7 +52,7 @@ const UUID_SEGMENT = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}
 const UUID = new RegExp(`^${UUID_SEGMENT}$`);
 const SHA256 = /^[0-9a-f]{64}$/;
 const KINDS = new Set([
-  'background', 'portrait', 'avatar', 'music', 'ambience',
+  'background', 'portrait', 'avatar', 'rule', 'music', 'ambience',
   'sound-effect', 'voice', 'video', 'font', 'license', 'other',
 ]);
 const PUBLIC_CODES = new Set([

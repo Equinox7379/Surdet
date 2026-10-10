@@ -203,7 +203,7 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
     // Editor 预览还支持 public；仅为只读校验适配这组事实，不改变导入目标合同。
     const publicCatalog = buildAssetCatalog(assetPaths.filter(file => file.startsWith('public/'))
       .map(file => `content/assets/${file.slice('public/'.length)}`));
-    for (const kind of ['backgrounds', 'portraits', 'avatars'] as const) {
+    for (const kind of ['backgrounds', 'portraits', 'avatars', 'rules'] as const) {
       assetCatalog[kind].push(...publicCatalog[kind].map(entry => ({ ...entry,
         sourcePath: `public/${entry.sourcePath.slice('content/assets/'.length)}` })));
     }

@@ -19,6 +19,7 @@ const ASSET_ROOT = 'content/assets/';
 
 const KIND_ORDER: readonly ProjectAssetKind[] = [
   'background',
+  'rule',
   'portrait',
   'avatar',
   'music',
@@ -41,6 +42,7 @@ const ISSUE_ORDER: readonly ProjectAssetIssueCode[] = [
 
 const DIRECTORY_KINDS: Readonly<Record<string, ProjectAssetKind>> = {
   bg: 'background',
+  rule: 'rule',
   portrait: 'portrait',
   avatar: 'avatar',
   bgm: 'music',
@@ -175,7 +177,7 @@ function classifyFile(fact: ProjectAssetFileFact): ClassifiedFile | null {
 export function isProjectAssetFormatSupported(kind: ProjectAssetKind, format: string): boolean {
   if (kind === 'license') return format === '' || format === 'txt' || format === 'md';
   if (format.length === 0) return false;
-  if (kind === 'background' || kind === 'portrait' || kind === 'avatar') return IMAGE_FORMATS.has(format);
+  if (kind === 'background' || kind === 'portrait' || kind === 'avatar' || kind === 'rule') return IMAGE_FORMATS.has(format);
   if (kind === 'music' || kind === 'ambience' || kind === 'sound-effect' || kind === 'voice') return AUDIO_FORMATS.has(format);
   if (kind === 'video') return VIDEO_FORMATS.has(format);
   if (kind === 'font') return FONT_FORMATS.has(format);
@@ -381,6 +383,7 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
       });
       switch (generic.name) {
         case 'bg': add('background', first, ref('bg')); break;
+        case 'transition': if (dequoteAssetToken(first ?? '') === 'rule') add('rule', generic.modifiers.get('rule'), ref('transition.rule')); break;
         case 'layer': if (!generic.modifiers.has('off')) add('background', generic.args[1], ref('layer')); break;
         case 'show': {
           const decoded = first === undefined ? undefined : dequoteAssetToken(first).trim();
@@ -646,6 +649,9 @@ export function buildProjectAssetIntelligence(
     item.references.sort(referenceOrder);
     item.issues.sort(issueOrder);
     const command = mediaAssetCommand(item.kind);
+    if (item.kind === 'rule' && item.physical && item.issues.length === 0) {
+      item.usage = { scene: { kind: 'instruction', name: 'transition', args: ['rule', '800'], modifiers: { rule: `"${item.key}"`, soft: '.15', reverse: 'false' } } };
+    }
     if (command && item.physical && item.issues.length === 0 && !(command === 'ambience' && item.key === 'off')) {
       item.usage = {
         scene: { kind: 'instruction', name: command, args: [`"${item.key}"`] },

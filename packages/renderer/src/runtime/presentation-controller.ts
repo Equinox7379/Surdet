@@ -15,6 +15,7 @@ import {
   validateTimeline,
   stageCommandFromInstruction,
   parseStoryFilter,
+  parseRuleTransition,
 } from '@surdet/core';
 import { prepareBacklog, DEFAULT_BACKLOG_CAPACITY, type Backlog, type BacklogEntry } from '../backlog.js';
 import type { AudioPlaybackSnapshot } from '../rollback-buffer.js';
@@ -1361,8 +1362,13 @@ export class PresentationController {
       case 'transition': {
         const name = args[0] ?? 'fade';
         const durationMs = parseTransitionDuration(args[1]);
-        if (!this.#commands.world.transition(name, durationMs)) {
-          console.warn(`[surdet] 未知转场：${name}`);
+        const rule = name === 'rule' ? parseRuleTransition(mods) : undefined;
+        if (!this.#commands.world.transition(name, durationMs, rule)) {
+          if (rule) {
+            this.#commands.world.transition('fade', durationMs);
+            const message = `转场遮罩“${rule.rule}”未加载，已使用淡入`;
+            this.#commands.dialogue.showBanner(message, 'tip'); console.warn(`[surdet] ${message}`);
+          } else console.warn(`[surdet] 未知转场：${name}`);
         }
         break;
       }

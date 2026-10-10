@@ -9,6 +9,7 @@ import type { ProjectAssetKind, TextHasher } from './contracts.js';
 
 const DIRECTORY_BY_KIND: Readonly<Record<ProjectAssetKind, string>> = Object.freeze({
   background: 'bg',
+  rule: 'rule',
   portrait: 'portrait',
   avatar: 'avatar',
   music: 'bgm',
@@ -203,7 +204,7 @@ export function isProjectLicenseFileName(fileName: string): boolean {
 
 function supportedExtension(kind: ProjectAssetKind, extension: string, fileName: string): boolean {
   if (kind === 'license') return isProjectLicenseFileName(fileName);
-  if (kind === 'background' || kind === 'portrait' || kind === 'avatar') return IMAGE_EXTENSIONS.has(extension);
+  if (kind === 'background' || kind === 'portrait' || kind === 'avatar' || kind === 'rule') return IMAGE_EXTENSIONS.has(extension);
   if (kind === 'music' || kind === 'ambience' || kind === 'sound-effect' || kind === 'voice') {
     return AUDIO_EXTENSIONS.has(extension);
   }

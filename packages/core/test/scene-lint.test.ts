@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { parseVariableConfig, validateVarDecl, validateSceneVariables, validateTransitionInstructions, BUILTIN_TRANSITION_NAMES, checkConsumedModifiers, type LintIssue } from '../src/scene-lint.js';
+import { parseVariableConfig, validateVarDecl, validateSceneVariables, validateTransitionInstructions, checkConsumedModifiers, type LintIssue } from '../src/scene-lint.js';
+import { BUILTIN_TRANSITION_NAMES } from '../src/transition.js';
 import { compileScene } from '../src/dsl/compiler.js';
 import { VariableStore } from '../src/state/variable-store.js';
 import type { VarDeclaration, VarValue } from '../src/state/types.js';
@@ -11,7 +12,7 @@ function lintDeclaration(name: string, decl: unknown): { valid: boolean; issues:
 
 describe('scene-lint 变量声明校验', () => {
   it('accepts every shared builtin transition and rejects an unknown one', () => {
-    const scene = compileScene(BUILTIN_TRANSITION_NAMES.map(name => `@transition ${name} 800`).join('\n') + '\n@transition unknown', 'scene.gal', 'scene');
+    const scene = compileScene(BUILTIN_TRANSITION_NAMES.map(name => `@transition ${name} 800${name === 'rule' ? ' @rule=mask' : ''}`).join('\n') + '\n@transition unknown', 'scene.gal', 'scene');
     const issues: LintIssue[] = []; validateTransitionInstructions(scene, issues);
     expect(issues).toHaveLength(1); expect(issues[0]).toMatchObject({ code: 'T010', line: BUILTIN_TRANSITION_NAMES.length + 1 });
     expect(issues[0]!.hint).toContain('dissolve');

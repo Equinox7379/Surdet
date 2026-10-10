@@ -5,6 +5,7 @@ import {
   findChoiceArrow,
   parseExpr,
   parseInlineInstructions,
+  Lexer,
 } from '@surdet/core';
 import type { RawCompositionReference } from './composition-contracts.js';
 import { decodeInstructionArgument, parseSceneDocument, splitInstruction } from './scene-document.js';
@@ -299,6 +300,11 @@ export function analyzeSceneCompositionReferences(input: {
           continue;
         }
         choiceOptionIndex = null;
+        if (name === 'transition' && cleanToken(args[0]) === 'rule') {
+          const token = new Lexer().tokenize(line.raw, input.path).find(token => token.type === 'instruction');
+          const rule = token?.type === 'instruction' ? cleanToken(token.modifiers.get('rule')) : '';
+          if (rule) addReference(references, 'rule-asset', 'candidate-external', rule, lineSource, `asset:rule:${rule}`);
+        }
         addSceneInstructionReferences(references, input.sceneId, name, args, lineSource);
         continue;
       }

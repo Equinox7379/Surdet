@@ -7,6 +7,14 @@ import {
 } from '../src/composition-reference-analysis.js';
 
 describe('raw composition reference analysis', () => {
+  it('tracks the real rule modifier as an external asset, not prose or a same-named background', () => {
+    const refs = analyzeSceneCompositionReferences({ sceneId: 'entry', path: 'content/scenario/entry.gal', characters: {},
+      text: '@scene entry\n遮罩 @左 只是正文\n@bg "遮罩 @左"\n@transition rule 800 @rule="遮罩 @左" @soft .2\n@end' });
+    expect(refs.filter(ref => ref.kind === 'rule-asset')).toEqual([expect.objectContaining({
+      scope: 'candidate-external', token: '遮罩 @左', objectRef: 'asset:rule:遮罩 @左', source: expect.objectContaining({ line: 4 }),
+    })]);
+    expect(refs.find(ref => ref.objectRef === 'asset:bg:遮罩 @左')).toBeDefined();
+  });
   it('collects interpolated text/choice variables through markup and ignores escaped braces', () => {
     const refs = analyzeSceneCompositionReferences({ sceneId: 'entry', path: 'content/scenario/entry.gal', characters: {},
       text: '<b>{正文变量}</b> {{不是变量}}\n@choice\n  <color=accent>{选项变量}</color> -> @goto end\n@label end' });

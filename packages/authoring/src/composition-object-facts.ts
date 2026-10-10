@@ -55,6 +55,7 @@ export function resolvedCompositionAssetRefs(assetPaths: readonly string[], snap
     ...catalog.backgrounds.filter((asset) => asset.resolved && usablePaths.has(asset.sourcePath)).map((asset) => backgroundAssetRef(asset.key)),
     ...catalog.portraits.filter((asset) => asset.resolved).map((asset) => portraitAssetRef(asset.role!, asset.outfit!, asset.expression!)),
     ...catalog.avatars.filter((asset) => asset.resolved && usablePaths.has(asset.sourcePath)).map((asset) => avatarAssetRef(asset.key)),
+    ...catalog.rules.filter(asset => asset.resolved && usablePaths.has(asset.sourcePath)).map(asset => `asset:rule:${asset.key}`),
     ...usable.flatMap(item => {
       if (item.kind === 'font') return [`asset:font:${item.sourcePath}`];
       const channel = mediaAssetCommand(item.kind);

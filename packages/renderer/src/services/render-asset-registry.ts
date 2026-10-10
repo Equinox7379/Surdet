@@ -26,6 +26,7 @@ export interface RenderAssetDiagnosticSnapshot {
   backgrounds: readonly string[];
   portraits: readonly string[];
   avatars: readonly string[];
+  rules: readonly string[];
   fontFamilies: Readonly<Record<RendererFontRole, string>>;
   sources: readonly string[];
 }
@@ -84,6 +85,7 @@ export class RenderAssetRegistry {
   #visualRequests = new Map<string, object>();
   #visualLoads = new Set<Promise<void>>();
   #avatars: AssetMap = new Map();
+  #rules: AssetMap = new Map();
   #videos = new Map<string, { url: string; sourcePath?: string }>();
   #registrations = new WeakMap<AssetMap, Map<string, object>>();
   #sourceRefs = new Map<string, number>();
@@ -177,6 +179,8 @@ export class RenderAssetRegistry {
   async registerAvatar(key: string, source: RenderAssetSource, format?: string): Promise<void> {
     await this.#register(this.#avatars, key, source, format);
   }
+  async registerRule(key: string, source: RenderAssetSource, format?: string): Promise<void> { await this.#register(this.#rules, key, source, format); }
+  resolveRule(key: string): Texture | null { return this.#rules.get(key)?.texture ?? null; }
 
   resolveBackground(key: string): Texture | null {
     return this.#backgrounds.get(key)?.texture ?? null;
@@ -304,6 +308,7 @@ export class RenderAssetRegistry {
     this.#resetMap(this.#backgrounds, clearAssets);
     this.#resetMap(this.#portraits, clearAssets);
     this.#resetMap(this.#avatars, clearAssets);
+    this.#resetMap(this.#rules, clearAssets);
   }
 
   async releaseRegisteredAssetSources(): Promise<void> {
@@ -318,7 +323,7 @@ export class RenderAssetRegistry {
       if (release.failed) this.#unloadSource(source, true);
     }
     const pending = await Promise.allSettled([...this.#sourceLoads.values()]);
-    for (const map of [this.#backgrounds, this.#portraits, this.#avatars]) {
+    for (const map of [this.#backgrounds, this.#portraits, this.#avatars, this.#rules]) {
       for (const [key, slot] of [...map.entries()]) {
         if (slot.ownership !== 'loaded') continue;
         map.delete(key);
@@ -335,6 +340,7 @@ export class RenderAssetRegistry {
       backgrounds: [...this.#backgrounds.keys()].sort(),
       portraits: [...this.#portraits.keys(), ...this.#portraitVisuals.keys()].sort(),
       avatars: [...this.#avatars.keys()].sort(),
+      rules: [...this.#rules.keys()].sort(),
       fontFamilies: { ...this.#fontFamilies },
       sources: [...new Set([...this.#sourceRefs.keys(), ...this.#sourceLoads.keys(), ...this.#sourceReleases.keys()])].sort(),
     };
@@ -348,6 +354,7 @@ export class RenderAssetRegistry {
     this.#visualRequests.clear();
     for (const id of this.#portraitVisuals.keys()) this.#clearPortraitVisual(id);
     this.#clearMap(this.#avatars);
+    this.#clearMap(this.#rules);
     this.#videos.clear();
     this.#resetFontsInternal();
     this.#lifecycle.release('runtime', 'async', 'asset-generation');

@@ -4,7 +4,8 @@
  */
 import { IMPLEMENTED_INSTRUCTIONS } from './dsl/compiler.js';
 import { parseExpr, collectVars } from './dsl/expr-parser.js';
-import { STAGE_POSE_MODIFIERS } from './stage.js';
+import { STAGE_POSE_MODIFIERS, decodeStageToken } from './stage.js';
+import { BUILTIN_TRANSITIONS, BUILTIN_TRANSITION_NAMES } from './transition.js';
 import type { ExprAst } from './dsl/expr-ast.js';
 import { collectInterpolatedVars } from './runtime/interpreter.js';
 import { VariableStore } from './state/variable-store.js';
@@ -219,15 +220,10 @@ export function collectSceneSpeakers(scene: CompiledScene): Set<string> {
   return out;
 }
 
-/** 引擎内置转场名称；未知名称必须在内容校验阶段报错，禁止运行时静默回退。 */
-export const BUILTIN_TRANSITION_NAMES = ['fade', 'slide-left', 'slide-right', 'circle', 'dissolve'] as const;
-export type BuiltinTransitionName = typeof BUILTIN_TRANSITION_NAMES[number];
-export const BUILTIN_TRANSITIONS: ReadonlySet<string> = new Set(BUILTIN_TRANSITION_NAMES);
-
 export function validateTransitionInstructions(scene: CompiledScene, issues: LintIssue[]): void {
   for (const instr of scene.instructions) {
     if (instr.op !== 'instr' || instr.name !== 'transition') continue;
-    const name = instr.args[0] ?? 'fade';
+    const name = decodeStageToken(instr.args[0] ?? 'fade');
     if (BUILTIN_TRANSITIONS.has(name)) continue;
     issues.push({
       severity: 'error',
@@ -429,6 +425,11 @@ export function checkConsumedModifiers(
   }
   // system 指令修饰符交付宿主；自定义指令不在 IMPLEMENTED 集 → 两者都跳过
   if (instr.name === 'pose' || instr.name === 'layer' || instr.name === 'stage') return;
+  if (instr.name === 'transition' && decodeStageToken(instr.args[0] ?? '') === 'rule') {
+    for (const key of instr.modifiers.keys()) if (!['rule', 'soft', 'reverse'].includes(key)) issues.push({ severity: 'warning', code: 'W003',
+      text: `${at}: 遮罩转场修饰符 '@${key}' 未被引擎消费`, file: instr.file, line: instr.line, col: instr.col });
+    return;
+  }
   if (SYSTEM_INSTRUCTIONS.has(instr.name) || !IMPLEMENTED_INSTRUCTIONS.has(instr.name)) return;
   for (const key of instr.modifiers.keys()) {
     issues.push({

@@ -4,9 +4,11 @@
  * `surdet lint --json` 输出携带 hint，构成"写剧本 → lint → 按 hint 修复 → 再 lint"的自我修正循环接口。
  */
 
-import { BUILTIN_TRANSITION_NAMES } from './scene-lint.js';
+import { BUILTIN_TRANSITION_NAMES } from './transition.js';
 
 export const LINT_CODE_HINTS: Record<string, string> = {
+  TRANSITION_INVALID: '@transition rule 指定 @rule 素材键；@soft 为0–1，@reverse 为开关或true/false。',
+  RULE_ASSET_UNRESOLVED: '导入指定遮罩图片到content/assets/rule，或更正@rule引用；重名/不支持的图片也不能当作已解析。',
   FILTER_INVALID: '@filter 使用 blur、grayscale、sepia、vignette 或 off，后接可选0–600000毫秒时长，不接受额外位置参数。',
   M001: '未知行内标签按原文显示；检查拼写，或用 \\< 明确输出尖括号。',
   M002: '样式标签必须在同一句内闭合；核对开标签对应的 </名称>。',

@@ -81,6 +81,7 @@ export class LegacyStageAdapter implements AdvStage {
     return this.host.registerPortrait(charId, costume, expression, source, format);
   }
   registerAvatar(key: string, source: RenderAssetSource, format?: string): Promise<void> { return this.host.registerAvatar(key, source, format); }
+  registerRule(key: string, source: RenderAssetSource, format?: string): Promise<void> { return this.host.registerRule(key, source, format); }
   releaseRegisteredAssetSources(): Promise<void> { return this.host.releaseRegisteredAssetSources(); }
 
   setSpeakerProfiles(profiles: SpeakerProfile[]): void { this.host.setSpeakerProfiles(profiles); }
@@ -131,7 +132,7 @@ export class LegacyStageAdapter implements AdvStage {
   restorePresentation(snapshot: unknown): void { this.host.restorePresentation(snapshot); }
   clearPresentation(): void { this.host.clearPresentation(); }
   shake(durMs = 400, strength = 8, direction: ShakeDirection = 'both'): void { this.host.shake(durMs, strength, direction); }
-  transition(name: TransitionName | string, durMs = 600): boolean { return this.host.transition(name, durMs); }
+  transition(name: TransitionName | string, durMs = 600, options?: import('@surdet/core').RuleTransitionOptions): boolean { return this.host.transition(name, durMs, options); }
   markStageBoundary(): void { this.host.markStageBoundary(); }
   setStoryFilter(name: import('@surdet/core').StoryFilterName, durationMs = 0): void { this.host.setStoryFilter(name, durationMs); }
   flash(durMs = 300): void { this.host.flash(durMs); }

@@ -389,7 +389,7 @@ export interface TimelinePatchInput {
 
 /** 只读资源发现条目（共享 asset catalog 统一解析）。 */
 export interface AssetEntry {
-  kind: 'background' | 'portrait' | 'avatar';
+  kind: 'background' | 'portrait' | 'avatar' | 'rule';
   key: string;
   /** 可直接复制到 timeline portrait track.target 的规范值；仅 portrait 提供。 */
   timelineTarget?: string;
@@ -411,6 +411,7 @@ export interface AssetEntry {
 /** 素材中心共享类型；稳定英文值供 Agent/DOM 使用，Editor 负责显示自然中文。 */
 export type ProjectAssetKind =
   | 'background'
+  | 'rule'
   | 'portrait'
   | 'avatar'
   | 'music'
@@ -653,6 +654,7 @@ export interface ProjectAssetCatalog {
   backgrounds: AssetEntry[];
   portraits: AssetEntry[];
   avatars: AssetEntry[];
+  rules: AssetEntry[];
   intelligence: ProjectAssetIntelligence;
 }
 

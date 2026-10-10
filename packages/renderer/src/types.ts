@@ -88,7 +88,7 @@ export interface AdvStage {
   /** 注册表驱动的转场；未知名称返回 false。 */
   markStageBoundary?(): void;
   setStoryFilter?(name: import('@surdet/core').StoryFilterName, durationMs?: number): void;
-  transition?(name: TransitionName | string, durMs: number): boolean;
+  transition?(name: TransitionName | string, durMs: number, options?: import('@surdet/core').RuleTransitionOptions): boolean;
   /** 白闪（@flash；线性衰减） */
   flash?(durMs: number): void;
   /** 世界层缩放（@zoom；向目标 scale 线性过渡，以画面中心为锚点） */

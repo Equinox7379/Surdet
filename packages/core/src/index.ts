@@ -50,5 +50,6 @@ export * from './project-ui.js';
 export * from './theme-tokens.js';
 export * from './stage.js';
 export * from './story-filter.js';
+export * from './transition.js';
 export { assertUniquePortraitBindings, parsePortraitFileName, projectPortraitOverrides, portraitSourcePaths, resolveProjectPortraits, type CharacterPortraits, type CharacterVisuals, type ProjectPortrait } from './project-portraits.js';
 export { parsePortraitVisual, portraitVisualPaths, samplePortraitVisual, type PortraitVisualDefinition } from './portrait-visual.js';

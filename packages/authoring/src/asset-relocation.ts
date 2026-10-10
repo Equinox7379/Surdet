@@ -1,4 +1,4 @@
-import { decodeStageToken, findChoiceArrow, projectPortraitOverrides, splitOutsideQuotes, stageCommandFromInstruction } from '@surdet/core';
+import { decodeStageToken, findChoiceArrow, Lexer, projectPortraitOverrides, splitOutsideQuotes, stageCommandFromInstruction } from '@surdet/core';
 import { readTextCatalog } from './text-catalog.js';
 import type {
   ProjectAssetFileFact,
@@ -24,12 +24,13 @@ import {
   instructionModifierTokens,
   parseSceneDocument,
   rewriteInstructionArgumentsRaw,
+  rewriteInstructionModifierRaw,
   serializeSceneDocument,
   splitInstruction,
 } from './scene-document.js';
 
 export const PROJECT_ASSET_RELOCATION_KINDS: readonly ProjectAssetKind[] = [
-  'background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license',
+  'background', 'portrait', 'avatar', 'rule', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license',
 ];
 const SUPPORTED_KINDS = new Set(PROJECT_ASSET_RELOCATION_KINDS);
 const KNOWN_ASSET_INSTRUCTIONS = new Set([
@@ -501,6 +502,14 @@ function sceneRewrite(
     };
 
     const mediaCommand = mediaAssetCommand(source.kind);
+    if (source.kind === 'rule' && parsed.name === 'transition' && args[0] === 'rule') {
+      const token = new Lexer().tokenize(raw, file.path).find(token => token.type === 'instruction');
+      if (token?.type === 'instruction' && decodeStageToken(token.modifiers.get('rule') ?? '') === source.key && target.key !== source.key) {
+        references.push({ ...reference('scene', file.path, `场景 · 第 ${lineNumber} 行`, 'transition.rule', `scene:${file.path}:${lineNumber}:transition.rule`, lineNumber), before: source.key, after: target.key });
+        return rewriteInstructionModifierRaw(raw, 'rule', target.key);
+      }
+      return raw;
+    }
     if (mediaCommand !== undefined && parsed.name === mediaCommand && args[0] === source.key
       && target.key !== source.key && !(mediaCommand === 'ambience' && args[0] === 'off')) {
       addChange(0, mediaCommand, source.key, target.key);
