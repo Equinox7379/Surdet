@@ -355,6 +355,8 @@ export class RendererFacade {
     };
 
     const world: WorldCommands = {
+      setStoryFilter: this.#worldPort?.setStoryFilter || this.#stage.setStoryFilter
+        ? (name, durationMs) => this.#callWorld('setStoryFilter', this.#worldPort?.setStoryFilter, this.#stage.setStoryFilter, name, durationMs) : undefined,
       markStageBoundary: this.#worldPort?.markStageBoundary || this.#stage.markStageBoundary
         ? () => this.#callWorld('markStageBoundary', this.#worldPort?.markStageBoundary, this.#stage.markStageBoundary) : undefined,
       applyStage: (command) => this.#callWorld('applyStage', this.#worldPort?.applyStage, this.#stage.applyStage, command),

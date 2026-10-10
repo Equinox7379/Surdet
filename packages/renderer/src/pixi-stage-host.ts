@@ -577,6 +577,7 @@ export class RendererStageHost {
 
   /** 注册表驱动的场景转场；未知名称返回 false，交由宿主/校验层报告。 */
   markStageBoundary(): void { this.#world.markStageBoundary(); }
+  setStoryFilter(name: import('@surdet/core').StoryFilterName, durationMs = 0): void { this.#world.setStoryFilter(name, durationMs); }
   transition(name: TransitionName | string, durMs = 600): boolean {
     return this.#world.transition(name, durMs);
   }

@@ -160,6 +160,8 @@ export function createPresentationPorts(
   };
 
   const worldCommands: RendererCommands['world'] = {
+    setStoryFilter: options.worldLayer?.setStoryFilter
+      ? (name, durationMs) => options.worldLayer!.setStoryFilter!(name, durationMs) : stage.setStoryFilter?.bind(stage),
     markStageBoundary: options.worldLayer?.markStageBoundary
       ? () => options.worldLayer!.markStageBoundary!() : stage.markStageBoundary?.bind(stage),
     setBackground: (key) => { if (options.worldLayer) options.worldLayer.setBackground(key); else stage.setBackground(key); },

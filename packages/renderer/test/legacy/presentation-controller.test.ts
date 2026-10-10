@@ -143,6 +143,20 @@ describe('PresentationController', () => {
       expect(wipe.mock.calls).toEqual([[600], [900]]);
     } finally { controller.dispose(); }
   });
+  it('projects the finite author filter instruction and refuses an unsupported host', () => {
+    const stage = stageHarness(), set = vi.fn(); stage.setStoryFilter = set;
+    const ports = createPresentationPorts(stage), controller = new PresentationController(ports.commands, ports.queries, NULL_AUDIO, { commands: ports.commands, queries: ports.queries });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus);
+    try {
+      bus.emit('instr', { name: 'filter', args: ['sepia', '700'], modifiers: new Map(), pos: { file: 'scene.gal', line: 1, col: 1 } });
+      expect(set).toHaveBeenCalledWith('sepia', 700);
+    } finally { controller.dispose(); }
+    const unsupported = createPresentationPorts(stageHarness()), second = new PresentationController(unsupported.commands, unsupported.queries, NULL_AUDIO, { commands: unsupported.commands, queries: unsupported.queries });
+    const failure = vi.fn(), secondBus = new EventBus<CoreEventMap>({ error: vi.fn() }, { onHandlerError: failure }); second.connect(secondBus);
+    try { secondBus.emit('instr', { name: 'filter', args: ['off'], modifiers: new Map(), pos: { file: 'scene.gal', line: 1, col: 1 } });
+      expect(failure).toHaveBeenCalledWith(expect.objectContaining({ message: '当前宿主未接入作者滤镜' }), 'instr'); }
+    finally { second.dispose(); }
+  });
   it('a completed nw line advances without voice/auto waits, but respects explicit pauses and does not skip NVL', () => {
     const stage = stageHarness(), ports = createPresentationPorts(stage), advance = vi.fn();
     const audio = { ...NULL_AUDIO, isVoicePlaying: () => true, stopVoice: vi.fn() };

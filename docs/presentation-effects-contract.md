@@ -1,6 +1,6 @@
 # 演出后端与前端接入合同
 
-当前交付：公开色彩调整纠错、旧世界 `dissolve` 与旧图生命周期。`rule` 遮罩素材、作者 `@filter`、时间轴转场尚未交付，不能按规划草案当作可用接口。Editor 表单由 Claude 完成；本批没有改可见界面。
+当前交付：公开色彩调整纠错、旧世界 `dissolve` 与旧图生命周期、四种作者 `@filter`。`rule` 遮罩素材、时间轴转场尚未交付，不能按规划草案当作可用接口。Editor 表单由 Claude 完成；本批没有改可见界面。公开创作合同2.35.0（73能力）。
 
 ## 溶解转场
 
@@ -30,6 +30,24 @@
 
 `@wipe` 的缺省时长统一为文档中的600ms，显式时长原样按现有规则消费。
 
+## 作者滤镜
+
+`@filter 名称 [时长毫秒]`；Core唯一`STORY_FILTER_NAMES`为blur（模糊）、grayscale（灰度）、sepia（怀旧）、vignette（暗角）、off（清除）。缺省时长0、立即应用；显式0–600000ms，未知名称、越界/非有限时长或多余位置参数在Core编译前拒绝，错误码FILTER_INVALID。修饰符不参与此指令，按现有W003提示未消费。
+
+```gal
+@filter grayscale 600
+回忆中的街道。
+@filter off 400
+现在的街道。
+```
+
+- Renderer公开`world.setStoryFilter(name, durationMs=0)`，支持的正式宿主都已接线。没有这项能力的自定义宿主显式报错，不模拟成功或偷偷当作旧指令。
+- 四种效果互斥为目标状态，换效果时原强度降为0、新强度升为1，过渡中可以同时有两个效果。颜色/模糊只处理背景、人物、独立图层所在的worldContainer，不处理对白、菜单、全屏fade/flash；暗角在世界染色上方、旧图下方、UI外。
+- 与玩家侧`PostProcessSettings`独立。关闭玩家色彩调整不会关作者滤镜；low画质保留灰度、怀旧、暗角，模糊保持可见但quality降为1。减少动态立即显示目标滤镜。
+- `presentation.payload.stage.storyFilters`（Core完整存档位置）包含`values:{blur,grayscale,sepia,vignette}`，每项0–1；过渡时另有`motion:{target:同形四值,duration,remain}`。快照以当前强度为起点、只保存剩余时长，恢复后不会再次计入已经经过的进度；没有该字段表示没有作者滤镜，不表示保留当前滤镜。恢复和验证仍走完整演出事务，不添加存档版本分支或迁移层。
+- 坏强度/过渡在预检阶段拒绝，现有世界与滤镜不变。新游戏和清舞台清除作者滤镜；菜单暂停冻结这条World帧链；销毁释放自有Blur/ColorMatrix资源与单张暗角纹理，不销毁作品素材。
+- `scene.patch`原insert/replaceInstruction可编排filter；无新写盘路径。候选事实仍走原通道，完整游戏渲染与视觉验收不是simulate通过可以代签。
+
 ## Claude 本批工作
 
-在原有转场指令表单中读取 Core 名称表并增加“溶解”选项，名称/时长继续通过原编辑事务修改与保存。解释先修改背景/人物再转场的顺序；不要把文字或菜单混进旧图，不要自行添加旧图存档字段。遮罩图选择、rule参数及滤镜表单等后端合同下一批再接。可复用已提供的 reading/inline/preview/flow 合同并按各自 PR 接入，不需要 Owner 转话。
+在原有转场指令表单中读取 Core 名称表并增加“溶解”选项，名称/时长继续通过原编辑事务修改与保存。解释先修改背景/人物再转场的顺序；不要把文字或菜单混进旧图，不要自行添加旧图存档字段。filter表单读取STORY_FILTER_NAMES，用上述中文名称显示，写回DSL英文值；第二位置参数写时长，不是强度，off同样支持过渡。遮罩图选择和rule参数待下一批合同。可复用已提供的 reading/inline/preview/flow 合同并按各自 PR 接入，不需要 Owner 转话。

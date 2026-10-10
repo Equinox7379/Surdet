@@ -5,6 +5,7 @@ import { Lexer } from './lexer.js';
 import { Parser } from './parser.js';
 import { parseInlineText, type InlineTextContext } from '../inline-text.js';
 import { rangeOfArguments, type SourcePos, type SourceRange } from './token.js';
+import { parseStoryFilter } from '../story-filter.js';
 
 /**
  * 指令白名单（lint/编译期校验用），分两档：
@@ -17,7 +18,7 @@ export const IMPLEMENTED_INSTRUCTIONS: ReadonlySet<string> = new Set([
   // 演出（渲染层消费）
   'bg', 'show', 'hide', 'pose', 'layer', 'stage', 'voice', 'bgm', 'se', 'fadein', 'fadeout',
   'shake', 'flash', 'zoom', 'wipe', 'transition', 'ambience',
-  'particle', 'mov', 'tint',
+  'particle', 'mov', 'tint', 'filter',
   'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'ruby',
   // 周目（解释器记录 ClearTracker + 发 clear 事件，宿主接全局通关记录）
   'clear',
@@ -541,6 +542,10 @@ export class SceneCompiler {
   }
 
   #makeGeneric(name: string, args: string[], modifiers: Map<string, string>, p: SourcePos): GenericInstr {
+    if (name === 'filter') {
+      try { parseStoryFilter(args.map(decodeStageToken)); }
+      catch (error) { throw new DslError('FILTER_INVALID', error instanceof Error ? error.message : String(error), p); }
+    }
     if (['pose', 'layer', 'stage'].includes(name)) {
       try { stageCommandFromInstruction(name, args.map(decodeStageToken), new Map([...modifiers].map(([key, value]) => [key, decodeStageToken(value)]))); }
       catch (error) { throw new DslError('STAGE_INVALID', error instanceof Error ? error.message : String(error), p); }

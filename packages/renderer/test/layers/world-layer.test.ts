@@ -119,6 +119,26 @@ it('stage clear keeps its old frame and reduced motion ends a dissolve immediate
   } finally { disposeRuntime(runtime); }
 });
 
+it('restores sampled author filter progress, rejects malformed snapshots atomically and retains gray in low quality', async () => {
+  vi.stubGlobal('document', { createElement: () => ({ getContext: () => null }) });
+  const runtime = makeRuntime();
+  try {
+    await registerWorldAssets(runtime.assets); runtime.layer.setBackground('hall');
+    runtime.layer.setStoryFilter('grayscale', 1000); runtime.layer.update(400);
+    const saved = runtime.layer.snapshotPresentation(); expect(saved.storyFilters!.values.grayscale).toBe(.4);
+    runtime.layer.setStoryFilter('sepia', 0); const before = runtime.layer.snapshotPresentation();
+    expect(() => runtime.layer.restorePresentation({ ...saved, storyFilters: { values: { ...saved.storyFilters!.values, blur: NaN } } })).toThrow();
+    expect(runtime.layer.snapshotPresentation()).toEqual(before);
+    runtime.layer.restorePresentation(saved); runtime.layer.update(300);
+    expect(runtime.layer.snapshotPresentation().storyFilters!.values.grayscale).toBeCloseTo(.7);
+    runtime.layer.setPresentationPreferences({ reducedMotion: true }); runtime.layer.setQuality('low');
+    expect(runtime.layer.snapshotPresentation().storyFilters!.values.grayscale).toBe(1);
+    expect(runtime.layer.worldContainer.filters).toHaveLength(1); expect(runtime.layer.needsUpdate).toBe(false);
+    runtime.layer.setStoryFilter('off', 1000);
+    expect(runtime.layer.snapshotPresentation().storyFilters).toBeUndefined(); expect(runtime.layer.worldContainer.filters).toBeNull();
+  } finally { disposeRuntime(runtime); }
+});
+
 function findPortrait(root: Container): Sprite {
   const visit = (container: Container): Sprite | undefined => {
     for (const child of container.children) {

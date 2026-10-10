@@ -10,13 +10,20 @@
 | 项目 | 当前结论 |
 | --- | --- |
 | 仓库 | `Equinox7379/Surdet`，本机 `E:\surdet`，主线 `main`，远端名 `surdet`。PR #1—#7均已合入；最新PR #7合并点`79ecbde`与已验收`b15b764`内容一致。 |
-| 最近代码交付 | 主线/日常Editor仍为PR #7。后端PR #8—#13已推送；codex/world-dissolve补齐旧世界溶解与资源生命周期，验证完成准备交付。公开创作合同2.34.0（73能力）；新后端均未合入主线。 |
+| 最近代码交付 | 主线/日常Editor仍为PR #7。后端PR #8—#14已推送；codex/story-filters补齐四种作者滤镜与快照，验证完成准备交付。公开创作合同2.35.0（73能力）；新后端均未合入主线。 |
 | 审核结论 | 2026-10-06 Owner 转达 `bcaef40` 复审 PASS，300-REV-01 已关闭。本轮未附新报告，不补写独立检查数量或范围。3FF-REV-01/03、字体及旧维护的有效结论保持原范围，不扩成全引擎或发行验收。 |
 | Editor | Claude 负责前端，本机负责后端、Git 整合和 Windows 验收。本次主线已包含深色工作台、最近项目、问题入口、命令面板、精确源码选区、诊断过期保护和自动待审数量；正式结果实时核对、来源返回及草稿保护保留。未开展 Player 新一轮改版；接口见 [AI-GUIDE](../../AI-GUIDE.md) 和[接力文档](../../human-agent-relay-wave-7.md#当前项目的审阅任务发现后端接口)。 |
 | 当前任务 | Owner 确认引擎 MIT，且明确开源前要真正优化前端、让 Editor 成为脱离外部浏览器的独立 Windows 应用；最终作品目标是原创商业 Gal 级完成度，而非小样例。已准备源码/随包许可、素材例外说明、短英文介绍和私人文件 ignore；仓库仍 PRIVATE。公开历史方式、作品授权及桌面化/前端验收待完成，详见 11.39。 |
 | 最近验证 | 行内后端相关Core/Authoring/Renderer定向用例、五个受影响模块类型检查/构建及能力文档检查通过；Windows Chromium真实共享Player已验证样式、注音、同句停顿、快进、等待点存读档与选择输入。不是Editor前端或新桌面包验收，未跑本地全仓；PR #7原证据继续有效。 |
 | 当前停止点 | Owner要求继续可独立推进的后端。流程操作交付后继续演出后端；各批合同见文档索引，Claude负责前端。未签前端接入通过，不覆盖日常桌面；G4导出/安装与安全策略边界保留。 |
 | CI / 发行 | 旧PR #5/#6与`e1029ea`主线CI成功结论保留。PR #7 `b15b764` 的 [CI 38025530471](https://github.com/Equinox7379/Surdet/actions/runs/38025530471) Electron已成功、verify尚未结束；合并点`79ecbde`的 [主线CI 38026102851](https://github.com/Equinox7379/Surdet/actions/runs/38026102851) 正常自动运行，未代签整轮通过、未重复触发或绕过保护。桌面本地更新获准，公开、发行、部署仍须分别授权。 |
+
+### 演出第二单元：作者滤镜（2026-10-10）
+
+- `@filter blur/grayscale/sepia/vignette/off [duration]`和唯一Core名称/参数校验已实现，缺省立即、有限时长；World原帧链推进，颜色/模糊仅作用背景人物图层，暗角在旧图下和UI外。独立于设备侧PostProcess，low保持剧情颜色与暗角，只降低模糊quality；减少动态立即目标。
+- 当前四强度与剩余过渡进入演出快照，恢复从已保存强度继续、只算剩余时长。真实Core存读档与Host键盘回退通过，坏快照拒绝后原世界不变，off恢复原图；公开scene.patch替换filter支持、非法参数拒绝且原记录不变，合同2.35/73。Core6、纯滤镜3、World1、Controller1、Authoring替换1/注册15与CLI JSON1定向通过；相关类型与构建通过。
+- Windows真实Player九条行为通过、pageErrors0，gray/sepia在low仍有效，暗角中心保持221/34/34、边缘52/8/8，模糊棋盘边界差187降为1，UI未被滤镜处理。暗角初版确实全场误压暗：Pixi radial先铺边缘alpha的底，透明source-over不能清它；已改自有透明Canvas径向纹理，修前源码/画面/失败日志保留。首个Controller失败与r1采样/r3无filter为undefined的夹具问题如实分列，不改断言目的或生产合同。最终图片已目视，服务关闭。
+- 本批不改Editor源码、日常桌面、安全设置或新依赖；完整演出中的rule素材、遮罩Shader和时间轴转场未交付。Claude表单合同仍在同一[presentation-effects-contract](../../presentation-effects-contract.md)，不复制第二份规格。
 
 ### 演出第一步：旧世界溶解（2026-10-10）
 

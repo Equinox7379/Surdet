@@ -7,6 +7,7 @@
 import { BUILTIN_TRANSITION_NAMES } from './scene-lint.js';
 
 export const LINT_CODE_HINTS: Record<string, string> = {
+  FILTER_INVALID: '@filter 使用 blur、grayscale、sepia、vignette 或 off，后接可选0–600000毫秒时长，不接受额外位置参数。',
   M001: '未知行内标签按原文显示；检查拼写，或用 \\< 明确输出尖括号。',
   M002: '样式标签必须在同一句内闭合；核对开标签对应的 </名称>。',
   M003: '标签须按嵌套顺序闭合；<w> 为单标签，不写 </w>。',

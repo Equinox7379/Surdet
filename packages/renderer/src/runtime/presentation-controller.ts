@@ -14,6 +14,7 @@ import {
   type PresentationRestoreResult,
   validateTimeline,
   stageCommandFromInstruction,
+  parseStoryFilter,
 } from '@surdet/core';
 import { prepareBacklog, DEFAULT_BACKLOG_CAPACITY, type Backlog, type BacklogEntry } from '../backlog.js';
 import type { AudioPlaybackSnapshot } from '../rollback-buffer.js';
@@ -1403,6 +1404,12 @@ export class PresentationController {
         const kind = (args[0] ?? '').toLowerCase();
         if (kind === 'off') this.#commands.world.stopParticles();
         else if (kind) this.#commands.world.startParticles(kind);
+        break;
+      }
+      case 'filter': {
+        const filter = parseStoryFilter(args);
+        if (!this.#commands.world.setStoryFilter) throw new Error('当前宿主未接入作者滤镜');
+        this.#commands.world.setStoryFilter(filter.name, filter.durationMs);
         break;
       }
       case 'title':
