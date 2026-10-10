@@ -12,6 +12,7 @@ import type { BacklogEntry } from '../../backlog.js';
 import { parseInlineText, inlinePlainText, type InlineTextDocument } from '@surdet/core';
 import { InlineTextView } from './inline-text-view.js';
 import type { ReadingDiagnostic } from '../../reading-diagnostics.js';
+import { DEFAULT_READING_PREFERENCES, normalizeReadingPreferences, type ReadingPreferences } from '../../presentation.js';
 import { wrapCjk, wrapCjkMeasure } from '../../text-wrap.js';
 import type { PresentationPreferences } from '../../presentation.js';
 import { DEFAULT_PRESENTATION_PREFERENCES } from '../../presentation.js';
@@ -232,6 +233,9 @@ export class DialogueLayer implements DialogueProjectionPort {
   #interfaceHidden = false;
   #preferences: PresentationPreferences = { ...DEFAULT_PRESENTATION_PREFERENCES };
   #theme: RendererTheme = DEFAULT_RENDERER_THEME;
+  #workTheme: RendererTheme = DEFAULT_RENDERER_THEME;
+  #reading: ReadingPreferences = { ...DEFAULT_READING_PREFERENCES };
+  #backlogContent: { entries: readonly BacklogEntry[]; onReplayVoice?: (voice: string) => void; query: string } | null = null;
 
   constructor(options: DialogueLayerOptions) {
     this.#root = options.uiLayer;
@@ -511,6 +515,8 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   setTheme(theme: RendererTheme): void {
     if (this.#disposed) return;
+    this.#workTheme = theme;
+    theme = { ...theme, typography: { ...theme.typography, bodySize: theme.typography.bodySize * this.#reading.textScale } };
     const previous = this.#theme;
     this.#theme = theme;
     this.#drawDialogPanel();
@@ -522,7 +528,8 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#speakerText.style.stroke = { width: 0, color: theme.colors.textOnAccent };
     this.#dialogText.style.fill = theme.colors.text;
     this.#dialogText.style.stroke = { width: 0, color: theme.colors.textOnAccent };
-    this.#nvlBackground.clear().rect(0, 0, this.#w, this.#h).fill({ color: theme.colors.panel, alpha: 0.86 });
+    this.#nvlBackground.clear().rect(0, 0, this.#w, this.#h).fill({ color: theme.colors.panel, alpha: this.#reading.dialogueOpacity === null ? 0.86
+      : Math.min(1, 0.86 * this.#reading.dialogueOpacity / (theme.opacity.panel || 1)) });
     this.#bannerText.style.fill = theme.colors.text;
     for (const view of this.#choiceViews) this.#drawChoiceCard(view, view === this.#choiceViews[this.#choiceHighlight]);
     repaintThemeProjection(this.#dialogueRoot, previous, theme);
@@ -543,6 +550,14 @@ export class DialogueLayer implements DialogueProjectionPort {
       view.label.style.letterSpacing = theme.typography.uiLetterSpacing;
     }
     this.layout();
+  }
+
+  setReadingPreferences(preferences: Partial<ReadingPreferences>): void {
+    const backlog = this.#backlogLayer.visible ? this.#backlogContent : null, scroll = this.#backlogScroll;
+    this.#reading = normalizeReadingPreferences({ ...this.#reading, ...preferences });
+    this.setTheme(this.#workTheme);
+    if (backlog) { this.showBacklog(backlog.entries, backlog.onReplayVoice, backlog.query); this.scrollBacklog(-scroll); }
+    this.#requestFrame();
   }
 
   /** Hide only the default drawing and hit targets; projection and controller state remain live. */
@@ -572,6 +587,13 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void {
     this.#preferences = { ...this.#preferences, ...preferences };
+    if (this.#preferences.reducedMotion) {
+      this.#choiceFadeRemain = 0;
+      for (const view of this.#choiceViews) view.holder.alpha = 1;
+      this.#lifecycle.release('dialogue', 'tween', 'choice-fade');
+      this.#continueIndicator.y = this.#continueIndicatorAnchorY; this.#continueIndicator.alpha = 1;
+      if (this.#bannerRemain > 0) this.#bannerLayer.alpha = 1;
+    }
     this.#requestFrame();
   }
 
@@ -644,7 +666,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   needsUpdate(): boolean {
-    return this.#continueIndicator.visible || this.#hasEffectWork();
+    return this.#continueIndicator.visible && !this.#preferences.reducedMotion || this.#hasEffectWork();
   }
 
   update(deltaMs: number): void {
@@ -671,7 +693,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     if (this.#bannerRemain > 0) {
       this.#bannerRemain = Math.max(0, this.#bannerRemain - deltaMs);
       const elapsed = this.#bannerDur - this.#bannerRemain;
-      this.#bannerLayer.alpha = Math.min(1, elapsed / 300, this.#bannerRemain / 400);
+      this.#bannerLayer.alpha = this.#preferences.reducedMotion ? 1 : Math.min(1, elapsed / 300, this.#bannerRemain / 400);
       if (this.#bannerRemain === 0) {
         this.#bannerLayer.visible = false;
         this.#lifecycle.release('dialogue', 'tween', 'banner');
@@ -771,7 +793,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     });
     this.#choiceHighlight = -1;
     this.layout();
-    if (this.#choiceViews.length > 0) {
+    if (this.#choiceViews.length > 0 && !this.#preferences.reducedMotion) {
       this.#choiceFadeRemain = this.#choiceFadeDur + (this.#choiceViews.length - 1) * 80;
       for (const view of this.#choiceViews) view.holder.alpha = 0;
       this.#lifecycle.register('dialogue', 'tween', 'choice-fade', () => undefined);
@@ -807,12 +829,14 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   updateContinuePulse(deltaMs: number): void {
     if (!this.#continueIndicator.visible) return;
+    if (this.#preferences.reducedMotion) { this.#continueIndicator.y = this.#continueIndicatorAnchorY; this.#continueIndicator.alpha = 1; return; }
     this.#continuePhase = (this.#continuePhase + deltaMs / 1000 * 3) % (Math.PI * 2);
     this.#continueIndicator.y = this.#continueIndicatorAnchorY + Math.sin(this.#continuePhase) * 3;
     this.#continueIndicator.alpha = 0.7 + Math.sin(this.#continuePhase) * 0.28;
   }
 
   showBacklog(entries: readonly BacklogEntry[], onReplayVoice?: (voice: string) => void, query = ''): void {
+    this.#backlogContent = { entries: entries.map(entry => ({ ...entry })), onReplayVoice, query };
     const layer = this.#backlogLayer;
     markPlayerModal(layer, {
       scroll: (delta) => this.scrollBacklog(delta),
@@ -907,6 +931,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   hideBacklog(): void {
+    this.#backlogContent = null;
     this.#backlogLayer.visible = false;
     this.#backlogLayer.removeChildren().forEach((child) => child.destroy({ children: true, context: true }));
     this.#backlogEntriesLayer = null;
@@ -1040,7 +1065,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#bannerDur = variant === 'chapter' ? 2200 : 1800;
     this.#bannerRemain = this.#bannerDur;
     this.#bannerLayer.visible = true;
-    this.#bannerLayer.alpha = 0;
+    this.#bannerLayer.alpha = this.#preferences.reducedMotion ? 1 : 0;
     this.#lifecycle.register('dialogue', 'tween', 'banner', () => undefined);
     this.#requestFrame();
   }
@@ -1275,6 +1300,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   #dialogWidth(): number { return Math.max(120, this.#w - this.#dialogLeft() - this.#dialogMarginX() - 78); }
 
   #drawDialogPanel(): void {
+    const opacity = this.#reading.dialogueOpacity ?? this.#theme.opacity.panel;
     const skinKey = this.#theme.skins.dialogSkin;
     const skinTexture = skinKey ? this.#assets.resolveBackground(skinKey) : null;
     if (skinTexture) {
@@ -1289,7 +1315,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       this.#dialogSkinSprite.position.set(this.#dialogMarginX(), top);
       this.#dialogSkinSprite.width = this.#w - 2 * this.#dialogMarginX();
       this.#dialogSkinSprite.height = Math.max(1, this.#dialogBottom() - top);
-      this.#dialogSkinSprite.alpha = this.#theme.opacity.panel;
+      this.#dialogSkinSprite.alpha = opacity;
       this.#dialogPanelFill.clear();
       bindThemeGraphicsProjection(this.#dialogPanelFill, []);
       return;
@@ -1303,9 +1329,9 @@ export class DialogueLayer implements DialogueProjectionPort {
     const fadeHeight = 44;
     for (let step = 0; step < 22; step++) {
       panel.rect(this.#dialogMarginX(), top - fadeHeight + step * 2, this.#w - 2 * this.#dialogMarginX(), 2)
-        .fill({ color: this.#theme.colors.panel, alpha: this.#theme.opacity.panel * step / 22 });
+        .fill({ color: this.#theme.colors.panel, alpha: opacity * step / 22 });
     }
-    panel.rect(this.#dialogMarginX(), top, this.#w - 2 * this.#dialogMarginX(), this.#dialogBottom() - top).fill({ color: this.#theme.colors.panel, alpha: this.#theme.opacity.panel });
+    panel.rect(this.#dialogMarginX(), top, this.#w - 2 * this.#dialogMarginX(), this.#dialogBottom() - top).fill({ color: this.#theme.colors.panel, alpha: opacity });
     panel.moveTo(this.#dialogMarginX(), top + 1).lineTo(this.#w - this.#dialogMarginX(), top + 1).stroke({ color: this.#theme.colors.line, width: 1.5, alpha: 0.85 });
     bindThemeGraphicsProjection(panel, [...Array<keyof RendererTheme['colors']>(23).fill('panel'), 'line']);
   }
@@ -1320,7 +1346,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     const height = Math.max(40, this.#speakerText.height + 12);
     const x = this.#dialogLeft() - 18, y = this.#dialogTop;
     this.#speakerPlate.poly([x + 10, y - height + 2, x + w, y - height + 2, x + w - 10, y + 2, x, y + 2])
-      .fill({ color: this.#theme.colors.panel, alpha: this.#theme.opacity.panel });
+      .fill({ color: this.#theme.colors.panel, alpha: this.#reading.dialogueOpacity ?? this.#theme.opacity.panel });
     this.#speakerPlate.moveTo(x + 8, y + 1).lineTo(x + w * 0.42, y + 1)
       .bezierCurveTo(x + w * 0.66, y + 2, x + w * 0.73, y - 20, x + w - 4, y - 9)
       .stroke({ color: this.#theme.colors.line, width: 1.5, alpha: 0.9 });

@@ -17,6 +17,7 @@ import type { Backlog } from '../backlog.js';
 import type { AudioPlaybackSnapshot } from '../rollback-buffer.js';
 import { dequote } from '../dequote.js';
 import { Typewriter } from '../text-buffer.js';
+import { SystemNarrator } from '../system-narrator.js';
 import { FadeTween } from '../transitions.js';
 import type { AudioHandle, FrameRequestHandler, PortraitView } from '../types.js';
 import { NULL_AUDIO } from '../types.js';
@@ -228,6 +229,7 @@ export function preparePresentationRestore(
 }
 
 export interface AdvRendererOptions {
+  narrator?: Pick<SystemNarrator, 'speak' | 'stop' | 'busy' | 'onError'>;
   typewriter?: Typewriter;
   /** 玩家推进到下一行时回调（连接 Interpreter.advance） */
   onAdvance?: () => void;
@@ -285,6 +287,11 @@ export class PresentationController {
   #connectionCleanup: (() => void) | null = null;
   #disposed = false;
   #audio: AudioHandle;
+  #narrator: Pick<SystemNarrator, 'speak' | 'stop' | 'busy' | 'onError'>;
+  #readAloud = false;
+  #narrationLocale = '';
+  #narrationVolume = 1;
+  #currentVoice: string | null = null;
   #tw: Typewriter;
   #status: RenderStatus = 'idle';
   #current: { speaker: string | null; value: string } | null = null;
@@ -358,6 +365,8 @@ export class PresentationController {
     this.#lifecycle = options.lifecycle;
     this.#detachPlugin = options.detachPlugin;
     this.#audio = audio;
+    this.#narrator = options.narrator ?? new SystemNarrator();
+    this.#narrator.onError = message => { if (!this.#disposed) { this.#commands.dialogue.showBanner(message, 'tip'); this.#requestFrame(); } };
     this.#tw = options.typewriter ?? new Typewriter();
     this.#onAdvance = options.onAdvance;
     this.#onSelect = options.onSelect;
@@ -389,6 +398,16 @@ export class PresentationController {
 
   get status(): RenderStatus {
     return this.#status;
+  }
+
+  setReadAloud(enabled: boolean, locale = '', volume = 1): void {
+    this.#readAloud = enabled; this.#narrationLocale = locale; this.#narrationVolume = volume;
+    if (!enabled) this.#narrator.stop();
+  }
+
+  #stopVoice(): void { this.#narrator.stop(); this.#audio.stopVoice?.(); }
+  #narrate(value: string): void {
+    if (this.#readAloud && !this.#currentVoice && !this.#audio.isVoicePlaying() && !this.#skipMode && !this.presentationPaused) this.#narrator.speak(inlinePlainText(value), this.#narrationLocale, this.#narrationVolume);
   }
 
   /**
@@ -429,7 +448,7 @@ export class PresentationController {
       bus.on('choice', (p) => { this.#onChoice(p); this.#requestFrame(); }),
       bus.on('textRefresh', (p) => { this.#refreshDisplayedText(p); this.#requestFrame(); }),
       bus.on('runtimeTrace', event => { if (event.kind === 'instruction') {
-        if (this.#instructionOrigin?.kind === 'scene' && this.#instructionOrigin.sceneId !== event.source.sceneId) { this.#audio.stopVoice?.(); this.#pendingVoice = null; }
+        if (this.#instructionOrigin?.kind === 'scene' && this.#instructionOrigin.sceneId !== event.source.sceneId) { this.#stopVoice(); this.#pendingVoice = null; }
         this.#instructionOrigin = { kind: 'scene', file: event.source.file, line: event.source.line, sceneId: event.source.sceneId, instructionIndex: event.source.index };
       } }),
       bus.on('instr', (p) => { this.#onInstr(p); this.#requestFrame(); }),
@@ -437,10 +456,11 @@ export class PresentationController {
       bus.on('video', (p) => { this.#onVideo(p); this.#requestFrame(); }),
       bus.on('timeline', (p) => { this.#onTimeline(p); this.#requestFrame(); }),
       bus.on('stateReset', () => { this.#onStateReset(); this.#requestFrame(); }),
-      bus.on('sceneEnd', () => { this.#audio.stopVoice?.(); this.#pendingVoice = null; }),
+      bus.on('sceneEnd', () => { this.#stopVoice(); this.#pendingVoice = null; }),
     ];
     const cleanup = (): void => {
       if (!active) return;
+      this.#narrator.stop();
       active = false;
       if (this.#unsubs === unsubs) this.#unsubs = [];
       for (const off of unsubs) off();
@@ -472,7 +492,7 @@ export class PresentationController {
 
   destroy(): void {
     if (this.#disposed) return;
-    this.#audio.stopVoice?.();
+    this.#stopVoice(); this.#narrator.onError = null;
     this.#unbindAudioErrors?.();
     this.#unbindAudioErrors = undefined;
     this.#waitSession += 1;
@@ -497,7 +517,7 @@ export class PresentationController {
 
   /** 开始一轮新的剧情会话：清理渲染状态，但保留宿主注入的设置（如打字速度）。 */
   resetSession(options: { preserveWorld?: boolean; clearAssets?: boolean } = {}): void {
-    this.#audio.stopVoice?.(); this.#audio.setVoicePaused?.(false);
+    this.#stopVoice(); this.#audio.setVoicePaused?.(false);
     this.#status = 'idle';
     this.#current = null;
     this.#advCurrent = null;
@@ -559,6 +579,7 @@ export class PresentationController {
 
   setPresentationPaused(paused: boolean): void {
     this.#explicitPaused = paused;
+    if (this.presentationPaused) this.#narrator.stop();
     // Settle old clocks before the host can create a new wait/text in this same task.
     if (!this.presentationPaused) this.#resumePausedClock();
     this.#audio.setVoicePaused?.(this.presentationPaused); this.#requestFrame();
@@ -580,6 +601,7 @@ export class PresentationController {
     if (this.#disposed) return;
     this.#audio.setVoicePaused?.(this.presentationPaused);
     if (this.presentationPaused) {
+      this.#narrator.stop();
       this.#pausedSince ??= nowMs();
       // 只推进菜单和顶层提示，不推进世界、打字、选项或章节演出。
       this.#menuProjectionBusy = this.#updateMenuProjection?.(deltaMs) === true;
@@ -619,7 +641,7 @@ export class PresentationController {
           this.#tw.skip(); // onComplete → status 'awaiting'
         }
         if (this.#status === 'awaiting') {
-          this.#audio.stopVoice?.();
+          this.#stopVoice();
           this.#status = 'idle';
           this.#onAdvance?.(); // 解释器同步发出下一事件（text/choice/end）
           if (nowMs() > deadline) break;
@@ -632,7 +654,7 @@ export class PresentationController {
       // （isVoicePlaying 恒 false 的音频实现不受影响）。choice 挂起时不推进。
       const waited = nowMs() - this.#awaitSince;
       const need = this.#autoBaseDelayMs + this.#autoPerCharMs * this.#lineVisibleLength;
-      if (waited >= need && !this.#audio.isVoicePlaying()) {
+      if (waited >= need && !this.#audio.isVoicePlaying() && !this.#narrator.busy) {
         this.#status = 'idle';
         this.#onAdvance?.();
       }
@@ -685,7 +707,8 @@ export class PresentationController {
   toggleBacklog(): boolean {
     if (!this.#backlog) return false;
     this.#backlogOpen = !this.#backlogOpen;
-    if (!this.#backlogOpen) this.#audio.stopVoice?.();
+    this.#narrator.stop();
+    if (!this.#backlogOpen) this.#stopVoice();
     this.#audio.setVoicePaused?.(this.presentationPaused);
     if (this.#backlogOpen) {
       this.#renderBacklog();
@@ -782,7 +805,7 @@ export class PresentationController {
   /** 切换快进（瞬时文本 + 连续推进；默认仅跳已读行） */
   toggleSkip(): boolean {
     this.#skipMode = !this.#skipMode;
-    if (this.#skipMode) this.#audio.stopVoice?.();
+    if (this.#skipMode) this.#stopVoice();
     this.#skipAll = false;
     this.#requestFrame();
     return this.#skipMode;
@@ -792,7 +815,7 @@ export class PresentationController {
   toggleSkipAll(): boolean {
     this.#skipAll = !this.#skipAll;
     this.#skipMode = this.#skipAll;
-    if (this.#skipMode) this.#audio.stopVoice?.();
+    if (this.#skipMode) this.#stopVoice();
     this.#requestFrame();
     return this.#skipAll;
   }
@@ -834,7 +857,7 @@ export class PresentationController {
       return true;
     }
     if (this.#status === 'awaiting') {
-      this.#audio.stopVoice?.();
+      this.#stopVoice();
       this.#status = 'idle';
       this.#onAdvance?.();
       return true;
@@ -859,8 +882,10 @@ export class PresentationController {
       this.#commands.dialogue.setChoiceHighlight(this.#choiceCursor);
     }
     if (!p.text || (this.#status !== 'typing' && this.#status !== 'awaiting')) return;
+    this.#narrator.stop();
     if (p.text.voice !== undefined) {
-      this.#audio.stopVoice?.(); this.#audio.setVoicePaused?.(this.presentationPaused);
+      this.#stopVoice(); this.#audio.setVoicePaused?.(this.presentationPaused);
+      this.#currentVoice = p.text.voice;
       if (p.text.voice && !this.#skipMode) this.#audio.playVoice(p.text.voice);
     }
     if (this.#nvl) {
@@ -879,6 +904,7 @@ export class PresentationController {
     }
     this.#current = { speaker: p.text.speaker, value: p.text.value };
     this.#lineVisibleLength = inlineTextLength(p.text.value);
+    this.#narrate(p.text.value);
     if (!this.#nvl) this.#advCurrent = this.#current;
   }
 
@@ -890,7 +916,8 @@ export class PresentationController {
     this.#commands.world.setPortraitSkipping?.(this.#skipMode);
     // Backlog 语音关联：@voice 紧跟的文本行带上语音 key（回看可重播）
     const voice = p.voice !== undefined ? p.voice : this.#pendingVoice;
-    if (p.voice !== undefined || this.#pendingVoice === null) this.#audio.stopVoice?.();
+    if (p.voice !== undefined || this.#pendingVoice === null) this.#stopVoice();
+    this.#currentVoice = voice ?? null;
     this.#audio.setVoicePaused?.(this.presentationPaused);
     if (p.voice && !this.#skipMode) this.#audio.playVoice(p.voice);
     this.#backlog?.add(p.displaySpeaker ?? p.speaker, inlinePlainText(p.value), voice ?? undefined);
@@ -898,6 +925,7 @@ export class PresentationController {
     this.#pendingVoice = null;
     this.#current = { speaker: p.speaker, value: p.value };
     this.#lineVisibleLength = inlineTextLength(p.value);
+    this.#narrate(p.value);
     if (this.#nvl) {
       this.#commands.world.setPortraitSpeaking?.(false);
       // NVL 模式：整行瞬时追加到全屏文本页（不走打字机），等待推进
@@ -926,7 +954,7 @@ export class PresentationController {
   }
 
   #onChoice(p: ChoiceEventPayload): void {
-    this.#audio.stopVoice?.(); this.#pendingVoice = null;
+    this.#stopVoice(); this.#pendingVoice = null;
     // 遇选择肢自动退出快进/自动播放：玩家必须做出选择，不应被连续推进越过
     this.#skipMode = false;
     this.#skipAll = false;
@@ -979,7 +1007,7 @@ export class PresentationController {
   /** 读档状态重置（审计修复 C1）：作废等待计时并递增会话号，
    *  残留的 video 结束/计时到点回调不再调 onWaitEnd → finishWait 状态失配抛错 */
   #onStateReset(): void {
-    this.#audio.stopVoice?.(); this.#audio.setVoicePaused?.(false);
+    this.#stopVoice(); this.#audio.setVoicePaused?.(false);
     this.#explicitPaused = false; this.#pausedSince = null;
     this.#backlogOpen = false;
     this.#commands.dialogue.hideBacklog();
@@ -1069,7 +1097,7 @@ export class PresentationController {
         if (event.cue.action === 'bgm') this.#audio.playBgm(event.cue.key);
         else if (event.cue.action === 'ambience') this.#audio.playAmbience?.(event.cue.key, event.cue.durationMs);
         else if (event.cue.action === 'se') this.#audio.playSe(event.cue.key);
-        else if (event.cue.action === 'voice') this.#audio.playVoice(event.cue.key);
+        else if (event.cue.action === 'voice') { this.#narrator.stop(); this.#audio.playVoice(event.cue.key); }
       } else {
         this.#commands.world.applyTimelineFrame(event);
       }
@@ -1264,6 +1292,7 @@ export class PresentationController {
       }
       case 'voice': {
         if (args[0]) {
+          this.#narrator.stop();
           this.#audio.setVoicePaused?.(this.presentationPaused);
           if (!this.#skipMode) this.#audio.playVoice(args[0]);
           this.#pendingVoice = args[0]; // 下一行文本进 Backlog 时带上（语音回放）

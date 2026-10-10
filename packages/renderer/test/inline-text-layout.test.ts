@@ -4,6 +4,13 @@ import { layoutInlineText, revealInlineRun } from '../src/inline-text-layout.js'
 
 const measure = (text: string, style: { size?: number }, ruby: boolean) => Array.from(text).length * 10 * (style.size ?? 1) * (ruby ? 0.5 : 1);
 describe('行内文字完整排版与局部揭示', () => {
+  it('keeps large closing punctuation inside the clipped viewport by moving its preceding character', () => {
+    const document = parseInlineText('<size=2>甲乙丙丁，戊己庚辛。</size>');
+    const layout = layoutInlineText(document, 80, 10, measure);
+    expect(layout.width).toBeLessThanOrEqual(80);
+    expect(layout.runs.map(run => revealInlineRun(run, Infinity)).join('')).toBe(document.plainText);
+    for (const run of layout.runs) expect(['，', '。']).not.toContain(run.units[0]!.text);
+  });
   it('样式参与测量且逐字揭示不改变已确定的换行位置', () => {
     const document = parseInlineText('甲<size=2>乙丙</size>丁');
     const layout = layoutInlineText(document, 30, 10, measure);

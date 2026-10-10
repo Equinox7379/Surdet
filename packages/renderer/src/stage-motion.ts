@@ -143,6 +143,10 @@ export class StageMotionController {
     for (const motion of this.#direct) this.#apply(motion, 1);
     this.#direct = [];
   }
+  /** Device reduced motion settles active visual cues without advancing their story clock. */
+  settleTimelines(): void {
+    for (const motion of this.#timelines.values()) { this.#apply(motion, 1); motion.from = { ...motion.to }; }
+  }
   releaseTimeline(runId: number): void {
     for (const key of this.#timelines.keys()) if (key.startsWith(`${runId}/`)) this.#timelines.delete(key);
     for (const key of this.#cancelled) if (key.startsWith(`${runId}/`)) this.#cancelled.delete(key);

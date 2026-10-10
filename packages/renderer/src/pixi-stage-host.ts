@@ -294,6 +294,10 @@ export class RendererStageHost {
     this.#dialogue.setPresentationPreferences(this.#world.getPresentationPreferences());
   }
 
+  setReadingPreferences(preferences: Partial<import('./presentation.js').ReadingPreferences>): void {
+    this.#dialogue.setReadingPreferences(preferences);
+  }
+
   getPresentationPreferences(): PresentationPreferences {
     return this.#world.getPresentationPreferences();
   }

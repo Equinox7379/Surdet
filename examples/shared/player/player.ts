@@ -5,6 +5,7 @@
 import {
   compileScene,
   inlinePlainText,
+  GAME_SETTING_DEFINITIONS,
   readGalleryUnlockPolicy, effectiveGalleryUnlocks, readGalleryReplayEntries, readGalleryEndings, effectiveEndingUnlocks, readGalleryDossiers,
   collectProjectTextRows, projectTextSources, createProjectTextResolver, readTextCatalog, parseTerminology,
   type TextSceneSource,
@@ -59,6 +60,8 @@ import {
   Backlog,
   Typewriter,
   SettingsStore,
+  createSettingsRows,
+  applyReadingSettings,
   createSettingsUpdateHandler,
   SETTING_STEPS,
   stepSetting,
@@ -268,7 +271,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   const backgroundUrls = new Map<string, string>();
   const audio: AudioHandle = new ResolvedAudio(audioManager, audioUrls);
 
-  const settings = new SettingsStore(createSettingsStorage(project.id, browserPrefix));
+  const settings = new SettingsStore(createSettingsStorage(project.id, browserPrefix), { reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches });
   await settings.load();
   if (signal?.aborted) { audioManager.dispose(); return; }
   let textLocale = projectTexts.locales.includes(settings.settings.locale) ? settings.settings.locale : projectTexts.sourceLocale;
@@ -371,6 +374,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   // 显式 Player 参数 > game.config.json 主题 > 引擎默认。
   const playerTheme = resolvePlayerTheme(gameConfig, project.theme);
   commands.preferences.setTheme(playerTheme);
+  applyReadingSettings(settings.settings, commands, renderer, textLocale);
   function projectSpeakerNames(): void {
     dialogue.setSpeakerProfiles(speakerProfiles.map(profile => ({ ...profile, sourceName: profile.name,
       name: projectTexts.field('character', `character:${profile.id}`, gameConfig.characters?.[profile.id]?.name ?? profile.name, textLocale),
@@ -1057,7 +1061,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   function settingsView() {
     const s = settings.settings;
     return {
-      rows: [...SETTING_STEPS.map((d) => ({ id: d.key, label: d.label, display: d.format(s[d.key]) })),
+      rows: [...createSettingsRows(s),
         ...(textCatalog ? [{ id: 'locale', label: '作品语言', display: ({ 'zh-CN': '中文', ja: '日语', en: '英语' } as Record<string, string>)[textLocale] ?? textLocale }] : [])],
       onChange: onSettingsChange,
       onClose: closeSettings,
@@ -1144,7 +1148,8 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         }
         return '';
       },
-      read(name, kind) { return kind === 'variable' ? store.get(name) : name === 'locale' ? textLocale : settings.settings[name as keyof GameSettings]; },
+      read(name, kind) { return kind === 'variable' ? store.get(name) : name === 'locale' ? textLocale : name === 'dialogueOpacity'
+        ? settings.settings.dialogueOpacity ?? playerTheme.opacity.panel : settings.settings[name as keyof GameSettings]; },
       async write(binding: ProjectUiBinding, value) {
         playerShell!.commands.consumePointer();
         if (binding.kind === 'variable') { writeWorkVariable(page, binding.name, value); return; }
@@ -1696,6 +1701,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       settings.apply(typewriter, audio);
       renderer.setAutoWait(confirmed.autoBaseDelayMs, confirmed.autoPerCharMs);
       const locale = projectTexts.locales.includes(confirmed.locale) ? confirmed.locale : projectTexts.sourceLocale;
+      applyReadingSettings(confirmed, commands, renderer, locale);
       if (locale !== textLocale) {
         textLocale = locale;
         projectSpeakerNames(); interp.refreshDisplayedText();
@@ -1709,6 +1715,9 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
 
   function onSettingsChange(id: string, dir: -1 | 1): void {
     playerShell!.commands.consumePointer();
+    if (Object.hasOwn(GAME_SETTING_DEFINITIONS, id) && GAME_SETTING_DEFINITIONS[id as keyof GameSettings].type === 'boolean') {
+      void updateSettings(confirmed => ({ [id]: !confirmed[id as 'readAloud' | 'reducedMotion'] })); return;
+    }
     if (id === 'locale') {
       const locales = projectTexts.locales;
       void updateSettings(confirmed => {
@@ -1717,7 +1726,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       });
       return;
     }
-    void updateSettings(confirmed => stepSetting(confirmed, id as NumericSettingKey, dir));
+    void updateSettings(confirmed => stepSetting(confirmed, id as NumericSettingKey, dir, playerTheme.opacity.panel));
   }
 
   function closeSettings(): void {

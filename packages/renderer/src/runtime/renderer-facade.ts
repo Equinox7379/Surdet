@@ -126,6 +126,7 @@ export interface RendererStagePort extends PresentationStage {
   restorePresentation?: (snapshot: unknown) => void;
   clearPresentation?: () => void;
   setTheme?: (theme: RendererTheme) => void;
+  setReadingPreferences?: RendererCommands['preferences']['setReadingPreferences'];
   setDeclarativeUiSuppression?: (pages: Partial<Record<import('@surdet/core').ProjectUiPageId, boolean>>) => void;
 }
 
@@ -749,7 +750,15 @@ export class RendererFacade {
 
     const preferences: PreferenceCommands = {
       setQuality: (quality) => this.#callWorld('setQuality', this.#worldPort?.setQuality, this.#stage.setQuality, quality),
-      setPresentationPreferences: (preferences) => this.#callWorld('setPresentationPreferences', this.#worldPort?.setPresentationPreferences, this.#stage.setPresentationPreferences, { ...preferences }),
+      setPresentationPreferences: (preferences) => {
+        this.#callWorld('setPresentationPreferences', this.#worldPort?.setPresentationPreferences, this.#stage.setPresentationPreferences, { ...preferences });
+        this.#dialoguePort?.setPresentationPreferences(preferences);
+      },
+      setReadingPreferences: (preferences) => {
+        this.#ensureActive('preferences', 'setReadingPreferences');
+        if (this.#dialoguePort) this.#dialoguePort.setReadingPreferences(preferences);
+        else this.#callStage('preferences', 'setReadingPreferences', this.#stage.setReadingPreferences, preferences);
+      },
       setPostProcess: (settings) => this.#callWorld('setPostProcess', this.#worldPort?.setPostProcess, this.#stage.setPostProcess, { ...settings }),
       setTheme: (overrides: RendererThemeOverrides) => {
         this.#ensureActive('preferences', 'setTheme');

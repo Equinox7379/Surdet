@@ -93,6 +93,39 @@ function snapshot(runtime: WorldRuntime): WorldPresentationSnapshot {
 }
 
 describe('WorldLayer direct presentation contract', () => {
+  it('reduced motion suppresses every flash frame/shake, settles fade/transition, and can be disabled again', () => {
+    const runtime = makeRuntime();
+    try {
+      runtime.layer.flash(1000); expect(runtime.layer.flashOverlay.alpha).toBe(1);
+      runtime.layer.setPresentationPreferences({ reducedMotion: true });
+      expect(runtime.layer.flashOverlay.alpha).toBe(0);
+      runtime.layer.shake(1000, 64); runtime.layer.flash(1000); runtime.layer.fade(0, 1, 1000);
+      expect(runtime.layer.fadeOverlay.alpha).toBe(1); expect(runtime.layer.isFadeActive()).toBe(false);
+      expect(runtime.layer.transition('slide-left', 1000)).toBe(true);
+      for (const ms of [0, .2, .5, 16, 50]) { runtime.layer.update(ms); expect(runtime.layer.flashOverlay.alpha).toBe(0); expect(runtime.layer.worldContainer.position.x).toBe(0); }
+      runtime.layer.setPresentationPreferences({ reducedMotion: false });
+      runtime.layer.fade(1, 0, 1000); runtime.layer.update(100); expect(runtime.layer.isFadeActive()).toBe(true);
+      expect(runtime.layer.fadeOverlay.alpha).toBeGreaterThan(0);
+    } finally { disposeRuntime(runtime); }
+  });
+  it('projects reduced timeline motion at its target without skipping the timeline or restoring intermediate pixels', () => {
+    const runtime = makeRuntime(createStageGeometryPolicy());
+    try {
+      runtime.layer.setPresentationPreferences({ reducedMotion: true });
+      const event = { runId: 1, definitionVersion: 2 as const, trackIndex: 0, cueIndex: 0, cueId: 0, track: 'camera' as const,
+        cue: { atMs: 0, durationMs: 1000, easing: 'linear' as const, action: 'pan' as const, x: 100, y: 30 }, started: true, final: false, progress: .1, elapsedMs: 100 };
+      runtime.layer.applyTimelineFrame(event); expect(snapshot(runtime).cameraPan).toEqual({ x: 100, y: 30 });
+      runtime.layer.applyTimelineFrame({ ...event, started: false, progress: .3, elapsedMs: 300 });
+      expect(snapshot(runtime).cameraPan).toEqual({ x: 100, y: 30 });
+      expect(event.progress).toBe(.1);
+      runtime.layer.setPresentationPreferences({ reducedMotion: false });
+      runtime.layer.applyTimelineFrame({ ...event, started: false, progress: .5, elapsedMs: 500 });
+      expect(snapshot(runtime).cameraPan).toEqual({ x: 100, y: 30 });
+      runtime.layer.setPresentationPreferences({ reducedMotion: true });
+      runtime.layer.applyTimelineFrame({ ...event, cueId: 1, track: 'screen', cue: { atMs: 0, durationMs: 1000, easing: 'linear', action: 'flash' } });
+      expect(runtime.layer.flashOverlay.alpha).toBe(0);
+    } finally { disposeRuntime(runtime); }
+  });
   it.each([
     { name: 'legacy frames', metadata: {} },
     { name: 'owned v1 frames', metadata: { runId: 1, definitionVersion: 1 as const, trackIndex: 0, cueIndex: 0 } },
@@ -258,7 +291,8 @@ describe('WorldLayer direct presentation contract', () => {
       expect(snapshot(runtime).tint).toEqual({ color: 0xff0000, alpha: 0.4 });
 
       runtime.layer.setPresentationPreferences({ reducedMotion: true });
-      expect(runtime.layer.getPresentationPreferences().transitionScale).toBe(0);
+      // Reduced motion overrides playback, not the stored scale needed when the preference is disabled.
+      expect(runtime.layer.getPresentationPreferences().transitionScale).toBe(1);
       runtime.layer.transition('fade', 100);
       runtime.layer.update(1);
       expect(runtime.layer.needsUpdate).toBe(false);

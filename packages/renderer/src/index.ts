@@ -87,3 +87,4 @@ export { PixiStage, LegacyStageAdapter } from './pixi-stage.js';
  */
 export type { BattleHandlers, FontRole } from './pixi-stage.js';
 export { isPlayerControlPointer } from './player-controls.js';
+export { SystemNarrator } from './system-narrator.js';

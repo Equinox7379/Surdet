@@ -4,7 +4,7 @@ import type { BattleHandlers, BattleView } from '../battle-view.js';
 import type { GalleryItemView } from '../gallery.js';
 import type { LoadingProgress } from '../loading-progress.js';
 import type { PostProcessSettings } from '../post-process.js';
-import type { PresentationPreferences } from '../presentation.js';
+import type { PresentationPreferences, ReadingPreferences } from '../presentation.js';
 import type { RenderQuality } from '../quality.js';
 import type { SettingsRowView } from '../settings-store.js';
 import type { TimelineFrameEvent } from '../timeline-player.js';
@@ -133,6 +133,8 @@ export interface DialogueCommands {
  */
 export interface DialogueProjectionPort extends DialogueCommands {
   setTheme(theme: RendererTheme): void;
+  setReadingPreferences(preferences: Partial<ReadingPreferences>): void;
+  setPresentationPreferences(preferences: Partial<PresentationPreferences>): void;
   readonly activeSpeakerId: string | null;
   /** Increments only when a non-idempotent text projection is accepted. */
   readonly projectionVersion: number;
@@ -243,6 +245,7 @@ export interface PreferenceCommands {
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void;
   setPostProcess(settings: Partial<PostProcessSettings>): void;
   setTheme(overrides: RendererThemeOverrides): void;
+  setReadingPreferences(preferences: Partial<ReadingPreferences>): void;
 }
 
 export interface PresentationCommands {
