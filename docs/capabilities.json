@@ -336,7 +336,7 @@
         "docs/dsl-spec.md",
         "docs/AI-GUIDE.md"
       ],
-      "limitation": "当前提供内置注册表与四种安全转场；自定义插件转场不在本轮范围。"
+      "limitation": "五种内置转场含旧世界溶解dissolve；rule遮罩、作者滤镜和时间轴转场尚未交付，自定义插件转场不在本批范围。"
     },
     {
       "id": "player-shell-coordination",

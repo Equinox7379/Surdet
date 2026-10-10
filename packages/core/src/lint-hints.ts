@@ -4,6 +4,8 @@
  * `surdet lint --json` 输出携带 hint，构成"写剧本 → lint → 按 hint 修复 → 再 lint"的自我修正循环接口。
  */
 
+import { BUILTIN_TRANSITION_NAMES } from './scene-lint.js';
+
 export const LINT_CODE_HINTS: Record<string, string> = {
   M001: '未知行内标签按原文显示；检查拼写，或用 \\< 明确输出尖括号。',
   M002: '样式标签必须在同一句内闭合；核对开标签对应的 </名称>。',
@@ -67,7 +69,7 @@ export const LINT_CODE_HINTS: Record<string, string> = {
   T001: '@set 值类型与声明类型不匹配：调整右值类型或修改变量声明 type（+=/-= 仅用于 number）。',
   T002: '条件表达式静态类型不是 boolean：条件应产出布尔值（比较/逻辑运算），不要用数值/字符串表达式。',
   T003: '运算符操作数类型明显不符：如数值变量与字符串比较、数值与布尔做 &&；修正操作数或补充类型转换逻辑。',
-  T010: '@transition 类型未知：使用已支持的 fade、slide-left、slide-right 或 circle。',
+  T010: `@transition 类型未知：使用已支持的 ${BUILTIN_TRANSITION_NAMES.join('、')}。`,
   TL001: '时间轴 JSON 顶层必须是对象。',
   TL002: '时间轴 version 必须为 1 或 2；使用 clips 时须为 2。',
   TL003: '时间轴 id 仅用字母、数字、下划线、点号或短横线，且与文件名一致。',

@@ -2,6 +2,7 @@ import { createStageGeometryPolicy } from './stage-geometry.js';
 import {
   Application,
   Container,
+  Rectangle,
   Text as PText,
   TextStyle,
   type TextStyleOptions,
@@ -130,6 +131,7 @@ export class RendererStageHost {
   }
 
   #uiLayer: Container;
+  readonly #worldRoot = new Container();
   readonly #assetRegistry: RenderAssetRegistry;
   readonly #dialogue: DialogueLayer;
   /** M5 extracted gallery projection; all gallery state lives here. */
@@ -166,6 +168,9 @@ export class RendererStageHost {
       createBackgroundTexture: (key, width, height) => makeWorldBackgroundTexture(key, width, height),
       requestFrame: () => this.#requestFrame(),
       captureThumbnail: () => this.captureThumbnail(),
+      captureWorld: () => this.app && !this.#world.getPresentationPreferences().reducedMotion
+        ? this.app.renderer.generateTexture({ target: this.#worldRoot, frame: new Rectangle(0, 0, this.#w, this.#h), resolution: 1, clearColor: 0x000000 })
+        : null,
     });
     this.#dialogue = new DialogueLayer({
       uiLayer: this.#uiLayer,
@@ -249,7 +254,8 @@ export class RendererStageHost {
     // 鼠标移动/点击唤出操作带；监听器由 DialogueLayer 以 owner=dialogue 注册。
     this.#dialogue.attachPointerTarget(app.canvas);
 
-    app.stage.addChild(this.#world.worldContainer, this.#world.particleContainer, this.#world.screenContainer, this.#uiLayer);
+    this.#worldRoot.addChild(this.#world.worldContainer, this.#world.particleContainer, this.#world.screenContainer);
+    app.stage.addChild(this.#worldRoot, this.#uiLayer);
     this.#dialogue.bringTextDisplaysToFront();
     // flash 置最末：闪光覆盖全部 UI；黑场 fade 也保留在 HUD 之上用于整屏转场。
     // tint 位于 screenLayer，在世界与 HUD 之间，不应吞掉对白、选择肢或操作带。
@@ -570,6 +576,7 @@ export class RendererStageHost {
   }
 
   /** 注册表驱动的场景转场；未知名称返回 false，交由宿主/校验层报告。 */
+  markStageBoundary(): void { this.#world.markStageBoundary(); }
   transition(name: TransitionName | string, durMs = 600): boolean {
     return this.#world.transition(name, durMs);
   }
