@@ -737,12 +737,12 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   /** Begin a new ADV line without exposing a transient empty-panel frame. */
-  beginText(speaker: string | null): void {
+  beginText(speaker: string | null, value = '', visibleUnits = Infinity): void {
     this.#advScroll = 0;
     this.#lineActive = true;
     this.#lastShownSpeaker = undefined;
     this.#lastShownDialog = '';
-    this.showText(speaker, '');
+    this.showText(speaker, value, visibleUnits);
     if (!this.#interfaceHidden && !this.#nvlActive) this.#dialogPanel.visible = true;
   }
 

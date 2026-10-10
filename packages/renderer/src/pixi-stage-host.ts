@@ -456,8 +456,8 @@ export class RendererStageHost {
     this.#dialogue.showText(speaker, value, visibleUnits);
   }
 
-  beginText(speaker: string | null): void {
-    this.#dialogue.beginText(speaker);
+  beginText(speaker: string | null, value?: string, visibleUnits?: number): void {
+    this.#dialogue.beginText(speaker, value, visibleUnits);
   }
 
   clearText(): void {

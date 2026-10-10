@@ -100,9 +100,9 @@ export class LegacyStageAdapter implements AdvStage {
       this.setPortraitFocus(this.host.dialogueLayer.activeSpeakerId);
     }
   }
-  beginText(speaker: string | null): void {
+  beginText(speaker: string | null, value?: string, visibleUnits?: number): void {
     const before = this.host.dialogueLayer.projectionVersion;
-    this.host.beginText(speaker);
+    this.host.beginText(speaker, value, visibleUnits);
     if (this.host.dialogueLayer.projectionVersion !== before) {
       this.setPortraitFocus(this.host.dialogueLayer.activeSpeakerId);
     }

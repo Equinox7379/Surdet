@@ -968,8 +968,8 @@ export class PresentationController {
     }
     this.#advCurrent = this.#current;
     this.#inlineAutoElapsed = 0;
-    this.#beginText(p.speaker);
     if (p.value.length === 0) {
+      this.#beginText(p.speaker);
       this.#commands.world.setPortraitSpeaking?.(false);
       // 空文本行（如只有说话人前缀的“凛：”）：无可打字内容，直接进入等待推进，
       // 否则状态机永远卡在 typing（Typewriter 空文本 done=true 但不触发 onComplete），剧情无法推进。
@@ -977,11 +977,13 @@ export class PresentationController {
       this.#awaitSince = nowMs();
       return;
     }
-    this.#status = 'typing';
-    this.#commands.world.setPortraitSpeaking?.(!this.#skipMode);
+    // Preparing a tag-only line may complete synchronously; do not publish it twice.
+    this.#status = 'idle';
     this.#tw.text = p.value;
+    this.#status = this.#tw.isDone ? 'awaiting' : 'typing';
+    if (this.#tw.isDone) this.#awaitSince = nowMs();
     this.#autoContinueLine = this.#tw.noWait;
-    this.#commands.dialogue.showText(p.speaker, p.value, this.#tw.shown);
+    this.#beginText(p.speaker, p.value, this.#tw.shown);
     this.#commands.world.setPortraitSpeaking?.(!this.#tw.isPaused && !this.#tw.isDone && !this.#skipMode);
     this.#syncAwaiting(this.#tw.isWaiting || this.#tw.isDone);
   }
@@ -1466,9 +1468,9 @@ export class PresentationController {
     if (c) this.#commands.dialogue.showText(c.speaker, c.value);
   }
 
-  #beginText(speaker: string | null): void {
-    if (this.#commands.dialogue.beginText) this.#commands.dialogue.beginText(speaker);
-    else this.#commands.dialogue.showText(speaker, '');
+  #beginText(speaker: string | null, value = '', visibleUnits?: number): void {
+    if (this.#commands.dialogue.beginText) this.#commands.dialogue.beginText(speaker, value, visibleUnits);
+    else this.#commands.dialogue.showText(speaker, value, visibleUnits);
   }
 
   #clearText(): void {

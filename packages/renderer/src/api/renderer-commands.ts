@@ -104,8 +104,8 @@ export interface WorldProjectionPort extends WorldCommands {
 export interface DialogueCommands {
   /** Complete marked line plus revealed visible-unit count (omitted means fully visible). */
   showText(speaker: string | null, value: string, visibleUnits?: number): void;
-  /** Additive internal lifecycle command: begin a line while keeping its panel visible. */
-  beginText?(speaker: string | null): void;
+  /** Begin a line and project its complete source/reveal count in one lifecycle step. */
+  beginText?(speaker: string | null, value?: string, visibleUnits?: number): void;
   /** Additive internal lifecycle command: explicitly clear and hide the current line. */
   clearText?(): void;
   showChoices(options: readonly ChoiceOptionView[]): void;

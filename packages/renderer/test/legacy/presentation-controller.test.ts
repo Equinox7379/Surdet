@@ -47,7 +47,10 @@ function stageHarness(): AdvStage & {
     setPortrait: () => undefined,
     removePortrait: () => undefined,
     showText: (_speaker: string | null, value: string) => { stage.texts.push(value); },
-    beginText: (speaker: string | null) => { stage.begins.push(speaker); },
+    beginText: (speaker: string | null, value = '', visibleUnits?: number) => {
+      stage.begins.push(speaker);
+      if (value) stage.showText(speaker, value, visibleUnits);
+    },
     clearText: () => { stage.clears += 1; },
     showChoices: (options: { index: number; label: string }[]) => { stage.choices = options.map((option) => ({ ...option })); },
     hideChoices: () => { stage.choices = []; },
