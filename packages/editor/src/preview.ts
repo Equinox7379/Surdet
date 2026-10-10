@@ -12,6 +12,7 @@ import { readProjectStage, resolvePlayerTheme, resolveProjectTitleLogo, stageCon
  * postMessage 协议（父窗口 → 预览）：
  *  { type: 'surdet-preview-load', payload: { sceneId, scenes, variables?, configs?, startLabel?, fast? } } → 编译并播放
  *  { type: 'surdet-preview-fast', fast: boolean }                                  → 切换打字速度
+ *  { type: 'surdet-preview-reading-trial', textScale, reducedMotion }              → 临时试看字号/减少动态（不保存）
  * 预览就绪后向父窗口回 { type: 'surdet-preview-ready' }。
  *
  * system 类指令无宿主部分（@battle/@calendar 缺配置等）：解释器直接穿透，
@@ -35,8 +36,9 @@ import { previewTextHash } from './preview-content.js';
 import { parsePreviewDebugCommand, type PreviewDebugState } from './preview-debug.js';
 import {
   AudioManager, Backlog, Typewriter, RenderPerformanceMonitor, buildMapView, createRendererRuntime,
-  SettingsStore, SETTING_STEPS, stepSetting, createSettingsUpdateHandler,
+  SettingsStore, stepSetting, createSettingsUpdateHandler, createSettingsRows, applyReadingSettings,
 } from '@surdet/renderer';
+import { NO_READING_TRIAL, parseReadingTrial, withReadingTrial, type ReadingTrial } from './preview-reading-trial.js';
 import type { AudioHandle, FontRole, GameSettings, RendererRuntime, SaveSlotView, SettingsStorage, SpeakerProfile, NumericSettingKey } from '@surdet/renderer';
 import { PreviewGeneration, readingPreviewDiagnostic, type PreviewDiagnostic } from './preview-diagnostics.js';
 import { createDirectTimelinePreviewScene } from './preview-direct-timeline.js';
@@ -129,6 +131,12 @@ let sessionStart = Date.now();
 let systemMenuOpen = false;
 let saveLoadOpen = false;
 let settingsOpen = false;
+/** Toolbar try-out over the preview settings; applied through Renderer commands, never stored. */
+let readingTrial: ReadingTrial = NO_READING_TRIAL;
+/** Re-applies the current reading settings and trial to the live runtime. */
+let applyPreviewReading: (() => void) | null = null;
+/** The work theme's dialogue panel opacity, where stepping "跟随作品" starts. */
+let previewPanelOpacity: number | undefined;
 /** 已应用字体的识别键与 Blob URL（同字体重复 load 不重复注册；换字体时按角色回收旧 URL） */
 const appliedFontKeys: Partial<Record<FontRole, string>> = {};
 const appliedFontUrls: Partial<Record<FontRole, string>> = {};
@@ -463,6 +471,11 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
   const menu = commands.menu;
   const system = commands.system;
   settings.apply(typewriter, previewAudio);
+  applyPreviewReading = () => {
+    if (runtime !== activeRuntime || queries.diagnostics.isDisposed()) return;
+    applyReadingSettings(withReadingTrial(settings.settings, readingTrial), commands, controller, settings.settings.locale || document.documentElement.lang);
+  };
+  applyPreviewReading();
   controller.connect(bus);
   bus.on('choice', ({ options }) => replayController?.choice(options));
   let debugPublishQueued = false;
@@ -552,6 +565,7 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
     apply: confirmed => {
       settings.apply(typewriter, previewAudio);
       controller.setAutoWait(confirmed.autoBaseDelayMs, confirmed.autoPerCharMs);
+      applyPreviewReading?.();
       if (settingsOpen) refreshSettingsPanel();
     },
     onError: error => showError(`预览设置保存失败，已保留原设置：${error instanceof Error ? error.message : String(error)}`),
@@ -560,13 +574,10 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
   function refreshSettingsPanel(): void {
     const current = settings.settings;
     menu.showSettings(
-      SETTING_STEPS.map((def) => ({
-        id: def.key,
-        label: def.label,
-        display: def.format(current[def.key]),
-      })),
+      createSettingsRows(current),
       (id, dir) => {
-        void updateSettings(confirmed => stepSetting(confirmed, id as NumericSettingKey, dir));
+        if (id === 'reducedMotion' || id === 'readAloud') { void updateSettings(confirmed => ({ [id]: !confirmed[id] })); return; }
+        void updateSettings(confirmed => stepSetting(confirmed, id as NumericSettingKey, dir, previewPanelOpacity));
       },
       () => {
         settingsOpen = false;
@@ -1185,6 +1196,7 @@ async function load(p: LoadPayload): Promise<void> {
     await applyPreviewAssets(p.assets, requiredThemeImages);
     if (previewDisposed) return;
     commands.preferences.setTheme(theme);
+    previewPanelOpacity = theme.opacity.panel;
     postPreviewDiagnostic({ generation, level: 'info', phase: 'assets', message: '素材加载完成', sceneId: p.sceneId });
     interp = new Interpreter(vs, bus!, reg, undefined, undefined, {
       snapshot: (): SystemSnapshots => ({
@@ -1266,6 +1278,10 @@ window.addEventListener('message', (e: MessageEvent) => {
     void loadQueue;
   }
   if (d.type === 'surdet-preview-fast') runtime?.controller.setTextSpeed(d.fast ? FAST_CPS : NORMAL_CPS);
+  if (d.type === 'surdet-preview-reading-trial') {
+    const trial = parseReadingTrial(e.data);
+    if (trial) { readingTrial = trial; applyPreviewReading?.(); }
+  }
   if (d.type === 'surdet-preview-reading-check' && e.source === window.parent) {
     const reading = readCurrentReading();
     if (!reading) return;

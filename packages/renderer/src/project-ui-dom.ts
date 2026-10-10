@@ -1,4 +1,4 @@
-import { PROJECT_UI_TAB_BAR_HEIGHT, evalExprBoolean, projectUiChildrenRect, projectUiRect, type VarValue, type ProjectUiAction, type ProjectUiBinding, type ProjectUiContentSource, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId, type ProjectUiRect, type ProjectUiText } from '@surdet/core';
+import { GAME_SETTING_DEFINITIONS, PROJECT_UI_TAB_BAR_HEIGHT, evalExprBoolean, projectUiChildrenRect, projectUiRect, type VarValue, type ProjectUiAction, type ProjectUiBinding, type ProjectUiContentSource, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId, type ProjectUiRect, type ProjectUiText } from '@surdet/core';
 import type { RendererTheme } from './theme.js';
 import { SETTING_STEPS } from './settings-store.js';
 import { fontTextDiagnostics, isUiTextClipped, type ReadingDiagnostic } from './reading-diagnostics.js';
@@ -56,8 +56,25 @@ const MODAL_PAGES = new Set<ProjectUiPageId>(['title', 'system-menu', 'save-load
 const PAGE_LEVEL: Record<ProjectUiPageId, number> = { hud: 1, dialogue: 2, toolbar: 3, choices: 4, title: 10, 'system-menu': 11, 'save-load': 12, settings: 12, gallery: 12, backlog: 12 };
 const DESIGN_FRAME: ProjectUiRect = { x: 0, y: 0, width: 1280, height: 720 };
 const hex = (value: number): string => `#${value.toString(16).padStart(6, '0')}`;
+const isSwitchSetting = (name: string): boolean => Object.hasOwn(GAME_SETTING_DEFINITIONS, name)
+  && GAME_SETTING_DEFINITIONS[name as keyof typeof GAME_SETTING_DEFINITIONS].type === 'boolean';
+
+/**
+ * Reading text follows the player's text scale: the dialogue body on the dialogue page and the
+ * option text on the choices page. Speaker names and system pages keep the author's size.
+ */
+function readingScale(context: ProjectUiContext): number {
+  const value = context.read('textScale', 'setting'), { min, max } = GAME_SETTING_DEFINITIONS.textScale;
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : 1;
+}
+
+function isReadingText(page: ProjectUiPageId, node: ProjectUiNode, item?: ProjectUiItem): boolean {
+  if (page === 'dialogue') return node.text?.kind === 'data' && node.text.field === 'dialogue';
+  return page === 'choices' && (item?.source === 'choices' || node.action?.kind === 'choice');
+}
 
 interface Display {
+  page: ProjectUiPageId;
   element: HTMLDivElement;
   context: ProjectUiContext;
   bindings: Array<() => void>;
@@ -123,7 +140,8 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       if (binding.name === 'keyPreset') return value === 'standard' ? '标准键位' : value === 'left-handed' ? '左手键位' : String(value ?? '');
       if (binding.name === 'locale') return ({ '': '作品原文', 'zh-CN': '中文', en: '英语', ja: '日语' } as Record<string, string>)[String(value ?? '')] ?? String(value);
       const setting = SETTING_STEPS.find(setting => setting.key === binding.name);
-      if (setting && typeof value === 'number') return setting.format(value);
+      if (setting && (typeof value === 'number' || value === null)) return setting.format(value);
+      if (isSwitchSetting(binding.name)) return value === true ? '开启' : '关闭';
       if (binding.name === 'autoPerCharMs' && typeof value === 'number') return `${value} 毫秒 / 字`;
     }
     if (binding.kind === 'variable' && binding.format) {
@@ -132,6 +150,77 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     }
     return typeof value === 'boolean' ? (value ? '是' : '否') : String(value ?? '');
   };
+
+  /** Reading bodies that are longer than their box, with how the reader scrolls each one. */
+  const readingScrollers = new Map<HTMLElement, (delta: number) => boolean>();
+
+  /**
+   * A body longer than its box: a new sentence starts at its top, growing text (typing) or a new
+   * text size keeps the tail in view only while the reader is at the end, and a refresh with the
+   * same text and size never moves the reader. The reader scrolls back with the wheel over the
+   * body or, once it is focused, with the arrow, Page and Home/End keys; clicks still reach the stage.
+   */
+  function followReading(element: HTMLElement, bindings: Array<() => void>): void {
+    element.style.overflow = 'hidden';
+    let text: string | null = null, size = '', atEnd = true;
+    const max = (): number => Math.max(0, element.scrollHeight - element.clientHeight);
+    const edges = (): void => {
+      const overflow = max() > 1, above = element.scrollTop > 1, below = element.scrollTop < max() - 1;
+      element.tabIndex = overflow ? 0 : -1;
+      const mask = overflow && (above || below)
+        ? `linear-gradient(to bottom, ${above ? 'transparent 0, #000 0.9em' : '#000 0'}, ${below ? '#000 calc(100% - 0.9em), transparent 100%' : '#000 100%'})` : '';
+      element.style.maskImage = mask;
+      element.style.setProperty('-webkit-mask-image', mask);
+    };
+    const scrollBy = (delta: number): boolean => {
+      const before = element.scrollTop;
+      element.scrollTop = Math.max(0, Math.min(max(), before + delta));
+      atEnd = element.scrollTop >= max() - 1;
+      edges();
+      return element.scrollTop !== before;
+    };
+    readingScrollers.set(element, scrollBy);
+    element.addEventListener('keydown', event => {
+      if (max() <= 1) return;
+      const line = parseFloat(getComputedStyle(element).fontSize) * 1.45 || 20;
+      // A page keeps one line of overlap, but a box shorter than a line (a small body at a large text
+      // size) still pages forward by most of its own height, never backwards or by nothing.
+      const page = Math.max(element.clientHeight - line, element.clientHeight * 0.875, 1);
+      const delta = { ArrowUp: -line, ArrowDown: line, PageUp: -page, PageDown: page, Home: -element.scrollHeight, End: element.scrollHeight }[event.key];
+      if (delta === undefined) return;
+      event.preventDefault(); event.stopPropagation();
+      scrollBy(delta);
+    });
+    element.addEventListener('focus', () => { element.style.outline = `2px solid ${hex(theme.colors.accent)}`; element.style.outlineOffset = '2px'; });
+    element.addEventListener('blur', () => { element.style.outline = ''; });
+    bindings.push(() => {
+      const nextText = element.textContent ?? '', nextSize = element.style.fontSize;
+      if (nextText === text && nextSize === size) return;
+      if (text === null || !nextText.startsWith(text)) {
+        // A new sentence: start from its top; follow it only if it does not overflow yet.
+        element.scrollTop = 0;
+        atEnd = max() <= 1;
+      }
+      text = nextText; size = nextSize;
+      if (atEnd) element.scrollTop = max();
+      edges();
+    });
+  }
+
+  // The body takes no pointer events, so the wheel over it is routed here before the stage sees it;
+  // it is consumed only when the body can still scroll that way.
+  const onWheel = (event: WheelEvent): void => {
+    for (const [element, scrollBy] of readingScrollers) {
+      if (!element.isConnected) { readingScrollers.delete(element); continue; }
+      if (element.closest('[hidden]')) continue;
+      const box = element.getBoundingClientRect();
+      if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) continue;
+      const unit = event.deltaMode === 1 ? parseFloat(getComputedStyle(element).fontSize) * 1.45 : event.deltaMode === 2 ? element.clientHeight : 1;
+      if (scrollBy(event.deltaY * unit)) { event.preventDefault(); event.stopPropagation(); }
+      return;
+    }
+  };
+  window.addEventListener('wheel', onWheel, { capture: true, passive: false });
 
   function applyStyle(element: HTMLElement, node: ProjectUiNode): void {
     const style = node.style;
@@ -159,6 +248,11 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     if (node.type === 'text' || node.type === 'button') element.dataset.uiReadingRole = node.style?.fontRole ?? 'ui';
     place(element, rect, parentRect);
     applyStyle(element, node);
+    if ((node.type === 'text' || node.type === 'button') && isReadingText(display.page, node, item)) {
+      const base = node.style?.fontSize ?? theme.typography.uiSize;
+      element.dataset.uiReadingScaled = 'true';
+      bindings.push(() => { element.style.fontSize = `${base * readingScale(display.context)}px`; });
+    }
     element.style.whiteSpace = 'pre-wrap';
     element.style.overflowWrap = 'anywhere';
     const condition = (expression: string | undefined): boolean => expression === undefined || evalExprBoolean(expression, {
@@ -199,6 +293,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       element.style.lineHeight = '1.45';
       element.style.pointerEvents = 'none';
       if (node.text) bindings.push(() => { element.textContent = visibleText(node.text, display.context, item, `ui:${node.id}`); });
+      if (element.dataset.uiReadingScaled) followReading(element, bindings);
     } else if (node.type === 'image') {
       const url = options.imageUrl(node.asset!);
       if (!url) throw new Error(`界面图片未加载：${node.asset}`);
@@ -312,6 +407,9 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     const signature = JSON.stringify(items);
     if (signature === content.signature) return;
     const scrollTop = content.element.scrollTop;
+    // Re-rendering after a setting changes must not drop keyboard focus from the row or its control.
+    const active = document.activeElement instanceof HTMLElement && content.element.contains(document.activeElement) ? document.activeElement : null;
+    const focusedItem = active?.closest<HTMLElement>('[data-ui-item]')?.dataset.uiItem, focusedControl = active?.dataset.uiControl;
     content.signature = signature;
     content.bindings = [];
     content.element.replaceChildren();
@@ -364,10 +462,21 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
         restore.onclick = event => { event.stopPropagation(); void activate(true); };
         row.appendChild(restore);
       }
-      if (content.source === 'settings' && content.template.length === 0) {
+      if (content.source === 'choices' && content.template.length === 0) {
+        content.bindings.push(() => { row.style.fontSize = `${readingScale(display.context)}em`; });
+      }
+      if (content.source === 'settings' && content.template.length === 0 && isSwitchSetting(item.id)) {
+        const on = display.context.read(item.id, 'setting') === true;
+        const toggle = document.createElement('button');
+        toggle.type = 'button'; toggle.dataset.uiControl = 'switch'; toggle.textContent = on ? '开启' : '关闭';
+        toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-checked', String(on)); toggle.setAttribute('aria-label', item.label);
+        toggle.style.cssText = `position:absolute;right:12px;top:12px;width:102px;height:34px;border-radius:17px;border:1px solid ${hex(on ? theme.colors.accent : theme.colors.line)};background:${hex(on ? theme.colors.accent : theme.colors.surface)};color:${hex(on ? theme.colors.textOnAccent : theme.colors.text)};font-weight:600;cursor:pointer`;
+        toggle.onclick = event => { event.stopPropagation(); wrap(display.context.action({ kind: 'setting-step', name: item.id, direction: 1 })); };
+        row.appendChild(toggle);
+      } else if (content.source === 'settings' && content.template.length === 0) {
         for (const [direction, label] of [[-1, '−'], [1, '+']] as const) {
           const step = document.createElement('button');
-          step.type = 'button'; step.textContent = label;
+          step.type = 'button'; step.textContent = label; step.dataset.uiControl = `step${direction}`;
           step.setAttribute('aria-label', `${item.label}${direction < 0 ? '减少' : '增加'}`);
           step.style.cssText = `position:absolute;right:${direction < 0 ? 72 : 12}px;top:12px;width:42px;height:34px;border:1px solid ${hex(theme.colors.line)};background:${hex(theme.colors.surface)};color:${hex(theme.colors.text)};cursor:pointer`;
           step.onclick = event => { event.stopPropagation(); wrap(display.context.action({ kind: 'setting-step', name: item.id, direction })); };
@@ -377,6 +486,10 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       content.element.appendChild(row);
     });
     content.element.scrollTop = scrollTop;
+    if (focusedItem !== undefined) {
+      const row = Array.from(content.element.children as HTMLCollectionOf<HTMLElement>).find(element => element.dataset.uiItem === focusedItem);
+      (focusedControl ? row?.querySelector<HTMLElement>(`[data-ui-control="${focusedControl}"]`) : row)?.focus();
+    }
   }
 
   function refresh(): void {
@@ -454,7 +567,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
           element.style.backgroundPosition = 'center';
         }
       }
-      const display: Display = { element, context, bindings: [], contents: [], pending: false };
+      const display: Display = { page, element, context, bindings: [], contents: [], pending: false };
       if (context.mode) element.dataset.uiMode = context.mode;
       pages.set(page, display);
       design.appendChild(element);
@@ -508,6 +621,8 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       disposed = true;
       confirmation?.finish(false);
       window.cancelAnimationFrame(frame);
+      window.removeEventListener('wheel', onWheel, { capture: true });
+      readingScrollers.clear();
       pages.clear();
       root.remove();
     },
