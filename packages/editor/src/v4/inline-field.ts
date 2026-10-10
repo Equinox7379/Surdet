@@ -10,6 +10,8 @@ import { completionPrefix, inlineCompletions, wrapInlineSelection, type InlineCo
 
 export interface InlineFieldOptions {
   editable(): boolean;
+  /** False while the row is not dialogue (e.g. an empty row typed into an instruction); markup help is then off. */
+  active?(): boolean;
   signal: AbortSignal;
 }
 
@@ -121,8 +123,15 @@ export function attachInlineField(textarea: HTMLTextAreaElement, options: Inline
 
   const parse = (): InlineTextDocument => parseInlineText(textarea.value);
   const focused = (): boolean => document.activeElement === textarea;
+  const markupActive = (): boolean => options.active?.() ?? true;
 
   const refresh = (): void => {
+    if (!markupActive()) {
+      field.classList.remove('is-projected', 'has-markup');
+      view.replaceChildren();
+      mirror.replaceChildren(textarea.value, '\u200b');
+      return;
+    }
     const parsed = parse();
     const projected = !focused() && parsed.hasMarkup && !parsed.issues.some((issue) => issue.severity === 'error');
     field.classList.toggle('is-projected', projected);
@@ -148,7 +157,7 @@ export function attachInlineField(textarea: HTMLTextAreaElement, options: Inline
   };
 
   const showCompletion = (): void => {
-    if (composing || !options.editable() || textarea.selectionStart !== textarea.selectionEnd) { closeCompletion(); return; }
+    if (composing || !markupActive() || !options.editable() || textarea.selectionStart !== textarea.selectionEnd) { closeCompletion(); return; }
     const found = completionPrefix(textarea.value, textarea.selectionEnd);
     const entries = found ? inlineCompletions(found.prefix) : [];
     if (!found || entries.length === 0) { closeCompletion(); return; }
@@ -196,7 +205,7 @@ export function attachInlineField(textarea: HTMLTextAreaElement, options: Inline
 
   const closeToolbar = (): void => { toolbar?.remove(); toolbar = null; };
   const updateToolbar = (): void => {
-    const show = focused() && options.editable() && !composing && textarea.selectionStart !== textarea.selectionEnd;
+    const show = focused() && markupActive() && options.editable() && !composing && textarea.selectionStart !== textarea.selectionEnd;
     if (!show) { if (!toolbar?.contains(document.activeElement)) closeToolbar(); return; }
     if (toolbar) return;
     toolbar = h('div', 'v4-inline-toolbar');
@@ -245,7 +254,7 @@ export function attachInlineField(textarea: HTMLTextAreaElement, options: Inline
       if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); closeCompletion(); return; }
     }
     if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && (event.key === 'b' || event.key === 'i')
-      && textarea.selectionStart !== textarea.selectionEnd) {
+      && textarea.selectionStart !== textarea.selectionEnd && markupActive()) {
       event.preventDefault(); event.stopImmediatePropagation();
       wrap(event.key as 'b' | 'i');
     }

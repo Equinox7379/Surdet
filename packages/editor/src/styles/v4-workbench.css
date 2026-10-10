@@ -159,6 +159,9 @@
 .v4-inline-tool { min-width: 28px; height: 26px; padding: 0 7px; border: 0; border-radius: var(--surdet-radius-tight); background: transparent; color: var(--surdet-text-primary); font: 500 12px/1 var(--surdet-font-ui); cursor: pointer; }
 .v4-inline-tool:is(:hover, :focus-visible) { background: var(--surdet-surface-hover); outline: none; }
 .v4-inline-reading { width: 132px; height: 26px; padding: 0 8px; border: 1px solid var(--surdet-border-strong); border-radius: var(--surdet-radius-tight); background: var(--surdet-surface-app); color: var(--surdet-text-primary); font: 12px/1 var(--surdet-font-ui); }
+/* A row typed into from empty keeps the textarea's indent and, while still empty, its compact size. */
+.v4-authoring #editor .v4-empty-dialogue .fields :is(.v4-inline-mirror, .v4-inline-view) { padding-left: 106px; }
+.v4-authoring #editor .v4-empty-dialogue.block-blank .fields :is(.v4-inline-mirror, .v4-inline-view) { padding-block: 0; font: 400 13px/22px var(--surdet-font-ui); }
 .v4-authoring #editor .block[data-speaker-tone="1"] { --speaker-color: var(--surdet-speaker-1); }
 .v4-authoring #editor .block[data-speaker-tone="2"] { --speaker-color: var(--surdet-speaker-2); }
 .v4-authoring #editor .block[data-speaker-tone="3"] { --speaker-color: var(--surdet-speaker-3); }
@@ -457,6 +460,7 @@
   .v4-authoring .continuity-line-number { left: 2px; width: 30px; }
   .v4-authoring #editor .block-text .fields { grid-template-columns: minmax(0,1fr); }
   .v4-authoring #editor .v4-empty-dialogue .fields .v4-dialogue-input { padding-left: 0; }
+  .v4-authoring #editor .v4-empty-dialogue .fields :is(.v4-inline-mirror, .v4-inline-view) { padding-left: 0; }
   .v4-step-summary { gap: 8px; padding: 8px; flex-wrap: wrap; }
   .v4-authoring .ops { flex-wrap: wrap; }
   .v4-script-inspector { min-height: 0; overflow: auto; }
