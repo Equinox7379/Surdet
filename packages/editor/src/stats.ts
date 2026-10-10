@@ -3,7 +3,7 @@
  * 制作人向投资人/发行报进度用：字数/台词数/选择肢/结局数/预估通关时长。
  */
 import { parseScript } from './model.js';
-import { compileScene, computeProjectStats as computeCoreProjectStats } from '@surdet/core';
+import { compileScene, computeProjectStats as computeCoreProjectStats, inlineTextLength } from '@surdet/core';
 
 export interface SceneStat {
   id: string;
@@ -36,6 +36,15 @@ export interface ProjectStats {
 const DEFAULT_CPS = 30;
 /** 转场类指令的估算耗时（fadein/fadeout/wipe/flash 各按 400ms 估） */
 const TRANSITION_MS = 400;
+
+/**
+ * Visible characters of one scene's dialogue and narration, the same measure as `totalChars`
+ * (no tags, commands or variable names). It reads rows without compiling, so a scene that
+ * does not compile yet still gets a count.
+ */
+export function sceneTextCharacters(text: string): number {
+  return parseScript(text).reduce((sum, line) => sum + (line.kind === 'text' ? inlineTextLength(line.value) : 0), 0);
+}
 
 export function computeProjectStats(scenes: Iterable<{ id: string; text: string }>): ProjectStats {
   const materialized = [...scenes];
