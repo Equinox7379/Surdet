@@ -359,6 +359,11 @@ export class ScriptWorkbench {
       const originalInput = blank.oninput;
       blank.oninput = (event) => { originalInput?.call(blank, event); this.fitTextarea(blank); };
       this.bindDialogueEnter(block, blank);
+      // Typing here turns the row into narration in place, so the same textarea gets markup help
+      // while the row is (or may become) dialogue; an instruction typed here turns it off.
+      const slot = blank.parentNode!, next = blank.nextSibling;
+      slot.insertBefore(attachInlineField(blank, { editable: () => this.editable(), signal: this.abort.signal,
+        active: () => block.classList.contains('block-blank') || block.classList.contains('block-text') }), next);
       this.fitTextarea(blank);
       return;
     }

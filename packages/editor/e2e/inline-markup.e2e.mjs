@@ -40,6 +40,7 @@ const source = [
   '凛：到了。',
   '@end',
   '@label stay',
+  '',
   '凛：留下了。',
   '@end',
 ].join('\n');
@@ -230,6 +231,32 @@ try {
   await page.waitForFunction(() => document.querySelector('.block[data-line="6"] .raw input')?.value.includes('\\<i>'));
   assert.equal(await row(6).locator('.raw input').inputValue(), '  <color=accent>{hero}</color>\\<i>先走\\</i> -> @goto after');
   console.log('PASS search across tags, safe replacement, crossing match skipped, option text found and replaced as text');
+
+  // 9. A narration typed into an empty row keeps the same textarea and gets the same markup help;
+  //    an instruction typed there gets none, and undo returns the empty row.
+  const blankBox = box(12);
+  await blankBox.click();
+  await blankBox.evaluate((node) => { node.dataset.identity = 'blank-row'; });
+  await page.keyboard.type('新旁白<co');
+  await row(12).locator('.v4-inline-completion').waitFor();
+  assert.deepEqual(await row(12).locator('.v4-inline-completion code').allTextContents(), ['<color=…>']);
+  await page.keyboard.press('Enter');
+  const narration = await blankBox.evaluate((node) => ({ same: node.dataset.identity, value: node.value, selected: node.value.slice(node.selectionStart, node.selectionEnd),
+    kind: node.closest('.block').classList.contains('block-text') }));
+  assert.deepEqual(narration, { same: 'blank-row', value: '新旁白<color=accent></color>', selected: 'accent', kind: true });
+  assert.deepEqual(await row(12).locator('.v4-inline-mirror .is-tag').allTextContents(), ['<color=accent>', '</color>']);
+  for (let step = 0; step < 30 && !(await row(12).evaluate((block) => block.classList.contains('block-blank'))); step++) await page.keyboard.press('Control+z');
+  assert(await row(12).evaluate((block) => block.classList.contains('block-blank')), 'undo returns the empty row');
+  assert.equal(await row(12).locator('.v4-inline-field').count(), 1, 'the empty row again has markup help');
+  await box(12).click();
+  await page.keyboard.type('@wait 100 <co');
+  assert(await row(12).evaluate((block) => block.classList.contains('block-instr')), 'the row became an instruction');
+  assert.equal(await row(12).locator('.v4-inline-completion').count(), 0, 'an instruction gets no tag completion');
+  assert.equal(await row(12).locator('.v4-inline-mirror .is-tag, .v4-inline-mirror .is-error').count(), 0, 'an instruction gets no markup highlight');
+  for (let step = 0; step < 30 && !(await row(12).evaluate((block) => block.classList.contains('block-blank'))); step++) await page.keyboard.press('Control+z');
+  assert(await row(12).evaluate((block) => block.classList.contains('block-blank')), 'undo returns the empty row after an instruction');
+  if (outDir) await page.screenshot({ path: path.join(outDir, '04-new-narration.png') });
+  console.log('PASS empty row: new narration gets completion and highlight in the same textarea; instruction gets none; undo restores');
 
   assert.deepEqual(errors, [], 'page errors');
   console.log('PASS inline markup front end');
