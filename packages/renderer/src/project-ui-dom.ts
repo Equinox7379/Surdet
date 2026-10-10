@@ -182,7 +182,10 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     readingScrollers.set(element, scrollBy);
     element.addEventListener('keydown', event => {
       if (max() <= 1) return;
-      const line = parseFloat(getComputedStyle(element).fontSize) * 1.45, page = element.clientHeight - line;
+      const line = parseFloat(getComputedStyle(element).fontSize) * 1.45 || 20;
+      // A page keeps one line of overlap, but a box shorter than a line (a small body at a large text
+      // size) still pages forward by most of its own height, never backwards or by nothing.
+      const page = Math.max(element.clientHeight - line, element.clientHeight * 0.875, 1);
       const delta = { ArrowUp: -line, ArrowDown: line, PageUp: -page, PageDown: page, Home: -element.scrollHeight, End: element.scrollHeight }[event.key];
       if (delta === undefined) return;
       event.preventDefault(); event.stopPropagation();
