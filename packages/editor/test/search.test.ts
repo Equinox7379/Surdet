@@ -160,4 +160,12 @@ describe('选项文字按 Core 读出的选项文本查找替换（16-REV-01/02�
     ]);
     expect(previewSceneReplacement(text, 'danger', '<i>x</i>', false)!.changes[0]!.after).toBe('  <b>危</b>险 [if:<i>x</i>] -> @goto done');
   });
+  it('跨标签找到选项文字，并保留原稿行定位；箭头后的内容不算显示文字', () => {
+    const text = '@scene s\n@choice\n  <b>危</b>险 -> @goto done\n@label done\n@end';
+    expect(searchScenes([{ key: 's', id: 's', text }], '危险', false)).toEqual([
+      { sceneKey: 's', sceneId: 's', line: 2, text: '  <b>危</b>险 -> @goto done', visible: { text: '危险', start: 0, end: 2 } },
+    ]);
+    expect(searchScenes([{ key: 's', id: 's', text }], '危险 ->', false)).toEqual([]);
+    expect(searchScenes([{ key: 's', id: 's', text }], 'goto done', false).map(result => result.line)).toEqual([2]);
+  });
 });

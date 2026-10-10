@@ -30,6 +30,13 @@ function dialogueParts(line: SceneDocumentLine): { prefix: string; value: string
   return { prefix: line.raw.slice(0, line.raw.length - line.value.length), value: line.value };
 }
 
+/** The text a player sees on this row, as Core reads it: dialogue, or an option's shown text. */
+function shownText(line: SceneDocumentLine): { text: string; context: 'dialogue' | 'choice' } | null {
+  const parts = dialogueParts(line);
+  if (parts) return { text: parts.value, context: 'dialogue' };
+  const span = line.kind === 'choice-option' ? choiceLabelSpan(line.raw) : null;
+  return span ? { text: line.raw.slice(span.start, span.end), context: 'choice' } : null;
+}
 
 /** 构造匹配器（非法正则返回 null，由 UI 提示） */
 export function buildMatcher(query: string, useRegex: boolean): RegExp | null {
@@ -57,9 +64,9 @@ export function searchScenes(scenes: Iterable<SceneText>, query: string, useRege
         results.push({ sceneKey: sc.key, sceneId: sc.id, line: i, text });
         return;
       }
-      // Dialogue is also searched as the player sees it, so a phrase split by style tags is found.
-      const parts = dialogueParts(line);
-      const visible = parts && findInDialogue(parts.value, re);
+      // Dialogue and option text are also searched as the player sees them, so a phrase split by style tags is found.
+      const shown = shownText(line);
+      const visible = shown && findInDialogue(shown.text, re, shown.context);
       if (visible) results.push({ sceneKey: sc.key, sceneId: sc.id, line: i, text, visible: { text: visible.plain, start: visible.start, end: visible.end } });
     });
     if (results.length >= maxResults) break;

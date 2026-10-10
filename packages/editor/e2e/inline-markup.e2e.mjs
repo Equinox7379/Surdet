@@ -217,7 +217,19 @@ try {
   await page.getByRole('button', { name: '替换整个项目' }).click();
   assert.match(await status(), /跨过或位于行内标签内/);
   assert.equal(await box(2).inputValue(), '你说什么？<w=400>……<color=accent>再说两遍</color>。', 'a match across a tag is never replaced');
-  console.log('PASS search across tags, safe replacement, crossing match skipped');
+  // Option text is searched as Core reads it; a tag typed as replacement is written as text.
+  await page.locator('#search-input').fill('{hero}先走');
+  const optionHit = page.locator('.search-item').first();
+  await optionHit.waitFor();
+  assert.equal(await optionHit.locator('mark').innerText(), '{hero}先走');
+  await page.locator('#search-input').fill('先走');
+  await page.getByRole('textbox', { name: '替换为（可空）' }).fill('<i>先走</i>');
+  await page.getByRole('button', { name: '替换整个项目' }).click();
+  await page.locator('.search-replace-dialog').waitFor();
+  await page.getByRole('button', { name: '确认替换' }).click();
+  await page.waitForFunction(() => document.querySelector('.block[data-line="6"] .raw input')?.value.includes('\\<i>'));
+  assert.equal(await row(6).locator('.raw input').inputValue(), '  <color=accent>{hero}</color>\\<i>先走\\</i> -> @goto after');
+  console.log('PASS search across tags, safe replacement, crossing match skipped, option text found and replaced as text');
 
   assert.deepEqual(errors, [], 'page errors');
   console.log('PASS inline markup front end');
