@@ -111,6 +111,7 @@ describe('PreviewReplayController', () => {
       hideChoices: () => { visibleChoices = []; },
       setAwaiting: () => {},
       setChoiceHighlight: () => {},
+      setTextSkipping: () => {},
     } } as unknown as RendererCommands;
     const queries = {} as RendererQueries;
     const presentation = new PresentationController(commands, queries, undefined, {
