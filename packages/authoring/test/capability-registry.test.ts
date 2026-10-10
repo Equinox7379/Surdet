@@ -102,7 +102,7 @@ describe('authoring capability registry', () => {
     const patch = getCapabilityDefinition('scene.patch').inputSchema as Record<string, any>;
     const variants = patch.properties.patch.oneOf as Array<Record<string, any>>;
     expect(variants.map((variant) => variant.properties.kind.const)).toEqual([
-      'patchStageProperties', 'replaceText', 'replaceInstruction', 'insertAfter', 'replaceChoiceOption',
+      'patchStageProperties', 'replaceText', 'replaceInstruction', 'insertAfter', 'insertBefore', 'replaceChoiceOption',
       'replaceChoiceGroup', 'replaceConditionBlock', 'removeObject', 'renameLabel', 'removeLabel',
     ]);
     const choice = variants.find((variant) => variant.properties.kind.const === 'replaceChoiceGroup')!;

@@ -170,7 +170,7 @@ function hashText(text: string): string {
 function validateCurrentScenePatchReferences(snapshot: ProjectSnapshot, input: ScenePatchInput): void {
   const patch = input.patch;
   const index = buildObjectIndex(snapshot);
-  const ref = patch.kind === 'insertAfter' ? patch.anchor : patch.target;
+  const ref = patch.kind === 'insertAfter' || patch.kind === 'insertBefore' ? patch.anchor : patch.target;
   const target = index.byRef.get(ref);
   const sceneId = input.sceneId ?? (ref.startsWith('label:') ? /^label:([^.]+)\./.exec(ref)?.[1] : /^scene:([^/]+)\//.exec(ref)?.[1]);
   const scenes = snapshot.scenes.filter(scene => scene.id === sceneId);

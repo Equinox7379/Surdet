@@ -7,6 +7,7 @@
 行内文字、文字记录后端及Claude前端接入：[行内文字合同](inline-text-contract.md)。
 阅读辅助后端及Claude设置页接入：[阅读辅助合同](reading-accessibility-contract.md)。
 从源行试玩后端及Claude工作台接入：[目标路径合同](preview-target-path-contract.md)。
+流程图结构化操作后端及Claude连线接入：[流程编辑合同](flow-operations-contract.md)。
 
 | 需要做什么 | 阅读入口 |
 | --- | --- |

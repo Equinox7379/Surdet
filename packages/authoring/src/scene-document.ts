@@ -205,6 +205,10 @@ export function insertLinesAfter(
     const isNewFinalLine = insertionIndex === lines.length && insertedIndex === inserted.length - 1;
     return materializeLine(line, isNewFinalLine ? '' : (line.eol || lineEol));
   });
+  if (insertionIndex === 0 && existing[0]?.raw.startsWith('\uFEFF')) {
+    existing[0] = { ...existing[0], raw: existing[0].raw.slice(1) };
+    newLines[0] = { ...newLines[0]!, raw: '\uFEFF' + newLines[0]!.raw };
+  }
   return [...existing.slice(0, insertionIndex), ...newLines, ...existing.slice(insertionIndex)];
 }
 

@@ -1,6 +1,6 @@
 # 从源行试玩：后端与Claude接入合同
 
-成熟化规划第6项后端，依赖文字/记录PR #10。公开合同2.33.0，新增只读`project.preview-path`（MCP `surdet_project_preview_path`），共73能力。Editor界面尚未交付，继续由Claude负责。
+成熟化规划第6项后端，依赖文字/记录PR #10，交付于PR #11（当时合同2.33.0）；当前合同2.34.0，共73能力。只读`project.preview-path`（MCP `surdet_project_preview_path`）没有改变。Editor界面尚未交付，继续由Claude负责。
 
 ## 目标与三种起点
 

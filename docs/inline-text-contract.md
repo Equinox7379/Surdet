@@ -37,7 +37,7 @@ Core导出`INLINE_TEXT_TAGS`作为唯一标签表：`b`、`i`、`color`、`size`
 
 `interpolateInlineText`先识别模板中的真实标签，再替换普通文字中的变量；`<{tag}>`也不能由变量拼成标签。普通说话人仍走原来的`interpolate`。普通文本/CSV导入会转义尖括号与反斜杠；主动编写DSL或`scene.patch`的正文可以包含标签。
 
-Authoring合同2.33.0，能力仍为73项。`capabilities.describe.result.inlineText`包含`tags`、`ruby:explicit-only`和转义说明；无需增加一个标签写入工具。CLI/MCP/Editor必须使用同批依赖。译稿CSV保留原文标记；配音CSV的待录台词投影为明文，绑定仍固定原始台词，不把明文冒充源文。
+Authoring合同2.34.0，能力仍为73项。`capabilities.describe.result.inlineText`包含`tags`、`ruby:explicit-only`和转义说明；无需增加一个标签写入工具。CLI/MCP/Editor必须使用同批依赖。译稿CSV保留原文标记；配音CSV的待录台词投影为明文，绑定仍固定原始台词，不把明文冒充源文。
 
 ## Renderer接线
 

@@ -74,6 +74,31 @@ async function connectedProject(projectRoot: string, policy: 'observe' | 'stage'
 }
 
 describe('Surdet Agent Port MCP tool projection', () => {
+  it('flow insertBefore is publicly callable in a candidate and carries the real target dependency', async () => {
+    const { session, client, server } = await connected('stage');
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const result = await client.callTool({ name, arguments: args }); expect(result.isError, textContent(result)).not.toBe(true);
+      return (result.structuredContent as any).result;
+    };
+    try {
+      await call('surdet_change_begin', { compositionMode: 'candidate' });
+      await call('surdet_scene_create', { operationId: 'flow-destination', sceneId: 'destination', blocks: [{ kind: 'text', value: '已到目的地。' }] });
+      const scene = await call('surdet_object_inspect', { objectRef: 'scene:start', view: 'working' });
+      const children = await Promise.all(scene.childRefs.map((objectRef: string) => call('surdet_object_inspect', { objectRef, view: 'working' })));
+      const end = children.find((object: any) => object.source?.raw === '@end');
+      const patched = await call('surdet_scene_patch', { operationId: 'flow-connect', patch: { kind: 'insertBefore', anchor: end.objectRef,
+        expectedFingerprint: end.fingerprint, blocks: [{ kind: 'instruction', name: 'jump', args: ['destination'] }] } });
+      expect(patched.kind).toBe('insertBefore');
+      const route = await call('surdet_project_preview_path', { view: 'working', sceneId: 'destination', line: 1 });
+      expect(route.status).toBe('reached');
+      expect((await session.describe()).candidateReadiness?.status).toBe('ready');
+      const opened = await NodeChangeStore.openForProject(session.activeChangeId!, session.projectRoot);
+      expect(opened?.record.operations['flow-connect']?.compositionFacts?.requiredObjects).toEqual(expect.arrayContaining([
+        expect.objectContaining({ objectRef: 'scene:destination', source: 'candidate' }),
+      ]));
+      expect(fs.readFileSync(path.join(session.projectRoot, 'content/scenario/start.gal'), 'utf8')).toBe('@scene start\n凛：开始。\n@end\n');
+    } finally { await client.close(); await server.close(); await session.close(); }
+  });
   it('preview-path distinguishes a working draft from project without writing simulation evidence', async () => {
     const { session, client, server } = await connected('stage');
     try {

@@ -5,6 +5,7 @@ import { InMemoryChangeRepository, beginChange, openChange } from '../src/change
 import { applySceneCreate, applyScenePatch, ensureVariable } from '../src/operations.js';
 import { buildObjectIndex } from '../src/object-index.js';
 import type { SceneBlockInput, ScenePatchInput } from '../src/contracts.js';
+import { runExplicitPath } from '../src/simulation.js';
 
 function digest(text: string): string {
   let hash = 0x811c9dc5;
@@ -36,6 +37,55 @@ function fixtureStorage(configText = '{"entryScene":"prologue","variables":{}}',
 }
 
 describe('typed authoring operations', () => {
+  it.each([['\n', ''], ['\r\n', ''], ['', '\uFEFF']] as const)('flow insertBefore makes a first-line terminator connection reachable while preserving source and endings (%j,%j)', async (eol, bom) => {
+    const source = `${bom}@end${eol}`;
+    const config = '{"entryScene":"prologue","variables":{"visited":{"type":"number","initial":0}}}';
+    const extra = { 'content/scenario/destination.gal': '@set visited = 2\n@end\n' };
+    const snapshot = await loadProjectSnapshot(fixtureStorage(config, source, undefined, extra), hasher);
+    const anchor = buildObjectIndex(snapshot).objects.find(object => object.kind === 'instruction' && object.source?.path === 'content/scenario/prologue.gal' && object.source.raw.trimStart() === '@end')!;
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    const input: ScenePatchInput = { operationId: 'connect-before-end', patch: { kind: 'insertBefore', anchor: anchor.objectRef,
+      expectedFingerprint: anchor.fingerprint!, blocks: [{ kind: 'instruction', name: 'jump', args: ['destination'] }] } };
+    await applyScenePatch(change, input, hasher);
+    expect(change.record.workingFiles['content/scenario/prologue.gal']).toBe(`${bom}@jump destination${eol || '\n'}@end${eol}`);
+    const replay = await loadProjectSnapshot(fixtureStorage(config, change.record.workingFiles['content/scenario/prologue.gal'], undefined, extra), hasher);
+    expect(await runExplicitPath(replay, { sceneId: 'prologue', choices: [] })).toMatchObject({ status: 'passed', finalVariables: { visited: 2 } });
+    const after = change.record.workingFiles['content/scenario/prologue.gal'];
+    await applyScenePatch(change, input, hasher); expect(change.record.workingFiles['content/scenario/prologue.gal']).toBe(after);
+    expect((await fixtureStorage(config, source, undefined, extra).readText('content/scenario/prologue.gal')).text).toBe(source);
+  });
+  it('flow insertBefore accepts the actual next-label boundary for an empty segment', async () => {
+    const source = '@scene prologue\r\n@label first\r\n@label next\r\n@end\r\n';
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, source), hasher);
+    const anchor = buildObjectIndex(snapshot).byRef.get('label:prologue.next')!;
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    await applyScenePatch(change, { operationId: 'empty-label-connect', patch: { kind: 'insertBefore', anchor: anchor.objectRef,
+      expectedFingerprint: anchor.fingerprint!, blocks: [{ kind: 'instruction', name: 'goto', args: ['next'] }] } }, hasher);
+    expect(change.record.workingFiles['content/scenario/prologue.gal']).toBe(source.replace('@label next', '@goto next\r\n@label next'));
+  });
+  it('flow insertBefore refuses splitting the first or a later choice option without changing the draft', async () => {
+    const source = '@scene prologue\n@choice\n  甲 -> @end\n  乙 -> @end\n';
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, source), hasher);
+    for (const anchor of buildObjectIndex(snapshot).objects.filter(object => object.kind === 'choice-option')) {
+      const change = await beginChange(snapshot, new InMemoryChangeRepository()); const before = structuredClone(change.record);
+      await expect(applyScenePatch(change, { operationId: 'split-choice', patch: { kind: 'insertBefore', anchor: anchor.objectRef,
+        expectedFingerprint: anchor.fingerprint!, blocks: [{ kind: 'instruction', name: 'jump', args: ['prologue'] }] } }, hasher)).rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED' });
+      expect(change.record).toEqual(before);
+    }
+  });
+  it('flow retargets call and returns to its real continuation without changing surrounding CRLF', async () => {
+    const source = '@scene prologue\r\n  @call old.entry  \r\n@set visited += 10\r\n@end\r\n';
+    const config = '{"entryScene":"prologue","variables":{"visited":{"type":"number","initial":0}}}';
+    const extra = { 'content/scenario/old.gal': '@label entry\n@set visited = 1\n@return\n', 'content/scenario/new.gal': '@label entry\n@set visited = 2\n@return\n' };
+    const snapshot = await loadProjectSnapshot(fixtureStorage(config, source, undefined, extra), hasher);
+    const target = buildObjectIndex(snapshot).objects.find(object => object.source?.raw.trim() === '@call old.entry')!;
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    await applyScenePatch(change, { operationId: 'retarget-call', patch: { kind: 'replaceInstruction', target: target.objectRef,
+      expectedFingerprint: target.fingerprint!, instruction: { kind: 'instruction', name: 'call', args: ['new.entry'] } } }, hasher);
+    expect(change.record.workingFiles['content/scenario/prologue.gal']).toBe(source.replace('old.entry', 'new.entry'));
+    const replay = await loadProjectSnapshot(fixtureStorage(config, change.record.workingFiles['content/scenario/prologue.gal'], undefined, extra), hasher);
+    expect(await runExplicitPath(replay, { sceneId: 'prologue', choices: [] })).toMatchObject({ status: 'passed', finalVariables: { visited: 12 } });
+  });
   it('protects gallery text replay entries when deleting or renaming their label', async () => {
     const gallery = '\uFEFF{\r\n  "texts": [{"id":"memory","scene":"prologue","label":"memory","name":"memory","custom":42}], "custom":{"label":"memory"}\r\n}\r\n';
     const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, '@scene prologue\r\n@label memory\r\n回想。\r\n@end\r\n', undefined, { 'content/config/gallery.json': gallery, 'content/scenario/caller.gal': '@scene caller\n@call prologue.memory\n@end\n' }), hasher);
