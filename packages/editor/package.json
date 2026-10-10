@@ -18,6 +18,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@fontsource-variable/noto-serif-sc": "^5.3.0",
     "@surdet/authoring": "0.1.0",
     "@surdet/core": "0.1.0",
     "@surdet/player": "0.1.0",
@@ -27,4 +28,3 @@
     "vite": "^6.3.5"
   }
 }
-

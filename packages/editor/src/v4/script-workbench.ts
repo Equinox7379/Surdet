@@ -8,6 +8,7 @@ import { portraitDisplayName, projectPortraitAssets } from '../assets.js';
 import { disposePreviewPanel, renderPreviewPanel, refreshPreviewSourceState } from '../panels/preview-panel.js';
 import { allowedToEdit, button, disclosure, field, ImageScope, navigateMode } from './ui.js';
 import { renderTimelineSummary } from './timeline-summary.js';
+import { firstTimelineBackground, parseTimelineText } from '../timeline-model.js';
 import { toggleAuthoringOutline } from '../shell/authoring-workbench.js';
 import { editSceneLabel } from '../label-editing.js';
 import { instructionLabel, instructionArgumentSummary } from '../script-presentation.js';
@@ -48,6 +49,28 @@ export function installScriptV4(editor: HTMLElement, rerender: () => void): void
     active = new ScriptWorkbench(root, editor, scene, state.current, rerender);
   }
   active.decorate();
+}
+
+function projectTimeline(id: string) {
+  const entry = state.timelines.find((timeline) => timeline.id === id);
+  return entry ? parseTimelineText(entry.text).definition ?? undefined : undefined;
+}
+
+/**
+ * The background for the scene heading, which is decoration only: the first `@bg` in source order,
+ * or the background shown first by the first timeline that sets one. It does not replay the stage,
+ * so a non-blocking timeline running alongside a later `@bg` is not interleaved.
+ */
+function firstSceneBackground(lines: readonly LineModel[]): string {
+  for (const line of lines) {
+    if (line.kind !== 'instr' || (line.name !== 'bg' && line.name !== 'timeline')) continue;
+    const argument = decodeInstructionArgument(splitInstr(line.raw).args[0] ?? '');
+    if (line.name === 'bg') return argument;
+    const definition = projectTimeline(argument);
+    const key = definition ? firstTimelineBackground(definition, projectTimeline) : null;
+    if (key !== null) return key;
+  }
+  return '';
 }
 
 export class ScriptWorkbench {
@@ -246,10 +269,30 @@ export class ScriptWorkbench {
     this.editor.querySelector('.v4-source-editor')?.remove();
     if (this.view.view === 'source') this.createSourceEditor();
     for (const block of this.editor.querySelectorAll<HTMLElement>('.block')) this.decorateBlock(block, lines[Number(block.dataset.line)]);
+    this.decorateHeading(lines);
     this.select(this.view.line, false);
     this.editor.scrollTop = this.view.scroll;
     this.drawStage();
     refreshPreviewSourceState();
+  }
+
+  /** The scene's first background, kept faint behind its title; a scene without one keeps a plain title. */
+  private decorateHeading(lines: readonly LineModel[]): void {
+    const heading = this.editor.querySelector<HTMLElement>('.manuscript-heading');
+    if (!heading) return;
+    const key = firstSceneBackground(lines);
+    const asset = key === '' ? undefined
+      : state.dirAssets.find((item) => item.kind === 'bg' && item.key === key && item.isImage && item.handle !== null);
+    const existing = heading.querySelector<HTMLElement>('.manuscript-banner');
+    if (asset && existing?.dataset.backgroundKey === key && existing.dataset.imageState === 'ready') return;
+    existing?.remove();
+    heading.classList.toggle('has-banner', asset !== undefined);
+    if (!asset) return;
+    const banner = h('div', 'manuscript-banner');
+    banner.setAttribute('aria-hidden', 'true');
+    banner.dataset.backgroundKey = key;
+    heading.prepend(banner);
+    void this.rowImages.image(banner, asset, '', 'cover');
   }
 
   private decorateBlock(block: HTMLElement, line: LineModel | undefined): void {
@@ -539,7 +582,6 @@ export class ScriptWorkbench {
       }
     };
     if (line.kind === 'text') {
-      this.inspector.append(h('p', 'v4-muted', '在正文中编辑说话人和台词。'));
       const source = this.scene.text;
       const lines = this.lines();
       const revealOrigin = (sourceLine: number): void => {

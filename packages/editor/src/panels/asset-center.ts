@@ -807,8 +807,7 @@ function renderInspector(host: HTMLElement, item: ProjectAssetItem | null, items
       : renderDetachedRelocation(hooks);
     host.append(
       h('p', 'asset-center-eyebrow', '素材详情'),
-      h('h2', undefined, '选择一项素材'),
-      h('p', 'asset-center-empty-copy', '这里会固定显示预览、文件信息和引用位置，不需要把鼠标停在条目上。'),
+      h('p', 'asset-center-inspector-empty', '选中素材后在这里查看预览和引用'),
     );
     if (detachedRelocation !== null) host.appendChild(detachedRelocation);
     return;
@@ -957,7 +956,6 @@ export function renderAssetCenter(container: HTMLElement, hooks: AssetCenterHook
   title.append(
     h('p', 'asset-center-eyebrow', '项目素材'),
     h('h1', undefined, '素材中心'),
-    h('p', undefined, '查看真实文件与引用位置；整理素材会先显示影响，确认后才执行。'),
   );
   const tools = h('div', 'asset-center-tools');
   const importButton = h('button', 'asset-import-entry', '导入素材') as HTMLButtonElement;

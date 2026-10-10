@@ -571,56 +571,84 @@ body {
 }
 
 /* ---------- start page (no project open) ---------- */
+/* A title screen rather than a dashboard: the title set vertically like a book spine with a
+   small seal under it, the entries as a menu, recent projects like save slots, and a faint
+   warm wash where a lamp would stand. */
 .editor-welcome {
   display: grid;
-  grid-template-columns: minmax(280px, 440px) minmax(320px, 520px);
-  gap: 56px;
+  grid-template-columns: auto minmax(220px, 360px) minmax(320px, 460px);
+  gap: 0 clamp(40px, 6vw, 96px);
   align-content: center;
   justify-content: center;
   height: 100%;
-  padding: 48px;
+  padding: 64px 56px;
   overflow: auto;
-  background: var(--surdet-surface-app);
+  background:
+    linear-gradient(160deg, rgb(240 163 94 / 7%) 0%, rgb(240 163 94 / 0%) 42%),
+    var(--surdet-surface-app);
 }
 
-.editor-welcome-kicker {
-  display: block;
-  margin-bottom: 10px;
-  color: var(--surdet-action-primary);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .08em;
+.editor-welcome-intro {
+  display: contents;
 }
 
 .editor-welcome h1 {
-  font-size: 30px;
-  letter-spacing: .01em;
-  font-weight: 600;
-  margin: 0 0 12px;
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  margin: 0;
+  writing-mode: vertical-rl;
+  font: 600 60px/1 var(--surdet-font-display);
+  letter-spacing: .28em;
+}
+
+.editor-welcome-seal {
+  grid-column: 1;
+  grid-row: 3;
+  justify-self: center;
+  width: 30px;
+  height: 30px;
+  margin-top: 16px;
+  border: 1.5px solid var(--surdet-action-primary);
+  border-radius: var(--surdet-radius-tight);
+  color: var(--surdet-action-primary);
+  font: 500 17px/27px var(--surdet-font-display);
+  text-align: center;
+  opacity: .85;
+}
+
+/* Beside the title: the line at its top, the shortcuts at its foot. */
+.editor-welcome-intro > p {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: start;
+  margin-top: 8px;
 }
 
 .editor-welcome p {
-  margin: 0;
   color: var(--surdet-text-secondary);
-  line-height: 1.85;
-  max-width: 34em;
+  font-size: 15px;
+  line-height: 1.9;
+  max-width: 30em;
 }
 
 .editor-welcome-shortcuts {
+  grid-column: 2;
+  grid-row: 1 / span 2;
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 8px 14px;
-  margin: 28px 0 0;
-  color: var(--surdet-text-secondary);
+  align-self: end;
+  gap: 10px 16px;
+  margin: 0 0 8px;
+  color: var(--surdet-text-muted);
   font-size: 12px;
 }
 
 .editor-welcome-shortcuts dt {
   justify-self: start;
-  padding: 1px 7px;
-  border: 1px solid var(--surdet-border-default);
+  padding: 2px 8px;
   border-radius: var(--surdet-radius-tight);
-  color: var(--surdet-text-primary);
+  background: var(--surdet-surface-panel);
+  color: var(--surdet-text-secondary);
   font: 11px/1.6 var(--surdet-font-mono);
 }
 
@@ -630,67 +658,72 @@ body {
 }
 
 .editor-welcome-actions {
+  grid-column: 3;
+  grid-row: 1 / span 3;
+  align-self: start;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 2px;
 }
 
+/* Entries read like a title menu: the name in the story face, a lamp mark on hover. */
 .editor-welcome-actions > button {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 18px 20px;
-  border: 1px solid var(--surdet-border-default);
+  position: relative;
+  display: block;
+  padding: 14px 16px 14px 40px;
+  border: 0;
   border-radius: var(--surdet-radius-control);
-  background: var(--surdet-surface-panel);
+  background: transparent;
   cursor: pointer;
   text-align: left;
   color: var(--surdet-text-primary);
-  transition: border-color var(--surdet-motion-fast) ease, background-color var(--surdet-motion-fast) ease;
 }
 
-.editor-welcome-actions > button:hover {
-  border-color: var(--surdet-border-strong);
-  background: var(--surdet-surface-subtle);
-}
-
-.editor-welcome-actions > button:first-child {
-  border-color: var(--surdet-action-primary);
-}
-
-.editor-welcome-actions .workbench-icon {
-  width: 40px;
-  height: 40px;
-  flex-basis: 40px;
-  padding: 9px;
-  border-radius: var(--surdet-radius-control);
-  background: var(--surdet-action-soft);
+.editor-welcome-actions > button::before {
+  content: '◆';
+  position: absolute;
+  top: 24px;
+  left: 16px;
   color: var(--surdet-action-primary);
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0;
+  transform: translateX(-6px);
+  transition: opacity var(--surdet-motion-standard) ease, transform var(--surdet-motion-standard) ease;
 }
 
-.editor-welcome-actions strong {
+.editor-welcome-actions > button:is(:hover, :focus-visible)::before {
+  opacity: 1;
+  transform: none;
+}
+
+.editor-welcome-actions > button strong {
   display: block;
-  font-size: 15px;
-  font-weight: 600;
+  font: 500 21px/1.45 var(--surdet-font-display);
+  letter-spacing: .04em;
+  transition: color var(--surdet-motion-standard) ease;
+}
+
+.editor-welcome-actions > button:is(:hover, :focus-visible) strong {
+  color: var(--surdet-action-primary);
 }
 
 .editor-welcome small {
   display: block;
-  color: var(--surdet-text-secondary);
-  font-size: 12px;
+  color: var(--surdet-text-muted);
+  font-size: 12.5px;
   margin-top: 4px;
 }
 
 .editor-welcome-recent {
-  margin-top: 16px;
+  margin-top: 40px;
 }
 
 .editor-welcome-recent h2 {
-  margin: 0 0 8px;
-  color: var(--surdet-text-secondary);
+  margin: 0 0 10px 40px;
+  color: var(--surdet-text-muted);
   font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .06em;
+  font-weight: 500;
 }
 
 .editor-welcome-recent-list {
@@ -702,20 +735,20 @@ body {
 .editor-welcome-actions .editor-welcome-recent-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 2px 12px;
-  padding: 8px 12px;
-  border: 1px solid transparent;
+  gap: 2px 16px;
+  padding: 10px 16px 10px 40px;
+  border: 0;
+  border-radius: var(--surdet-radius-control);
   background: transparent;
   text-align: left;
 }
 
 .editor-welcome-actions .editor-welcome-recent-item:hover {
-  border-color: var(--surdet-border-default);
   background: var(--surdet-surface-panel);
 }
 
 .editor-welcome-recent-item strong {
-  font-size: 13.5px;
+  font: 500 15px/1.5 var(--surdet-font-display);
 }
 
 .editor-welcome-recent-item small {
@@ -740,7 +773,7 @@ body {
 
 .editor-welcome-recent-empty {
   margin: 0;
-  padding: 6px 12px;
+  padding: 6px 16px 6px 40px;
   color: var(--surdet-text-muted);
   font-size: 12px;
 }
@@ -750,8 +783,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  padding: 22px 24px 24px;
-  border: 1px solid var(--surdet-border-default);
+  padding: 28px 28px 24px;
   border-radius: var(--surdet-radius-control);
   background: var(--surdet-surface-panel);
 }
@@ -765,20 +797,20 @@ body {
 
 .editor-welcome-create-header h2 {
   margin: 0;
-  font-size: 17px;
-  font-weight: 600;
+  font: 600 22px/1.4 var(--surdet-font-display);
+  letter-spacing: .04em;
 }
 
 .editor-welcome-create-form {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 24px;
 }
 
 .editor-welcome-create-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .editor-welcome-create-field > label,
@@ -787,7 +819,6 @@ body {
   color: var(--surdet-text-secondary);
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: .04em;
 }
 
 .editor-welcome-create-field input[type=text] {
@@ -968,7 +999,27 @@ body {
   }
   .editor-welcome {
     grid-template-columns: minmax(0, 520px);
-    gap: 28px;
+    gap: 0;
+    padding: 48px 24px;
+  }
+  .editor-welcome :is(h1, .editor-welcome-intro > p, .editor-welcome-shortcuts, .editor-welcome-actions) {
+    grid-column: auto;
+    grid-row: auto;
+  }
+  .editor-welcome-shortcuts {
+    margin-top: 40px;
+  }
+  .editor-welcome h1 {
+    margin-bottom: 16px;
+    writing-mode: horizontal-tb;
+    font-size: 38px;
+    letter-spacing: .06em;
+  }
+  .editor-welcome-seal {
+    display: none;
+  }
+  .editor-welcome-actions {
+    margin-top: 40px;
   }
 }
 
@@ -982,7 +1033,9 @@ body {
 }
 
 @media(prefers-reduced-motion:reduce) {
-  .editor-command,.editor-mode-button {
+  .editor-command,.editor-mode-button,
+  .editor-welcome-actions > button::before,
+  .editor-welcome-actions > button strong {
     transition: none;
   }
 }
