@@ -1,4 +1,4 @@
-import { validateTimeline, resolveTimelineDefinition, type TimelineDefinition } from '@surdet/core';
+import { validateTimeline, resolveTimelineDefinition, TIMELINE_TRANSITION_ACTIONS, type TimelineDefinition } from '@surdet/core';
 import { parseProjectConfigDocument } from './config-document.js';
 import {
   AuthoringOperationError,
@@ -26,7 +26,7 @@ const WAVE2_ACTIONS: Record<string, ReadonlySet<string>> = {
   portrait: new Set(['show', 'hide', 'move', 'expression', 'pose']),
   layer: new Set(['show', 'hide', 'pose']),
   camera: new Set(['zoom', 'pan', 'shake']),
-  screen: new Set(['fade', 'tint', 'flash', 'wipe']),
+  screen: new Set(['fade', 'tint', 'flash', 'wipe', ...TIMELINE_TRANSITION_ACTIONS]),
   particle: new Set(['start', 'stop']),
   audio: new Set(['bgm', 'se', 'voice']),
 };

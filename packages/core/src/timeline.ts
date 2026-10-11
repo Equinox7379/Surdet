@@ -1,3 +1,5 @@
+import { TIMELINE_TRANSITION_ACTIONS } from './transition.js';
+
 /**
  * Data-only ADV presentation timeline model.
  *
@@ -71,7 +73,7 @@ const ACTIONS: Record<TimelineTrackKind, ReadonlySet<string>> = {
   background: new Set(['set']),
   portrait: new Set(['show', 'hide', 'move', 'expression']),
   camera: new Set(['zoom', 'pan', 'shake']),
-  screen: new Set(['fade', 'tint', 'flash', 'wipe']),
+  screen: new Set(['fade', 'tint', 'flash', 'wipe', ...TIMELINE_TRANSITION_ACTIONS]),
   particle: new Set(['start', 'stop']),
   audio: new Set(['bgm', 'se', 'voice']),
   layer: new Set(['show', 'hide', 'pose']),
@@ -146,6 +148,12 @@ function validatePayload(
       add(diagnostics, 'TL009', 'camera shake strength must be between 0 and 64', `${path}.strength`);
     }
   } else if (kind === 'screen') {
+    if (action === 'rule') {
+      requireString(cue.rule, diagnostics, 'TL009', '遮罩转场需要素材键 rule', `${path}.rule`);
+      if (typeof cue.rule === 'string' && cue.rule !== cue.rule.trim()) add(diagnostics, 'TL009', '遮罩素材键不能有首尾空白', `${path}.rule`);
+      if (cue.soft !== undefined && (!isFiniteNumber(cue.soft) || cue.soft < 0 || cue.soft > 1)) add(diagnostics, 'TL009', '遮罩柔和度 soft 须为0–1', `${path}.soft`);
+      if (cue.reverse !== undefined && typeof cue.reverse !== 'boolean') add(diagnostics, 'TL009', '遮罩 reverse 须为布尔值', `${path}.reverse`);
+    }
     if (action === 'fade') {
       if (!isFiniteNumber(cue.alpha) || cue.alpha < 0 || cue.alpha > 1) add(diagnostics, 'TL009', 'screen fade alpha must be between 0 and 1', `${path}.alpha`);
     }

@@ -61,6 +61,15 @@ abstract class TimedTransition implements StageTransition {
     return done;
   }
 
+  /** Timeline progress is already eased and must not advance on the world clock. */
+  seek(progress: number): boolean {
+    const done = progress >= 1;
+    this.onUpdate(Math.max(0, Math.min(1, progress)), done);
+    if (done) this.onFinish();
+    this.#requestFrame();
+    return done;
+  }
+
   cancel(): void {
     this.#elapsed = 0;
     this.onCancel();
@@ -148,6 +157,10 @@ class RuleTransition extends DissolveTransition {
   override update(deltaMs: number): boolean {
     if (!this.#options || !this.resolve(this.#options.rule)) { this.cancel(); console.warn('[surdet] 活动遮罩已释放，转场结束'); return true; }
     return super.update(deltaMs);
+  }
+  override seek(progress: number): boolean {
+    if (!this.#options || !this.resolve(this.#options.rule)) { this.cancel(); console.warn('[surdet] 活动遮罩已释放，转场结束'); return true; }
+    return super.seek(progress);
   }
   protected override onFinish(): void { this.#filter?.destroy(); this.#filter = null; super.onFinish(); }
   protected override onCancel(): void { this.#filter?.destroy(); this.#filter = null; super.onCancel(); }
@@ -250,6 +263,8 @@ export class WorldEffectsController {
   readonly registry = new TransitionRegistry();
   readonly #circle: CircleTransition;
   readonly #rule: RuleTransition;
+  readonly #dissolve: DissolveTransition;
+  #timelineTransition: string | null = null;
   #resolveRule: (key: string) => Texture | null;
   #captureWorld?: () => Texture | null;
   #oldFrame: Texture | null = null;
@@ -278,7 +293,7 @@ export class WorldEffectsController {
     this.registry.register(this.#circle);
     const oldFrameOptions = { ...timed, screen: options.screen, width: options.width, height: options.height,
       takeOldFrame: () => { const frame = this.#oldFrame; this.#oldFrame = null; return frame; } };
-    this.registry.register(new DissolveTransition(oldFrameOptions));
+    this.#dissolve = new DissolveTransition(oldFrameOptions); this.registry.register(this.#dissolve);
     this.#rule = new RuleTransition(oldFrameOptions, key => this.#resolveRule(key)); this.registry.register(this.#rule);
   }
 
@@ -301,8 +316,31 @@ export class WorldEffectsController {
       this.#rule.configure(options);
     }
     const started = this.registry.start(name, Math.max(1, durationMs));
+    if (started) this.#timelineTransition = null;
     if (started && name !== 'dissolve' && name !== 'rule') { this.#oldFrame?.destroy(true); this.#oldFrame = null; }
     return started;
+  }
+
+  timelineTransition(name: 'dissolve' | 'rule', identity: string, progress: number, started: boolean, options?: RuleTransitionOptions): boolean {
+    if (started) {
+      if (!this.#oldFrame) return true;
+      if (!this.transition(name, 1, options)) return false;
+      this.#timelineTransition = identity;
+    }
+    // Restored/settled cues and superseded runs may not resurrect an old image.
+    if (this.#timelineTransition !== identity) return true;
+    if ((name === 'rule' ? this.#rule : this.#dissolve).seek(progress)) this.finishTimelineTransition(identity);
+    return true;
+  }
+
+  finishTimelineTransition(identity: string): void {
+    if (this.#timelineTransition !== identity) return;
+    this.#timelineTransition = null;
+    this.registry.cancelActive(); this.markStageBoundary();
+  }
+
+  finishTimeline(runId: number): void {
+    if (this.#timelineTransition?.startsWith(`${runId}/`)) this.finishTimelineTransition(this.#timelineTransition);
   }
 
   shake(durationMs = 400, strength = 8, direction: ShakeDirection = 'both'): void {
@@ -315,7 +353,7 @@ export class WorldEffectsController {
 
   update(deltaMs: number): void {
     const active = this.registry.active;
-    this.registry.update(deltaMs);
+    if (this.#timelineTransition === null) this.registry.update(deltaMs);
     if (active && !this.registry.active) this.markStageBoundary();
     if (this.#shakeRemain <= 0) return;
     this.#shakeRemain = Math.max(0, this.#shakeRemain - Math.max(0, deltaMs));
@@ -338,6 +376,7 @@ export class WorldEffectsController {
   reset(options: { preserveOldFrame?: boolean } = {}): void {
     if (!options.preserveOldFrame || !['dissolve', 'rule'].includes(this.registry.active?.name ?? '')) this.registry.cancelActive();
     if (!options.preserveOldFrame) { this.#oldFrame?.destroy(true); this.#oldFrame = null; this.#captureNextChange = false; }
+    if (!this.registry.active) this.#timelineTransition = null;
     this.#shakeRemain = 0;
     this.#world.alpha = 1;
     const base = this.#getBasePosition();

@@ -119,6 +119,54 @@ it('stage clear keeps its old frame and reduced motion ends a dissolve immediate
   } finally { disposeRuntime(runtime); }
 });
 
+it('drives timeline dissolve from cue progress only, and never restarts it after restoration', async () => {
+  const textures: Texture[] = [];
+  const runtime = makeRuntime(undefined, () => {
+    const texture = new Texture({ source: new TextureSource({ width: 1280, height: 720 }) }); textures.push(texture); return texture;
+  });
+  const cue = { atMs: 100, durationMs: 1000, easing: 'outCubic' as const, action: 'dissolve' };
+  const event = { track: 'screen' as const, cue, cueId: 0, runId: 7, started: true, final: false, progress: 0, elapsedMs: 100 };
+  try {
+    await registerWorldAssets(runtime.assets); runtime.layer.setBackground('hall'); runtime.layer.markStageBoundary();
+    runtime.layer.setBackground('night');
+    const stageBeforeReveal = runtime.layer.snapshotPresentation();
+    runtime.layer.applyTimelineFrame(event);
+    expect(runtime.layer.snapshotPresentation()).toEqual(stageBeforeReveal);
+    expect(runtime.layer.screenContainer.children).toHaveLength(2);
+    runtime.layer.update(200);
+    expect(runtime.layer.screenContainer.children.at(-1)!.alpha).toBe(1);
+    runtime.layer.applyTimelineFrame({ ...event, started: false, progress: .875, elapsedMs: 600 });
+    expect(runtime.layer.screenContainer.children.at(-1)!.alpha).toBe(.125);
+    const saved = runtime.layer.snapshotPresentation();
+    runtime.layer.restorePresentation(saved);
+    runtime.layer.applyTimelineFrame({ ...event, started: false, progress: .9, elapsedMs: 650 });
+    expect(runtime.layer.screenContainer.children).toHaveLength(1);
+    expect(runtime.layer.backgroundKey).toBe('night');
+    expect(textures.at(-1)!.destroyed).toBe(true);
+  } finally { disposeRuntime(runtime); }
+});
+
+it('settles timeline transition on stop, zero duration or reduced motion without owning stage attributes', async () => {
+  const runtime = makeRuntime(undefined, () => new Texture({ source: new TextureSource({ width: 1280, height: 720 }) }));
+  const event = { track: 'screen' as const, cue: { atMs: 0, durationMs: 800, easing: 'linear' as const, action: 'dissolve' },
+    cueId: 0, runId: 7, started: true, final: false, progress: 0, elapsedMs: 0 };
+  try {
+    await registerWorldAssets(runtime.assets); runtime.layer.setBackground('hall'); runtime.layer.markStageBoundary();
+    runtime.layer.setBackground('night'); runtime.layer.applyTimelineFrame(event);
+    runtime.layer.applyStage({ type: 'finish-timeline', runId: 8 });
+    expect(runtime.layer.screenContainer.children).toHaveLength(2);
+    runtime.layer.applyStage({ type: 'finish-timeline', runId: 7 });
+    expect(runtime.layer.screenContainer.children).toHaveLength(1);
+    runtime.layer.markStageBoundary(); runtime.layer.setBackground('hall');
+    runtime.layer.applyTimelineFrame({ ...event, cue: { ...event.cue, durationMs: 0 }, progress: 1 });
+    expect(runtime.layer.screenContainer.children).toHaveLength(1);
+    runtime.layer.setPresentationPreferences({ reducedMotion: true });
+    runtime.layer.markStageBoundary(); runtime.layer.setBackground('night'); runtime.layer.applyTimelineFrame(event);
+    expect(runtime.layer.screenContainer.children).toHaveLength(1);
+    expect(runtime.layer.snapshotPresentation().backgroundKey).toBe('night');
+  } finally { disposeRuntime(runtime); }
+});
+
 it('restores sampled author filter progress, rejects malformed snapshots atomically and retains gray in low quality', async () => {
   vi.stubGlobal('document', { createElement: () => ({ getContext: () => null }) });
   const runtime = makeRuntime();
@@ -594,7 +642,9 @@ describe('WorldLayer direct presentation contract', () => {
   it('keeps world-only dependencies and performs two stable 50-cycle batches', async () => {
     const sourcePath = fileURLToPath(new URL('../../src/layers/world/world-layer.ts', import.meta.url));
     const source = readFileSync(sourcePath, 'utf8');
-    expect(source).not.toMatch(/from ['"][^'"]*(?:@surdet\/core|interpreter|variable-store|combat|calendar|shop|host)[^'"]*['"]/i);
+    // Shared data parsers are Core contracts, not ownership of the story runtime.
+    expect(source).not.toMatch(/from ['"][^'"]*(?:interpreter|variable-store|combat|calendar|shop|host)[^'"]*['"]/i);
+    expect(source).not.toMatch(/\b(?:Interpreter|VariableStore|EventBus|SceneRegistry)\b/);
     expect(source).not.toMatch(/from ['"][^'"]*\/layers\/(?!world)[^'"]*['"]/i);
 
     const lifecycle = new RenderLifecycle();

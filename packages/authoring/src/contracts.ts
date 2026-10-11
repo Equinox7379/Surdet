@@ -329,6 +329,8 @@ export type Wave2Action =
   | 'tint'
   | 'flash'
   | 'wipe'
+  | 'dissolve'
+  | 'rule'
   | 'start'
   | 'stop'
   | 'bgm'
@@ -361,6 +363,9 @@ export interface TimelineCueInput {
   y?: number;
   strength?: number;
   color?: number;
+  rule?: string;
+  soft?: number;
+  reverse?: boolean;
   kind?: string;
 }
 
@@ -488,7 +493,7 @@ export interface ProjectAssetItem {
   /** Exact-key examples for supported, unambiguous media; no decode guarantee. */
   usage?: {
     scene: Extract<SceneBlockInput, { kind: 'instruction' }>;
-    timeline?: { kind: 'audio'; cues: TimelineCueInput[] };
+    timeline?: { kind: 'audio' | 'screen'; cues: TimelineCueInput[] };
   };
 }
 

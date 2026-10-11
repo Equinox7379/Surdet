@@ -373,6 +373,10 @@ export function analyzeTimelineCompositionReferences(input: {
       if (!isRecord(rawCue)) continue;
       const action = rawCue['action'];
       const source = timelineSource(input.path, trackIndex, cueIndex);
+      if (kind === 'screen' && action === 'rule' && typeof rawCue.rule === 'string' && rawCue.rule.trim()) {
+        addReference(references, 'rule-asset', 'candidate-external', rawCue.rule, source, `asset:rule:${rawCue.rule}`);
+        continue;
+      }
       if (kind === 'audio' && (action === 'bgm' || action === 'se' || action === 'voice') && typeof rawCue['key'] === 'string') {
         addReference(references, 'audio-asset', 'candidate-external', rawCue['key'], source, `asset:${action}:${rawCue['key']}`);
         continue;

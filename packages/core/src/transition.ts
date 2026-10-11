@@ -2,6 +2,8 @@
 export const BUILTIN_TRANSITION_NAMES = ['fade', 'slide-left', 'slide-right', 'circle', 'dissolve', 'rule'] as const;
 export type BuiltinTransitionName = typeof BUILTIN_TRANSITION_NAMES[number];
 export const BUILTIN_TRANSITIONS: ReadonlySet<string> = new Set(BUILTIN_TRANSITION_NAMES);
+/** Timeline cues reveal a captured old world; they never own stage properties. */
+export const TIMELINE_TRANSITION_ACTIONS = ['dissolve', 'rule'] as const;
 export interface RuleTransitionOptions { rule: string; soft: number; reverse: boolean }
 /** Values have already been decoded by the Core lexer/host; no file IO here. */
 export function parseRuleTransition(modifiers: ReadonlyMap<string, string>): RuleTransitionOptions {

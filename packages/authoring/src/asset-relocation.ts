@@ -604,6 +604,18 @@ function timelineRewrite(
     const track = isRecord(trackValue) ? trackValue : null;
     if (track === null) return;
     const cues = Array.isArray(track.cues) ? track.cues : [];
+    if (track.kind === 'screen') {
+      cues.forEach((cueValue, cueIndex) => {
+        const cue = isRecord(cueValue) ? cueValue : null;
+        if (!cue || cue.action !== 'rule' || typeof cue.rule !== 'string') return;
+        const path: JsonPath = ['tracks', trackIndex, 'cues', cueIndex, 'rule'];
+        knownPaths.add(pathKey(path));
+        if (source.kind === 'rule' && cue.rule === source.key && target.key !== source.key) {
+          replacements.push({ path, before: source.key, after: target.key,
+            reference: reference('timeline', file.path, `时间轴 · 轨道 ${trackIndex + 1} · 片段 ${cueIndex + 1}`, 'screen.rule', `timeline:${file.path}:${trackIndex}:${cueIndex}:rule`) });
+        }
+      });
+    }
     if (track.kind === 'background' || track.kind === 'layer') {
       cues.forEach((cueValue, cueIndex) => {
         const cue = isRecord(cueValue) ? cueValue : null;
