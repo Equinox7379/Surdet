@@ -6,6 +6,7 @@
 
 import { parsePortraitFileName as parsePortraitIdentity, portraitSourcePaths, resolveProjectPortraits, samplePortraitVisual } from '@surdet/core';
 import { parseProjectConfigDocument } from '@surdet/authoring';
+import { quoteAssetArgument } from './v4/script-source.js';
 
 /** Show the author's character name without renaming the asset binding. */
 export function portraitDisplayName(key: string, configText: string): string {
@@ -18,7 +19,7 @@ export function portraitDisplayName(key: string, configText: string): string {
   } catch { return key; } // Invalid source is reported by project validation, not hidden or rewritten here.
 }
 
-export type AssetKind = 'bg' | 'portrait' | 'avatar' | 'bgm' | 'ambience' | 'se' | 'voice' | 'video' | 'font' | 'other' | 'cg' | 'music' | 'text';
+export type AssetKind = 'bg' | 'rule' | 'portrait' | 'avatar' | 'bgm' | 'ambience' | 'se' | 'voice' | 'video' | 'font' | 'other' | 'cg' | 'music' | 'text';
 
 /** 目录扫描出的素材文件条目 */
 export interface DirAsset {
@@ -84,7 +85,7 @@ export function galleryUnlockEntries(gallery: unknown): AssetEntry[] {
 }
 
 const DIR_KIND_MAP: Record<string, AssetKind> = {
-  bg: 'bg', portrait: 'portrait', avatar: 'avatar', bgm: 'bgm', music: 'bgm', ambience: 'ambience', se: 'se', voice: 'voice', video: 'video',
+  bg: 'bg', rule: 'rule', portrait: 'portrait', avatar: 'avatar', bgm: 'bgm', music: 'bgm', ambience: 'ambience', se: 'se', voice: 'voice', video: 'video',
   font: 'font', fonts: 'font',
 };
 
@@ -129,6 +130,7 @@ export function projectPortraitAssets(assets: readonly DirAsset[], configText: s
 export function insertLineForAsset(e: AssetEntry): string | null {
   switch (e.kind) {
     case 'bg': return `@bg ${e.key}`;
+    case 'rule': return `@transition rule 800 @rule=${quoteAssetArgument(e.key)}`;
     case 'bgm': return `@bgm ${e.key}`;
     case 'ambience': return `@ambience ${e.key}`;
     case 'se': return `@se ${e.key}`;
@@ -144,6 +146,6 @@ export function insertLineForAsset(e: AssetEntry): string | null {
 
 /** 素材类型中文标签（UI 展示用） */
 export const KIND_LABELS: Record<AssetKind, string> = {
-  bg: '背景', portrait: '立绘', avatar: '头像', bgm: '音乐', ambience: '环境音', se: '音效', voice: '语音', video: '视频',
+  bg: '背景', rule: '转场遮罩', portrait: '立绘', avatar: '头像', bgm: '音乐', ambience: '环境音', se: '音效', voice: '语音', video: '视频',
   font: '字体', other: '其他', cg: 'CG', music: '鉴赏音乐', text: '回想',
 };

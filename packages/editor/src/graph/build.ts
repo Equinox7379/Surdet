@@ -32,6 +32,8 @@ export interface FlowEdge {
   kind: FlowEdgeKind;
   /** choice 选项文本 / switch 分支值 / if 条件（展示在边上） */
   label?: string;
+  /** goto/loop/jump/call 的指令行或 choice 的选项行：流程图上改目标与删除依此定位源对象 */
+  line?: number;
 }
 
 export interface FlowGraph {
@@ -127,14 +129,15 @@ function buildScene(scene: CompiledScene, nodes: Map<string, FlowNode>, edges: F
           // @loop 与 @goto 同编译为回跳/跳转指令：目标标签在指令之前 = 循环回边（loop）
           const targetIdx = j.gotoIndex ?? scene.labels.get(j.target);
           const isBack = targetIdx !== undefined && targetIdx <= instr.index;
-          edges.push({ from, to: gotoTargetNode(scene, units, j), kind: isBack ? 'loop' : 'goto' });
+          // 编译器为 if/else 合成的内部跳转（target 为空）没有可改的源码 @goto，不带行号。
+          edges.push({ from, to: gotoTargetNode(scene, units, j), kind: isBack ? 'loop' : 'goto', ...(j.target === '' ? {} : { line: instr.line }) });
         } else {
-          edges.push({ from, to: targetNodeId(j.target), kind: 'jump' });
+          edges.push({ from, to: targetNodeId(j.target), kind: 'jump', line: instr.line });
         }
         break;
       }
       case 'call': {
-        edges.push({ from, to: targetNodeId((instr as CallInstr).target), kind: 'call' });
+        edges.push({ from, to: targetNodeId((instr as CallInstr).target), kind: 'call', line: instr.line });
         break;
       }
       case 'switch': {
@@ -166,6 +169,7 @@ function buildScene(scene: CompiledScene, nodes: Map<string, FlowNode>, edges: F
             to,
             kind: 'choice',
             label: opt.when ? `${opt.label} [if:${opt.when}]` : opt.label,
+            ...(jump.target === '' ? {} : { line: opt.pos.line }),
           });
         });
         break;

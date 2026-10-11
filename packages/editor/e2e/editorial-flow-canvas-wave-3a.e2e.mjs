@@ -1457,9 +1457,10 @@ async function run() {
     assert(menuEvidence.menuRect.right <= menuEvidence.workbenchRect.right + 1, 'context menu escapes right');
     assert(menuEvidence.menuRect.top >= menuEvidence.workbenchRect.top - 1, 'context menu escapes top');
     assert(menuEvidence.menuRect.bottom <= menuEvidence.workbenchRect.bottom + 1, 'context menu escapes bottom');
+    assert(menuEvidence.labels.some((label) => label.includes('编辑连接')), 'context menu omits connection editing');
     assert(menuEvidence.labels.some((label) => label.includes('重命名')), 'context menu omits rename');
     assert(menuEvidence.labels.some((label) => label.includes('删除')), 'context menu omits delete');
-    assert(menuEvidence.focusableButtons >= 2, 'context menu commands are not keyboard reachable');
+    assert(menuEvidence.focusableButtons >= 3, 'context menu commands are not keyboard reachable');
     await page.keyboard.press('Escape');
     await menu.waitFor({ state: 'detached' });
     pass('context-menu-pointer-stable', { ...menuEvidence, beforeContextTransform, afterContextTransform, movementCssPixels: { x: 4, y: 3 } });
@@ -1473,11 +1474,11 @@ async function run() {
       await page.keyboard.press(key);
       menuFocusSequence.push({ key, label: await activeMenuLabel() });
     }
-    assert(menuFocusSequence[0].label?.includes('重命名'), 'Shift+F10 did not focus the first menu command');
-    assert(menuFocusSequence[1].label?.includes('删除'), 'ArrowDown did not focus the next menu command');
-    assert(menuFocusSequence[2].label?.includes('重命名'), 'ArrowUp did not focus the previous menu command');
+    assert(menuFocusSequence[0].label?.includes('编辑连接'), 'Shift+F10 did not focus the first menu command');
+    assert(menuFocusSequence[1].label?.includes('重命名'), 'ArrowDown did not focus the next menu command');
+    assert(menuFocusSequence[2].label?.includes('编辑连接'), 'ArrowUp did not focus the previous menu command');
     assert(menuFocusSequence[3].label?.includes('删除'), 'End did not focus the last menu command');
-    assert(menuFocusSequence[4].label?.includes('重命名'), 'Home did not focus the first menu command');
+    assert(menuFocusSequence[4].label?.includes('编辑连接'), 'Home did not focus the first menu command');
     await page.keyboard.press('Escape');
     await menu.waitFor({ state: 'detached' });
     const returnedFocusNodeId = await page.evaluate(() => document.activeElement?.getAttribute?.('data-node-id') ?? null);
@@ -1503,6 +1504,13 @@ async function run() {
     await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, { steps: 14 });
     await page.mouse.up();
     const expectedJump = '@jump ch01_01.start';
+    // #12: the link is planned by the shared scene operations and applied only after its source diff is seen.
+    const linkDialog = page.locator('dialog.flow-edit-dialog');
+    await linkDialog.locator('.flow-edit-preview').waitFor();
+    const previewAdded = await linkDialog.locator('.flow-edit-line--added code').allTextContents();
+    assert(previewAdded.length === 1 && previewAdded[0] === expectedJump, `the preview does not add exactly the link: ${JSON.stringify(previewAdded)}`);
+    await linkDialog.getByRole('button', { name: '应用修改' }).click();
+    await linkDialog.waitFor({ state: 'detached' });
     await page.waitForFunction(({ sceneId, line }) => window.surdetEditorDebug.state.scenes.get(sceneId).text.includes(line), {
       sceneId: sourceSceneId,
       line: expectedJump,
@@ -1511,7 +1519,7 @@ async function run() {
       text: window.surdetEditorDebug.state.scenes.get(sceneId).text,
       status: document.querySelector('#status')?.textContent ?? '',
     }), sourceSceneId);
-    assert(afterLink.status.includes('新增剧情跳转') && afterLink.status.includes('可撤销'), `link status is not human-readable: ${afterLink.status}`);
+    assert(afterLink.status.includes('连到') && afterLink.status.includes('可撤销'), `link status is not human-readable: ${afterLink.status}`);
     await page.locator('[data-action="undo"]').click();
     await page.waitForFunction(({ sceneId, text }) => window.surdetEditorDebug.state.scenes.get(sceneId).text === text, {
       sceneId: sourceSceneId,

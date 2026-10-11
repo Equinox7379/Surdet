@@ -1,4 +1,4 @@
-import { resolveTimelineDefinition, validateTimeline, type TimelineCue, type TimelineDefinition, type TimelineEasing, type TimelineTrack, type TimelineTrackKind, type TimelineValue } from '@surdet/core';
+import { resolveTimelineDefinition, TIMELINE_TRANSITION_ACTIONS, validateTimeline, type TimelineCue, type TimelineDefinition, type TimelineEasing, type TimelineTrack, type TimelineTrackKind, type TimelineValue } from '@surdet/core';
 import type { TimelineAssetChoice } from './timeline-presentation.js';
 
 export const TIMELINE_TRACKS: readonly TimelineTrackKind[] = [
@@ -10,7 +10,7 @@ export const TIMELINE_ACTIONS: Record<TimelineTrackKind, readonly string[]> = {
   portrait: ['show', 'hide', 'move', 'expression', 'pose'],
   layer: ['show', 'hide', 'pose'],
   camera: ['zoom', 'pan', 'shake'],
-  screen: ['fade', 'tint', 'flash', 'wipe'],
+  screen: ['fade', 'tint', 'flash', 'wipe', ...TIMELINE_TRANSITION_ACTIONS],
   particle: ['start', 'stop'],
   audio: ['bgm', 'se', 'voice'],
 };
@@ -94,15 +94,18 @@ export interface TimelineCueDraft {
   trackPatch?: { target: string };
 }
 
+/** A mask transition names an imported mask; without one there is no valid cue to create. */
 export function createNeutralCue(
   kind: 'camera' | 'screen' | 'particle',
   action: string,
+  ruleKey?: string,
 ): TimelineCueDraft | null {
   if (!TIMELINE_ACTIONS[kind].includes(action)) return null;
+  if (kind === 'screen' && action === 'rule' && !ruleKey) return null;
   const values: Record<string, TimelineValue> = kind === 'camera'
     ? action === 'pan' ? { x: 0, y: 0 } : action === 'shake' ? { strength: 12 } : { scale: 1.03 }
     : kind === 'screen'
-      ? action === 'tint' ? { color: 0x102038, alpha: 0.18 } : action === 'fade' ? { alpha: 0 } : {}
+      ? action === 'tint' ? { color: 0x102038, alpha: 0.18 } : action === 'fade' ? { alpha: 0 } : action === 'rule' ? { rule: ruleKey! } : {}
       : action === 'start' ? { kind: 'sparkle' } : {};
   return { cue: cue(action, values) };
 }

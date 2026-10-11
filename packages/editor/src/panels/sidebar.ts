@@ -6,6 +6,7 @@ import { isSceneFilePathReserved, runProjectWriteOperation } from '../project-io
 import { hideAssetPreview, renderAssetsPanel } from './assets.js';
 import { openScriptImport } from './script-import.js';
 import { workbenchIcon } from '../shell/icons.js';
+import { sceneTextCharacters } from '../stats.js';
 
 export function renderSidebar(): void {
   hideAssetPreview();
@@ -94,7 +95,9 @@ export function renderSidebar(): void {
       const facts = h('span', 'scene-facts');
       if (selected) facts.appendChild(h('span', 'scene-current', '当前'));
       if (sc.dirty) facts.appendChild(h('span', 'dirty', '未保存'));
-      facts.appendChild(h('span', 'scene-meta', `${sc.text.replace(/\s+/g, '').length} 字`));
+      const count = h('span', 'scene-meta', `${sceneTextCharacters(sc.text)} 字`);
+      count.title = '台词与旁白的可见字数，不含标签、指令和变量名';
+      facts.appendChild(count);
       item.appendChild(facts);
       item.onclick = () => onSelectSceneHook(id);
       // Compact icon actions on the right edge, so the hover overlay never covers the row's name.
