@@ -299,6 +299,33 @@ describe('bound Editor sequential relay', () => {
     expect(client.publish).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps its last real save as its own after a save that changes nothing, and still sees an outside write', async () => {
+    await connectEditorWorkspace(client, root);
+    facts.projectTransition = false;
+    const savedLease = '11111111-1111-4111-8111-111111111111', unchangedLease = '22222222-2222-4222-8222-222222222222';
+    const notice = (sequence: number, initiator: 'human-editor' | 'external-agent', operationId?: string) => ({ schemaVersion: 1 as const,
+      sequence, projectIdentity: 'a'.repeat(64), projectRevision: newBaseline.projectRevision, coordinationRevision: newBaseline.coordinationRevision,
+      initiator, occurredAt: '2026-09-09T10:00:00.000Z', changedPaths: ['content/scenario/start.gal'], ...(operationId ? { operationId } : {}) });
+    // A real save: the service records a notice under this lease.
+    await beginEditorWorkspaceWrite();
+    disk = { projectIdentity: 'a'.repeat(32), diskBaseline: newBaseline, mutationNotice: notice(1, 'human-editor', savedLease) };
+    vi.mocked(client.finish).mockResolvedValueOnce({ diskBaseline: newBaseline, changedPaths: ['content/scenario/start.gal'], mutationNotice: { status: 'written' } });
+    await finishEditorWorkspaceWrite();
+    await pollEditorWorkspace(true);
+    expect(editorWorkspaceStatus().update).toBe('none');
+    // A save whose text equals the disk changes no file, so the service records no notice for it.
+    vi.mocked(client.begin).mockResolvedValueOnce({ writeLeaseId: unchangedLease, expiresAt: '2026-09-09T11:00:00.000Z', diskBaseline: newBaseline });
+    await beginEditorWorkspaceWrite();
+    vi.mocked(client.finish).mockResolvedValueOnce({ diskBaseline: newBaseline, changedPaths: [], mutationNotice: { status: 'none' } });
+    await finishEditorWorkspaceWrite();
+    await pollEditorWorkspace(true);
+    expect(editorWorkspaceStatus().update).toBe('none');
+    // A later outside write is still an outside write.
+    disk = { ...disk, mutationNotice: notice(2, 'external-agent') };
+    await pollEditorWorkspace(true);
+    expect(editorWorkspaceStatus().update).toBe('pending');
+  });
+
   it('does not adopt a fresh disk baseline when reconnecting an already loaded page', async () => {
     facts.projectTransition = false;
     disk.diskBaseline = newBaseline;
