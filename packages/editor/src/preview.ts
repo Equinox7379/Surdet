@@ -34,6 +34,7 @@ import { buildPreviewReplaySources, parsePreviewPlaybackCheckpoint,
 import { PreviewReplayController } from './preview-replay-runtime.js';
 import { previewTextHash } from './preview-content.js';
 import { parsePreviewDebugCommand, type PreviewDebugState } from './preview-debug.js';
+import { PreviewTargetDriver, type PreviewTargetRun, type PreviewTargetState } from './preview-target.js';
 import {
   AudioManager, Backlog, Typewriter, RenderPerformanceMonitor, buildMapView, createRendererRuntime,
   SettingsStore, stepSetting, createSettingsUpdateHandler, createSettingsRows, applyReadingSettings,
@@ -104,6 +105,8 @@ interface LoadPayload {
   replay?: PreviewPlaybackCheckpoint;
   strictSource?: boolean;
   debug?: { enabled: boolean; pauseOnStart: boolean; breakpoints: import('@surdet/core').RuntimeBreakpoint[] };
+  /** "从这一行试玩": replay a path found by the shared query up to a temporary breakpoint. */
+  target?: PreviewTargetRun;
 }
 
 /** 快进速度：每秒 1000 字（近似瞬时）；常规 30 字/秒 */
@@ -162,6 +165,7 @@ interface ActivePreviewTrace {
 
 let activePreviewTrace: ActivePreviewTrace | null = null;
 let replayController: PreviewReplayController | null = null;
+let targetDriver: PreviewTargetDriver | null = null;
 
 function createPreviewTraceId(): string {
   return `preview-${Date.now()}-${globalThis.crypto.randomUUID()}`;
@@ -348,6 +352,7 @@ function guardRun(fn: () => void): void {
     showError(`预览运行时错误：${err instanceof Error ? err.message : String(err)}`);
   }
   publishDebugState();
+  targetDriver?.poke();
 }
 
 function publishDebugState(error?: string): void {
@@ -477,10 +482,11 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
   };
   applyPreviewReading();
   controller.connect(bus);
-  bus.on('choice', ({ options }) => replayController?.choice(options));
+  bus.on('choice', ({ options }) => { replayController?.choice(options); targetDriver?.choice(options); });
   let debugPublishQueued = false;
   bus.on('runtimeTrace', (event) => {
     captureRuntimeTrace(event, () => createPreviewTraceEvidenceSnapshot(queries.presentation.snapshot(), queries.diagnostics.projectionSnapshot()));
+    targetDriver?.poke();
     if (interp?.debugEnabled && !debugPublishQueued) {
       debugPublishQueued = true;
       queueMicrotask(() => { debugPublishQueued = false; publishDebugState(); });
@@ -1067,6 +1073,8 @@ function invalidatePreviewSession(): void {
   runtime?.controller.setPresentationPaused?.(false);
   replayController?.dispose();
   replayController = null;
+  targetDriver?.dispose();
+  targetDriver = null;
   interp = null;
   store = null;
   registry = null;
@@ -1174,6 +1182,8 @@ async function load(p: LoadPayload): Promise<void> {
     }
     // 变量表来自 game.config.json（父窗口下发）：真实剧本的 @set/@mod/@if 需要它
     const vs = new VariableStore((p.variables ?? []) as unknown as VarDeclaration[]);
+    // A test start's temporary values; Core checks each declared name and type.
+    if (p.target?.mode === 'test') for (const [name, value] of Object.entries(p.target.variables ?? {})) vs.set(name, value);
     // 轻宿主系统按配置重建（构造注入 store；形状容错：非法配置按 null 走占位横幅）
     const cfg = p.configs ?? {};
     calendar = cfg.calendar ? tryBuild(() => new CalendarRunner(cfg.calendar as CalendarConfig, vs)) : null;
@@ -1231,10 +1241,22 @@ async function load(p: LoadPayload): Promise<void> {
       },
     });
     replayController.attach(interp, controller);
+    if (p.target) {
+      const activeInterp = interp;
+      targetDriver = new PreviewTargetDriver({ interpreter: activeInterp, input: controller, run: p.target,
+        continuePast: () => { controller.setPresentationPaused?.(false); activeInterp.debugContinue(); publishDebugState(); },
+        report: (outcome) => {
+          publishDebugState();
+          const message: PreviewTargetState = { type: 'surdet-preview-target-state', traceId: trace.traceId, generation: trace.generation,
+            ...(outcome.status === 'reached' ? { status: 'reached', message: '已到达目标', visit: outcome.visit } : outcome) };
+          window.parent.postMessage(message, location.origin);
+        } });
+    }
     turnResumeSnap = null;
     if (typeof p.fast === 'boolean') controller.setTextSpeed(p.fast ? FAST_CPS : NORMAL_CPS);
     interp.start(directTimelineId ? timelinePreviewSceneId : p.sceneId, directTimelineId ? undefined : p.startLabel);
     publishDebugState();
+    targetDriver?.poke();
     if (!replayReportedStatus) {
       postPreviewDiagnostic({ generation, level: 'info', phase: 'compile', message: '预览已启动', sceneId: p.sceneId, ...(p.startLabel ? { label: p.startLabel } : {}) });
     }
