@@ -169,7 +169,9 @@ export function findPreviewPath(snapshot: ProjectSnapshot, options: PreviewPathO
       if (steps >= maxSteps) { budget = true; coverage.stop('step-budget', '目标试玩的单路径调试操作预算已用尽。'); return; }
       steps++; totalSteps++;
       try {
-        if (interpreter.status === 'paused' || interpreter.status === 'awaiting-advance') { interpreter.debugStep(); continue; }
+        if (interpreter.status === 'paused') { interpreter.debugStep(); continue; }
+        // Finishing dialogue must preserve the pending stop before the next instruction.
+        if (interpreter.status === 'awaiting-advance') { interpreter.advance(); continue; }
         if (interpreter.status === 'awaiting-timer') { interpreter.finishWait(); continue; }
         if (interpreter.status !== 'awaiting-choice') throw new Error(`意外运行状态：${interpreter.status}`);
         const visible = [...latestChoices];

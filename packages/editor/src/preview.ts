@@ -12,6 +12,7 @@ import { readProjectStage, resolvePlayerTheme, resolveProjectTitleLogo, stageCon
  * postMessage 协议（父窗口 → 预览）：
  *  { type: 'surdet-preview-load', payload: { sceneId, scenes, variables?, configs?, startLabel?, fast? } } → 编译并播放
  *  { type: 'surdet-preview-fast', fast: boolean }                                  → 切换打字速度
+ *  { type: 'surdet-preview-reading-trial', textScale, reducedMotion }              → 临时试看字号/减少动态（不保存）
  * 预览就绪后向父窗口回 { type: 'surdet-preview-ready' }。
  *
  * system 类指令无宿主部分（@battle/@calendar 缺配置等）：解释器直接穿透，
@@ -33,10 +34,12 @@ import { buildPreviewReplaySources, parsePreviewPlaybackCheckpoint,
 import { PreviewReplayController } from './preview-replay-runtime.js';
 import { previewTextHash } from './preview-content.js';
 import { parsePreviewDebugCommand, type PreviewDebugState } from './preview-debug.js';
+import { PreviewTargetDriver, type PreviewTargetRun, type PreviewTargetState } from './preview-target.js';
 import {
   AudioManager, Backlog, Typewriter, RenderPerformanceMonitor, buildMapView, createRendererRuntime,
-  SettingsStore, SETTING_STEPS, stepSetting, createSettingsUpdateHandler,
+  SettingsStore, stepSetting, createSettingsUpdateHandler, createSettingsRows, applyReadingSettings,
 } from '@surdet/renderer';
+import { NO_READING_TRIAL, parseReadingTrial, withReadingTrial, type ReadingTrial } from './preview-reading-trial.js';
 import type { AudioHandle, FontRole, GameSettings, RendererRuntime, SaveSlotView, SettingsStorage, SpeakerProfile, NumericSettingKey } from '@surdet/renderer';
 import { PreviewGeneration, readingPreviewDiagnostic, type PreviewDiagnostic } from './preview-diagnostics.js';
 import { createDirectTimelinePreviewScene } from './preview-direct-timeline.js';
@@ -102,6 +105,8 @@ interface LoadPayload {
   replay?: PreviewPlaybackCheckpoint;
   strictSource?: boolean;
   debug?: { enabled: boolean; pauseOnStart: boolean; breakpoints: import('@surdet/core').RuntimeBreakpoint[] };
+  /** "从这一行试玩": replay a path found by the shared query up to a temporary breakpoint. */
+  target?: PreviewTargetRun;
 }
 
 /** 快进速度：每秒 1000 字（近似瞬时）；常规 30 字/秒 */
@@ -129,6 +134,12 @@ let sessionStart = Date.now();
 let systemMenuOpen = false;
 let saveLoadOpen = false;
 let settingsOpen = false;
+/** Toolbar try-out over the preview settings; applied through Renderer commands, never stored. */
+let readingTrial: ReadingTrial = NO_READING_TRIAL;
+/** Re-applies the current reading settings and trial to the live runtime. */
+let applyPreviewReading: (() => void) | null = null;
+/** The work theme's dialogue panel opacity, where stepping "跟随作品" starts. */
+let previewPanelOpacity: number | undefined;
 /** 已应用字体的识别键与 Blob URL（同字体重复 load 不重复注册；换字体时按角色回收旧 URL） */
 const appliedFontKeys: Partial<Record<FontRole, string>> = {};
 const appliedFontUrls: Partial<Record<FontRole, string>> = {};
@@ -154,6 +165,7 @@ interface ActivePreviewTrace {
 
 let activePreviewTrace: ActivePreviewTrace | null = null;
 let replayController: PreviewReplayController | null = null;
+let targetDriver: PreviewTargetDriver | null = null;
 
 function createPreviewTraceId(): string {
   return `preview-${Date.now()}-${globalThis.crypto.randomUUID()}`;
@@ -340,6 +352,7 @@ function guardRun(fn: () => void): void {
     showError(`预览运行时错误：${err instanceof Error ? err.message : String(err)}`);
   }
   publishDebugState();
+  targetDriver?.poke();
 }
 
 function publishDebugState(error?: string): void {
@@ -463,11 +476,17 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
   const menu = commands.menu;
   const system = commands.system;
   settings.apply(typewriter, previewAudio);
+  applyPreviewReading = () => {
+    if (runtime !== activeRuntime || queries.diagnostics.isDisposed()) return;
+    applyReadingSettings(withReadingTrial(settings.settings, readingTrial), commands, controller, settings.settings.locale || document.documentElement.lang);
+  };
+  applyPreviewReading();
   controller.connect(bus);
-  bus.on('choice', ({ options }) => replayController?.choice(options));
+  bus.on('choice', ({ options }) => { replayController?.choice(options); targetDriver?.choice(options); });
   let debugPublishQueued = false;
   bus.on('runtimeTrace', (event) => {
     captureRuntimeTrace(event, () => createPreviewTraceEvidenceSnapshot(queries.presentation.snapshot(), queries.diagnostics.projectionSnapshot()));
+    targetDriver?.poke();
     if (interp?.debugEnabled && !debugPublishQueued) {
       debugPublishQueued = true;
       queueMicrotask(() => { debugPublishQueued = false; publishDebugState(); });
@@ -552,6 +571,7 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
     apply: confirmed => {
       settings.apply(typewriter, previewAudio);
       controller.setAutoWait(confirmed.autoBaseDelayMs, confirmed.autoPerCharMs);
+      applyPreviewReading?.();
       if (settingsOpen) refreshSettingsPanel();
     },
     onError: error => showError(`预览设置保存失败，已保留原设置：${error instanceof Error ? error.message : String(error)}`),
@@ -560,13 +580,10 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
   function refreshSettingsPanel(): void {
     const current = settings.settings;
     menu.showSettings(
-      SETTING_STEPS.map((def) => ({
-        id: def.key,
-        label: def.label,
-        display: def.format(current[def.key]),
-      })),
+      createSettingsRows(current),
       (id, dir) => {
-        void updateSettings(confirmed => stepSetting(confirmed, id as NumericSettingKey, dir));
+        if (id === 'reducedMotion' || id === 'readAloud') { void updateSettings(confirmed => ({ [id]: !confirmed[id] })); return; }
+        void updateSettings(confirmed => stepSetting(confirmed, id as NumericSettingKey, dir, previewPanelOpacity));
       },
       () => {
         settingsOpen = false;
@@ -1056,6 +1073,8 @@ function invalidatePreviewSession(): void {
   runtime?.controller.setPresentationPaused?.(false);
   replayController?.dispose();
   replayController = null;
+  targetDriver?.dispose();
+  targetDriver = null;
   interp = null;
   store = null;
   registry = null;
@@ -1163,6 +1182,8 @@ async function load(p: LoadPayload): Promise<void> {
     }
     // 变量表来自 game.config.json（父窗口下发）：真实剧本的 @set/@mod/@if 需要它
     const vs = new VariableStore((p.variables ?? []) as unknown as VarDeclaration[]);
+    // A test start's temporary values; Core checks each declared name and type.
+    if (p.target?.mode === 'test') for (const [name, value] of Object.entries(p.target.variables ?? {})) vs.set(name, value);
     // 轻宿主系统按配置重建（构造注入 store；形状容错：非法配置按 null 走占位横幅）
     const cfg = p.configs ?? {};
     calendar = cfg.calendar ? tryBuild(() => new CalendarRunner(cfg.calendar as CalendarConfig, vs)) : null;
@@ -1185,6 +1206,7 @@ async function load(p: LoadPayload): Promise<void> {
     await applyPreviewAssets(p.assets, requiredThemeImages);
     if (previewDisposed) return;
     commands.preferences.setTheme(theme);
+    previewPanelOpacity = theme.opacity.panel;
     postPreviewDiagnostic({ generation, level: 'info', phase: 'assets', message: '素材加载完成', sceneId: p.sceneId });
     interp = new Interpreter(vs, bus!, reg, undefined, undefined, {
       snapshot: (): SystemSnapshots => ({
@@ -1219,10 +1241,22 @@ async function load(p: LoadPayload): Promise<void> {
       },
     });
     replayController.attach(interp, controller);
+    if (p.target) {
+      const activeInterp = interp;
+      targetDriver = new PreviewTargetDriver({ interpreter: activeInterp, input: controller, run: p.target,
+        continuePast: () => { controller.setPresentationPaused?.(false); activeInterp.debugContinue(); publishDebugState(); },
+        report: (outcome) => {
+          publishDebugState();
+          const message: PreviewTargetState = { type: 'surdet-preview-target-state', traceId: trace.traceId, generation: trace.generation,
+            ...(outcome.status === 'reached' ? { status: 'reached', message: '已到达目标', visit: outcome.visit } : outcome) };
+          window.parent.postMessage(message, location.origin);
+        } });
+    }
     turnResumeSnap = null;
     if (typeof p.fast === 'boolean') controller.setTextSpeed(p.fast ? FAST_CPS : NORMAL_CPS);
     interp.start(directTimelineId ? timelinePreviewSceneId : p.sceneId, directTimelineId ? undefined : p.startLabel);
     publishDebugState();
+    targetDriver?.poke();
     if (!replayReportedStatus) {
       postPreviewDiagnostic({ generation, level: 'info', phase: 'compile', message: '预览已启动', sceneId: p.sceneId, ...(p.startLabel ? { label: p.startLabel } : {}) });
     }
@@ -1266,6 +1300,10 @@ window.addEventListener('message', (e: MessageEvent) => {
     void loadQueue;
   }
   if (d.type === 'surdet-preview-fast') runtime?.controller.setTextSpeed(d.fast ? FAST_CPS : NORMAL_CPS);
+  if (d.type === 'surdet-preview-reading-trial') {
+    const trial = parseReadingTrial(e.data);
+    if (trial) { readingTrial = trial; applyPreviewReading?.(); }
+  }
   if (d.type === 'surdet-preview-reading-check' && e.source === window.parent) {
     const reading = readCurrentReading();
     if (!reading) return;
