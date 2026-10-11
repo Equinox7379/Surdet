@@ -69,11 +69,34 @@ try {
   page.on('dialog', (dialog) => { void dialog.accept(); });
   await page.exposeFunction('__surdetNodeFs', createNodeFsBridge({ project: projectRoot }));
   await page.addInitScript(nodeBackedFileSystemInit, { initialRootKey: 'project' });
-  // Every preview start posts one trace start; a refused start posts none.
+  // Every preview start posts one trace start; a refused start posts none. For a failure report the
+  // preview frame also keeps each load it was sent, and the page keeps its binding requests.
   await page.addInitScript(() => {
     window.__previewStarts = 0;
-    addEventListener('message', (event) => { if (event.data?.type === 'surdet-preview-trace-start') window.__previewStarts += 1; });
+    window.__previewTraceStarts = [];
+    window.__previewLoads = [];
+    addEventListener('message', (event) => {
+      const data = event.data;
+      if (data?.type === 'surdet-preview-trace-start') { window.__previewStarts += 1; window.__previewTraceStarts.push(data.traceId); }
+      if (data?.type === 'surdet-preview-load') window.__previewLoads.push({ traceId: data.payload?.traceId, targetLine: data.payload?.target?.line ?? null, debug: data.payload?.debug ?? null });
+    });
   });
+  const startedAt = Date.now(), requests = [];
+  const requestEntry = (request) => requests.find((entry) => entry.request === request);
+  page.on('request', (request) => { if (request.url().includes('/__surdet/')) requests.push({ request, at: Date.now() - startedAt, path: new URL(request.url()).pathname.split('/').slice(-2).join('/'), result: 'pending' }); });
+  page.on('requestfinished', async (request) => { const entry = requestEntry(request); if (entry) entry.result = String((await request.response())?.status()); });
+  page.on('requestfailed', (request) => { const entry = requestEntry(request); if (entry) entry.result = request.failure()?.errorText ?? 'failed'; });
+  const failureReport = async () => {
+    const preview = await page.evaluate(() => {
+      const frame = document.querySelector('iframe.preview-frame')?.contentWindow;
+      const snapshot = frame?.surdetPreviewDebug?.interp?.debugSnapshot();
+      return { loads: frame?.__previewLoads ?? [], traceStarts: window.__previewTraceStarts, debugStatus: document.querySelector('.preview-debugger p')?.textContent ?? '',
+        paused: snapshot ? { paused: snapshot.paused, reason: snapshot.reason, status: snapshot.status, sceneId: snapshot.current?.sceneId, line: snapshot.current?.line } : null };
+    }).catch((error) => String(error));
+    // Successful polls are left out; anything still pending is always shown.
+    const shown = requests.filter((entry) => entry.result === 'pending' || !(/workspace\/(heartbeat|snapshot)$/.test(entry.path) && entry.result === '200'));
+    return `${JSON.stringify(preview)}\n${shown.slice(-20).map((entry) => `${entry.at}ms ${entry.path} ${entry.result}`).join('\n')}`;
+  };
   const worker = gate(), content = gate();
   const held = (hold) => async (route) => { const armed = hold.armed; if (armed) { hold.held += 1; await armed.opened; } await route.continue(); };
   await page.route(/preview-path-worker/, held(worker));
@@ -89,7 +112,7 @@ try {
     try { await status.filter({ hasText: text }).waitFor(); }
     catch {
       const read = async (selector) => page.locator(selector).first().innerText().catch(() => '');
-      throw new Error(`target status never showed “${text}”: ${await read('.preview-target-status')} | ${await read('.preview-source-state')} | ${await read('.preview-diagnostics')}`);
+      throw new Error(`target status never showed “${text}”: ${await read('.preview-target-status')} | ${await read('.preview-source-state')} | ${await read('.preview-diagnostics')}\n${await failureReport()}`);
     }
   };
   const select = async (line) => {
