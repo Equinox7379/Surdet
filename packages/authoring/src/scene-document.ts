@@ -203,7 +203,7 @@ export function insertLinesAfter(
   }
   const newLines = inserted.map((line, insertedIndex) => {
     const isNewFinalLine = insertionIndex === lines.length && insertedIndex === inserted.length - 1;
-    return materializeLine(line, isNewFinalLine ? '' : (line.eol || lineEol));
+    return materializeLine(line, isNewFinalLine ? (lines[lines.length - 1]?.eol ?? '') : (line.eol || lineEol));
   });
   if (insertionIndex === 0 && existing[0]?.raw.startsWith('\uFEFF')) {
     existing[0] = { ...existing[0], raw: existing[0].raw.slice(1) };

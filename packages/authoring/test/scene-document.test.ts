@@ -34,6 +34,26 @@ describe('scene document EOL identity', () => {
     const next = insertLinesAfter(parseSceneDocument(source), 1, [{ kind: 'text', speaker: '凛', value: '新增', raw: '凛：新增' }]);
     expect(serializeSceneDocument(next, '\n')).toBe('@scene mixed\r\n凛：第一行\n凛：新增\n@end');
   });
+  it.each(['\n', '\r\n', '\r'] as const)('preserves a final %j when appending one or multiple lines', eol => {
+    const source = `@scene intro${eol}凛：开场。${eol}`;
+    const lines = parseSceneDocument(source);
+    const blocks = [{ kind: 'instr' as const, name: 'jump', args: ['home'], raw: '@jump home' }];
+    expect(serializeSceneDocument(insertLinesAfter(lines, lines.length - 1, blocks))).toBe(source + `@jump home${eol}`);
+    expect(serializeSceneDocument(insertLinesAfter(lines, lines.length - 1, [...blocks, { kind: 'comment', raw: '// 后记' }]))).toBe(source + `@jump home${eol}// 后记${eol}`);
+    expect(serializeSceneDocument(lines)).toBe(source);
+  });
+  it.each(['\n', '\r\n', '\r'] as const)('does not create a final newline when appending to an unterminated %j document', eol => {
+    const source = `\uFEFF@scene intro${eol}凛：开场。`;
+    const next = insertLinesAfter(parseSceneDocument(source), 1, [{ kind: 'instr', name: 'jump', args: ['home'], raw: '@jump home' }]);
+    expect(serializeSceneDocument(next)).toBe(source + `${eol}@jump home`);
+  });
+  it('keeps an existing mixed-EOL final delimiter and existing trailing blank lines', () => {
+    const source = '@scene intro\r\n凛：开场。\n\n';
+    const lines = parseSceneDocument(source);
+    const next = insertLinesAfter(lines, lines.length - 1, [{ kind: 'comment', raw: '// 后记' }]);
+    expect(serializeSceneDocument(next)).toBe(source + '// 后记\n');
+    expect(serializeSceneDocument(insertLinesAfter([], -1, [{ kind: 'text', speaker: '', value: '新稿', raw: '新稿' }]))).toBe('新稿');
+  });
 });
 
 describe('instruction argument edits preserve modifiers', () => {
