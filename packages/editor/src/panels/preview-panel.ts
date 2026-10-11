@@ -698,7 +698,9 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   debugPanel.append(debugActions, debugStatus, variableDetails, debugCalls, breakpointControls, breakpointList); workspace.appendChild(debugPanel);
   let debugState: PreviewDebugState | null = null;
   let debugSources: { id: string; text: string }[] = [];
-  const debugFresh = (): boolean => (debugging || (targetTraceId !== null && targetTraceId === expectedTraceId && runningTarget !== null && !targetStale(runningTarget)))
+  // A run replaying a found start is debuggable only while that start still matches the script, whether
+  // or not the debug switch is on; any other run needs the switch.
+  const debugFresh = (): boolean => (targetTraceId !== null && targetTraceId === expectedTraceId ? runningTarget !== null && !targetStale(runningTarget) : debugging)
     && publishedSource !== null && publishedSource === requestKey()
     && sourceState.dataset.previewSourceState === 'fresh' && currentTraceId === expectedTraceId && currentTraceGeneration >= 0;
   const sendDebug = (action: PreviewDebugCommand['action']): void => {
