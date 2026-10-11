@@ -45,11 +45,18 @@ describe('flow-map edits through the shared scene operations', () => {
     expect(crlf.text('intro')).toBe('﻿@scene intro\r\n凛：开场。\r\n@jump home\r\n@end\r\n');
   });
 
+  it.each([['\n', true], ['\r\n', true], ['\r', true], ['\n', false], ['\r\n', false]] as const)(
+    'connecting after the last line keeps how the file ends (%j, final newline: %j)', async (eol, terminated) => {
+      const scenes = { intro: `@scene intro${eol}凛：开场。${terminated ? eol : ''}`, home: '@scene home\n凛：到家。\n@end\n' };
+      const result = await plan(scenes, { kind: 'connect', from: { sceneId: 'intro' }, to: { sceneId: 'home' } });
+      expect(result.text('intro')).toBe(`@scene intro${eol}凛：开场。${eol}@jump home${terminated ? eol : ''}`);
+      expect(await reaches(project({ ...scenes, intro: result.text('intro')! }), 'home', 2)).toBe('reached');
+    });
+
   it('never takes a branch end nested in @if or a choice as the segment end', async () => {
     const nested = await plan({ intro: '@scene intro\n@if trust > 0\n  @jump home\n@endif\n', home: '@scene home\n@end\n' },
       { kind: 'connect', from: { sceneId: 'intro' }, to: { sceneId: 'home', label: undefined } });
-    // Placement only: an insert after a file's last line currently drops its final newline (reported on PR #12).
-    expect(nested.text('intro')!.trimEnd()).toBe('@scene intro\n@if trust > 0\n  @jump home\n@endif\n@jump home');
+    expect(nested.text('intro')).toBe('@scene intro\n@if trust > 0\n  @jump home\n@endif\n@jump home\n');
     expect(nested.summary).toContain('条件块结束');
     const choice = await plan({ intro: '@scene intro\n@choice\n  A -> @goto a\n  B -> @goto b\n@label a\n@end\n@label b\n@end\n' },
       { kind: 'connect', from: { sceneId: 'intro' }, to: { sceneId: 'intro', label: 'b' } });
