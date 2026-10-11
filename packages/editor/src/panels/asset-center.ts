@@ -21,6 +21,7 @@ import type { AssetRelocationOperationStatus } from '../asset-import-client.js';
 
 const KIND_LABELS: Record<ProjectAssetKind, string> = {
   background: '背景',
+  rule: '转场遮罩',
   portrait: '立绘',
   avatar: '头像',
   music: '音乐',
@@ -251,7 +252,7 @@ function renderPreview(host: HTMLElement, item: ProjectAssetItem): void {
       host.dataset.previewState = 'error';
       host.replaceChildren(h('div', 'asset-center-preview-empty', '素材文件无法预览，文件信息仍可查看'));
     };
-    if ((item.kind === 'background' || item.kind === 'portrait' || item.kind === 'avatar') && dirAsset.isImage) {
+    if ((item.kind === 'background' || item.kind === 'rule' || item.kind === 'portrait' || item.kind === 'avatar') && dirAsset.isImage) {
       const image = document.createElement('img');
       image.src = url;
       image.alt = `${KIND_LABELS[item.kind]}预览：${friendlyAssetName(item)}`;

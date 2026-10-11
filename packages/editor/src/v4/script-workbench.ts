@@ -2,8 +2,9 @@ import { state, h, setStatus, type SceneEntry } from '../state.js';
 import { setCurrentText } from '../history.js';
 import { parseScript, splitInstr, type LineModel } from '../model.js';
 import { decodeInstructionArgument, parseProjectConfigDocument } from '@surdet/authoring';
-import type { SourceRange } from '@surdet/core';
-import { sourceRangeOffsets } from './source-range.js';
+import { inlinePlainText, type SourceRange } from '@surdet/core';
+import { dialogueRangeOffsets, sourceRangeOffsets } from './source-range.js';
+import { attachInlineField } from './inline-field.js';
 import { portraitDisplayName, projectPortraitAssets } from '../assets.js';
 import { disposePreviewPanel, renderPreviewPanel, refreshPreviewSourceState } from '../panels/preview-panel.js';
 import { allowedToEdit, button, disclosure, field, ImageScope, navigateMode } from './ui.js';
@@ -12,9 +13,12 @@ import { firstTimelineBackground, parseTimelineText } from '../timeline-model.js
 import { toggleAuthoringOutline } from '../shell/authoring-workbench.js';
 import { editSceneLabel } from '../label-editing.js';
 import { instructionLabel, instructionArgumentSummary } from '../script-presentation.js';
+import { BUILTIN_TRANSITION_NAMES, STORY_FILTER_NAMES, type BuiltinTransitionName } from '@surdet/core';
+import { DEFAULT_RULE_SOFT, isStoryFilterName, isTransitionName, resolvedRuleKeys, STORY_FILTER_LABELS, TRANSITION_LABELS } from '../presentation-effects.js';
+import { readTransition, writeEffectDuration, writeRuleReverse, writeRuleSoft, writeTransitionName } from './presentation-effect-source.js';
 import {
   applySourceTextareaEdit, deleteStep, duplicateStep, insertStep, instructionPosition,
-  moveStep, moveStepBefore, projectEditLayout, quoteAssetArgument, setInstructionArgument,
+  moveStep, moveStepBefore, projectEditLayout, quoteAssetArgument, setInstructionArgument, setInstructionModifier,
   setInstructionPosition, simpleChoice, sourceEol, splitDialogue, stepAt, writeSimpleChoice,
   type ScriptView, type SourceEdit,
 } from './script-source.js';
@@ -83,6 +87,8 @@ export class ScriptWorkbench {
   private readonly sourceStatus: HTMLElement;
   private stageImages = new ImageScope();
   private inspectorImages = new ImageScope();
+  /** Removing a focused field blurs it, which can fire one more change while the inspector is being replaced. */
+  private replacingInspector = false;
   private rowImages = new ImageScope();
   private borrowed: { block: HTMLElement; fields: HTMLElement } | null = null;
   private inputScheduled = false;
@@ -183,7 +189,7 @@ export class ScriptWorkbench {
 
   private installDock(): void {
     const tools = this.root.querySelector<HTMLElement>('#script-v4-stage-tools')!;
-    const show = (mode: 'layout' | 'runtime'): void => {
+    const show = (mode: 'layout' | 'runtime', target?: { sceneId: string; line: number }): void => {
       if (!this.current()) return;
       if (mode === 'runtime' && !this.editable()) return;
       this.view.dock = mode;
@@ -200,9 +206,10 @@ export class ScriptWorkbench {
         this.drawStage();
       } else {
         // Deliberate launch, never selecting an arbitrary source row and claiming a replay.
+        // "从这一行试玩" names its row; the preview starts only once a real path reaches it.
         state.previewTimelineId = null;
         state.previewChoices = null;
-        renderPreviewPanel(this.runtime, { embedded: true, onSourceStateChange: () => this.updateStatus() });
+        renderPreviewPanel(this.runtime, { embedded: true, onSourceStateChange: () => this.updateStatus(), ...(target ? { target } : {}) });
       }
       this.updateStatus();
     };
@@ -210,14 +217,25 @@ export class ScriptWorkbench {
     edit.dataset.stageMode = 'layout';
     const play = button('运行预览', () => show('runtime'));
     play.dataset.stageMode = 'runtime';
+    const fromLine = button('从这一行试玩', () => show('runtime', { sceneId: this.scene.id, line: this.cursorLine() + 1 }));
+    fromLine.dataset.action = 'preview-from-line';
+    fromLine.title = '找到一条真实到达当前行的路径，在这一行执行之前停住';
     const enlarge = button('放大画面', () => this.enlargePicture(enlarge), 'v4-button v4-enlarge-picture');
-    tools.replaceChildren(edit, play, enlarge);
+    tools.replaceChildren(edit, play, fromLine, enlarge);
     // Never auto-start audio on returning from another view.
     this.view.dock = 'layout';
     edit.setAttribute('aria-pressed', 'true');
     play.setAttribute('aria-pressed', 'false');
     this.runtime.hidden = true;
     this.picture.hidden = false;
+  }
+
+  /** The row the writer is on: the source caret in source view, otherwise the selected step. */
+  private cursorLine(): number {
+    const textarea = this.view.view === 'source' ? this.editor.querySelector<HTMLTextAreaElement>('.v4-source-editor') : null;
+    if (!textarea) return this.view.line;
+    // Native textarea offsets count one LF per row, even for CRLF documents.
+    return textarea.value.slice(0, textarea.selectionStart).split('\n').length - 1;
   }
 
   private enlargePicture(trigger: HTMLButtonElement): void {
@@ -358,6 +376,11 @@ export class ScriptWorkbench {
       const originalInput = blank.oninput;
       blank.oninput = (event) => { originalInput?.call(blank, event); this.fitTextarea(blank); };
       this.bindDialogueEnter(block, blank);
+      // Typing here turns the row into narration in place, so the same textarea gets markup help
+      // while the row is (or may become) dialogue; an instruction typed here turns it off.
+      const slot = blank.parentNode!, next = blank.nextSibling;
+      slot.insertBefore(attachInlineField(blank, { editable: () => this.editable(), signal: this.abort.signal,
+        active: () => block.classList.contains('block-blank') || block.classList.contains('block-text') }), next);
       this.fitTextarea(blank);
       return;
     }
@@ -393,7 +416,7 @@ export class ScriptWorkbench {
       this.fitTextarea(textarea);
     };
     this.bindDialogueEnter(block, textarea);
-    original.before(textarea);
+    original.before(attachInlineField(textarea, { editable: () => this.editable(), signal: this.abort.signal }));
     this.fitTextarea(textarea);
   }
 
@@ -405,7 +428,11 @@ export class ScriptWorkbench {
         const index = Number(block.dataset.line);
         const current = this.lines()[index];
         if (current?.kind !== 'text' || current.value !== textarea.value) return;
-        this.structural((text) => splitDialogue(text, index, textarea.selectionStart, textarea.selectionEnd), true);
+        try {
+          this.structural((text) => splitDialogue(text, index, textarea.selectionStart, textarea.selectionEnd), true);
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : String(error), false, 5000);
+        }
       }
     };
   }
@@ -505,7 +532,7 @@ export class ScriptWorkbench {
   }
 
   /** Main's search/issues/trace navigation must not focus hidden legacy rows in source view. */
-  /** In the source view a diagnostic range selects its exact text; otherwise the whole row. */
+  /** A diagnostic range selects its exact text in the source view or in a manuscript dialogue box; otherwise the whole row. */
   revealLine(index: number, range?: SourceRange): boolean {
     const rows = this.lines();
     const line = rows[index];
@@ -537,6 +564,13 @@ export class ScriptWorkbench {
     const block = this.block(index);
     if (!block) return false;
     block.scrollIntoView({ block: 'center' });
+    const dialogue = range !== undefined && line.kind === 'text' ? block.querySelector<HTMLTextAreaElement>('.v4-dialogue-input') : null;
+    const exact = dialogue && range !== undefined && line.kind === 'text' ? dialogueRangeOffsets(line, index, range) : null;
+    if (dialogue && exact && line.kind === 'text' && dialogue.value === line.value) {
+      dialogue.focus({ preventScroll: true });
+      dialogue.setSelectionRange(exact.start, exact.end);
+      return true;
+    }
     block.focus({ preventScroll: true });
     return true;
   }
@@ -560,7 +594,8 @@ export class ScriptWorkbench {
     this.returnFields();
     this.inspectorImages.dispose(); this.inspectorImages = new ImageScope();
     const index = this.view.line, line = this.lines()[index], block = this.block(index);
-    this.inspector.replaceChildren();
+    this.replacingInspector = true;
+    try { this.inspector.replaceChildren(); } finally { this.replacingInspector = false; }
     if (!line || !block) return;
     this.inspector.append(h('div', 'v4-inspector-title', line.kind === 'text' ? '当前对白' : line.kind === 'instr' ? instructionLabel(line.name) : line.kind === 'choice-option' ? '分支选项' : '当前步骤'));
     const location = h('p', 'v4-source-hint', `${this.scene.file} · 第 ${index + 1} 行`);
@@ -580,6 +615,17 @@ export class ScriptWorkbench {
       if (this.writeRaw(setInstructionArgument(current.raw, parameter, value), current.raw, index)) {
         this.renderInspector(); this.drawStage();
       }
+    };
+    /** One edit of the current instruction line; a rejected value restores the form. */
+    const editInstruction = (change: (raw: string) => string): void => {
+      if (this.replacingInspector) return;
+      const current = readInstruction();
+      if (!current) return;
+      let next: string;
+      try { next = change(current.raw); }
+      catch (error) { setStatus(error instanceof Error ? error.message : String(error), false, 5000); this.renderInspector(); return; }
+      if (this.writeRaw(next, current.raw, index)) this.drawStage();
+      this.renderInspector();
     };
     if (line.kind === 'text') {
       const source = this.scene.text;
@@ -693,6 +739,10 @@ export class ScriptWorkbench {
       } else if (line.name === 'timeline') {
         const id = decodeInstructionArgument(args[0] ?? '');
         this.inspector.append(renderTimelineSummary(id));
+      } else if (line.name === 'transition') {
+        this.renderTransitionControls(line.raw, editInstruction);
+      } else if (line.name === 'filter') {
+        this.renderFilterControls(args.map(decodeInstructionArgument), editInstruction);
       } else if (line.name === 'wait') {
         const quick = h('div', 'v4-segmented');
         for (const milliseconds of [200, 500, 1000, 2000]) quick.append(button(`${milliseconds} 毫秒`, () => editParameter(0, String(milliseconds))));
@@ -733,7 +783,7 @@ export class ScriptWorkbench {
         this.borrowed = { block, fields };
         const advanced = disclosure('全部参数与高级语法', fields);
         const rawOnlyChoice = line.kind === 'choice-option' && simpleChoice(line.raw) === null;
-        advanced.open = rawOnlyChoice || line.kind === 'instr' && !['bg', 'show', 'wait', 'timeline', 'choice'].includes(line.name);
+        advanced.open = rawOnlyChoice || line.kind === 'instr' && !['bg', 'show', 'wait', 'timeline', 'choice', 'transition', 'filter'].includes(line.name);
         if (line.kind === 'comment' || line.kind === 'label') advanced.open = true;
         this.inspector.append(advanced);
       }
@@ -742,6 +792,59 @@ export class ScriptWorkbench {
       const details = block.querySelector<HTMLDetailsElement>('.technical-details');
       if (details) { details.open = true; block.scrollIntoView({ block: 'center' }); block.querySelector<HTMLInputElement>('.raw input')?.focus(); }
     }));
+  }
+
+  /** Effect, length and, for a mask, the mask asset with its edge and direction; each control writes one source edit. */
+  private renderTransitionControls(raw: string, edit: (change: (raw: string) => string) => void): void {
+    let source: ReturnType<typeof readTransition>;
+    try { source = readTransition(raw); }
+    catch { this.inspector.append(h('p', 'v4-muted', '请先在原始行补全这条转场指令。')); return; }
+    const masks = resolvedRuleKeys(state.dirAssets);
+    const effect = h('select');
+    if (!isTransitionName(source.name)) effect.append(new Option(source.name ? `${source.name}（未知效果）` : '尚未指定', source.name));
+    for (const name of BUILTIN_TRANSITION_NAMES) {
+      const option = new Option(TRANSITION_LABELS[name], name);
+      if (name === 'rule' && !masks.length && source.name !== 'rule') { option.disabled = true; option.text = '遮罩（先导入转场遮罩）'; }
+      effect.append(option);
+    }
+    effect.value = source.name;
+    effect.onchange = () => edit((current) => writeTransitionName(current, effect.value as BuiltinTransitionName, masks[0]));
+    const duration = h('input'); duration.type = 'number'; duration.min = '1'; duration.max = '10000'; duration.step = '50';
+    duration.placeholder = '600'; duration.value = source.durationMs;
+    duration.onchange = () => edit((current) => writeEffectDuration(current, 'fade', duration.value, 1, 10000));
+    this.inspector.append(field('转场效果', effect), field('时长（毫秒）', duration));
+    if (source.name === 'rule') {
+      const mask = h('select');
+      if (source.rule === undefined || !masks.includes(source.rule)) mask.append(new Option(source.rule ? `${source.rule}（未找到或无法使用）` : '尚未指定', source.rule ?? ''));
+      masks.forEach((key) => mask.append(new Option(key, key)));
+      mask.value = source.rule ?? '';
+      mask.onchange = () => edit((current) => setInstructionModifier(current, 'rule', mask.value));
+      const soft = h('input'); soft.type = 'number'; soft.min = '0'; soft.max = '1'; soft.step = '0.05';
+      soft.placeholder = String(DEFAULT_RULE_SOFT); soft.value = source.soft ?? '';
+      soft.onchange = () => edit((current) => writeRuleSoft(current, soft.value));
+      const reverse = h('input'); reverse.type = 'checkbox'; reverse.checked = source.reverse;
+      reverse.onchange = () => edit((current) => writeRuleReverse(current, reverse.checked));
+      this.inspector.append(field('遮罩素材', mask), field('边缘柔和度（0 为硬边）', soft), field('反向揭示', reverse));
+      this.inspector.append(h('p', 'v4-muted', masks.length
+        ? '遮罩较暗的部分先显示新画面，较亮的部分最后显示；勾选反向则相反。'
+        : '项目中没有可用的转场遮罩；在素材中心导入到「转场遮罩」分类后可以选择。'));
+    }
+    this.inspector.append(h('p', 'v4-muted', '转场把本批第一次修改舞台之前的画面过渡到新画面：先写背景、人物的修改，再写转场。对白和菜单不在旧画面里；没有修改舞台时，溶解和遮罩不会播放。'));
+  }
+
+  /** The filter and its fade-in length; the number is milliseconds, never strength. */
+  private renderFilterControls(args: readonly string[], edit: (change: (raw: string) => string) => void): void {
+    const name = args[0] ?? '';
+    const filter = h('select');
+    if (!isStoryFilterName(name)) filter.append(new Option(name ? `${name}（未知滤镜）` : '尚未指定', name));
+    for (const value of STORY_FILTER_NAMES) filter.append(new Option(STORY_FILTER_LABELS[value], value));
+    filter.value = name;
+    filter.onchange = () => edit((current) => setInstructionArgument(current, 0, filter.value));
+    const duration = h('input'); duration.type = 'number'; duration.min = '0'; duration.max = '600000'; duration.step = '100';
+    duration.placeholder = '0'; duration.value = args[1] ?? '';
+    duration.onchange = () => edit((current) => writeEffectDuration(current, 'off', duration.value.trim() || '0', 0, 600000));
+    this.inspector.append(field('画面滤镜', filter), field('过渡时长（毫秒）', duration),
+      h('p', 'v4-muted', '时长是过渡用的毫秒数，不是强度；0 表示立即生效，「清除」也可以设过渡。滤镜只作用于背景、人物和图层，不影响对白和菜单。'));
   }
 
   private drawStage(): void {
@@ -775,7 +878,8 @@ export class ScriptWorkbench {
     }
     if (projection.dialogue) {
       const text = h('div', 'v4-stage-dialogue');
-      text.append(h('strong', undefined, projection.dialogue.speaker), h('p', undefined, projection.dialogue.value));
+      // Static layout is not a run: it shows Core's plain text; styles and pauses belong to the real preview.
+      text.append(h('strong', undefined, projection.dialogue.speaker), h('p', undefined, inlinePlainText(projection.dialogue.value)));
       stage.append(text);
     }
     if (!projection.background && !projection.actors.length && !projection.dialogue) stage.append(h('p', 'v4-stage-empty', '此片段尚未明确设置画面'));
@@ -832,7 +936,7 @@ export class ScriptWorkbench {
       if (focusDialogue) {
         const target = block?.querySelector<HTMLTextAreaElement>('.v4-dialogue-input, .fields textarea')
           ?? this.inspector.querySelector<HTMLTextAreaElement>('.fields textarea');
-        target?.focus(); target?.setSelectionRange(0, 0);
+        target?.focus(); target?.setSelectionRange(result.caret ?? 0, result.caret ?? 0);
       }
     });
     return true;
@@ -905,7 +1009,7 @@ export class ScriptWorkbench {
     const dialog = h('dialog', 'v4-insert-dialog');
     dialog.setAttribute('aria-label', '添加剧情');
     const type = h('select');
-    const kinds = [['text', '对白'], ['bg', '背景'], ['show', '人物'], ['voice', '语音'], ['bgm', '音乐'], ['se', '音效'], ['wait', '等待'], ['choice', '分支'], ['timeline', '时间轴'], ['set', '变量'], ['raw', '原始指令']];
+    const kinds = [['text', '对白'], ['bg', '背景'], ['show', '人物'], ['transition', '转场'], ['filter', '画面滤镜'], ['voice', '语音'], ['bgm', '音乐'], ['se', '音效'], ['wait', '等待'], ['choice', '分支'], ['timeline', '时间轴'], ['set', '变量'], ['raw', '原始指令']];
     kinds.forEach(([key, label]) => type.append(new Option(label!, key!)));
     const body = h('div', 'v4-insert-fields'), message = h('p', 'v4-muted');
     const drafts = new Map<string, string[]>();
@@ -931,6 +1035,29 @@ export class ScriptWorkbench {
       const kind = type.value;
       if (kind === 'text') { input('说话人（可空）'); const control = h('textarea'); body.append(field('对白', control)); }
       else if (kind === 'bg' || kind === 'voice' || kind === 'bgm' || kind === 'se' || kind === 'show') selectAssets(kind === 'show' ? 'portrait' : kind);
+      else if (kind === 'transition') {
+        const masks = resolvedRuleKeys(state.dirAssets);
+        const effect = h('select');
+        for (const name of BUILTIN_TRANSITION_NAMES) {
+          const option = new Option(TRANSITION_LABELS[name], name);
+          if (name === 'rule' && !masks.length) { option.disabled = true; option.text = '遮罩（先导入转场遮罩）'; }
+          effect.append(option);
+        }
+        effect.value = 'dissolve';
+        body.append(field('转场效果', effect));
+        input('时长（毫秒）', '800');
+        const mask = h('select');
+        mask.append(new Option(masks.length ? '仅遮罩效果使用' : '项目中没有可用的转场遮罩', ''));
+        masks.forEach((key) => mask.append(new Option(key, key)));
+        body.append(field('遮罩素材', mask));
+        message.textContent = '转场放在背景、人物的修改之后：它把修改前的画面过渡到新画面。';
+      } else if (kind === 'filter') {
+        const filter = h('select');
+        for (const name of STORY_FILTER_NAMES) filter.append(new Option(STORY_FILTER_LABELS[name], name));
+        body.append(field('画面滤镜', filter));
+        input('过渡时长（毫秒，可空）');
+        message.textContent = '时长是过渡用的毫秒数，不是强度；留空立即生效。';
+      }
       else if (kind === 'wait') input('等待毫秒', '500');
       else if (kind === 'timeline') { const control = h('select'); state.timelines.forEach((item) => control.append(new Option(item.id, item.id))); body.append(field('已有时间轴', control)); }
       else if (kind === 'choice') { input('第一个选项', '继续交谈'); input('第二个选项', '暂时离开'); message.textContent = '将连同两个唯一段落标记和分支结束位置一起插入。'; }
@@ -963,6 +1090,15 @@ export class ScriptWorkbench {
       } else if (type.value === 'set') {
         if (!/^[^\s@]+$/.test(values[0] ?? '') || /[\r\n]/.test(values[1] ?? '')) throw new Error('请填写单行变量名与表达式');
         rows = [`@set ${values[0]} = ${values[1] ?? ''}`];
+      } else if (type.value === 'transition') {
+        const [name = '', duration = '', mask = ''] = values;
+        if (!/^\d+$/.test(duration) || Number(duration) < 1 || Number(duration) > 10000) throw new Error('转场时长须为 1–10000 的整数毫秒');
+        if (name === 'rule' && !mask) throw new Error('遮罩转场需要选择遮罩素材');
+        rows = [`@transition ${name} ${duration}${name === 'rule' ? ` @rule=${quoteAssetArgument(mask)}` : ''}`];
+      } else if (type.value === 'filter') {
+        const [name = '', duration = ''] = values;
+        if (duration.trim() && (!/^\d+$/.test(duration.trim()) || Number(duration) > 600000)) throw new Error('滤镜过渡时长须为 0–600000 的整数毫秒');
+        rows = [`@filter ${name}${duration.trim() ? ` ${duration.trim()}` : ''}`];
       } else {
         if (!values[0]) throw new Error('请先选择或填写参数');
         rows = [`@${type.value} ${quoteAssetArgument(values[0])}${type.value === 'show' ? ' ' + quoteAssetArgument(values[1] || 'normal') + ' @ center' : ''}`];
