@@ -66,4 +66,26 @@ describe('preview target path through the real Core debugger', () => {
     const result = findPreviewPath(snapshot, { sceneId: 'entry', line: 2, mode: 'path', choices: [0], targetVisit: 2 });
     expect(result).toMatchObject({ status: 'reached', targetVisit: 2, choices: [0] });
   });
+  it.each(['search', 'path', 'test'] as const)('stops before every consecutive dialogue and the following end in %s mode', mode => {
+    const snapshot = project({ entry: '@scene entry\n凛：一。\n凛：二。\n凛：三。\n@end' });
+    for (const line of [2, 3, 4, 5]) {
+      const result = findPreviewPath(snapshot, { sceneId: 'entry', line, mode });
+      expect(result.status).toBe('reached');
+      expect(result.position).toMatchObject({ sceneId: 'entry', line, op: line === 5 ? 'end' : 'text' });
+      expect(result.coverage.scenes[0]?.executedInstructions).toBe(line - 1);
+    }
+  });
+  it.each(['search', 'path', 'test'] as const)('stops before a choice after dialogue and executes preceding state only in %s mode', mode => {
+    const snapshot = project({ entry: '正文\n@set trust += 1\n正文二\n@choice\n  继续 -> @set trust += 100 @end' }, vars);
+    const result = findPreviewPath(snapshot, { sceneId: 'entry', line: 5, mode });
+    expect(result).toMatchObject({ status: 'reached', choices: [], finalVariables: { trust: 1 },
+      target: { kind: 'choice-group', requestedLine: 5, line: 4 }, position: { line: 4, op: 'choice' } });
+  });
+  it('counts loop visits after dialogue and preserves step budgets and host stops', () => {
+    const source = '@label again\n正文一\n正文二\n@choice\n  再来 -> @goto again\n  结束 -> @end';
+    const result = findPreviewPath(project({ entry: source }), { sceneId: 'entry', line: 3, mode: 'path', choices: [0], targetVisit: 2 });
+    expect(result).toMatchObject({ status: 'reached', choices: [0], targetVisit: 2, position: { line: 3, op: 'text' } });
+    expect(findPreviewPath(project({ entry: source }), { sceneId: 'entry', line: 3, maxStepsPerPath: 1 }).status).toBe('budget-exhausted');
+    expect(findPreviewPath(project({ entry: '正文\n@calendar next\n之后' }), { sceneId: 'entry', line: 3 }).status).toBe('host-boundary');
+  });
 });
