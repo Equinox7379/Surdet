@@ -75,6 +75,24 @@ async function insert(change: ChangeSession, operationId: string, sceneId: strin
 }
 
 describe('candidate operation-time facts', () => {
+  it('guards timeline rule dependencies before persistence and seals create/patch facts', async () => {
+    const definition = { version: 2, id: 'reveal', durationMs: 800, tracks: [{ kind: 'screen', cues: [
+      { atMs: 0, durationMs: 800, easing: 'linear', action: 'rule', rule: '遮罩 @左' },
+    ] }] };
+    const missing = await candidate(), before = structuredClone(missing.record);
+    await expect(applyTimelineCreate(missing, { operationId: 'reveal', timelineId: 'reveal', definition }, hasher))
+      .rejects.toMatchObject({ code: 'CANDIDATE_DEPENDENCY_NOT_READY' });
+    expect(missing.record).toEqual(before);
+    const ready = await candidate(['asset:rule:遮罩 @左']);
+    const created = await applyTimelineCreate(ready, { operationId: 'reveal', timelineId: 'reveal', definition }, hasher);
+    await applyTimelinePatch(ready, { operationId: 'patch-reveal', timelineId: 'reveal',
+      patch: { kind: 'setDuration', durationMs: 900, expectedFingerprint: created.fingerprint } }, hasher);
+    for (const operationId of ['reveal', 'patch-reveal']) {
+      expect(facts(ready, operationId).requiredObjects).toContainEqual({ objectRef: 'asset:rule:遮罩 @左', source: 'base' });
+    }
+    expect(inspectCandidateCompositionReadiness(ready.record).status).toBe('ready');
+    expect((await seal(ready)).eligibility).toBe('ready');
+  });
   it.each(['JSON', 'JsOn'])('retains canonical .%s dependency facts for V2 create and patch', async (extension) => {
     const timelineId = `intro.${extension}`;
     const timelinePath = `content/timelines/chapter/intro.${extension}`;

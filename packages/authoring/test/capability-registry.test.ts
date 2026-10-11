@@ -8,6 +8,20 @@ import {
   type AuthoringCapabilityId,
 } from '../src/index.js';
 describe('authoring capability registry', () => {
+  it('publishes typed timeline transition inputs on create and patch', () => {
+    const create = getCapabilityDefinition('timeline.create');
+    const cue = ((create.inputSchema.properties as any).definition.properties.tracks.items.properties.cues.items).properties;
+    expect(cue.action.enum).toContain('dissolve'); expect(cue.action.enum).toContain('rule');
+    expect(cue.rule).toMatchObject({ type: 'string', minLength: 1 });
+    expect(cue.soft).toMatchObject({ type: 'number', minimum: 0, maximum: 1 });
+    expect(cue.reverse).toMatchObject({ type: 'boolean' });
+    const patch = getCapabilityDefinition('timeline.patch');
+    const variants = (patch.inputSchema.properties as any).patch.oneOf;
+    for (const kind of ['insertCue', 'replaceCue']) {
+      const variant = variants.find((value: any) => value.properties.kind.const === kind);
+      expect(variant.properties.cue.properties).toEqual(cue);
+    }
+  });
   it('is the single complete 73-capability contract', () => {
     expect(AUTHORING_CAPABILITY_IDS).toHaveLength(73);
     expect(new Set(AUTHORING_CAPABILITY_IDS).size).toBe(73);

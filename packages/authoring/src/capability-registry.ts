@@ -7,6 +7,7 @@ import type {
 } from './capability-contract.js';
 import { AGENT_IMAGE_MAX_FILES, AGENT_MEDIA_EXTENSIONS } from './agent-image-import.js';
 import { REPLACEABLE_SCENE_INSTRUCTIONS } from './contracts.js';
+import { TIMELINE_TRANSITION_ACTIONS } from '@surdet/core';
 
 const JSON_SCHEMA_DRAFT = 'https://json-schema.org/draft/2020-12/schema' as const;
 
@@ -299,7 +300,10 @@ const timelineCueSchema = strictObject({
   atMs: { type: 'integer', minimum: 0 },
   durationMs: { type: 'integer', minimum: 0 },
   easing: { enum: ['linear', 'inOutSine', 'outCubic', 'inOutCubic'] },
-  action: { enum: ['pose', 'set', 'show', 'hide', 'move', 'expression', 'zoom', 'pan', 'shake', 'fade', 'tint', 'flash', 'wipe', 'start', 'stop', 'bgm', 'se', 'voice'] },
+  action: { enum: ['pose', 'set', 'show', 'hide', 'move', 'expression', 'zoom', 'pan', 'shake', 'fade', 'tint', 'flash', 'wipe', ...TIMELINE_TRANSITION_ACTIONS, 'start', 'stop', 'bgm', 'se', 'voice'] },
+  rule: { type: 'string', minLength: 1, description: 'screen rule cue only: exact prepared rule asset key' },
+  soft: { type: 'number', minimum: 0, maximum: 1, default: 0.15 },
+  reverse: { type: 'boolean', default: false },
   key: { type: 'string', description: 'background or audio cue: copy the matching project.assets usage.timeline; audio keys are channel-specific' },
   expression: { type: 'string', description: 'portrait cue only: copy project.assets.portraits[].expression for the selected timelineTarget' },
   position: stringSchema,
@@ -1230,7 +1234,7 @@ const definitions = {
       inlineText: strictObject({ tags: arrayOf(strictObject({ name: stringSchema, paired: booleanSchema, value: { type: ['string', 'null'] }, label: stringSchema, example: stringSchema }, ['name', 'paired', 'value', 'label', 'example'])),
         ruby: { const: 'explicit-only' }, escape: stringSchema }, ['tags', 'ruby', 'escape']),
     }, ['contractVersion', 'capabilities', 'inlineText']),
-    example: { input: {}, expectedResultShape: { contractVersion: '2.36.0', capabilities: [], inlineText: { tags: [], ruby: 'explicit-only', escape: '\\< for literal <; \\\\ for literal \\' } } },
+    example: { input: {}, expectedResultShape: { contractVersion: '2.37.0', capabilities: [], inlineText: { tags: [], ruby: 'explicit-only', escape: '\\< for literal <; \\\\ for literal \\' } } },
   },
   inspect: {
     inputSchema: readViewInputSchema,

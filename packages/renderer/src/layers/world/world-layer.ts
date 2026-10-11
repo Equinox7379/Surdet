@@ -554,7 +554,7 @@ export class WorldLayer implements WorldProjectionPort {
 
   applyStage(command: StageCommand): void {
     if (this.#disposed) return;
-    if (command.type === 'finish-timeline') { this.#stageMotions.releaseTimeline(command.runId); return; }
+    if (command.type === 'finish-timeline') { this.#stageMotions.releaseTimeline(command.runId); this.#worldEffects.finishTimeline(command.runId); return; }
     if (command.type === 'skip-motions') { this.#stageMotions.skip(); this.#requestFrame(); return; }
     if (command.type === 'clear') {
       this.#worldEffects.beforeStageMutation();
@@ -1074,7 +1074,8 @@ export class WorldLayer implements WorldProjectionPort {
 
   applyTimelineFrame(event: TimelineFrameEvent): void {
     if (this.#disposed) return;
-    if (event.track === 'background' || event.track === 'portrait' || event.track === 'camera' || event.track === 'layer') this.#worldEffects.beforeStageMutation();
+    if (event.track === 'background' ? event.started || event.final
+      : event.track === 'portrait' || event.track === 'camera' || event.track === 'layer') this.#worldEffects.beforeStageMutation();
     // Keep the timeline clock and event ownership intact; only visual interpolation completes immediately.
     if (this.#presentation.reducedMotion) event = { ...event, progress: 1 };
     if (event.runId !== undefined && this.#applyOwnedTimelineFrame(event)) {
@@ -1082,6 +1083,16 @@ export class WorldLayer implements WorldProjectionPort {
       this.#syncEffectRegistration(); this.#requestFrame(); return;
     }
     const cue = event.cue;
+    if (event.track === 'screen' && (cue.action === 'dissolve' || cue.action === 'rule')) {
+      const rule = cue.action === 'rule' ? { rule: String(cue.rule), soft: Number(cue.soft ?? .15), reverse: cue.reverse === true } : undefined;
+      const accepted = this.#worldEffects.timelineTransition(cue.action, `${event.runId ?? ''}/${event.cueId ?? 0}`,
+        event.final ? 1 : event.progress, event.started && !event.final, rule);
+      if (!accepted) {
+        console.warn(`[surdet] 转场遮罩 '${rule?.rule}' 未加载，使用淡入`);
+        this.transition('fade', Math.max(1, cue.durationMs * (1 - event.progress)));
+      }
+      this.#syncEffectRegistration(); this.#requestFrame(); return;
+    }
     if (event.track === 'background' && cue.action === 'set' && typeof cue.key === 'string' && (event.started || event.final)) {
       this.#startTimelineBackground(cue.key, cue.durationMs);
       return;

@@ -446,6 +446,8 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
           add('background', typeof cue.key === 'string' ? cue.key : undefined, base);
         } else if (track.kind === 'audio' && (cue.action === 'bgm' || cue.action === 'se' || cue.action === 'voice')) {
           add(cue.action === 'bgm' ? 'music' : cue.action === 'se' ? 'sound-effect' : 'voice', typeof cue.key === 'string' ? cue.key : undefined, base);
+        } else if (track.kind === 'screen' && cue.action === 'rule') {
+          add('rule', typeof cue.rule === 'string' ? cue.rule : undefined, base);
         } else if (track.kind === 'portrait') {
           const rawTarget = definition?.version === 2 && typeof cue.source === 'string' ? cue.source : typeof track.target === 'string' ? track.target : undefined;
           if (cue.action === 'show' || cue.action === 'expression') {
@@ -650,7 +652,10 @@ export function buildProjectAssetIntelligence(
     item.issues.sort(issueOrder);
     const command = mediaAssetCommand(item.kind);
     if (item.kind === 'rule' && item.physical && item.issues.length === 0) {
-      item.usage = { scene: { kind: 'instruction', name: 'transition', args: ['rule', '800'], modifiers: { rule: `"${item.key}"`, soft: '.15', reverse: 'false' } } };
+      item.usage = {
+        scene: { kind: 'instruction', name: 'transition', args: ['rule', '800'], modifiers: { rule: `"${item.key}"`, soft: '.15', reverse: 'false' } },
+        timeline: { kind: 'screen', cues: [{ atMs: 0, durationMs: 800, easing: 'linear', action: 'rule', rule: item.key, soft: .15, reverse: false }] },
+      };
     }
     if (command && item.physical && item.issues.length === 0 && !(command === 'ambience' && item.key === 'off')) {
       item.usage = {

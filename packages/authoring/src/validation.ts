@@ -408,6 +408,9 @@ export function validateSnapshot(
       if (definition === undefined) continue;
       definition.tracks.forEach((track) => {
         track.cues.forEach((cue) => {
+          if (track.kind === 'screen' && cue.action === 'rule' && typeof cue.rule === 'string' && !resolvedRules.has(cue.rule)) {
+            rawIssues.push({ severity: 'error', code: 'RULE_ASSET_UNRESOLVED', text: `${timeline.path}: 转场遮罩 '${cue.rule}' 未解析`, file: timeline.path, line: 1, col: 1 });
+          }
           if (track.kind === 'background' && cue.action === 'set' && typeof cue.key === 'string') {
             if (!resolvedBackgrounds.has(cue.key)) {
               rawIssues.push({

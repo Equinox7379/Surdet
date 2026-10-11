@@ -1,6 +1,6 @@
 # 演出后端与前端接入合同
 
-当前交付：公开色彩调整纠错、旧世界 `dissolve` / `rule` 与旧图生命周期、四种作者 `@filter`、遮罩素材链。时间轴转场尚未交付，不能按规划草案当作可用接口。Editor 表单由 Claude 完成；本批没有改可见界面。公开创作合同2.36.0（73能力）。
+当前交付：公开色彩调整纠错、旧世界 `dissolve` / `rule` 与旧图生命周期、四种作者 `@filter`、遮罩素材链，以及时间轴 screen 转场。Editor 表单由 Claude 完成；本批没有改可见界面。公开创作合同2.37.0（73能力）。
 
 ## 溶解转场
 
@@ -62,6 +62,21 @@
 - `presentation.payload.stage.storyFilters`（Core完整存档位置）包含`values:{blur,grayscale,sepia,vignette}`，每项0–1；过渡时另有`motion:{target:同形四值,duration,remain}`。快照以当前强度为起点、只保存剩余时长，恢复后不会再次计入已经经过的进度；没有该字段表示没有作者滤镜，不表示保留当前滤镜。恢复和验证仍走完整演出事务，不添加存档版本分支或迁移层。
 - 坏强度/过渡在预检阶段拒绝，现有世界与滤镜不变。新游戏和清舞台清除作者滤镜；菜单暂停冻结这条World帧链；销毁释放自有Blur/ColorMatrix资源与单张暗角纹理，不销毁作品素材。
 - `scene.patch`原insert/replaceInstruction可编排filter；无新写盘路径。候选事实仍走原通道，完整游戏渲染与视觉验收不是simulate通过可以代签。
+
+## 时间轴 screen 转场
+
+- version 1、2 均支持 `action: "dissolve" | "rule"`，名称表为 Core 的 `TIMELINE_TRANSITION_ACTIONS`。沿用 `atMs`、`durationMs`、`easing`；时长可为0，仍须在时间轴总长内。
+- rule cue 增加 `rule: string`（已导入遮罩的精确素材键、非空且无首尾空白）、`soft?: number`（0–1，缺省0.15）、`reverse?: boolean`（缺省false）。不是DSL引号串；JSON里的false不能写成字符串。非法字段由共享Core报TL009，原timeline.create/patch拒绝，不新增能力。
+- 每个实际cue起点先应用同一时刻的舞台修改，再使用首次修改前取得的旧世界。转场进度直接来自时间轴已缓动的progress，World更新不再推进第二遍；不缩放时间轴逻辑时长。减少动态直接显示结束画面，保留逻辑游标和阻塞时长。
+- 没有舞台修改时不产生旧图；转场只持有一张旧世界图，不拥有背景、人物、镜头、fade或tint属性。只在实际播放经过起点时启动，恢复、已消费cue、跳过至末尾的结算都不能另起旧图。取消所属run、完成、恢复、销毁释放自有旧图，不销毁借用的遮罩素材；其他run结束不取消当前转场。
+- 存档格式不变：旧图和转场进度不入档。读档/回退恢复快照的实际世界与时间轴游标，已经开始的转场视为完成，游标之后的转场仍可正常开始。现有背景交叉淡化恢复规则不改。
+- 缺图静态诊断为`RULE_ASSET_UNRESOLVED`（error）；运行时沿用原fade并给出中文诊断。`project.assets.intelligence.items[].usage.timeline`提供真实rule键的screen轨道示例；资产引用定位到具体cue，素材改名只改rule字段，候选创建/修改记录`asset:rule:<key>`依赖，缺失在落盘前拒绝。引用片段中的遮罩亦进入原递归依赖链。
+
+示例：在同一时间点的背景轨道写`set`，screen轨道写以下cue即可，不要再补一条重复的场景转场指令；screen轨道在JSON中先写也能正确播放。
+
+```json
+{"kind":"screen","cues":[{"atMs":100,"durationMs":800,"easing":"outCubic","action":"rule","rule":"百叶窗","soft":0.15,"reverse":false}]}
+```
 
 ## Claude 本批工作
 

@@ -1131,7 +1131,11 @@ export class PresentationController {
   }
 
   #applyTimelineEvents(events: readonly import('../timeline-player.js').TimelineFrameEvent[]): void {
-    for (const event of events) {
+    // At a shared start boundary every stage mutation must precede the reveal,
+    // even when the screen track was authored before the background track.
+    const startsTransition = (event: TimelineFrameEvent) => event.started && event.track === 'screen'
+      && (event.cue.action === 'dissolve' || event.cue.action === 'rule');
+    for (const event of [...events.filter(event => !startsTransition(event)), ...events.filter(startsTransition)]) {
       if (event.track === 'audio' && this.#skipTimelineAudio && event.cue.action !== 'bgm') continue;
       if (event.track === 'audio' && typeof event.cue.key === 'string' && (event.started || (event.final && event.cue.action === 'bgm'))) {
         if (event.cue.action === 'bgm') this.#audio.playBgm(event.cue.key);

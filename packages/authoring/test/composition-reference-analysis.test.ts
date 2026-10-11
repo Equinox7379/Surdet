@@ -7,6 +7,20 @@ import {
 } from '../src/composition-reference-analysis.js';
 
 describe('raw composition reference analysis', () => {
+  it('tracks rule dependencies through timeline clips without claiming background or prose fields', () => {
+    const child = { version: 2, id: 'mask_child', durationMs: 800, tracks: [
+      { kind: 'screen', cues: [{ atMs: 0, durationMs: 800, easing: 'linear', action: 'rule', rule: '遮罩 @左' }] },
+      { kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: '遮罩 @左' }] },
+    ] };
+    const refs = analyzeTimelineCompositionReferences({ timelineId: 'parent', path: 'content/timelines/parent.json',
+      definition: { version: 2, tracks: [], clips: [{ timelineId: 'mask_child', atMs: 0 }] },
+      lookup: () => ({ path: 'content/timelines/mask_child.json', definition: child }) });
+    expect(refs.filter(ref => ref.kind === 'rule-asset')).toEqual([expect.objectContaining({
+      scope: 'candidate-external', token: '遮罩 @左', objectRef: 'asset:rule:遮罩 @左',
+      source: expect.objectContaining({ path: 'content/timelines/mask_child.json', trackIndex: 0, cueIndex: 0 }),
+    })]);
+    expect(refs.some(ref => ref.objectRef === 'asset:bg:遮罩 @左')).toBe(true);
+  });
   it('tracks the real rule modifier as an external asset, not prose or a same-named background', () => {
     const refs = analyzeSceneCompositionReferences({ sceneId: 'entry', path: 'content/scenario/entry.gal', characters: {},
       text: '@scene entry\n遮罩 @左 只是正文\n@bg "遮罩 @左"\n@transition rule 800 @rule="遮罩 @左" @soft .2\n@end' });

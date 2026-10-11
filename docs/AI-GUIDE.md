@@ -2,7 +2,7 @@
 
 本指南面向编写剧情、配置与演出的内容作者。默认使用正式 Agent Port 工具，在隔离草稿中修改、验证和试玩；不需要先读引擎源码、长期台账或重新接线播放器。已有项目保持原位，新项目使用现有模板。
 
-本批公开创作合同为 **2.36.0**（73 项公开能力），`project.simulate` 新增源位置与版本关联的 `coverage`，失败和预算耗尽的部分报告保留在错误 `details.report`；保留作品界面变量条件、只读数值条、数组列表/数量、有限赋值按钮，以及人物档案、用语辞典、结局册、可选永久收藏、多语言、已有配音、主题、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+本批公开创作合同为 **2.37.0**（73 项公开能力），`project.simulate` 新增源位置与版本关联的 `coverage`，失败和预算耗尽的部分报告保留在错误 `details.report`；保留作品界面变量条件、只读数值条、数组列表/数量、有限赋值按钮，以及人物档案、用语辞典、结局册、可选永久收藏、多语言、已有配音、主题、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
 
 ## 0. 准备项目与会话
 
@@ -400,6 +400,8 @@ Player、Editor 的工作稿试玩读取对应版本的角色资料。候选可�
 ```
 
 传给 `timeline.create` 后，在剧情 blocks 的可达位置插入 `{ "kind": "instruction", "name": "timeline", "args": ["arrival"], "modifiers": { "blocking": "" } }`。省略 blocking 就与台词并行；名字是 timeline，不是 timeline.play。不必把时间轴效果再用场景指令重复执行一次。
+
+screen轨道还支持`dissolve`和`rule`。例如`{"atMs":0,"durationMs":800,"easing":"linear","action":"rule","rule":"百叶窗","soft":0.15,"reverse":false}`，遮罩键从`project.assets.intelligence.items[].usage.timeline`复制，不猜文件名；soft缺省0.15、reverse缺省false，不能写字符串开关。给同一时刻加背景/人物轨道即可从修改前的世界过渡；没有舞台修改时不产生转场。已开始的转场读档/回退后视为完成，游标之后的新cue正常播放；转场不接管其他轨道属性。详见[演出接口](presentation-effects-contract.md#时间轴-screen-转场)。
 
 返修原演出：inspect `timeline:arrival`，从 childRefs 逐层取得轨道、cue 的引用和当前指纹；timeline.patch 的 replaceCue 要传完整 cue，而不是仅改过的字段。成功后重读再继续；旧指纹拒绝时不要猜数组序号。背景/表情写错，用场景对象的当前引用和指纹调用 scene.patch 的 replaceInstruction；场景内单行指纹与时间轴指纹不能混用。
 
