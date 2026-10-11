@@ -10,6 +10,7 @@
 流程图结构化操作后端及Claude连线接入：[流程编辑合同](flow-operations-contract.md)。
 旧画面溶解后端及Claude转场表单接入：[演出合同](presentation-effects-contract.md)。
 项目插件后端及Claude信任/预览接入：[项目插件合同](project-plugins-contract.md)。
+Windows免安装导出后端及Claude导出界面接入：[Windows导出合同](windows-game-export-contract.md)。
 
 | 需要做什么 | 阅读入口 |
 | --- | --- |

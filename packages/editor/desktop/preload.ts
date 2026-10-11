@@ -3,6 +3,16 @@ import type { DesktopBridge } from './contracts.js';
 
 if (process.isMainFrame) {
   const bridge: DesktopBridge = {
+    inspectGameExport: () => ipcRenderer.invoke('editor:export-inspect'),
+    chooseExportLocation: () => ipcRenderer.invoke('editor:export-location'),
+    exportGame: request => ipcRenderer.invoke('editor:export-game', request),
+    cancelGameExport: () => ipcRenderer.invoke('editor:export-cancel'),
+    showGameExport: () => ipcRenderer.invoke('editor:export-show'),
+    onGameExportProgress: callback => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: Parameters<typeof callback>[0]) => callback(progress);
+      ipcRenderer.on('editor:export-progress', listener);
+      return () => { ipcRenderer.removeListener('editor:export-progress', listener); };
+    },
     context: () => ipcRenderer.invoke('editor:context'),
     openProject: () => ipcRenderer.invoke('editor:open-project'),
     chooseProjectLocation: () => ipcRenderer.invoke('editor:choose-project-location'),

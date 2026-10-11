@@ -3,19 +3,17 @@ import { cmdPack } from '../src/pack.js';
 
 describe('cmdPack', () => {
   it('rejects a missing target without invoking npm', async () => {
-    const run = vi.fn();
-    expect(await cmdPack(undefined, { run })).toBe(1);
-    expect(run).not.toHaveBeenCalled();
+    const exported = vi.fn();
+    expect(await cmdPack(undefined, { export: exported })).toBe(1);
+    expect(exported).not.toHaveBeenCalled();
   });
 
-  it('passes an explicit absolute target to shell packaging', async () => {
-    const run = vi.fn(() => 0);
-    expect(await cmdPack('E:/surdet/examples/zero-after-midnight', { run })).toBe(0);
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({
-      env: expect.objectContaining({
-        SURDET_GAME_DIR: expect.stringContaining('zero-after-midnight'),
-        SURDET_PACK_MODE: 'release',
-      }),
+  it('passes an explicit project and new output folder to the shared export core', async () => {
+    const exported = vi.fn(async () => ({ directory: 'out', executable: 'out/game.exe', id: 'game', title: '游戏', version: '1.0.0' }));
+    expect(await cmdPack('game', { export: exported }, new Map([['--output', 'output/game'], ['--trust-plugins', 'counter,panel'], ['--runtime', 'runtime/Surdet Editor.exe']]))).toBe(0);
+    expect(exported).toHaveBeenCalledWith(expect.objectContaining({
+      projectRoot: expect.stringContaining('game'), folderName: 'game', encrypted: true, trustedPlugins: ['counter', 'panel'],
+      runtime: expect.objectContaining({ executable: 'Surdet Editor.exe', gameRuntime: expect.stringContaining('game-runtime') }),
     }));
   });
 });
