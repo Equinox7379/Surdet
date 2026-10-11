@@ -601,3 +601,136 @@
     max-height: 96px;
   }
 }
+
+/* 编辑连接：现有连接、可新增的连接，以及应用前的源码差异。 */
+.flow-edit-dialog {
+  width: min(760px, calc(100vw - 24px));
+}
+
+.flow-edit-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--surdet-space-12);
+}
+
+.flow-edit-header h2 {
+  margin: 0 0 var(--surdet-space-12);
+}
+
+.flow-edit-status {
+  min-height: 1.5em;
+  margin: 0 0 var(--surdet-space-8);
+  color: var(--surdet-state-warning);
+  font-size: var(--surdet-type-caption);
+}
+
+.flow-edit-section {
+  display: grid;
+  gap: var(--surdet-space-8);
+  margin-block: var(--surdet-space-16);
+}
+
+.flow-edit-section h3,
+.flow-edit-preview h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.flow-edit-edges {
+  display: grid;
+  gap: var(--surdet-space-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flow-edit-edge,
+.flow-edit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--surdet-space-8);
+}
+
+.flow-edit-edge-text {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.flow-edit-hint,
+.flow-edit-note {
+  margin: 0;
+  color: var(--surdet-text-secondary);
+  font-size: var(--surdet-type-caption);
+}
+
+.flow-edit-branch {
+  display: grid;
+  gap: var(--surdet-space-8);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.flow-edit-branch legend {
+  padding: 0;
+  margin-bottom: var(--surdet-space-4);
+}
+
+.flow-edit-options {
+  display: grid;
+  gap: var(--surdet-space-8);
+}
+
+.flow-edit-dialog :is(input, select) {
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--surdet-border-default);
+  border-radius: var(--surdet-radius-tight);
+  background: var(--surdet-surface-app);
+  color: var(--surdet-text-primary);
+}
+
+.flow-edit-preview {
+  display: grid;
+  gap: var(--surdet-space-8);
+  padding-top: var(--surdet-space-16);
+  border-top: 1px solid var(--surdet-border-default);
+}
+
+.flow-edit-preview[hidden] { display: none; }
+
+.flow-edit-summary { margin: 0; }
+
+.flow-edit-file {
+  margin: 0;
+  font-family: var(--surdet-font-mono);
+  font-size: var(--surdet-type-caption);
+  color: var(--surdet-text-secondary);
+}
+
+.flow-edit-lines {
+  margin: 0;
+  padding: var(--surdet-space-8) 0;
+  list-style: none;
+  background: var(--surdet-surface-app);
+  font-family: var(--surdet-font-mono);
+  font-size: 12px;
+  overflow-x: auto;
+}
+
+.flow-edit-line {
+  display: grid;
+  grid-template-columns: 3.5em 1.5em minmax(0, 1fr);
+  padding-inline: var(--surdet-space-8);
+  white-space: pre;
+}
+
+.flow-edit-line code { font: inherit; }
+.flow-edit-line-number { color: var(--surdet-text-muted); text-align: end; padding-right: var(--surdet-space-8); }
+.flow-edit-line--added { background: color-mix(in srgb, var(--surdet-state-success) 14%, transparent); }
+.flow-edit-line--removed { background: color-mix(in srgb, var(--surdet-state-danger) 14%, transparent); }
+
+.flow-edit-branch > button { justify-self: start; }
