@@ -25,7 +25,9 @@ describe('Flow Canvas interaction preservation contract', () => {
     expect(flowSource).toMatch(/import\s*\{[^}]*appendLineToScene[^}]*\}\s*from\s*['"]\.\.\/scene-text\.js['"]/s);
     expect(flowSource).toMatch(/collectConfigSceneRoots\(state\.configFiles\)/);
     expect(flowSource).toMatch(/buildFlowGraph\(scenes\s*,\s*roots\)/);
-    expect(flowSource).toMatch(/buildJumpLine\(\s*from(?:Node)?\s*,\s*to(?:Node)?\s*\)/);
+    // #12: a dragged link is planned by the shared scene operations and previewed, never appended after the file end.
+    expect(flowSource).toMatch(/openFlowEditor\(fromNode,\s*\{\s*kind:\s*'connect'/);
+    expect(flowSource).toMatch(/planFlowEdit\(flowEditFiles\(\),\s*edit\)/);
     expect(flowSource).toMatch(/setSceneText\(/);
   });
 

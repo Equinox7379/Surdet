@@ -6,7 +6,8 @@
  *    只隐藏重复/源码顺序等技术连接的默认展示，不删除真实节点和边
  *  - 交互（E1a）：拖拽平移 / 滚轮缩放（以光标为中心）；单击场景节点 → 切到块编辑视图；
  *    单击标签节点 → 切到该场景并滚动到 @label 行；当前场景与校验状态均有文字和边界反馈
- *  - 交互（E1b）：从节点拖到另一节点 → 在源场景末尾插入 @jump/@goto（走 history 可 undo）；
+ *  - 交互（E1b）：从节点拖到另一节点，或在节点菜单“编辑连接…”里连线、加分支、新建场景、改目标、删除连接；
+ *    都经共享的 scene.create / scene.patch 生成修改，先看源码差异，应用后走 history 可撤销；
  *    右键场景节点 → 重命名（引用同步改写）/ 删除（引用检查警告）
  *  - 渲染：真实节点常驻 SVG，避免平移到远端场景时出现“只剩空框”的错觉；规模目标 100 场景 / 800 标签
  */
@@ -22,11 +23,13 @@ import {
   sceneProjectPath,
   workingGameConfigText,
 } from '../project-io.js';
-import { collectConfigSceneRoots } from '@surdet/core';
+import { collectConfigSceneRoots, compileScene, type CompiledScene } from '@surdet/core';
 import { assertTextCatalogTargetRemovable, parseProjectConfigDocument, renameSceneDefinition, sceneMoveTargetPath, visitSceneReferences } from '@surdet/authoring';
 import { buildFlowGraph } from '../graph/build.js';
 import type { FlowGraph, FlowNode, FlowEdge } from '../graph/build.js';
 import { histories, setSceneText } from '../history.js';
+import { planFlowEdit, type FlowEdit, type FlowEditPlan } from '../flow-operations.js';
+import { endpointOf, openFlowEditDialog } from './flow-edit-dialog.js';
 import { renderSidebar } from './sidebar.js';
 import {
   flowEdgeKindLabel,
@@ -89,14 +92,6 @@ export function rewriteSceneRefs(text: string, oldId: string, newId: string): st
 /** 统计场景被 @jump/@call 引用次数（删除前检查用） */
 export function countSceneRefs(text: string, sceneId: string): number {
   return visitSceneReferences(text, sceneId).count;
-}
-
-/** 构造拖拽建链的插入行：同场景 → @goto 标签（场景开头 → @jump 本场景）；跨场景 → @jump 场景[.标签] */
-export function buildJumpLine(from: FlowNode, to: FlowNode): string {
-  if (from.sceneId === to.sceneId) {
-    return to.kind === 'label' ? `@goto ${to.label ?? ''}` : `@jump ${to.sceneId}`;
-  }
-  return to.kind === 'label' ? `@jump ${to.sceneId}.${to.label ?? ''}` : `@jump ${to.sceneId}`;
 }
 
 /** 场景文本末尾追加行：纯函数已拆至 scene-text.ts（断模块循环依赖，M4 审阅轮 Minor 1）；保留重导出稳定公开 API */
@@ -758,19 +753,79 @@ function currentGraph(): FlowGraph {
   return buildFlowGraph(scenes, roots);
 }
 
-/** 拖拽建链的插入动作（源节点 → 目标节点；写入源场景末尾，走 history 可 undo） */
+/** The editor's current files, as the shared operations read a project. */
+function flowEditFiles(): Record<string, string> {
+  const files: Record<string, string> = { 'game.config.json': workingGameConfigText() || '{}' };
+  for (const scene of state.scenes.values()) files[scene.file.startsWith('content/scenario/') ? scene.file : `content/scenario/${scene.file}`] = scene.text;
+  return files;
+}
+
+/** Why the map cannot be edited now: read-only review content, a load in progress or a pending write. */
+function flowEditBlocked(): string | null {
+  if (state.reviewWorkspace !== null || state.reviewPreviewReadOnly) return '审阅内容是只读的，不能在流程图上修改。';
+  if (state.projectLoading) return '项目正在载入，请稍后再改。';
+  if (state.projectWriteLock !== null) return '正在保存或写入项目，请稍后再改。';
+  return null;
+}
+
+/** Apply a previewed plan through the scene history, only if every scene still has the text it was planned on. */
+async function applyFlowPlan(plan: FlowEditPlan): Promise<void> {
+  await runProjectWriteOperation(async () => {
+    const blocked = flowEditBlocked();
+    if (blocked) throw new Error(blocked);
+    const edits: { key: string; text: string }[] = [], created: { id: string; text: string }[] = [];
+    for (const file of plan.files) {
+      if (file.before === null) {
+        if ([...state.scenes.values()].some(scene => scene.id === file.sceneId)) throw new Error(`场景 '${file.sceneId}' 已存在，请重新预览。`);
+        if (isSceneFilePathReserved(`${file.sceneId}.gal`)) throw new Error('该场景文件正等待删除，请先保存全部。');
+        created.push({ id: file.sceneId, text: file.after });
+        continue;
+      }
+      const key = resolveSceneKeyForOperation(file.sceneId);
+      if (!key || state.scenes.get(key)!.text !== file.before) throw new Error('剧本在预览之后变化了，没有应用；请重新预览。');
+      edits.push({ key, text: file.after });
+    }
+    for (const scene of created) {
+      // Same in-memory entry as the outline's 新建场景: written by 保存全部.
+      const pendingCreateOperationId = [...state.scenes.values()].find(entry => entry.handle === null && !entry.persistedSha256 && entry.pendingCreateOperationId)
+        ?.pendingCreateOperationId ?? crypto.randomUUID();
+      state.scenes.set(scene.id, { id: scene.id, file: `${scene.id}.gal`, text: scene.text, eol: '\n', dirty: true, handle: null, pendingCreateOperationId });
+    }
+    for (const edit of edits) setSceneText(edit.key, edit.text);
+    // Undo and redo act on the current scene: make it the one this edit changed.
+    if (edits[0]) state.current = edits[0].key;
+  });
+  requestValidateHook();
+  renderSidebar();
+  setStatus(`${plan.summary}。已应用，可撤销；保存全部后写入项目`, true, 5000);
+}
+
+/** The graph of the text being edited now. Validation is debounced, so its result can trail a quick series of edits;
+ *  connection lines must match the text the shared operations read. A scene that does not compile offers no edits. */
+function editingGraph(): FlowGraph {
+  const scenes = new Map<string, CompiledScene>();
+  for (const [key, scene] of state.scenes) {
+    try { scenes.set(key, compileScene(scene.text, scene.file, scene.id)); } catch { /* Its errors are in the problems list. */ }
+  }
+  return buildFlowGraph(scenes, collectConfigSceneRoots(state.configFiles));
+}
+
+function openFlowEditor(node: FlowNode, initial?: FlowEdit): void {
+  if (node.kind === 'host-entry' || !resolveSceneKeyForOperation(node.sceneId)) {
+    setStatus('无法唯一确定这个场景，宿主入口与重复场景不可编辑', false, 5000);
+    return;
+  }
+  openFlowEditDialog({ node, graph: editingGraph(), blocked: flowEditBlocked(), ...(initial ? { initial } : {}),
+    plan: edit => planFlowEdit(flowEditFiles(), edit), apply: applyFlowPlan });
+}
+
+/** 拖拽建链：先看共享操作生成的源码差异，再应用（不再追加到场景文件末尾）。 */
 function createLink(fromNode: FlowNode, toNode: FlowNode): void {
-  const resolved = resolveFlowLinkSceneKeys(fromNode, toNode);
-  if (!resolved) {
+  if (!resolveFlowLinkSceneKeys(fromNode, toNode)) {
     setStatus('无法唯一确定剧情连接的两端，宿主入口与重复场景不可编辑', false, 5000);
     return;
   }
-  const sceneKey = resolved.sourceKey;
-  const sc = state.scenes.get(sceneKey)!;
-  const line = buildJumpLine(fromNode, toNode);
-  setSceneText(sceneKey, appendLineToScene(sc.text, sc.eol, line));
-  setStatus(`已为场景“${fromNode.sceneId}”新增剧情跳转，可撤销；校验稍后刷新`, true, 4000);
-  renderSidebar();
+  openFlowEditor(fromNode, { kind: 'connect', from: endpointOf(fromNode), to: endpointOf(toNode) });
 }
 
 export function resolveFlowLinkSceneKeys(
@@ -788,20 +843,28 @@ let menuOutsideHandler: ((e: PointerEvent) => void) | null = null;
 let menuBindTimer: ReturnType<typeof setTimeout> | null = null;
 let menuReturnFocus: SVGElement | null = null;
 
-function showSceneMenu(container: HTMLElement, sceneId: string, cx: number, cy: number, returnFocus: SVGElement): void {
+function showSceneMenu(container: HTMLElement, node: FlowNode, cx: number, cy: number, returnFocus: SVGElement): void {
   closeSceneMenu();
   menuReturnFocus = returnFocus;
+  const sceneId = node.sceneId;
   const menu = h('div', 'flow-menu');
   menu.id = 'flow-menu';
   menu.setAttribute('role', 'menu');
-  menu.setAttribute('aria-label', `场景 ${sceneId} 的操作`);
-  const rename = h('button', undefined, '重命名场景…');
-  rename.setAttribute('role', 'menuitem');
-  rename.onclick = () => { closeSceneMenu(); renameSceneHook(sceneId); };
-  const del = h('button', undefined, '删除场景…');
-  del.setAttribute('role', 'menuitem');
-  del.onclick = () => { closeSceneMenu(); deleteSceneHook(sceneId); };
-  menu.append(rename, del);
+  menu.setAttribute('aria-label', node.kind === 'label' ? `段落 ${sceneId}.${node.label ?? ''} 的操作` : `场景 ${sceneId} 的操作`);
+  const connections = h('button', undefined, '编辑连接…');
+  connections.setAttribute('role', 'menuitem');
+  connections.onclick = () => { closeSceneMenu(); openFlowEditor(node); };
+  const items: HTMLButtonElement[] = [connections];
+  if (node.kind === 'scene') {
+    const rename = h('button', undefined, '重命名场景…');
+    rename.setAttribute('role', 'menuitem');
+    rename.onclick = () => { closeSceneMenu(); renameSceneHook(sceneId); };
+    const del = h('button', undefined, '删除场景…');
+    del.setAttribute('role', 'menuitem');
+    del.onclick = () => { closeSceneMenu(); deleteSceneHook(sceneId); };
+    items.push(rename, del);
+  }
+  menu.append(...items);
   const rect = container.getBoundingClientRect();
   container.appendChild(menu);
   const menuRect = menu.getBoundingClientRect();
@@ -809,7 +872,6 @@ function showSceneMenu(container: HTMLElement, sceneId: string, cx: number, cy: 
   const top = Math.max(8, Math.min(cy - rect.top, rect.height - menuRect.height - 8));
   menu.style.left = `${left}px`;
   menu.style.top = `${top}px`;
-  const items = [rename, del];
   menu.addEventListener('keydown', (e) => {
     const currentIndex = Math.max(0, items.indexOf(document.activeElement as HTMLButtonElement));
     if (e.key === 'Escape') {
@@ -831,7 +893,7 @@ function showSceneMenu(container: HTMLElement, sceneId: string, cx: number, cy: 
       items[nextIndex]!.focus();
     }
   });
-  rename.focus();
+  connections.focus();
   // 点菜单外部才关闭（验收反馈：原实现任意 pointerdown 都关，按钮还没收到 click 菜单就被删了）；
   // 延迟一帧绑定，避开打开菜单那次右键的 pointerdown
   menuBindTimer = setTimeout(() => {
@@ -1042,7 +1104,7 @@ function drawNode(
   meta.textContent = truncateTextToWidth(metaText, box.w - 24, 9);
 
   const title = el('title');
-  title.textContent = `${presentation.primaryText}（点击打开；拖到其他节点可新增跳转）｜技术信息：${presentation.technicalText}`;
+  title.textContent = `${presentation.primaryText}（点击打开；拖到其他节点可新增跳转；右键编辑连接）｜技术信息：${presentation.technicalText}`;
   if (box.role === 'entry') g.append(rect, primary, title);
   else g.append(rect, primary, meta, title);
 
@@ -1060,19 +1122,19 @@ function drawNode(
       openFlowNode(node);
       return;
     }
-    if (node.kind === 'scene' && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) {
+    if (node.kind !== 'host-entry' && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) {
       e.preventDefault();
       const bounds = g.getBoundingClientRect();
       const container = world.ownerSVGElement?.parentElement;
-      if (container) showSceneMenu(container as HTMLElement, node.sceneId, bounds.left + 16, bounds.top + 16, g);
+      if (container) showSceneMenu(container as HTMLElement, node, bounds.left + 16, bounds.top + 16, g);
     }
   });
-  if (node.kind === 'scene') {
+  if (node.kind !== 'host-entry') {
     g.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       e.stopPropagation();
       const container = world.ownerSVGElement?.parentElement;
-      if (container) showSceneMenu(container as HTMLElement, node.sceneId, e.clientX, e.clientY, g);
+      if (container) showSceneMenu(container as HTMLElement, node, e.clientX, e.clientY, g);
     });
   }
   world.appendChild(g);
