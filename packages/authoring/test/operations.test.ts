@@ -37,6 +37,22 @@ function fixtureStorage(configText = '{"entryScene":"prologue","variables":{}}',
 }
 
 describe('typed authoring operations', () => {
+  it.each([['\n', true], ['\r\n', true], ['\r', true], ['\n', false], ['\r\n', false]] as const)('flow insertAfter keeps final delimiter state through the public operation (%j, terminated=%j)', async (eol, terminated) => {
+    const source = `\uFEFF@scene prologue${eol}凛：开场。${terminated ? eol : ''}`;
+    const config = '{"entryScene":"prologue","variables":{"visited":{"type":"number","initial":0}}}';
+    const extra = { 'content/scenario/destination.gal': '@set visited = 2\n@end\n' };
+    const storage = fixtureStorage(config, source, undefined, extra);
+    const snapshot = await loadProjectSnapshot(storage, hasher);
+    const anchor = buildObjectIndex(snapshot).objects.find(object => object.kind === 'text' && object.source?.path === 'content/scenario/prologue.gal')!;
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    await applyScenePatch(change, { operationId: 'append-connection', patch: { kind: 'insertAfter', anchor: anchor.objectRef,
+      expectedFingerprint: anchor.fingerprint!, blocks: [{ kind: 'instruction', name: 'jump', args: ['destination'] }] } }, hasher);
+    const text = change.record.workingFiles['content/scenario/prologue.gal']!;
+    expect(text).toBe(`${source}${terminated ? '' : eol}@jump destination${terminated ? eol : ''}`);
+    expect((await storage.readText('content/scenario/prologue.gal')).text).toBe(source);
+    const replay = await loadProjectSnapshot(fixtureStorage(config, text, undefined, extra), hasher);
+    expect(await runExplicitPath(replay, { sceneId: 'prologue', choices: [] })).toMatchObject({ status: 'passed', finalVariables: { visited: 2 } });
+  });
   it.each([['\n', ''], ['\r\n', ''], ['', '\uFEFF']] as const)('flow insertBefore makes a first-line terminator connection reachable while preserving source and endings (%j,%j)', async (eol, bom) => {
     const source = `${bom}@end${eol}`;
     const config = '{"entryScene":"prologue","variables":{"visited":{"type":"number","initial":0}}}';
