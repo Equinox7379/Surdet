@@ -439,6 +439,8 @@ describe('Surdet Agent Port MCP tool projection', () => {
     const names = listed.tools.map((tool) => tool.name);
     const capsuleExposed = policy !== 'observe';
     expect(names).toHaveLength(allowed.length + 1 + (capsuleExposed ? 1 : 0));
+    expect([...names].sort()).toEqual(['surdet_session_describe', ...(capsuleExposed ? ['surdet_delivery_capsule'] : []),
+      ...allowed.map(nativeCapabilityToMcpTool)].sort());
     expect(new Set(names).size).toBe(names.length);
     expect(names).toContain('surdet_session_describe');
     if (capsuleExposed) {
@@ -468,12 +470,10 @@ describe('Surdet Agent Port MCP tool projection', () => {
       expect(names).not.toContain('surdet_change_commit');
       expect(names).not.toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
       for (const action of ['commit', 'recover', 'undo'] as const) expect(names).not.toContain(nativeCapabilityToMcpTool(`asset.relocation.${action}`));
-      expect(names).toHaveLength(67);
    }
    if (policy === 'apply') {
      expect(names).toContain(nativeCapabilityToMcpTool('change.recovery.execute'));
       for (const action of ['commit', 'recover', 'undo'] as const) expect(names).toContain(nativeCapabilityToMcpTool(`asset.relocation.${action}`));
-      expect(names).toHaveLength(74);
    }
    const described = await client.callTool({ name: 'surdet_session_describe', arguments: {} });
     expect(described.isError).not.toBe(true);
