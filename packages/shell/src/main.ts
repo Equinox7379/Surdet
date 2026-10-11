@@ -13,8 +13,17 @@ import { FileProfileStore } from './profile-store.js';
 import { assertProfileKey } from '@surdet/host';
 import { resolveWindowState, type WindowState } from './window-state.js';
 import { resolveGamePaths } from './main-entry-policy.js';
+import { gameIdentity } from './game-identity.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+// Set paths before stores, windows, Chromium sessions and the single-instance lock.
+if (app.isPackaged) {
+  const metadata = JSON.parse(fs.readFileSync(path.join(app.getAppPath(), 'game/release/pack-metadata.json'), 'utf8'));
+  const identity = gameIdentity(metadata.game, app.commandLine.getSwitchValue('user-data-dir') || app.getPath('appData'));
+  app.setName(identity.name);
+  app.setAppUserModelId(identity.appId);
+  app.setPath('userData', identity.userData);
+}
 
 /** 桌面存档目录：userData/saves（第一次访问时创建） */
 let saveStore: FileSaveStore | null = null;

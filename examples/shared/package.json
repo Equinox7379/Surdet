@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/player/player.d.ts",
       "import": "./dist/player/player.js"
+    },
+    "./content": {
+      "types": "./dist/player/content-player.d.ts",
+      "import": "./dist/player/content-player.js"
     }
   },
   "files": ["dist"],
