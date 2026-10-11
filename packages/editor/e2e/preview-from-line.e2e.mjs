@@ -34,13 +34,12 @@ function wav(seconds) {
   return bytes;
 }
 const config = JSON.stringify({ entryScene: 'entry', characters: { lynn: { name: '凛' } }, variables: { trust: { type: 'number', initial: 0 } } });
-// Targets avoid an instruction directly after a dialogue line: the #11 query does not stop before
-// one yet (reported on PR #11); the preview's breakpoint itself has no such gap.
+// The choice and the later targets follow a dialogue line directly, as most lines in a script do.
 const entry = [
   '@scene entry', // 1
-  '@bgm theme', // 2
-  '凛：开场。', // 3
-  '@bg harbor', // 4
+  '@bg harbor', // 2
+  '@bgm theme', // 3
+  '凛：开场。', // 4
   '@choice', // 5
   '  回家 -> @set trust = 1 @jump home', // 6
   '  留下 -> @end', // 7
@@ -183,15 +182,25 @@ try {
   await assertNotStarted('an unreachable target starts no run');
   console.log('PASS option row stops before its group; unreachable scene reported and not played');
 
-  // 7. Source view: the caret row is the line (an instruction target this time).
+  // 7. Source view: the caret row is the line. A dialogue line right after another, then @end after it.
   await page.locator('.scene-item[data-scene-id="home"]').click();
   await page.locator('[data-script-view="source"]').click();
   const source = page.locator('.v4-source-editor');
-  await source.evaluate((node) => { const at = node.value.indexOf('@set trust'); node.focus(); node.setSelectionRange(at + 3, at + 3); });
+  const caretAt = (text) => source.evaluate((node, text) => { const at = node.value.indexOf(text); node.focus(); node.setSelectionRange(at + 1, at + 1); }, text);
+  await caretAt('凛：之后');
   await fromLine.click();
-  await waitStatus('已停在 home 第 5 行之前');
-  assert.deepEqual(await debug(pausedAt), { paused: true, reason: 'breakpoint', sceneId: 'home', line: 5, trust: 1 });
-  console.log('PASS source view uses the caret row');
+  await waitStatus('已停在 home 第 7 行之前');
+  assert.deepEqual(await debug(pausedAt), { paused: true, reason: 'breakpoint', sceneId: 'home', line: 7, trust: 3 });
+  assert.equal((await debug(stage)).history.at(-1), '回家了。', 'the dialogue before it was read');
+  await caretAt('@end');
+  await fromLine.click();
+  await waitStatus('已停在 home 第 8 行之前');
+  await page.locator('.preview-target').getByLabel('起点方式').selectOption('path');
+  await page.locator('.preview-target').getByLabel('选项序号').fill('0');
+  await page.locator('.preview-target').getByRole('button', { name: '查找并试玩' }).click();
+  await waitStatus('已停在 home 第 8 行之前');
+  assert.deepEqual(await debug(pausedAt), { paused: true, reason: 'breakpoint', sceneId: 'home', line: 8, trust: 3 });
+  console.log('PASS source view uses the caret row; dialogue after dialogue and @end after dialogue are reached');
 
   assert.deepEqual(errors, [], 'page errors');
   console.log('PASS from-line preview');

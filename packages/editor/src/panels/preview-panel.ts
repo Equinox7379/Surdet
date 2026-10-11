@@ -584,6 +584,11 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   sceneControl.hidden = true;
   controls.appendChild(sceneControl);
   let sourceOptions: PreviewContentOption[] = [];
+  /** What a found start depends on: the content played, the editor text its line was picked in, and a selected version's revision. */
+  const targetKey = (sceneId: string): string => JSON.stringify({ request: requestKey(),
+    editing: [...state.scenes.values()].find(scene => scene.id === sceneId)?.text ?? null,
+    content: selectedTarget === null ? null : isolated?.contentRevision ?? null });
+  const targetStale = (found: FoundTarget): boolean => targetKey(found.report.target.sceneId) !== found.sourceKey;
   const requestKey = () => selectedTarget === null ? previewSourceKey() : JSON.stringify({ target: selectedTarget,
     scene: sceneSel.value, assets: state.dirAssets.map(asset => [asset.sourcePath, asset.key, asset.bytes, asset.lastModified]) });
   const entryControl = h('label', 'preview-entry-control');
@@ -666,6 +671,9 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   /** The trace of the run that is replaying a found path, if the current one is. */
   let targetTraceId: string | null = null;
   let targetLabel = '';
+  /** The found start being loaded, and the one the current run replays. */
+  let loadingTarget: FoundTarget | null = null;
+  let runningTarget: FoundTarget | null = null;
   const diagnostics = h('div', 'preview-diagnostics');
   diagnostics.setAttribute('aria-live', 'polite');
   workspace.appendChild(diagnostics);
@@ -690,7 +698,8 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   debugPanel.append(debugActions, debugStatus, variableDetails, debugCalls, breakpointControls, breakpointList); workspace.appendChild(debugPanel);
   let debugState: PreviewDebugState | null = null;
   let debugSources: { id: string; text: string }[] = [];
-  const debugFresh = (): boolean => (debugging || (targetTraceId !== null && targetTraceId === expectedTraceId)) && publishedSource !== null && publishedSource === requestKey()
+  const debugFresh = (): boolean => (debugging || (targetTraceId !== null && targetTraceId === expectedTraceId && runningTarget !== null && !targetStale(runningTarget)))
+    && publishedSource !== null && publishedSource === requestKey()
     && sourceState.dataset.previewSourceState === 'fresh' && currentTraceId === expectedTraceId && currentTraceGeneration >= 0;
   const sendDebug = (action: PreviewDebugCommand['action']): void => {
     if (!debugFresh()) { debugStatus.textContent = '当前内容或预览身份已变化，请重新播放后再调试。'; return; }
@@ -776,6 +785,18 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   let loadingSource: string | null = null;
   activePreviewCleanup = () => { loading?.abort(); targetWorker?.terminate(); targetWorker = null; stageWorkbench?.dispose(); expectedTraceId = null; void invalidate('closed').catch(() => {}); frame.remove(); };
   notifyPreviewSourceEdited = () => {
+    // A selected version's request key does not cover the editor text; a found start does.
+    if (sourceState.dataset.previewSourceState === 'loading' && loadingTarget !== null && targetStale(loadingTarget)) {
+      loading?.abort();
+      loadingTarget = null;
+      sourceState.dataset.previewSourceState = 'stale';
+      sourceState.textContent = '剧本已修改，找到的起点属于旧版本，本次未启动。';
+      targetSection?.setStatus('剧本已修改，这次起点属于旧版本；请重新查找。', 'warning');
+    }
+    if (runningTarget !== null && targetTraceId !== null && targetTraceId === expectedTraceId && targetStale(runningTarget)) {
+      targetSection?.setStatus('剧本已修改，这次起点属于旧版本；请重新查找。', 'warning');
+      refreshDebug();
+    }
     if (sourceState.dataset.previewSourceState === 'loading' && loadingSource !== null && loadingSource !== requestKey()) {
       loading?.abort();
       sourceState.dataset.previewSourceState = 'stale';
@@ -784,7 +805,6 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     if (sourceState.dataset.previewSourceState !== 'stale' && publishedSource !== null && publishedSource !== requestKey()) {
       sourceState.dataset.previewSourceState = 'stale';
       sourceState.textContent = '内容已修改；当前画面仍属于上一次运行，请重新播放。';
-      if (targetTraceId !== null && targetTraceId === expectedTraceId) targetSection?.setStatus('剧本已修改，这次起点属于旧版本；请重新查找。', 'warning');
       refreshDebug(); refreshBreakpoints();
       void invalidate('source-changed').catch(() => {});
       options.onSourceStateChange?.();
@@ -963,8 +983,16 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   };
   /** 异步读取素材期间若用户重新选择播放入口，旧请求不得晚到覆盖新选择。 */
   const send = async (resume = false, capturedPlayback?: import('@surdet/authoring').PreviewPlaybackCheckpoint | null, target?: FoundTarget): Promise<void> => {
-    if (target === undefined && targetWorker !== null) { stopTargetQuery(); targetSection?.setStatus('已改为正常播放，查找已取消。'); }
+    if (target === undefined && (targetWorker !== null || targetTraceId !== null)) {
+      stopTargetQuery();
+      targetSection?.setStatus('已改为正常播放；需要时可重新查找。');
+      targetSection?.setDetails([]);
+    }
     pendingTarget = null;
+    // Any new start supersedes the run that replayed an earlier found start.
+    runningTarget = null;
+    targetTraceId = null;
+    loadingTarget = target ?? null;
     loading?.abort();
     const controller = new AbortController();
     loading = controller;
@@ -997,6 +1025,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       if (signal.aborted || mountRevision !== previewPanelMountRevision) return;
       sourceState.dataset.previewSourceState = 'stale';
       sourceState.textContent = `所选内容未能加载；保留的旧画面不代表新版本：${error instanceof Error ? error.message : String(error)}`;
+      if (target !== undefined) targetSection?.setStatus('所选内容未能重新读取，这次起点没有开始；请重新查找。', 'warning');
       return;
     }
     if (revision !== sendRevision || selectedTarget !== requestedTarget || state.dirHandle !== requestRoot || mountRevision !== previewPanelMountRevision) return;
@@ -1009,10 +1038,11 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
         : projected.entryScene ?? projected.scenes[0]?.id ?? '';
       sceneControl.hidden = false;
     } else sceneControl.hidden = true;
-    if (target !== undefined && (target.selected !== requestedTarget || requestKey() !== target.sourceKey)) {
+    // After the selected version is read again: a new revision or an edited line needs a new query.
+    if (target !== undefined && (target.selected !== requestedTarget || targetStale(target))) {
       sourceState.dataset.previewSourceState = 'stale';
-      sourceState.textContent = '剧本已修改，找到的起点属于旧版本，本次未启动。';
-      targetSection?.setStatus('剧本已修改，这次起点属于旧版本；请重新查找。', 'warning');
+      sourceState.textContent = '剧本或所选内容已更新，找到的起点属于旧版本，本次未启动。';
+      targetSection?.setStatus('剧本或所选内容已更新，这次起点属于旧版本；请重新查找。', 'warning');
       return;
     }
     const cur = target !== undefined ? (projected?.scenes ?? collectPreviewScenes(state.scenes)).find(scene => scene.id === target.report.entryScene)
@@ -1036,6 +1066,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     const requestScene = state.current ? state.scenes.get(state.current) : undefined;
     const requestAssets = state.dirAssets;
     const requestSource = requestKey();
+    const sameRequest = (): boolean => requestKey() === requestSource && (target === undefined || !targetStale(target));
     loadingSource = requestSource;
     // 使用本次选择的内容版本，不从编辑器原配置借用字体。
     let capturedContent: ReturnType<typeof capturePreviewContent>;
@@ -1058,7 +1089,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !container.isConnected) return;
     if (state.dirHandle !== requestRoot || state.current !== requestSceneKey
       || (requestSceneKey !== null && state.scenes.get(requestSceneKey) !== requestScene)
-      || state.dirAssets !== requestAssets || requestKey() !== requestSource) {
+      || state.dirAssets !== requestAssets || !sameRequest()) {
       sourceState.dataset.previewSourceState = 'stale';
       sourceState.textContent = '读取素材期间内容或项目发生变化，本次未启动，请重新播放。';
       return;
@@ -1075,14 +1106,14 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       const previewGeneration = ++publishedPreviewGeneration;
       try {
         const source = await previewSourceFacts(assets, cachedFonts, capturedContent.storage, isolated);
-        if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || requestKey() !== requestSource) return;
+        if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !sameRequest()) return;
         await publisher.publish({ action: 'begin', previewId: traceId, previewGeneration, sceneId: cur.id,
           seed,
           ...(startLabel ? { label: startLabel } : {}), source,
           expectedProjectRevision: publisher.baseline.projectRevision,
           expectedCoordinationRevision: publisher.baseline.coordinationRevision,
           ...(isolated === undefined ? {} : { content: { target: isolated.target, contentRevision: isolated.contentRevision } }) });
-        if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || requestKey() !== requestSource
+        if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !sameRequest()
           || state.dirHandle !== requestRoot || !container.isConnected) {
           await publisher.publish({ action: 'invalidate', previewGeneration, reason: 'source-changed' }).catch(() => {});
           return;
@@ -1097,7 +1128,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       sourceState.textContent = `隔离内容尚未开始试玩：${observationError ?? '工作区当前无法发布所选版本的观察，请等待当前操作结束'}`;
       return;
     }
-    if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || requestKey() !== requestSource
+    if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !sameRequest()
       || state.dirHandle !== requestRoot || !container.isConnected) return;
     const gameConfig = parseProjectConfigDocument(requestConfigText || '{}');
     debugSources = capturedContent.scenes;
@@ -1168,10 +1199,19 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       contentKey: JSON.stringify({ scenes: message.payload.scenes, gameConfig, configs: message.payload.configs, timelines: message.payload.timelines }),
       isCurrent: () => state.dirHandle === requestRoot && storyPreviewSourceKey() === sourceKey,
     });
-    if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || requestKey() !== requestSource
+    if (target !== undefined && targetStale(target) && revision === sendRevision && mountRevision === previewPanelMountRevision) {
+      void invalidate('source-changed').catch(() => {});
+      sourceState.dataset.previewSourceState = 'stale';
+      sourceState.textContent = '剧本或所选内容已更新，找到的起点属于旧版本，本次未启动。';
+      targetSection?.setStatus('剧本或所选内容已更新，这次起点属于旧版本；请重新查找。', 'warning');
+      return;
+    }
+    if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !sameRequest()
       || state.dirHandle !== requestRoot || !container.isConnected) return;
     stageWorkbench?.reset();
     currentPlayback = null;
+    loadingTarget = null;
+    runningTarget = run === undefined ? null : target!;
     targetTraceId = run === undefined ? null : traceId;
     targetLabel = run === undefined ? '' : `${target!.report.target.sceneId} 第 ${target!.report.target.line} 行`;
     debugPanel.hidden = !debugging && run === undefined;
@@ -1260,6 +1300,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     if (mountRevision !== previewPanelMountRevision || !container.isConnected || source !== frame.contentWindow
       || message.traceId !== expectedTraceId || message.traceId !== currentTraceId || message.traceId !== targetTraceId
       || message.generation !== currentTraceGeneration) return;
+    if (runningTarget !== null && targetStale(runningTarget)) return; // The edit already marked this start as old.
     if (message.status === 'reached') {
       const again = message.visit !== undefined && message.visit > 1 ? `（第 ${message.visit} 次到达）` : '';
       targetSection?.setStatus(`已停在 ${targetLabel}之前${again}。这一行还没有执行，按“继续运行”执行它。`, 'reached');
@@ -1283,11 +1324,12 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
         // A selected version is used only when this scene is the text being edited; line numbers must agree.
         const chosen = projected?.scenes.find(scene => scene.id === request.sceneId);
         const editing = [...state.scenes.values()].find(scene => scene.id === request.sceneId);
-        if (isolated === undefined || chosen === undefined || editing === undefined || chosen.text !== editing.text)
+        if (isolated === undefined || JSON.stringify(isolated.target) !== JSON.stringify(selected)) throw new Error('所选试玩内容还在载入，请稍后再查找。');
+        if (chosen === undefined || editing === undefined || chosen.text !== editing.text)
           throw new Error('所选“试玩内容”里的这个场景与正在编辑的剧本不同，行号对不上；请把试玩内容切回当前编辑内容。');
         files = { ...isolated.files };
       }
-      sourceKey = requestKey();
+      sourceKey = targetKey(request.sceneId);
     } catch (error) {
       targetSection.setStatus(error instanceof Error ? error.message : String(error), 'warning');
       targetSection.setDetails([]);
@@ -1304,7 +1346,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       stopTargetQuery();
       if (event.data.error) { targetSection.setStatus(`不能从这一行开始：${event.data.error.message}`, 'warning'); return; }
       const report = event.data.result!.report;
-      if (selectedTarget !== selected || requestKey() !== sourceKey) {
+      if (selectedTarget !== selected || targetKey(request.sceneId) !== sourceKey) {
         targetSection.setStatus('查找期间剧本已修改，结果属于旧版本；请重新查找。', 'warning');
         return;
       }
