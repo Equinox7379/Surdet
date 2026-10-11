@@ -10,6 +10,8 @@ import { startDevProject } from '../scripts/dev-project.mjs';
 // A bound project, so "试玩内容" can select the saved project. A found start depends on the
 // editor line it was picked from and on the selected version it was found in: an edit while the
 // query waits, a new saved version read for the start, or an edit after the start makes it old.
+// Normal play of the saved project needs a clean binding: a save that changes nothing keeps it
+// clean, while a real outside change still blocks it.
 const intro = ['@scene intro', '@set trust = 1', '凛：目标。', '凛：之后。', '@end', ''].join('\n');
 
 async function choosePort() {
@@ -171,14 +173,17 @@ try {
     return snapshot ? { paused: snapshot.paused, reason: snapshot.reason, status: snapshot.status, sceneId: snapshot.current?.sceneId, line: snapshot.current?.line,
       text: debug.runtime.queries.diagnostics.projectionSnapshot().dialogue?.dialogText ?? '' } : null;
   });
-  // Normal play of the saved project needs no unsaved edits. Each save here changes the file: a save
-  // that leaves it as it was currently makes the binding take the previous save for an outside change.
-  const saveAll = async (expected) => {
+  const workspaceUpdate = () => page.evaluate(async () => (await import('/src/editor-workspace.ts')).editorWorkspaceStatus().update);
+  // Save all, then wait for the next poll of the binding, which is where an outside change is noticed.
+  const saveAndPoll = async () => {
     const finished = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/workspace/finish'));
     await page.locator('[data-action="save-project"]').click();
-    assert.ok((await finished).ok(), 'the save finished');
-    await until(async () => (await fs.readFile(path.join(projectRoot, 'content', 'scenario', 'intro.gal'), 'utf8')) === expected, 'the editor text was not saved');
+    const response = await finished;
+    assert.ok(response.ok(), 'the save finished');
+    const settlement = (await response.json()).data;
+    await page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/workspace/snapshot'));
     await page.waitForFunction(() => window.surdetEditorDebug.state.scenes.get('intro').dirty === false);
+    return settlement;
   };
   await debugSwitch.check();
   await until(async () => (await pausedAt())?.reason === 'entry', 'the debug replay did not pause at the entry');
@@ -202,18 +207,21 @@ try {
   assert.deepEqual(await pausedAt(), atTarget, 'the old line 3 did not run');
   assert.match(await status.innerText(), /剧本已修改，这次起点属于旧版本/, 'the old-version notice stays');
   if (outDir) await page.screenshot({ path: path.join(outDir, 'from-line-saved-debug-stale.png') });
-  // Back to the saved text and normal play without the switch.
-  await saveAll(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('intro').text));
+  console.log('PASS with the debug switch on, an edit after the start still disables continue and step, and the command is refused');
+
+  // 2c. Back to the saved text: after the real save above, this save changes no file. The binding must
+  // not take that real save for an outside change, so normal play of the saved project starts.
+  await removeDuplicate();
+  const unchanged = await saveAndPoll();
+  assert.deepEqual({ changedPaths: unchanged.changedPaths, notice: unchanged.mutationNotice.status }, { changedPaths: [], notice: 'none' }, 'the save changed no file');
+  assert.equal(await fs.readFile(path.join(projectRoot, 'content', 'scenario', 'intro.gal'), 'utf8'), intro);
+  assert.equal(await workspaceUpdate(), 'none', 'no outside change after a save that changed nothing');
   const beforeNormal = await starts();
   await debugSwitch.uncheck();
-  await until(async () => (await starts()) > beforeNormal, 'normal play did not restart');
-  await removeDuplicate();
-  await saveAll(intro);
-  const beforeSavedReplay = await starts();
-  await page.locator('.preview-workspace').getByRole('button', { name: '重新播放' }).click();
-  await until(async () => (await starts()) > beforeSavedReplay, 'the replay did not start');
-  await page.waitForFunction(() => document.querySelector('[data-preview-source-state]')?.dataset.previewSourceState === 'fresh');
-  console.log('PASS with the debug switch on, an edit after the start still disables continue and step, and the command is refused');
+  await until(async () => (await starts()) > beforeNormal, 'normal play of the saved project did not start');
+  await page.waitForFunction(() => /来源项目（已保存）/.test(document.querySelector('.preview-source-state')?.textContent ?? '')
+    && document.querySelector('[data-preview-source-state]')?.dataset.previewSourceState === 'fresh');
+  console.log('PASS a save that changes nothing keeps the binding clean, and normal play of the saved project starts');
 
   // 3. A fresh query on the current version starts; an edit after the start marks it old.
   await page.locator('.preview-target').getByRole('button', { name: '查找并试玩' }).click();
@@ -229,6 +237,7 @@ try {
   // 4. Last, because it leaves the binding waiting on the outside update: an external change on
   // disk during the start's read is refused by the binding itself, and the start reports it.
   await removeDuplicate();
+  await saveAndPoll();
   content.hold();
   const beforeExternal = await starts();
   await page.locator('.preview-target').getByRole('button', { name: '查找并试玩' }).click();
@@ -243,6 +252,20 @@ try {
   assert(conflicts.length >= 1, 'the binding refused the read');
   errors.splice(0, errors.length, ...errors.filter((message) => !conflicts.includes(message)));
   console.log('PASS an external change during the start read is refused by the binding; the start reports it');
+
+  // The outside change stays one: once polled, the binding refuses the saved project's content to a
+  // replay until the change is taken, and nothing starts.
+  await until(async () => (await workspaceUpdate()) === 'pending', 'the outside change was not noticed');
+  const beforeRefused = await starts();
+  const read = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/workspace/preview-content'));
+  await page.locator('.preview-workspace').getByRole('button', { name: '重新播放' }).click();
+  assert.equal((await read).status(), 409, 'the binding refused the read for the replay');
+  await page.waitForTimeout(1000);
+  assert.deepEqual(await sourceState(), { state: 'stale', text: '所选内容未能加载；保留的旧画面不代表新版本：预览或内容版本已变化，本次观察未继续发布。' });
+  assert.equal(await starts(), beforeRefused, 'normal play did not start over an outside change');
+  assert.equal(await workspaceUpdate(), 'pending');
+  errors.splice(0, errors.length, ...errors.filter((message) => !message.includes('status of 409 (Conflict)')));
+  console.log('PASS a real outside change still refuses normal play of the saved project');
 
   assert.deepEqual(errors, [], 'page errors');
   console.log('PASS bound from-line preview');
