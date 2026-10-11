@@ -140,7 +140,7 @@ describe('authoring capability registry', () => {
     const cue = track.properties.cues.items as Record<string, any>;
     expect(cue.properties.action.enum).toEqual([
       'pose', 'set', 'show', 'hide', 'move', 'expression', 'zoom', 'pan', 'shake',
-      'fade', 'tint', 'flash', 'wipe', 'start', 'stop', 'bgm', 'se', 'voice',
+      'fade', 'tint', 'flash', 'wipe', 'dissolve', 'rule', 'start', 'stop', 'bgm', 'se', 'voice',
     ]);
     expect(cue.properties).toEqual(expect.objectContaining({
       key: expect.any(Object), expression: expect.any(Object), position: expect.any(Object),

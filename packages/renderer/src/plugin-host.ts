@@ -26,8 +26,8 @@ export interface RendererPluginDiagnostic {
 }
 
 /**
- * 渲染扩展宿主：插件按注册顺序运行，单个插件失败会被隔离并停用，不能拖死主循环。
- * 插件只获得受限的舞台投影接口，不获得 Node/Electron 或任意文件系统能力。
+ * 渲染扩展宿主：按注册顺序调用；抛异常的回调会被停用。
+ * 此接口不是沙箱：回调仍能访问所在环境的全局能力，无法中止死循环或撤销副作用。
  */
 export class RendererPluginHost {
   #plugins = new Map<string, RendererPlugin>();

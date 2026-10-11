@@ -361,6 +361,12 @@ export class RendererFacade {
     };
 
     const world: WorldCommands = {
+      registerTransition: this.#worldPort?.registerTransition || this.#stage.registerTransition
+        ? transition => this.#callWorld('registerTransition', this.#worldPort?.registerTransition, this.#stage.registerTransition, transition) : undefined,
+      registerFilter: this.#worldPort?.registerFilter || this.#stage.registerFilter
+        ? (id, filter) => this.#callWorld('registerFilter', this.#worldPort?.registerFilter, this.#stage.registerFilter, id, filter) : undefined,
+      setFilterActive: this.#worldPort?.setFilterActive || this.#stage.setFilterActive
+        ? (id, active) => this.#callWorld('setFilterActive', this.#worldPort?.setFilterActive, this.#stage.setFilterActive, id, active) : undefined,
       setStoryFilter: this.#worldPort?.setStoryFilter || this.#stage.setStoryFilter
         ? (name, durationMs) => this.#callWorld('setStoryFilter', this.#worldPort?.setStoryFilter, this.#stage.setStoryFilter, name, durationMs) : undefined,
       markStageBoundary: this.#worldPort?.markStageBoundary || this.#stage.markStageBoundary

@@ -261,12 +261,15 @@ export function normalizeAuthoringError(error: unknown): NormalizedAuthoringErro
   if (code === 'SIMULATION_INCOMPLETE' && typeof details?.['retryInput'] === 'object' && details['retryInput'] !== null) {
     repairActions[0] = { capability: 'project.simulate', reason: '使用明确的有界预算重试；仍不足时缩小场景/路径，不把 incomplete 当作通过。', inputTemplate: details['retryInput'] as Record<string, unknown> };
   }
+  const report = details?.['report'] as { coverage?: { stops?: { kind?: string }[] } } | undefined;
+  const requiresExtension = code === 'SIMULATION_INCOMPLETE' && report?.coverage?.stops?.some(stop => stop.kind === 'requires-extension') === true;
+  if (requiresExtension) repairActions.splice(0, repairActions.length, terminalAction('需要扩展，未运行；请由 Owner 明确信任项目代码后实际试玩。普通 Agent 不得自行启用代码，增加模拟预算不能解决。'));
   return {
     code,
     category: definition.category,
     message,
     ...(details === undefined ? {} : { details }),
-    retryDisposition: definition.retryDisposition,
+    retryDisposition: requiresExtension ? 'never' : definition.retryDisposition,
     repairActions,
   };
 }

@@ -25,6 +25,7 @@ import { ClearTracker } from '../systems/clear-tracker.js';
 import type { GrowthResult, GrowthSystem } from '../systems/growth.js';
 import type { TimelineCatalog, TimelineDefinition } from '../timeline.js';
 import type { VarValue } from '../state/types.js';
+import { assertPluginSnapshots, pluginInstructionValues, readProjectPlugins, type ProjectPluginDeclaration, type ProjectPluginHooks } from '../project-plugins.js';
 
 /**
  * 宿主提供的全家桶系统（日历/战斗/好感/周目）存档钩子。
@@ -219,6 +220,8 @@ export class Interpreter {
   #systemHooks: SystemHooks;
   #timelineCatalog: TimelineCatalog | null;
   #presentationHooks: PresentationSnapshotHooks | null;
+  #plugins: ProjectPluginDeclaration[] = [];
+  #pluginHooks: ProjectPluginHooks | null = null;
   #randomSource: RandomSource = { next: () => Math.random() };
   #debugEnabled = false;
   #debugPaused = false;
@@ -267,6 +270,21 @@ export class Interpreter {
   /** 宿主可在 renderer 创建后注入演出快照钩子，兼容旧项目初始化顺序。 */
   setPresentationHooks(hooks: PresentationSnapshotHooks | null): void {
     this.#presentationHooks = hooks;
+  }
+
+  /** Host permission is separate from declarative project content. Install before starting. */
+  setProjectPlugins(declarations: readonly ProjectPluginDeclaration[], hooks: ProjectPluginHooks | null = null): void {
+    if (!['idle', 'ended', 'error'].includes(this.#status)) throw new RuntimeError('运行中不能替换项目插件');
+    this.#plugins = readProjectPlugins({ plugins: declarations });
+    this.#pluginHooks = hooks;
+  }
+
+  /** An asynchronous extension failure stops the run; ordinary resume/debug cannot skip it. */
+  failHost(): void {
+    this.#status = 'error';
+    this.#hostPaused = false;
+    this.#resumeRequested = false;
+    this.#resetDebugRun(true);
   }
 
   setTextResolver(resolver: RuntimeTextResolver | null): void { this.#textResolver = resolver; }
@@ -449,6 +467,8 @@ export class Interpreter {
     if (!position) return null;
     if (hash !== undefined) position.sceneHash = hash;
     const systems = this.#systemHooks.snapshot?.();
+    const plugins = this.#pluginHooks?.snapshot();
+    if (plugins !== undefined) assertPluginSnapshots(plugins);
     if (systems !== undefined && !isJsonSafeValue(systems)) {
       throw new RuntimeError('宿主系统快照必须是 JSON 安全值');
     }
@@ -486,6 +506,7 @@ export class Interpreter {
       clears: this.clearTracker.snapshot(),
       ...(this.#growth ? { growth: this.#growth.snapshot() } : {}),
       ...(systems ? { systems } : {}),
+      ...(plugins && Object.keys(plugins).length ? { plugins } : {}),
       ...(presentationPayload !== undefined ? { presentation: { version: 1 as const, payload: presentationPayload } } : {}),
       ...(random !== undefined ? { random } : {}),
     };
@@ -558,6 +579,10 @@ export class Interpreter {
         throw new RuntimeError(err instanceof Error ? err.message : String(err));
       }
     }
+    if (snap.plugins && Object.keys(snap.plugins).length && !this.#pluginHooks) {
+      throw new RuntimeError(`PLUGIN_REQUIRED：存档需要项目插件 ${Object.keys(snap.plugins).join('、')}，请先明确启用。`);
+    }
+    const commitPlugins = this.#pluginHooks?.prepareRestore(snap.plugins ?? {});
     if (snap.random !== undefined) {
       try {
         this.#randomSource.restore!(snap.random);
@@ -565,6 +590,7 @@ export class Interpreter {
         throw new RuntimeError(err instanceof Error ? err.message : String(err));
       }
     }
+    commitPlugins?.();
     if (version === undefined || version < SAVE_SCHEMA_VERSION) {
       this.#bus.emit('saveMigrated', { from: version ?? 1, to: SAVE_SCHEMA_VERSION });
     }
@@ -1037,6 +1063,7 @@ export class Interpreter {
           case 'instr': {
             this.#resumeRequested = false;
             this.#execGeneric(instr);
+            if (this.#status === 'error') throw new RuntimeError('PLUGIN_EXECUTION：项目插件执行失败，剧情已停止。', instr);
             this.#emitStateTrace(instr, variablesBefore);
             // hostJump 在事件回调内已重设 pc 时不再自增（否则跳过目标指令）
             if (this.#jumpOverride) {
@@ -1309,6 +1336,14 @@ export class Interpreter {
         return;
       }
       default:
+        for (const plugin of this.#plugins) {
+          const instruction = plugin.instructions.find(candidate => candidate.name === name);
+          if (!instruction) continue;
+          const values = pluginInstructionValues(instruction, instr.args, instr.modifiers);
+          if (!this.#pluginHooks) throw new RuntimeError(`PLUGIN_REQUIRED：指令 @${name} 需要插件 ${plugin.id}；未明确启用，剧情已停止。`, instr);
+          this.#pluginHooks.execute(plugin, instruction, values);
+          return;
+        }
         this.#bus.emit('instr', {
           name,
           args: instr.args,

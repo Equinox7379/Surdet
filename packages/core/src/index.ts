@@ -45,6 +45,7 @@ export * from './localization.js';
 export * from './project-texts.js';
 export * from './project-stats.js';
 export * from './project-fonts.js';
+export * from './project-plugins.js';
 export * from './project-theme.js';
 export * from './project-ui.js';
 export * from './theme-tokens.js';

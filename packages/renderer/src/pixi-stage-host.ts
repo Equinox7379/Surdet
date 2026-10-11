@@ -579,6 +579,9 @@ export class RendererStageHost {
   /** 注册表驱动的场景转场；未知名称返回 false，交由宿主/校验层报告。 */
   markStageBoundary(): void { this.#world.markStageBoundary(); }
   setStoryFilter(name: import('@surdet/core').StoryFilterName, durationMs = 0): void { this.#world.setStoryFilter(name, durationMs); }
+  registerTransition(transition: import('./transition-registry.js').StageTransition): () => void { return this.#world.registerTransition!(transition); }
+  registerFilter(id: string, filter: import('pixi.js').Filter): () => void { return this.#world.registerFilter!(id, filter); }
+  setFilterActive(id: string, active: boolean): void { this.#world.setFilterActive!(id, active); }
   transition(name: TransitionName | string, durMs = 600, options?: import('@surdet/core').RuleTransitionOptions): boolean {
     return this.#world.transition(name, durMs, options);
   }

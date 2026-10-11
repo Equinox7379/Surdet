@@ -21,6 +21,7 @@ import type {
   SetInstr,
   TextInstr,
 } from './dsl/ast.js';
+import { readProjectPlugins } from './project-plugins.js';
 
 /** 统一 lint 问题形状（CLI 与编辑器共用）；hint 为可操作的修复建议（M5 支柱1：AI 自我修正闭环，
  *  经 attachHints 按错误码补齐，lint --json 输出携带） */
@@ -77,6 +78,8 @@ export function parseVariableConfig(
       });
     }
   }
+  try { customInstructions.push(...readProjectPlugins({ plugins: raw.plugins }).flatMap(plugin => plugin.instructions.map(instruction => instruction.name))); }
+  catch (error) { issues.push({ severity: 'error', code: 'PLUGIN_CONFIG', text: error instanceof Error ? error.message : String(error), file: cfgPath, line: 0, col: 0 }); }
 
   const entryRaw = raw['entryScene'];
   const entryScene = typeof entryRaw === 'string' && entryRaw.length > 0 ? entryRaw : undefined;

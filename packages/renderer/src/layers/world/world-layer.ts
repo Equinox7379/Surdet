@@ -4,6 +4,7 @@ import {
   Graphics,
   Sprite,
   Texture,
+  type Filter,
 } from 'pixi.js';
 import type { WorldProjectionPort } from '../../api/renderer-commands.js';
 import { RendererCommandError } from '../../api/renderer-errors.js';
@@ -50,6 +51,7 @@ export interface WorldPresentationSnapshot {
   tint: { color: number; alpha: number };
   particleKind: string | null;
   storyFilters?: StoryFilterSnapshot;
+  pluginFilters?: string[];
 }
 
 /** Read-only evidence emitted for the local renderer acceptance harness. */
@@ -245,6 +247,7 @@ export class WorldLayer implements WorldProjectionPort {
   #presentation: PresentationPreferences = { ...DEFAULT_PRESENTATION_PREFERENCES };
   #postProcess: PostProcessSettings = { ...DEFAULT_POST_PROCESS };
   #colorMatrix: ColorMatrixFilter | null = null;
+  #pluginFilters = new Map<string, { filter: Filter; active: boolean }>();
   #frameRequest: FrameRequestHandler | null = null;
   #disposed = false;
   #effectRegistered = false;
@@ -867,6 +870,28 @@ export class WorldLayer implements WorldProjectionPort {
     return started;
   }
 
+  registerTransition(transition: import('../../transition-registry.js').StageTransition): () => void {
+    if (this.#disposed) throw new Error('舞台已释放');
+    this.#worldEffects.registry.register(transition);
+    return () => { if (this.#worldEffects.registry.get(transition.name) === transition) this.#worldEffects.registry.unregister(transition.name); };
+  }
+
+  registerFilter(id: string, filter: Filter): () => void {
+    if (this.#disposed || !/^[a-z][a-z0-9_]*$/.test(id) || this.#pluginFilters.has(id) || [...this.#pluginFilters.values()].some(entry => entry.filter === filter)
+      || !filter || typeof filter.apply !== 'function' || typeof filter.destroy !== 'function') throw new Error(`PLUGIN_FILTER：滤镜 ${id} 无效或重复`);
+    const owned = { filter, active: false }; this.#pluginFilters.set(id, owned);
+    return () => {
+      if (this.#pluginFilters.get(id) !== owned) return;
+      this.#pluginFilters.delete(id); this.#applyPostProcess(); filter.destroy(); this.#requestFrame();
+    };
+  }
+
+  setFilterActive(id: string, active: boolean): void {
+    const entry = this.#pluginFilters.get(id);
+    if (this.#disposed || !entry) throw new Error(`PLUGIN_FILTER_MISSING：滤镜 ${id} 未注册`);
+    entry.active = active; this.#applyPostProcess(); this.#requestFrame();
+  }
+
   markStageBoundary(): void { if (!this.#disposed) this.#worldEffects.markStageBoundary(); }
 
   setStoryFilter(name: StoryFilterName, durationMs = 0): void {
@@ -1231,6 +1256,7 @@ export class WorldLayer implements WorldProjectionPort {
       tint: { color: Number(this.#tintOverlay.tint ?? 0), alpha: this.#tintOverlay.alpha },
       particleKind: this.#particleKind,
       ...(storyFilters ? { storyFilters } : {}),
+      ...(this.#pluginFilters.size ? { pluginFilters: [...this.#pluginFilters].filter(([, value]) => value.active).map(([id]) => id) } : {}),
     };
   }
 
@@ -1279,6 +1305,8 @@ export class WorldLayer implements WorldProjectionPort {
     this.#generation.dispose();
     this.#clearVisibleState();
     this.#worldEffects.destroy();
+    for (const { filter } of this.#pluginFilters.values()) filter.destroy();
+    this.#pluginFilters.clear();
     this.#storyFilter.destroy();
     this.#frameRequest = null;
     try {
@@ -1289,7 +1317,7 @@ export class WorldLayer implements WorldProjectionPort {
   }
 
   #applyPostProcess(): void {
-    const filters = this.#storyFilter.project(this.#quality.quality === 'low');
+    const filters = [...this.#storyFilter.project(this.#quality.quality === 'low'), ...[...this.#pluginFilters.values()].filter(value => value.active).map(value => value.filter)];
     const enabled = this.#postProcess.enabled && this.#quality.settings.postProcess;
     if (!enabled || typeof document === 'undefined') {
       this.worldContainer.filters = filters.length ? filters : null;
@@ -1586,6 +1614,8 @@ export class WorldLayer implements WorldProjectionPort {
     this.worldContainer.scale.set(1);
     this.#worldEffects.reset({ preserveOldFrame: options.preserveOldFrame });
     this.#storyFilter.clear(); this.#applyPostProcess();
+    for (const filter of this.#pluginFilters.values()) filter.active = false;
+    this.#applyPostProcess();
     this.#flashRemain = 0;
     this.#flashDur = 1;
     this.flashOverlay.alpha = 0;
@@ -1615,6 +1645,8 @@ export class WorldLayer implements WorldProjectionPort {
   #prepareSnapshot(snapshot: unknown): WorldPresentationSnapshot {
     if (typeof snapshot !== 'object' || snapshot === null || Array.isArray(snapshot)) throw invalidSnapshot('Presentation snapshot must be an object');
     const raw = snapshot as Record<string, unknown>;
+    if (raw.pluginFilters !== undefined && (!Array.isArray(raw.pluginFilters) || raw.pluginFilters.some(id => typeof id !== 'string' || !this.#pluginFilters.has(id))
+      || new Set(raw.pluginFilters).size !== raw.pluginFilters.length)) throw invalidSnapshot('PLUGIN_FILTER_MISSING：存档滤镜未注册或列表非法');
     let storyFilters: StoryFilterSnapshot | undefined;
     try { storyFilters = StoryFilter.prepare(raw.storyFilters); }
     catch (error) { throw invalidSnapshot(error instanceof Error ? error.message : String(error)); }
@@ -1739,6 +1771,7 @@ export class WorldLayer implements WorldProjectionPort {
       tint: { color: tint.color, alpha: tint.alpha },
       particleKind: raw.particleKind,
       ...(storyFilters ? { storyFilters } : {}),
+      ...(raw.pluginFilters !== undefined ? { pluginFilters: [...raw.pluginFilters as string[]] } : {}),
     };
   }
 
@@ -1785,6 +1818,8 @@ export class WorldLayer implements WorldProjectionPort {
     if (snapshot.motions) this.#stageMotions.restore(snapshot.motions);
     this.#objectSources.clear(); for (const [key, source] of snapshot.objectSources ?? []) this.#objectSources.set(key, source);
     this.#storyFilter.restore(snapshot.storyFilters); this.#applyPostProcess();
+    for (const [id, filter] of this.#pluginFilters) filter.active = snapshot.pluginFilters?.includes(id) ?? false;
+    this.#applyPostProcess();
     this.#worldEffects.markStageBoundary();
     if (this.#presentation.reducedMotion) this.#finishVisualMotions();
     this.#syncEffectRegistration();

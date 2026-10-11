@@ -5,7 +5,7 @@ import type { AuthoringObject, ProjectAssetCatalog, ProjectAssetFileFact } from 
 import type { ProjectSnapshot, ProjectSnapshotScene } from './project-snapshot.js';
 import { GALLERY_PATH, readGalleryDocument, type GalleryCgEntry } from './gallery-operations.js';
 import { AuthoringOperationError } from './change-session.js';
-import { readGalleryReplayEntries, readGalleryEndings, readGalleryDossiers } from '@surdet/core';
+import { readGalleryReplayEntries, readGalleryEndings, readGalleryDossiers, readProjectPlugins, type ProjectPluginDeclaration } from '@surdet/core';
 import { timelineIdFromPath } from './timeline-identity.js';
 import { PROJECT_UI_PAGES, readProjectUi, collectVars, parseExpr, resolveProjectFontPaths, isStoryTextSource, parseTerminology, type ProjectUiNode } from '@surdet/core';
 import { parseProjectConfigDocument } from './config-document.js';
@@ -741,6 +741,8 @@ export interface ProjectInspection {
   characters: { id: string; name?: string; avatar?: string; declaration: unknown }[];
   /** 只读资源目录（共享 asset catalog 解析结果）；输入仅是资产路径元数据。 */
   assets: ProjectAssetCatalog;
+  /** Data only: inspection never imports code or grants trust. */
+  plugins: ProjectPluginDeclaration[];
   objectCount: number;
   referenceCount: number;
 }
@@ -773,6 +775,7 @@ export function inspectProject(
     variables: Object.entries(snapshot.variables).map(([name, declaration]) => ({ name, declaration })),
     characters,
     assets: buildAssetCatalog(assetFiles, snapshot, { gallery }),
+    plugins: readProjectPlugins({ plugins: snapshot.config.plugins }),
     objectCount: index.objects.length,
     referenceCount: index.objects.reduce((total, object) => total + object.references.length, 0),
   };
