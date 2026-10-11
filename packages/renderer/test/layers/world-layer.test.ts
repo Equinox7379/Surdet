@@ -13,6 +13,35 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it('uses registered plugin effects on the real world and restores only available filters', () => {
+  vi.stubGlobal('document', { createElement: () => ({ getContext: () => null }) });
+  const runtime = makeRuntime(), filter = new ColorMatrixFilter(), destroy = vi.spyOn(filter, 'destroy');
+  const remove = runtime.layer.registerFilter('night_filter', filter);
+  runtime.layer.setFilterActive('night_filter', true);
+  expect(runtime.layer.worldContainer.filters).toContain(filter);
+  const saved = runtime.layer.snapshotPresentation(); expect(saved.pluginFilters).toEqual(['night_filter']);
+  runtime.layer.setFilterActive('night_filter', false); runtime.layer.restorePresentation(saved);
+  expect(runtime.layer.worldContainer.filters).toContain(filter);
+  const before = runtime.layer.snapshotPresentation();
+  expect(() => runtime.layer.restorePresentation({ ...saved, pluginFilters: ['missing'] })).toThrow(/PLUGIN_FILTER_MISSING/);
+  expect(runtime.layer.snapshotPresentation()).toEqual(before);
+  const duplicate = new ColorMatrixFilter(); expect(() => runtime.layer.registerFilter('night_filter', duplicate)).toThrow(/重复/); duplicate.destroy();
+  remove(); remove(); expect(destroy).toHaveBeenCalledOnce(); expect(runtime.layer.worldContainer.filters).toBeNull();
+  expect(() => runtime.layer.restorePresentation(saved)).toThrow(/PLUGIN_FILTER_MISSING/);
+  disposeRuntime(runtime); expect(destroy).toHaveBeenCalledOnce();
+});
+
+it('shares built-in transition ownership with plugins, cancels on restore and unregisters once', () => {
+  const runtime = makeRuntime(), start = vi.fn(), cancel = vi.fn(), update = vi.fn(() => false);
+  const remove = runtime.layer.registerTransition({ name: 'plugin-wipe', start, cancel, update });
+  expect(() => runtime.layer.registerTransition({ name: 'fade', start, cancel, update })).toThrow(/重复/);
+  const saved = runtime.layer.snapshotPresentation(); runtime.layer.transition('plugin-wipe', 40); runtime.layer.update(10);
+  expect(start).toHaveBeenCalledWith(40); expect(update).toHaveBeenCalledWith(10);
+  runtime.layer.restorePresentation(saved); expect(cancel).toHaveBeenCalledOnce();
+  remove(); remove(); expect(runtime.layer.transition('plugin-wipe', 40)).toBe(false);
+  disposeRuntime(runtime);
+});
+
 interface WorldRuntime {
   readonly root: Container;
   readonly layer: WorldLayer;

@@ -14,6 +14,7 @@ import {
   compileScene,
   inlineTextLength,
   parseVariableConfig,
+  readProjectPlugins,
   Interpreter,
   SceneRegistry,
   EventBus,
@@ -207,9 +208,11 @@ export function dryRunProject(
   store: VariableStore,
   entryScene: string,
   maxSteps = 5000,
+  plugins: import('@surdet/core').ProjectPluginDeclaration[] = [],
 ): DryRunResult {
   const bus = new EventBus<CoreEventMap>();
   const interp = new Interpreter(store, bus, registry);
+  interp.setProjectPlugins(plugins);
   let hitSystem = false;
   // 对象包装：事件回调内的赋值不被 TS 控制流分析跟踪，直接 let 会被永久窄化为 null
   const choiceState: { payload: ChoiceEventPayload | null } = { payload: null };
@@ -381,7 +384,7 @@ export async function cmdAudit(dir: string, opts: { noRun?: boolean }): Promise<
   const registry = new SceneRegistry();
   for (const scene of compiled.values()) registry.register(scene);
   const store = new VariableStore(declsFromConfig(configRaw));
-  const run = dryRunProject(registry, store, entryScene);
+  const run = dryRunProject(registry, store, entryScene, 5000, readProjectPlugins({ plugins: configRaw.plugins }));
   const label: Record<DryRunResult['stopped'], string> = {
     ended: '到达 @end（剧情线播完）',
     system: '到达系统交互指令（@battle/@shop/@calendar 等，宿主交互区——ADV 链路健康）',

@@ -147,6 +147,7 @@ export interface ServiceResult<T> extends ServiceMetadata {
 type SimulationInput = { sceneId?: string; seed?: number; maxPaths?: number; maxStepsPerPath?: number };
 
 function incompleteSimulation(input: SimulationInput | undefined, report: ReturnType<typeof simulateSnapshot>): AuthoringOperationError {
+  if (report.coverage.stops.some(stop => stop.kind === 'requires-extension')) return new AuthoringOperationError('SIMULATION_INCOMPLETE', '需要扩展，未运行；无头检查不执行项目代码，请明确启用后进行真实试玩。', { report });
   const maxPaths = input?.maxPaths ?? 500;
   const maxStepsPerPath = input?.maxStepsPerPath ?? 20_000;
   return new AuthoringOperationError('SIMULATION_INCOMPLETE', '项目模拟达到预算上限；调整有界预算或缩小场景/路径后重试', {

@@ -30,6 +30,13 @@ export class TransitionRegistry {
     return this.#transitions.get(name) ?? null;
   }
 
+  unregister(name: string): boolean {
+    const transition = this.#transitions.get(name);
+    if (!transition) return false;
+    if (this.#active === transition) this.cancelActive();
+    this.#transitions.delete(name); return true;
+  }
+
   start(name: string, durationMs: number): boolean {
     const transition = this.get(name);
     if (!transition) return false;

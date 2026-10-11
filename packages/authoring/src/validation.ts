@@ -9,6 +9,8 @@ import {
   checkConsumedModifiers,
   collectSceneSpeakers,
   parseVariableConfig,
+  readProjectPlugins,
+  validatePluginInstructions,
   validateJumpTarget,
   validateSceneVariables,
   validateSwitchTargets,
@@ -136,6 +138,8 @@ export function validateSnapshot(
   const failedScenes = new Set(options.failedScenes ?? []);
   const configPath = snapshot.configFile?.path ?? 'game.config.json';
   const parsed = parseVariableConfig(snapshot.config, configPath, rawIssues);
+  let plugins: ReturnType<typeof readProjectPlugins> = [];
+  try { plugins = readProjectPlugins({ plugins: snapshot.config.plugins }); } catch { /* parseVariableConfig already reports the declaration error. */ }
 
   for (const physicalScene of snapshot.scenes) {
     const scene = physicalScene.compiled;
@@ -153,6 +157,7 @@ export function validateSnapshot(
     }
     validateSwitchTargets(scene, rawIssues);
     validateTransitionInstructions(scene, rawIssues);
+    validatePluginInstructions(scene, plugins, rawIssues);
     validateSceneVariables(
       scene,
       parsed.variables,

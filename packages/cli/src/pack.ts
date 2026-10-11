@@ -1,6 +1,8 @@
 import { execSync } from 'node:child_process';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as fs from 'node:fs';
+import { readProjectPlugins } from '@surdet/core';
 
 export interface PackDeps {
   run(options: { cwd: string; env: NodeJS.ProcessEnv }): number;
@@ -28,6 +30,13 @@ export async function cmdPack(gameDirArg: string | undefined, deps?: PackDeps): 
     return 1;
   }
   const gameDir = path.resolve(gameDirArg);
+  const configPath = path.join(gameDir, 'game.config.json');
+  try {
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8').replace(/^\uFEFF/, ''));
+      for (const plugin of readProjectPlugins(config)) if (!fs.existsSync(path.join(gameDir, plugin.entry)) || !fs.statSync(path.join(gameDir, plugin.entry)).isFile()) throw new Error(`插件 ${plugin.id} 入口不存在：${plugin.entry}`);
+    }
+  } catch (error) { process.stderr.write(`导出前插件检查失败：${error instanceof Error ? error.message : String(error)}\n`); return 1; }
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     SURDET_GAME_DIR: gameDir,

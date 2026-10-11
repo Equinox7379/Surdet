@@ -547,6 +547,10 @@ const uiInspectionSchema = strictObject({
 }, ['value', 'defaultPages', 'nodes', 'fingerprint']);
 
 const projectInspectionSchema = strictObject({
+  plugins: arrayOf(strictObject({ id: stringSchema, entry: stringSchema, apiVersion: { const: 1 }, stateVersion: integerSchema,
+    instructions: arrayOf(strictObject({ name: stringSchema, blocking: booleanSchema,
+      parameters: arrayOf(strictObject({ name: stringSchema, type: { enum: ['string', 'number', 'boolean'] }, optional: booleanSchema }, ['name', 'type'])),
+      modifiers: arrayOf(strictObject({ name: stringSchema, type: { enum: ['string', 'number', 'boolean'] }, optional: booleanSchema }, ['name', 'type'])) }, ['name', 'blocking', 'parameters'])) }, ['id', 'entry', 'apiVersion', 'instructions'])),
   playerConfig: playerConfigSchema,
   themeConfig: themeConfigSchema,
   stageConfig: strictObject({ value: { oneOf: [jsonObjectSchema, nullSchema] }, effective: { oneOf: [jsonObjectSchema, nullSchema] }, fingerprint: stringSchema }, ['value', 'effective', 'fingerprint']),
@@ -630,7 +634,7 @@ const simulationPathSchema = strictObject({
   choices: arrayOf(integerSchema),
   finalVariables: jsonValueSchema,
   status: { enum: ['passed', 'failed', 'incomplete'] },
-  termination: { enum: ['ended', 'error', 'pruned', 'budget-exhausted'] },
+  termination: { enum: ['ended', 'error', 'pruned', 'budget-exhausted', 'requires-extension'] },
   prunedReason: { enum: ['state-signature', 'path-budget', 'step-budget'] },
   error: stringSchema,
 }, ['choices', 'finalVariables', 'status', 'termination']);
@@ -646,7 +650,7 @@ const storyCoverageSchema = strictObject({
     ['location', 'optionIndex', 'label', 'available', 'selected', 'conditionFalse', 'budgetStops', 'status'])),
   conditions: arrayOf(strictObject({ location: storyLocationSchema, expression: stringSchema, optionIndex: integerSchema,
     trueCount: integerSchema, falseCount: integerSchema }, ['location', 'expression', 'trueCount', 'falseCount'])),
-  stops: arrayOf(strictObject({ kind: { enum: ['runtime-error', 'path-budget', 'step-budget'] },
+  stops: arrayOf(strictObject({ kind: { enum: ['runtime-error', 'path-budget', 'step-budget', 'requires-extension'] },
     location: { oneOf: [storyLocationSchema, nullSchema] }, message: stringSchema }, ['kind', 'location', 'message'])),
   hostInstructions: arrayOf(storyLocationSchema),
 }, ['scenes', 'branches', 'conditions', 'stops', 'hostInstructions']);
@@ -1234,7 +1238,7 @@ const definitions = {
       inlineText: strictObject({ tags: arrayOf(strictObject({ name: stringSchema, paired: booleanSchema, value: { type: ['string', 'null'] }, label: stringSchema, example: stringSchema }, ['name', 'paired', 'value', 'label', 'example'])),
         ruby: { const: 'explicit-only' }, escape: stringSchema }, ['tags', 'ruby', 'escape']),
     }, ['contractVersion', 'capabilities', 'inlineText']),
-    example: { input: {}, expectedResultShape: { contractVersion: '2.37.0', capabilities: [], inlineText: { tags: [], ruby: 'explicit-only', escape: '\\< for literal <; \\\\ for literal \\' } } },
+    example: { input: {}, expectedResultShape: { contractVersion: '2.38.0', capabilities: [], inlineText: { tags: [], ruby: 'explicit-only', escape: '\\< for literal <; \\\\ for literal \\' } } },
   },
   inspect: {
     inputSchema: readViewInputSchema,
@@ -1429,7 +1433,7 @@ const definitions = {
       targetVisit: { type: 'integer', minimum: 1, maximum: 1000 }, seed: seedSchema,
       maxPaths: { type: 'integer', minimum: 1, maximum: 2000 }, maxStepsPerPath: { type: 'integer', minimum: 1, maximum: 100000 },
     }, ['sceneId', 'line']),
-    outputSchema: strictObject({ view: { enum: ['project', 'working'] }, status: { enum: ['reached', 'unreachable', 'budget-exhausted', 'path-mismatch', 'host-boundary', 'runtime-error'] },
+    outputSchema: strictObject({ view: { enum: ['project', 'working'] }, status: { enum: ['reached', 'unreachable', 'budget-exhausted', 'path-mismatch', 'host-boundary', 'runtime-error', 'requires-extension'] },
       mode: { enum: ['search', 'path', 'test'] }, entryScene: stringSchema, entryLabel: stringSchema, seed: seedSchema,
       initialVariables: { type: 'object', additionalProperties: jsonValueSchema }, finalVariables: { type: 'object', additionalProperties: jsonValueSchema },
       target: strictObject({ sceneId: stringSchema, requestedLine: integerSchema, line: integerSchema, index: integerSchema,

@@ -47,6 +47,11 @@ export interface AssetCommands {
 }
 
 export interface WorldCommands {
+  /** Production registry; duplicates (including built-ins) are rejected. Return releases ownership. */
+  registerTransition?(transition: import('../transition-registry.js').StageTransition): () => void;
+  /** Plugin owns the Filter until successful registration; the world then owns its release. */
+  registerFilter?(id: string, filter: import('pixi.js').Filter): () => void;
+  setFilterActive?(id: string, active: boolean): void;
   /** Releases unused old-frame capture and starts the next mutation batch. */
   markStageBoundary?(): void;
   /** Finite stage commands; legacy adapters without this port must reject new stage content. */

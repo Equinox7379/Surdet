@@ -9,6 +9,7 @@ import {
   checkExprOperands,
   checkExprVars,
   parseVariableConfig,
+  readProjectPlugins,
   collectConfigSceneRoots as collectConfigSceneRootsFromConfigs,
   attachHints,
   type CallInstr,
@@ -132,6 +133,12 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
   const scenes = new Map<string, CompiledScene>();
 
   const { variables, types, readonlyVars, hasConfig, customInstructions, entryScene } = loadVariables(root, issues);
+  try {
+    for (const plugin of readProjectPlugins({ plugins: readConfigRaw(root)?.plugins })) {
+      if (!fs.existsSync(path.join(root, plugin.entry)) || !fs.statSync(path.join(root, plugin.entry)).isFile()) issues.push({ severity: 'error', code: 'PLUGIN_MISSING',
+        text: `插件 ${plugin.id} 入口不存在：${plugin.entry}`, file: 'game.config.json', line: 0, col: 0, hint: '由获授权的代码作者准备入口文件；声明本身不授权执行插件。' });
+    }
+  } catch (error) { issues.push({ severity: 'error', code: 'PLUGIN_CONFIG', text: error instanceof Error ? error.message : String(error), file: 'game.config.json', line: 0, col: 0 }); }
 
   // 场景 ID → 首个源文件（LINT_DUP 报告冲突根因用；场景 ID = 文件名去扩展名）
   const sceneSourceFiles = new Map<string, string>();

@@ -13,6 +13,7 @@ import {
   portraitSourcePaths,
   assertUniquePortraitBindings,
   readProjectStage,
+  readProjectPlugins,
   readProjectUi,
   projectUiAssetKeys,
   type ProjectUiAction,
@@ -76,6 +77,7 @@ import {
   actionForKeyboardEvent,
   rendererInputForGamepadAction,
   rendererInputForGameAction,
+  RendererPluginHost,
 } from '@surdet/renderer';
 import type { GameSettings, GalleryConfig, SaveSlotView, AudioHandle, SpeakerProfile, AssetLoadJob, AssetPriority, LoadingProgress, GameAction, NumericSettingKey, ProjectUiContext, ProjectUiDom, ProjectUiItem } from '@surdet/renderer';
 import { resolvePlayerTheme } from '@surdet/core';
@@ -84,6 +86,7 @@ import {
   MemoryProfileStorage, createGalleryCollection, galleryCollectionKey,
   connectSystemRouter,
   createDefaultHost,
+  ProjectPluginHost,
   connectInterpreterPresentation,
   createPlayerShellController,
   createRendererPlayerShellSlots,
@@ -95,6 +98,7 @@ import {
   shouldRestoreInterfaceOnPointer,
 } from '@surdet/host';
 import type { HostStateAdapter, PlayerOverlay, PlayerShellController, PlayerShellSlotProvider, PlayerShellOpenRequest } from '@surdet/host';
+import type { ProjectPluginLoadOptions } from '@surdet/host';
 import { createSystemAdapters } from './system-adapters.js';
 import { ResolvedAudio } from '../resolved-audio.js';
 import { createSettingsStorage } from '../settings-storage.js';
@@ -125,6 +129,7 @@ export interface PlayerProject {
     theme?: Record<string, unknown>;
     ui?: unknown;
     textCatalog?: unknown;
+    plugins?: unknown;
   };
   sceneFiles: Record<string, () => Promise<unknown>>;
   timelineFiles?: Record<string, unknown>;
@@ -155,11 +160,23 @@ export interface PlayerProject {
   };
   hot?: SceneHotModule;
   resolveSceneUrl: (path: string) => string;
+  /** Explicit host trust and lazy entry loader. A config declaration alone cannot load code. */
+  plugins?: ProjectPluginLoadOptions;
 }
 
 export async function startPlayer(project: PlayerProject, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return;
   const gameConfig = project.config;
+  const pluginDeclarations = readProjectPlugins(gameConfig);
+  let reportPluginFailure = (error: Error): void => { console.error('[player] 项目插件失败：', error); };
+  // Host permission is explicit; even a declared entry is never imported without it.
+  const plugins = await ProjectPluginHost.load(pluginDeclarations, {
+    ...(project.plugins ?? { trustedIds: [], loadEntry: async () => { throw new Error('未提供受信任插件加载器'); } }),
+    onFailure: error => { reportPluginFailure(error); project.plugins?.onFailure?.(error); },
+  });
+  let pluginOwnerInstalled = false;
+  try {
+  if (signal?.aborted) { plugins.dispose(); return; }
   const workUi = readProjectUi(gameConfig);
   // Explicit host options remain authoritative; empty values intentionally clear
   // configuration. Missing fields fall back to content-independent defaults.
@@ -215,7 +232,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     const src = (await load()) as string;
     if (signal?.aborted) return;
     const id = path.split('/').pop()!.replace(/\.gal$/i, '');
-    const scene = compileScene(src, path, id);
+    const scene = compileScene(src, path, id, pluginDeclarations.flatMap(plugin => plugin.instructions.map(instruction => instruction.name)));
     if (textCatalog) scene.textSourceVersion = await sha256(src);
     registry.register(scene);
     if (scene.textSourceVersion) textScenes.push({ id, path, text: src, sha256: scene.textSourceVersion });
@@ -295,12 +312,14 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   const uiSession = createPlayerUiSession({ base: 'title' }, () => uiDom?.refresh());
   let playerShell: PlayerShellController | null = null;
   const performanceMonitor = new RenderPerformanceMonitor();
+  const pluginFrames = new RendererPluginHost();
   const runtime = await createRendererRuntime({
     stage: readProjectStage(gameConfig),
     audio,
     typewriter,
     backlog,
     performanceMonitor,
+    pluginHost: pluginFrames,
     onError: (error) => { console.error('[starter] Renderer failed:', error); if (galleryReplay) scheduleReplayReturn(error); },
     onAdvance: () => interp.advance(),
     onSelect: (i) => interp.choose(i),
@@ -475,7 +494,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     interpreter: interp,
     renderer,
     stage: system,
-    adapters: createSystemAdapters({
+    adapters: [...createSystemAdapters({
       interpreter: interp,
       renderer: system,
       store,
@@ -493,11 +512,14 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       },
       onTurnResumeSnapshot: (snapshot) => { turnResumeSnap = snapshot; },
       onLog: (message) => console.info(`[starter] ${message}`),
-    }),
+    }), ...plugins.adapters()],
     onError: (error) => { console.error('[starter] 宿主 adapter 失败：', error); if (galleryReplay) scheduleReplayReturn(error); },
     onSystemBoundary: () => { clearRollbackForBoundary(); },
     onStateReset: () => { turnResumeSnap = null; },
   });
+  reportPluginFailure = error => { if (renderer.autoPlay) renderer.toggleAuto(); dialogue.showBanner(error.message, 'tip'); };
+  try { plugins.bind(interp, store, host, runtime, pluginFrames); }
+  catch (error) { host.dispose(); runtime.dispose(); audioManager.dispose(); window.removeEventListener('resize', resizeHandler); throw error; }
   connectSystemRouter(bus, host, (error) => { console.error('[starter] system 路由失败：', error); if (galleryReplay) scheduleReplayReturn(error); });
   const debugApi = (window as unknown as { __surdetDebug?: Record<string, unknown> }).__surdetDebug;
   if (debugApi) {
@@ -1350,6 +1372,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         interp.gallery.restore({ cgs: [], music: [], texts: [] });
         interp.clearTracker.restore(undefined);
         systemHooks.restore!(structuredClone(initialSystems));
+        plugins.resetState();
         if (growth && initialGrowth) growth.restore(structuredClone(initialGrowth));
         clearCountedThisSession = false; // 新周目会话开始，周目计数重新可用
         // 周目继承：存在全局通关记录时，按 ngp.json 继承项把通关值应用到新周目初始表
@@ -1550,8 +1573,8 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     try {
       const snap = await saves.load(QUICK_SLOT);
       if (ownerTeardown.disposed) return false;
-      clearRollback();
       interp.loadSnapshot(snap);
+      clearRollback();
       sessionStart = Date.now() - Math.max(0, snap.meta.playTimeSec ?? 0) * 1000;
       playerShell!.commands.completeOperation({ base: 'game', overlay: 'none' });
       activeSaveLoad = null;
@@ -1570,8 +1593,8 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   }
 
   function completeLoadedSnapshot(snap: SaveSnapshot): void {
-    clearRollback();
     interp.loadSnapshot(snap);
+    clearRollback();
     sessionStart = Date.now() - Math.max(0, snap.meta.playTimeSec ?? 0) * 1000;
     playerShell!.commands.completeOperation({ base: 'game', overlay: 'none' });
     menu.hideTitle();
@@ -1821,7 +1844,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   gamepad.start();
 
   const ownerTeardown = createStarterOwnerTeardown({
-    host,
+    host: { dispose: () => { try { plugins.dispose(); } finally { host.dispose(); } } },
     runtime: {
       dispose: () => {
         try {
@@ -1837,6 +1860,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     assetBlobUrls,
     revokeObjectUrl: (url) => URL.revokeObjectURL(url),
   });
+  pluginOwnerInstalled = true;
   ownerTeardown.trackListener(() => { collectionDisposed = true; collectionNotice?.remove(); clearRecordNotice?.remove(); replayExit.remove(); galleryReplay = null; });
   ownerTeardown.trackListener(() => window.removeEventListener('resize', resizeHandler));
   ownerTeardown.trackListener(() => runtime.canvas.removeEventListener('pointerdown', canvasPointerDown));
@@ -2116,6 +2140,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   refreshCommandRail();
   showTitleScreen();
   console.info(`[starter] started: ${registry.all().length} scenes, ${decls.length} variables`);
+  } finally { if (!pluginOwnerInstalled) plugins.dispose(); }
 }
 
 export { showPlayerRecovery } from './recovery-screen.js';

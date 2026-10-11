@@ -7,6 +7,7 @@ import {
   VariableStore,
   assertValidRandomSeed,
   createSeededRandomSource,
+  readProjectPlugins,
   type CoreEventMap,
   type SaveSnapshot,
   type VarDeclaration,
@@ -30,7 +31,7 @@ export interface SimulationOptions {
 
 export type SimulationStatus = 'passed' | 'failed' | 'incomplete';
 
-export type SimulationPathTermination = 'ended' | 'error' | 'pruned' | 'budget-exhausted';
+export type SimulationPathTermination = 'ended' | 'error' | 'pruned' | 'budget-exhausted' | 'requires-extension';
 
 export interface SimulationPath {
   choices: number[];
@@ -95,7 +96,7 @@ export interface PreviewPathOptions {
 }
 
 export interface PreviewPathReport {
-  status: 'reached' | 'unreachable' | 'budget-exhausted' | 'path-mismatch' | 'host-boundary' | 'runtime-error';
+  status: 'reached' | 'unreachable' | 'budget-exhausted' | 'path-mismatch' | 'host-boundary' | 'runtime-error' | 'requires-extension';
   mode: 'search' | 'path' | 'test';
   entryScene: string;
   entryLabel?: string;
@@ -152,6 +153,7 @@ export function findPreviewPath(snapshot: ProjectSnapshot, options: PreviewPathO
   let latestChoices: { index: number; label: string }[] = [];
   bus.on('choice', event => { latestChoices = event.options; });
   let hostBlocked = false;
+  let extensionRequired = false;
   bus.on('system', () => { hostBlocked = true; interpreter.pauseHost(); });
   let reached: { position: RuntimeDebugLocation; variables: Record<string, VarValue>; choices: number[]; visit: number } | null = null;
   let pathsExplored = 1, totalSteps = 0, budget = false, mismatch = false, stoppedAtHost = false;
@@ -162,6 +164,9 @@ export function findPreviewPath(snapshot: ProjectSnapshot, options: PreviewPathO
       if (hostBlocked) { stoppedAtHost = true; return; }
       const debug = interpreter.debugSnapshot();
       if (interpreter.status === 'paused' && debug.current?.sceneId === scene.id && debug.current.index === index) {
+        if (instruction.op === 'instr' && readProjectPlugins({ plugins: snapshot.config.plugins }).some(plugin => plugin.instructions.some(i => i.name === instruction.name))) {
+          extensionRequired = true; coverage.stop('requires-extension', '目标本身需要扩展，未运行。'); return;
+        }
         visits++;
         if (visits === targetVisit) { reached = { position: debug.current, variables: store.snapshot(), choices, visit: visits }; return; }
       }
@@ -207,11 +212,12 @@ export function findPreviewPath(snapshot: ProjectSnapshot, options: PreviewPathO
   catch (error) { errors.push({ scene: interpreter.position?.sceneId ?? null, message: errorText(error) }); }
   const found = reached as { position: RuntimeDebugLocation; variables: Record<string, VarValue>; choices: number[]; visit: number } | null;
   const status: PreviewPathReport['status'] = found ? 'reached' : budget ? 'budget-exhausted' : mismatch ? 'path-mismatch'
-    : stoppedAtHost ? 'host-boundary' : errors.length ? 'runtime-error' : 'unreachable';
+    : stoppedAtHost ? 'host-boundary' : extensionRequired || errors.some(error => error.message.includes('PLUGIN_REQUIRED')) ? 'requires-extension' : errors.length ? 'runtime-error' : 'unreachable';
   const messages: Record<PreviewPathReport['status'], string> = {
     reached: '已真实执行到目标步骤之前。', 'budget-exhausted': '搜索预算用尽，不能判为不可达。',
     'path-mismatch': '所给路径缺少选择，或该选择在当前条件下不可用。', 'host-boundary': '到达需要实际宿主接管的指令，未伪造后续状态。',
     'runtime-error': '运行错误阻止了目标核验。', unreachable: '按当前初值和已探索路径未到达目标；实测条件见coverage。',
+    'requires-extension': '需要扩展，未运行；请先明确启用项目插件后进行真实试玩。',
   };
   return { status, mode, entryScene, ...(entryLabel === undefined ? {} : { entryLabel }), seed, initialVariables: { ...initialVariables },
     target: { sceneId: scene.id, requestedLine: options.line, line: instruction.line, index, kind }, choices: found?.choices ?? [], targetVisit: found?.visit ?? targetVisit,
@@ -283,6 +289,7 @@ function runtimeFor(snapshot: ProjectSnapshot, initial: Record<string, VarValue>
   const bus = new EventBus<CoreEventMap>();
   // timelineCatalog 为构造器第 9 参（preview.ts 同一模式；growth 维持既有 setGrowth 注入）。
   const interpreter = new Interpreter(store, bus, registry, undefined, undefined, {}, undefined, null, buildTimelineRegistry(snapshot));
+  interpreter.setProjectPlugins(readProjectPlugins({ plugins: snapshot.config.plugins }));
   interpreter.setRandomSource(createSeededRandomSource(seed));
   if (snapshot.growthConfig !== undefined && snapshot.growthConfig !== null) {
     interpreter.setGrowth(new GrowthSystem(snapshot.growthConfig, store));
@@ -335,6 +342,7 @@ export function simulateSnapshot(
   let cyclesPruned = 0;
   let saveRoundtrips = 0;
   let pathsExplored = 0;
+  let extensionBlocked = false;
   let segmentSawClear = false;
 
   bus.on('choice', (payload) => { latestChoices = payload.options; });
@@ -348,6 +356,12 @@ export function simulateSnapshot(
   });
 
   const finish = (choices: number[], status: SimulationPath['status'], error?: string): void => {
+    if (error?.includes('PLUGIN_REQUIRED')) {
+      extensionBlocked = true;
+      paths.push({ choices: [...choices], finalVariables: store.snapshot(), status: 'incomplete', termination: 'requires-extension', error });
+      coverage.stop('requires-extension', '需要扩展，未运行；没有生成可用的续接或通过证据。');
+      return;
+    }
     paths.push({
       choices: [...choices],
       finalVariables: store.snapshot(),
@@ -458,7 +472,7 @@ export function simulateSnapshot(
   }
 
   return {
-    status: runtimeErrors.length > 0 ? 'failed' : budgetExhausted ? 'incomplete' : 'passed',
+    status: runtimeErrors.length > 0 ? 'failed' : budgetExhausted || extensionBlocked ? 'incomplete' : 'passed',
     entryScene,
     pathsExplored,
     choiceBranches: { total: choiceTotal, visited: choiceBranches.size },
