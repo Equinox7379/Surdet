@@ -1,5 +1,6 @@
 import { state, h, setStatus } from '../state.js';
 import { button, ImageScope, revealAsset } from './ui.js';
+import type { ProjectAssetKind } from '@surdet/authoring';
 
 let activeImageDialog: { dialog: HTMLDialogElement; scope: ImageScope } | null = null;
 /** Release view-owned media before changing modes or replacing a material list. */
@@ -11,7 +12,7 @@ export function disposeV4SurfaceViews(): void {
   activeImageDialog = null;
 }
 
-const KIND_LABELS: Record<string, string> = { background: '背景', portrait: '立绘', avatar: '头像', music: '音乐', ambience: '环境音', 'sound-effect': '音效', voice: '语音', video: '视频', font: '字体', other: '其他' };
+const KIND_LABELS: Record<ProjectAssetKind, string> = { background: '背景', rule: '转场遮罩', portrait: '立绘', avatar: '头像', music: '音乐', ambience: '环境音', 'sound-effect': '音效', voice: '语音', video: '视频', font: '字体', license: '许可证/说明', other: '其他' };
 export function displayBytes(value: number | undefined | null): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '未测量';
   if (value < 1024) return `${value} B`;
@@ -152,7 +153,7 @@ export function renderAssetInsights(root: HTMLElement): void {
   for (const [kind, value] of Object.entries(summary.byKind)) {
     if (value.files === 0) continue;
     const row = h('div', 'v4-analysis-row');
-    row.append(h('span', undefined, KIND_LABELS[kind] ?? kind), h('span', undefined, `${value.files} 个文件`));
+    row.append(h('span', undefined, KIND_LABELS[kind as ProjectAssetKind] ?? kind), h('span', undefined, `${value.files} 个文件`));
     // Per-kind fields are not guessed: aggregate directly from shared item bytes.
     const measured = items.filter((item) => item.kind === kind && item.physical && typeof item.bytes === 'number');
     const size = measured.length ? measured.reduce((sum, item) => sum + item.bytes!, 0) : undefined;

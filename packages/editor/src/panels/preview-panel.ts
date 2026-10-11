@@ -257,6 +257,7 @@ interface PreviewAssets {
   portraits: { charId: string; costume: string; expression: string; image: PreviewImage; configured?: true }[];
   visuals: { charId: string; costume: string; expression: string; definition: PortraitVisualDefinition; images: Record<string, PreviewImage> }[];
   avatars: { key: string; image: PreviewImage }[];
+  rules: { key: string; image: PreviewImage }[];
   audio: { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }[];
 }
 
@@ -369,6 +370,7 @@ export async function readProjectImages(configText: string, signal: AbortSignal,
   const visualImages = new Map<string, PreviewImage>();
   const visuals: PreviewAssets['visuals'] = [];
   const avatars = new Map<string, { key: string; image: PreviewImage }>();
+  const rules = new Map<string, { key: string; image: PreviewImage }>();
   const videos = new Map<string, { key: string; file: PreviewImage }>();
   const audio = new Map<string, { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }>();
   const config = JSON.parse(configText.replace(/^\uFEFF/, '') || '{}');
@@ -400,10 +402,14 @@ export async function readProjectImages(configText: string, signal: AbortSignal,
         });
         continue;
       }
-      if (!asset.isImage || (asset.kind !== 'bg' && asset.kind !== 'portrait' && asset.kind !== 'avatar')) continue;
+      if (!asset.isImage || (asset.kind !== 'bg' && asset.kind !== 'rule' && asset.kind !== 'portrait' && asset.kind !== 'avatar')) continue;
       const image = { buffer, mime: file.type || IMAGE_MIME[ext] || 'application/octet-stream', sourcePath };
       if (asset.kind === 'bg') {
         backgrounds.set(asset.key, { key: asset.key, image });
+        continue;
+      }
+      if (asset.kind === 'rule') {
+        rules.set(asset.key, { key: asset.key, image });
         continue;
       }
       if (asset.kind === 'avatar') {
@@ -440,7 +446,7 @@ export async function readProjectImages(configText: string, signal: AbortSignal,
     if (!backgrounds.has(key) || assetEntries.filter(asset => asset.kind === 'bg' && asset.key === key).length !== 1)
       throw new Error(`主题图片不存在、不唯一或不可读取：${key}`);
   }
-  return { backgrounds: [...backgrounds.values()], portraits: [...portraits.values()], visuals, avatars: [...avatars.values()], audio: [...audio.values()], videos: [...videos.values()] };
+  return { backgrounds: [...backgrounds.values()], portraits: [...portraits.values()], visuals, avatars: [...avatars.values()], rules: [...rules.values()], audio: [...audio.values()], videos: [...videos.values()] };
 }
 
 /** Fix one request's text, metadata and handles before the first resource await.
@@ -510,7 +516,7 @@ async function previewSourceFacts(assets: PreviewAssets, fonts: Partial<Record<F
       sha256: await previewTextHash(previewSourceText(path, text)) })));
   const buffers = [...assets.backgrounds.map(value => value.image), ...assets.portraits.map(value => value.image),
     ...assets.visuals.flatMap(value => Object.values(value.images)),
-    ...assets.avatars.map(value => value.image), ...assets.audio.map(value => value.file), ...assets.videos.map(value => value.file), ...Object.values(fonts)];
+    ...assets.avatars.map(value => value.image), ...assets.rules.map(value => value.image), ...assets.audio.map(value => value.file), ...assets.videos.map(value => value.file), ...Object.values(fonts)];
   const facts = await Promise.all(buffers.map(async value => {
     if (!value.sourcePath) throw new Error('无法核对预览素材来源，请重新加载项目。');
     const hash = await crypto.subtle.digest('SHA-256', value.buffer);
@@ -1184,6 +1190,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       ...assets.portraits.map((a) => a.image.buffer),
       ...assets.visuals.flatMap(a => Object.values(a.images).map(image => image.buffer)),
       ...assets.avatars.map((a) => a.image.buffer),
+      ...assets.rules.map((a) => a.image.buffer),
       ...assets.audio.map((a) => a.file.buffer),
       ...assets.videos.map((a) => a.file.buffer),
       ...Object.values(fonts).map((font) => font.buffer),
