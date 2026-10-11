@@ -184,7 +184,7 @@ export class ScriptWorkbench {
 
   private installDock(): void {
     const tools = this.root.querySelector<HTMLElement>('#script-v4-stage-tools')!;
-    const show = (mode: 'layout' | 'runtime'): void => {
+    const show = (mode: 'layout' | 'runtime', target?: { sceneId: string; line: number }): void => {
       if (!this.current()) return;
       if (mode === 'runtime' && !this.editable()) return;
       this.view.dock = mode;
@@ -201,9 +201,10 @@ export class ScriptWorkbench {
         this.drawStage();
       } else {
         // Deliberate launch, never selecting an arbitrary source row and claiming a replay.
+        // "从这一行试玩" names its row; the preview starts only once a real path reaches it.
         state.previewTimelineId = null;
         state.previewChoices = null;
-        renderPreviewPanel(this.runtime, { embedded: true, onSourceStateChange: () => this.updateStatus() });
+        renderPreviewPanel(this.runtime, { embedded: true, onSourceStateChange: () => this.updateStatus(), ...(target ? { target } : {}) });
       }
       this.updateStatus();
     };
@@ -211,14 +212,25 @@ export class ScriptWorkbench {
     edit.dataset.stageMode = 'layout';
     const play = button('运行预览', () => show('runtime'));
     play.dataset.stageMode = 'runtime';
+    const fromLine = button('从这一行试玩', () => show('runtime', { sceneId: this.scene.id, line: this.cursorLine() + 1 }));
+    fromLine.dataset.action = 'preview-from-line';
+    fromLine.title = '找到一条真实到达当前行的路径，在这一行执行之前停住';
     const enlarge = button('放大画面', () => this.enlargePicture(enlarge), 'v4-button v4-enlarge-picture');
-    tools.replaceChildren(edit, play, enlarge);
+    tools.replaceChildren(edit, play, fromLine, enlarge);
     // Never auto-start audio on returning from another view.
     this.view.dock = 'layout';
     edit.setAttribute('aria-pressed', 'true');
     play.setAttribute('aria-pressed', 'false');
     this.runtime.hidden = true;
     this.picture.hidden = false;
+  }
+
+  /** The row the writer is on: the source caret in source view, otherwise the selected step. */
+  private cursorLine(): number {
+    const textarea = this.view.view === 'source' ? this.editor.querySelector<HTMLTextAreaElement>('.v4-source-editor') : null;
+    if (!textarea) return this.view.line;
+    // Native textarea offsets count one LF per row, even for CRLF documents.
+    return textarea.value.slice(0, textarea.selectionStart).split('\n').length - 1;
   }
 
   private enlargePicture(trigger: HTMLButtonElement): void {

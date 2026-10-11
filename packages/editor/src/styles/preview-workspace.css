@@ -522,3 +522,112 @@
     font-size: 11px;
   }
 }
+
+/* "从这一行试玩": the found path, its options and what it proves, under the picture. */
+.preview-target {
+  display: grid;
+  gap: var(--surdet-space-8);
+  padding: var(--surdet-space-12) var(--surdet-space-16);
+  background-color: var(--surdet-surface-panel);
+  font-size: var(--surdet-type-caption);
+  color: var(--surdet-text-secondary);
+}
+
+.preview-target-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--surdet-space-12);
+}
+
+.preview-target-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--surdet-text-primary);
+}
+
+.preview-target-where { font-family: var(--surdet-font-mono); }
+
+.preview-target-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--surdet-space-8) var(--surdet-space-16);
+}
+
+.preview-target-form > [hidden] { display: none; }
+
+.preview-target-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--surdet-space-8);
+  min-width: 0;
+}
+
+.preview-target-field input { width: 9em; }
+.preview-target-field input[type="number"] { width: 6.5em; }
+
+.preview-target-hint {
+  flex: 1 0 100%;
+  margin: 0;
+  color: var(--surdet-text-muted);
+}
+
+.preview-target-budget,
+.preview-target-variables {
+  flex: 1 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--surdet-space-8) var(--surdet-space-16);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.preview-target-budget > summary,
+.preview-target-variables > legend {
+  flex: 1 0 100%;
+  padding: 0;
+  color: var(--surdet-text-primary);
+  cursor: pointer;
+}
+
+.preview-target-actions {
+  display: inline-flex;
+  gap: var(--surdet-space-8);
+}
+
+.preview-target-actions > [hidden] { display: none; }
+
+.preview-target-actions button {
+  min-height: 30px;
+  padding: 0 var(--surdet-space-12);
+  border: 1px solid var(--surdet-border-strong);
+  border-radius: var(--surdet-radius-tight);
+  background-color: var(--surdet-surface-subtle);
+  color: var(--surdet-text-primary);
+  font-size: var(--surdet-type-caption);
+  cursor: pointer;
+}
+
+.preview-target-actions button:hover:not(:disabled) { background-color: var(--surdet-surface-raised); }
+.preview-target-actions button:disabled { cursor: not-allowed; opacity: 0.5; }
+.preview-target-actions .preview-target-find { border-color: var(--surdet-action-primary); color: var(--surdet-action-primary); }
+
+.preview-target-status {
+  margin: 0;
+  color: var(--surdet-text-primary);
+}
+
+.preview-target-status:empty { display: none; }
+.preview-target-status[data-tone="reached"] { color: var(--surdet-state-success); }
+.preview-target-status[data-tone="warning"] { color: var(--surdet-state-warning); }
+
+.preview-target-details {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.7;
+}
+
+.preview-target-details:empty { display: none; }
