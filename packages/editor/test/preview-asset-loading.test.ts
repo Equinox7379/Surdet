@@ -74,6 +74,19 @@ describe('preview asset loading', () => {
     expect(content.timelinePreviewId).toBeUndefined();
   });
 
+  it('reads the transition masks a scene or a timeline cue uses for registerRule, and only those', async () => {
+    const source = await snapshot({}, { start: '@scene start\n@bg room\n@transition rule 800 @rule="百叶窗 遮罩"\n凛：你好。' },
+      { cut: { version: 1, id: 'cut', durationMs: 1200, tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 600, easing: 'linear', action: 'rule', rule: 'radial' }] }] } });
+    const assets = [image('bg/room.png'), ...['rule/百叶窗 遮罩.png', 'rule/radial.webp', 'rule/unused.png'].map(name => ({ ...image(name), kind: 'rule' as const }))];
+    const required = previewAssetPaths(source, assets);
+    expect([...required].filter(value => value.includes('/rule/')).sort()).toEqual([path('rule/radial.webp'), path('rule/百叶窗 遮罩.png')]);
+    const loaded = await readProjectImages('{}', new AbortController().signal, required, assets);
+    expect(loaded.rules.map(mask => [mask.key, mask.image.mime, mask.image.sourcePath])).toEqual(expect.arrayContaining([
+      ['百叶窗 遮罩', 'image/png', path('rule/百叶窗 遮罩.png')], ['radial', 'image/webp', path('rule/radial.webp')]]));
+    expect(loaded.rules).toHaveLength(2);
+    expect(loaded.backgrounds.map(background => background.key)).toEqual(['room']);
+  });
+
   it('selects dependencies from later scenes, timeline cues, skins and implicit avatars; excludes unused images', async () => {
     const source = await snapshot({ characters: { lynn: { name: '凛' } }, theme: { buttonSkin: 'skin' } },
       { start: '@scene start\n@jump later', later: '@scene later\n@bg beach\n@voice greeting\n凛：你好。' },

@@ -1,4 +1,4 @@
-import { Lexer, parseInlineInstructions } from '@surdet/core';
+import { decodeStageToken, Lexer, parseInlineInstructions } from '@surdet/core';
 import { decodeInstructionArgument } from '@surdet/authoring';
 import { parseScript, serializeScript, splitInstr, type LineModel } from '../model.js';
 import { InstructionFieldSource } from '../instruction-field-source.js';
@@ -216,6 +216,30 @@ export function setInstructionPosition(raw: string, position: Position): string 
   }
   const tail = raw.match(/[ \t]*$/)?.[0] ?? '';
   return raw.slice(0, raw.length - tail.length) + ' @ ' + position + tail;
+}
+
+/** The `@name` modifiers as Core decodes them; a bare switch reads as ''. */
+export function instructionModifiers(raw: string): ReadonlyMap<string, string> {
+  const instruction = new Lexer().tokenize(raw, 'editor-field.gal').find((token) => token.type === 'instruction');
+  if (!instruction || instruction.type !== 'instruction') throw new Error('请先在原始行补全指令');
+  return new Map([...instruction.modifiers].map(([key, value]) => [key, decodeStageToken(value)]));
+}
+
+/** Write one `@name=value` modifier (`true` writes a bare switch) or remove it with null; the rest of the line is kept as written. */
+export function setInstructionModifier(raw: string, name: string, value: string | true | null): string {
+  const matching = modifierRanges(raw).filter((part) => new RegExp(`^@\\s*${name}(?:\\s*=|\\s|$)`).test(part.text));
+  if (matching.length > 1) throw new Error(`当前行有多个 @${name}，请先在原始行确认`);
+  const written = value === null ? '' : value === true ? `@${name}` : `@${name}=${quoteAssetArgument(value)}`;
+  const existing = matching[0];
+  if (existing) {
+    const trailing = existing.text.match(/\s*$/)![0];
+    if (written) return raw.slice(0, existing.start) + written + trailing + raw.slice(existing.end);
+    // The last modifier also takes the space before it.
+    return existing.end === raw.length ? raw.slice(0, existing.start).replace(/[ \t]+$/, '') + trailing : raw.slice(0, existing.start) + raw.slice(existing.end);
+  }
+  if (!written) return raw;
+  const tail = raw.match(/[ \t]*$/)?.[0] ?? '';
+  return raw.slice(0, raw.length - tail.length) + ' ' + written + tail;
 }
 
 export interface SimpleChoice { text: string; condition: string; target: string; indent: string; trailing: string }

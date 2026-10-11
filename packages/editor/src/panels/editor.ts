@@ -116,6 +116,8 @@ export const INSTR_FIELDS: Record<string, { labels: string[]; opSelect?: number;
   nvl: { labels: ['阅读模式'] },
   mov: { labels: ['角色', '位置', '毫秒'] },
   tint: { labels: ['十六进制颜色', '透明度', '毫秒'] },
+  transition: { labels: ['效果', '毫秒'] },
+  filter: { labels: ['滤镜', '过渡毫秒'] },
   clear: { labels: ['结局标识（缺省=当前场景）'] },
   exp: { labels: ['角色标识', '经验值'] },
   achievement: { labels: ['操作', '成就标识'] },
@@ -135,7 +137,7 @@ function kindBadge(l: LineModel): string {
 
 const FLOW_CMDS = new Set(['goto', 'jump', 'call', 'if', 'elif', 'loop', 'choice', 'switch']);
 const STAGE_CMDS = new Set([
-  'bg', 'show', 'hide', 'bgm', 'ambience', 'se', 'voice', 'flash', 'shake', 'wipe', 'zoom', 'transition', 'wait',
+  'bg', 'show', 'hide', 'bgm', 'ambience', 'se', 'voice', 'flash', 'shake', 'wipe', 'zoom', 'transition', 'filter', 'wait',
   'fadein', 'fadeout', 'particle', 'mov', 'tint', 'video', 'nvl', 'tip', 'note', 'title', 'chapter', 'center',
 ]);
 

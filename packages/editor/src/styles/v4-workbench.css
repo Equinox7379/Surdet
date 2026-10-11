@@ -28,6 +28,7 @@
 .v4-field > span { color: var(--surdet-text-secondary); }
 .v4-field :is(input,select,textarea) { width: 100%; min-width: 0; font: inherit; color: var(--surdet-text-primary); background: var(--surdet-surface-panel); border: 1px solid var(--v4-line); border-radius: 3px; padding: 7px 9px; }
 .v4-field textarea { min-height: 88px; resize: vertical; }
+.v4-field > input[type="checkbox"] { width: auto; align-self: flex-start; padding: 0; }
 .v4-disclosure { margin: 14px 0; }
 .v4-disclosure > summary { font: 12px/1.7 var(--surdet-font-ui); padding: 7px 0; cursor: pointer; color: var(--surdet-text-secondary); }
 .v4-segmented, .v4-view-switch { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; }

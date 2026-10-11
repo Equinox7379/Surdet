@@ -13,9 +13,10 @@ import { appendLineToScene } from '../scene-text.js';
 import { setSceneText } from '../history.js';
 
 /** 分组展示顺序 */
-const KIND_ORDER: AssetKind[] = ['bg', 'portrait', 'avatar', 'bgm', 'ambience', 'se', 'voice', 'video', 'cg', 'music', 'text'];
+const KIND_ORDER: AssetKind[] = ['bg', 'rule', 'portrait', 'avatar', 'bgm', 'ambience', 'se', 'voice', 'video', 'cg', 'music', 'text'];
 const SHARED_KIND: Partial<Record<ProjectAssetKind, AssetKind>> = {
   background: 'bg',
+  rule: 'rule',
   portrait: 'portrait',
   avatar: 'avatar',
   music: 'bgm',

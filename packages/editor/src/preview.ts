@@ -64,6 +64,8 @@ interface PreviewAssets {
   portraits: { charId: string; costume: string; expression: string; image: PreviewImage; configured?: true }[];
   visuals?: { charId: string; costume: string; expression: string; definition: import('@surdet/core').PortraitVisualDefinition; images: Record<string, PreviewImage> }[];
   avatars: { key: string; image: PreviewImage }[];
+  /** Transition masks from content/assets/rule, keyed by file name as in the Player. */
+  rules?: { key: string; image: PreviewImage }[];
   audio: { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }[];
 }
 
@@ -1062,6 +1064,12 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined, requiredBac
       asset.image.buffer,
       asset.image.mime,
       (url) => rendererAssets.registerAvatar(asset.key, url, asset.image.mime),
+    )),
+    // A mask that fails to load is reported by the renderer at its transition, which falls back to fade.
+    ...(assets.rules ?? []).map((asset) => register(
+      asset.image.buffer,
+      asset.image.mime,
+      (url) => rendererAssets.registerRule(asset.key, url, asset.image.mime),
     )),
   ]);
   if (previewDisposed) { for (const url of urls) URL.revokeObjectURL(url); return; }
