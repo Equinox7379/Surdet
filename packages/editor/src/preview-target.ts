@@ -107,6 +107,7 @@ export function describePreviewPath(report: PreviewPathReport): { title: string;
     'path-mismatch': '给出的选择路径走不通',
     'host-boundary': '途中需要战斗、日程等宿主玩法接管',
     'runtime-error': '运行出错，无法确认能否到达',
+    'requires-extension': '途中需要项目插件，查找不运行插件代码，未能确认',
   };
   details.push(report.message);
   const coverage = report.coverage;

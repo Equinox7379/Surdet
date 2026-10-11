@@ -21,6 +21,7 @@
     "@fontsource-variable/noto-serif-sc": "^5.3.0",
     "@surdet/authoring": "0.1.0",
     "@surdet/core": "0.1.0",
+    "@surdet/host": "0.1.0",
     "@surdet/player": "0.1.0",
     "@surdet/renderer": "0.1.0"
   },

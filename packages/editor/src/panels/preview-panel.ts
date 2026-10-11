@@ -3,6 +3,8 @@ import { projectThemeAssetKeys, resolveProjectTheme, resolveProjectTitleLogo, ty
 import { debugInstructionOptions, validDebugBreakpoints, normalizePreviewDebugState, type PreviewBreakpoint, type PreviewDebugState, type PreviewDebugCommand } from '../preview-debug.js';
 import { describePreviewPath, normalizePreviewTargetState, type PreviewTargetRun, type PreviewTargetState } from '../preview-target.js';
 import { createPreviewTargetSection, writableDeclarations } from './preview-target-section.js';
+import { createPreviewPluginsSection } from './preview-plugins-section.js';
+import { pluginStatuses, previewPluginSources, readPluginDeclarations } from '../project-plugins.js';
 import '../styles/stage-workspace.css';
 /**
  * 预览面板（M6 E4，父窗口侧）：iframe 承载 preview.html 运行器，
@@ -25,7 +27,7 @@ import type { DirAsset } from '../assets.js';
 import { editorPreviewPublisher, editorWorkspaceStatus } from '../editor-workspace.js';
 import { inspectConfigDraftState, previewStageConfigText, previewThemeConfigText, previewUiConfigText, readUiConfigDraft, readStageConfigDraft, readThemeConfigDraft } from './config.js';
 import { previewTextHash, projectPreviewContent } from '../preview-content.js';
-import { previewCheckpointKey, readPreviewCheckpoint, writePreviewCheckpoint } from '../preview-checkpoints.js';
+import { clearPreviewCheckpoint, previewCheckpointKey, readPreviewCheckpoint, writePreviewCheckpoint } from '../preview-checkpoints.js';
 import { NO_READING_TRIAL, readingTrialScales, type ReadingTrial } from '../preview-reading-trial.js';
 import type { FontRole } from '@surdet/renderer';
 import { assertUniquePortraitBindings, portraitSourcePaths, resolveProjectPortraits, resolveProjectFontPaths, type PortraitVisualDefinition } from '@surdet/core';
@@ -687,6 +689,19 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   sourceState.dataset.previewSourceState = 'idle';
   sourceState.setAttribute('aria-live', 'polite');
   workspace.appendChild(sourceState);
+  // Another version's files are not the ones confirmed in this directory, so it runs no plugin code.
+  const pluginsBlocked = (): string | null => selectedTarget === null ? null
+    : '所选版本不运行项目插件代码：插件只按当前打开目录中经你确认的入口运行，无法对应这个版本；试玩到插件指令时会停下。';
+  const pluginsSection = createPreviewPluginsSection({ root: () => state.dirHandle, onChange: () => { showPlugins(); void send(); } });
+  const showPlugins = (): void => {
+    let read: ReturnType<typeof readPluginDeclarations>;
+    try { read = readPluginDeclarations(capturePreviewContent(projected).configText); }
+    catch { return; }
+    const blocked = pluginsBlocked();
+    pluginsSection.show({ ...read, blocked, statuses: blocked ? new Map() : pluginStatuses(state.dirHandle, read.declarations) });
+  };
+  showPlugins();
+  workspace.appendChild(pluginsSection.element);
   const debugPanel = h('section', 'preview-debugger'); debugPanel.hidden = !debugging; debugPanel.setAttribute('aria-label', '真实调试');
   const debugActions = h('div', 'preview-controls');
   const pauseDebug = h('button', undefined, '暂停'), stepDebug = h('button', undefined, '单步'), continueDebug = h('button', undefined, '继续运行');
@@ -967,6 +982,12 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       if (current.playback !== undefined) { currentPlayback = current.playback; writePreviewCheckpoint(activeCheckpointKey, current.playback); }
     } else {
       traceCompleted = true;
+      // The run ends after its last event: a plugin stop leaves no position to resume, since resuming meets the same stop.
+      if (current.type === 'surdet-preview-trace-complete' && current.status === 'failed' && current.firstError !== undefined && /PLUGIN_[A-Z]+/.test(current.firstError)) {
+        clearPreviewCheckpoint(activeCheckpointKey);
+        currentPlayback = null;
+        pluginsSection.setStop(current.firstError);
+      }
     }
     currentPreviewTrace = [...currentPreviewTrace, current];
     appendStoryPreview(current);
@@ -1091,6 +1112,12 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     }
     const { cachedFonts, assets, timelineContent } = resources;
     const requestConfigText = capturedContent.configText;
+    // Only entries confirmed for this directory and still unchanged are sent; the checks below cover this read too.
+    const pluginDeclarations = readPluginDeclarations(requestConfigText);
+    const pluginRun = pluginsBlocked() === null ? await previewPluginSources(requestRoot, pluginDeclarations.declarations) : { sources: [], statuses: new Map() };
+    if (mountRevision === previewPanelMountRevision && state.dirHandle === requestRoot) {
+      pluginsSection.show({ ...pluginDeclarations, blocked: pluginsBlocked(), statuses: pluginRun.statuses });
+    }
     const fonts = clonePreviewFontsForTransfer(cachedFonts);
     if (projected !== undefined && timelineContent.issues.length) { sourceState.textContent = `所选版本的演出无法加载：${timelineContent.issues.join('；')}`; sourceState.dataset.previewSourceState = 'stale'; return; }
     const timelines = timelineContent.definitions;
@@ -1183,6 +1210,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
         debug: run === undefined ? { enabled: debugging, pauseOnStart: debugging && !resume, breakpoints: userBreakpoints }
           : { enabled: true, pauseOnStart: false, breakpoints: [run.breakpoint] },
         target: run,
+        plugins: pluginRun.sources.length ? pluginRun.sources : undefined,
       },
     };
     const transfer = [
@@ -1226,6 +1254,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     debugPanel.hidden = !debugging && run === undefined;
     expectedTraceId = traceId;
     activeCheckpointKey = key;
+    pluginsSection.setStop(null);
     activateStoryPreview(previewRecord);
     frameWindow.postMessage(message, '*', [...new Set(transfer)]);
     // A rejected or superseded read has not begun a new run. Only a published

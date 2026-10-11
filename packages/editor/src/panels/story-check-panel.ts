@@ -1,4 +1,4 @@
-import { DEFAULT_AUTHORING_EVIDENCE_SEED, type SimulationOptions, type StoryLocation } from '@surdet/authoring';
+import { DEFAULT_AUTHORING_EVIDENCE_SEED, type SimulationOptions, type StoryCoverage, type StoryLocation } from '@surdet/authoring';
 import type { VarValue } from '@surdet/core';
 import { state, h } from '../state.js';
 import { assertConfigSourcesReadable } from '../config-source.js';
@@ -26,7 +26,10 @@ export function captureStoryCheckInput(): StoryCheckInput {
   return { files };
 }
 const branchNames = { visited: '已选择', unvisited: '未访问', 'condition-not-met': '本次条件未满足', 'budget-exhausted': '预算停止' };
-const stopNames = { 'runtime-error': '运行失败', 'path-budget': '路径预算停止', 'step-budget': '推进预算停止' };
+// The headless check never runs project code; a plugin instruction stops it.
+const stopNames: Record<StoryCoverage['stops'][number]['kind'], string> = {
+  'runtime-error': '运行失败', 'path-budget': '路径预算停止', 'step-budget': '推进预算停止', 'requires-extension': '需要扩展，未运行',
+};
 function current(record: { owner: unknown; key: string } | null): boolean {
   try { return record !== null && record.owner === state.dirHandle && record.key === storyInputKey(captureStoryCheckInput()); } catch { return false; }
 }
@@ -76,7 +79,7 @@ export function renderStoryCheckPanel(container: HTMLElement, onSource: (file: s
     const valid = current(record);
     if (record) {
       const { report } = record.result, coverage = report.coverage;
-      body.append(h('h3', undefined, `${report.status === 'failed' ? '发现运行失败' : report.status === 'incomplete' ? '检查达到预算上限' : '本次模拟已结束'} · ${valid ? '对应当前内容' : '内容已修改，请重新检查'}`),
+      body.append(h('h3', undefined, `${report.status === 'failed' ? '发现运行失败' : report.status === 'incomplete' ? report.budgetExhausted ? '检查达到预算上限' : '检查未走完：途中需要项目插件' : '本次模拟已结束'} · ${valid ? '对应当前内容' : '内容已修改，请重新检查'}`),
         h('p', undefined, `入口 ${report.entryScene} · 路径探索计数 ${report.pathsExplored} · 场景访问 ${coverage.scenes.filter(scene => scene.visited).length}/${coverage.scenes.length} · 选项选择 ${coverage.branches.filter(branch => branch.selected > 0).length}/${coverage.branches.length}`),
         h('p', 'project-health-description', `本次参数：路径上限 ${record.result.options.maxPaths ?? 500} · 推进上限 ${record.result.options.maxStepsPerPath ?? 20000} · 随机种子 ${report.seed} · 测试初值 ${Object.keys(record.result.options.initialVariables ?? {}).length} 项`));
       if (report.budgetExhausted) body.append(h('p', undefined, '预算已用尽，以下为部分结果；未访问项不代表不可达。可调整预算后重测。'));
