@@ -160,11 +160,65 @@ try {
     && document.querySelector('[data-preview-source-state]')?.dataset.previewSourceState === 'fresh');
   await until(async () => (await starts()) > beforeReplay, 'the replay did not start');
 
+  // 2b. With the debug switch on, normal play pauses at the entry and the found start replays to its
+  // line. The switch does not lift the start's own freshness, for the buttons or for the command they send.
+  const continueButton = page.locator('.preview-debugger').getByRole('button', { name: '继续运行' });
+  const stepButton = page.locator('.preview-debugger').getByRole('button', { name: '单步' });
+  const debugSwitch = page.locator('.preview-workspace').getByLabel('启用调试（从入口重播）');
+  const pausedAt = () => page.evaluate(() => {
+    const debug = document.querySelector('iframe.preview-frame')?.contentWindow?.surdetPreviewDebug;
+    const snapshot = debug?.interp?.debugSnapshot();
+    return snapshot ? { paused: snapshot.paused, reason: snapshot.reason, status: snapshot.status, sceneId: snapshot.current?.sceneId, line: snapshot.current?.line,
+      text: debug.runtime.queries.diagnostics.projectionSnapshot().dialogue?.dialogText ?? '' } : null;
+  });
+  // Normal play of the saved project needs no unsaved edits. Each save here changes the file: a save
+  // that leaves it as it was currently makes the binding take the previous save for an outside change.
+  const saveAll = async (expected) => {
+    const finished = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/workspace/finish'));
+    await page.locator('[data-action="save-project"]').click();
+    assert.ok((await finished).ok(), 'the save finished');
+    await until(async () => (await fs.readFile(path.join(projectRoot, 'content', 'scenario', 'intro.gal'), 'utf8')) === expected, 'the editor text was not saved');
+    await page.waitForFunction(() => window.surdetEditorDebug.state.scenes.get('intro').dirty === false);
+  };
+  await debugSwitch.check();
+  await until(async () => (await pausedAt())?.reason === 'entry', 'the debug replay did not pause at the entry');
+  await page.locator('.preview-target').getByRole('button', { name: '查找并试玩' }).click();
+  await waitStatus('已停在 intro 第 3 行之前');
+  assert.match((await sourceState()).text, /来源项目（已保存）/);
+  const atTarget = { paused: true, reason: 'breakpoint', status: 'paused', sceneId: 'intro', line: 3, text: '' };
+  assert.deepEqual(await pausedAt(), atTarget);
+  assert.equal(await continueButton.isDisabled(), false);
+  assert.equal(await stepButton.isDisabled(), false);
+  await duplicateSetStep();
+  await waitStatus('剧本已修改，这次起点属于旧版本');
+  // The selected version itself is unchanged, so only the start's own check can refuse.
+  assert.equal((await sourceState()).state, 'fresh');
+  assert.equal(await continueButton.isDisabled(), true, 'the debug switch does not keep an old start continuable');
+  assert.equal(await stepButton.isDisabled(), true, 'nor steppable');
+  // The command handler refuses on the same condition, so nothing reaches the run even if invoked.
+  await continueButton.evaluate((button) => button.onclick());
+  await page.locator('.preview-debugger').getByText('当前内容或预览身份已变化，请重新播放后再调试。').waitFor();
+  await page.waitForTimeout(1000);
+  assert.deepEqual(await pausedAt(), atTarget, 'the old line 3 did not run');
+  assert.match(await status.innerText(), /剧本已修改，这次起点属于旧版本/, 'the old-version notice stays');
+  if (outDir) await page.screenshot({ path: path.join(outDir, 'from-line-saved-debug-stale.png') });
+  // Back to the saved text and normal play without the switch.
+  await saveAll(await page.evaluate(() => window.surdetEditorDebug.state.scenes.get('intro').text));
+  const beforeNormal = await starts();
+  await debugSwitch.uncheck();
+  await until(async () => (await starts()) > beforeNormal, 'normal play did not restart');
+  await removeDuplicate();
+  await saveAll(intro);
+  const beforeSavedReplay = await starts();
+  await page.locator('.preview-workspace').getByRole('button', { name: '重新播放' }).click();
+  await until(async () => (await starts()) > beforeSavedReplay, 'the replay did not start');
+  await page.waitForFunction(() => document.querySelector('[data-preview-source-state]')?.dataset.previewSourceState === 'fresh');
+  console.log('PASS with the debug switch on, an edit after the start still disables continue and step, and the command is refused');
+
   // 3. A fresh query on the current version starts; an edit after the start marks it old.
   await page.locator('.preview-target').getByRole('button', { name: '查找并试玩' }).click();
   await waitStatus('已停在 intro 第 3 行之前');
   assert.match((await sourceState()).text, /来源项目（已保存）/);
-  const continueButton = page.locator('.preview-debugger').getByRole('button', { name: '继续运行' });
   assert.equal(await continueButton.isDisabled(), false);
   if (outDir) await page.screenshot({ path: path.join(outDir, 'from-line-saved-reached.png') });
   await duplicateSetStep();
