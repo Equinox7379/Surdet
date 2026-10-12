@@ -24,11 +24,11 @@ export interface ConfiguredFontJobOptions {
 export function createConfiguredFontJobs(options: ConfiguredFontJobOptions): () => AssetLoadJob[] {
   const { config, fontBlobUrls, label, resolveFontUrl, assets } = options;
 
-  async function loadConfiguredFont(role: FontRole, path: string): Promise<void> {
+  async function loadConfiguredFont(role: FontRole, path: string, source: { url?: Promise<string | null>; remaining: number }): Promise<void> {
     let url: string | null = null;
     let registered = false;
     try {
-      url = await resolveFontUrl(path);
+      url = await (source.url ??= resolveFontUrl(path));
       if (!options.isActive()) return;
       if (!url) throw new Error('未找到字体文件');
       registered = await assets.registerFontRole(role, url);
@@ -42,16 +42,24 @@ export function createConfiguredFontJobs(options: ConfiguredFontJobOptions): () 
       options.onError?.(message);
       throw new Error(message, { cause: error });
     } finally {
-      if (url?.startsWith('blob:')) {
-        if (registered && options.isActive()) fontBlobUrls.add(url);
-        else URL.revokeObjectURL(url);
-      }
+      if (registered && options.isActive() && url?.startsWith('blob:')) fontBlobUrls.add(url);
+      // A failed role must not revoke the URL while another role is still decoding it.
+      source.remaining--;
+      if (source.remaining === 0 && url?.startsWith('blob:') && !fontBlobUrls.has(url)) URL.revokeObjectURL(url);
     }
   }
 
   return function configuredFontJobs(): AssetLoadJob[] {
-    return Object.entries(resolveProjectFontPaths(config)).map(([role, path]) => ({
-      id: `fonts/${role}:${path}`, priority: 'critical', load: () => loadConfiguredFont(role as FontRole, path),
+    const entries = Object.entries(resolveProjectFontPaths(config));
+    // Share only within this load batch; a later batch re-reads changed files and retries failures.
+    const sources = new Map<string, { url?: Promise<string | null>; remaining: number }>();
+    for (const [, path] of entries) {
+      const source = sources.get(path);
+      if (source) source.remaining++;
+      else sources.set(path, { remaining: 1 });
+    }
+    return entries.map(([role, path]) => ({
+      id: `fonts/${role}:${path}`, priority: 'critical', load: () => loadConfiguredFont(role as FontRole, path, sources.get(path)!),
     }));
   };
 }
