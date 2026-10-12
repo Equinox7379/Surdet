@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compileScene, parseInlineText } from '@surdet/core';
-import { choiceLabelSpan, completionPrefix, findInDialogue, inlineCompletions, insertInlineMarker, replaceInDialogue, sourceRangeOfPlain, splitInlineDialogue, wrapInlineSelection } from '../src/v4/inline-markup.js';
+import { choiceLabelSpan, completionPrefix, findInDialogue, inlineCompletions, inlineTagAllowed, insertInlineMarker, replaceInDialogue, sourceRangeOfPlain, splitInlineDialogue, wrapInlineSelection } from '../src/v4/inline-markup.js';
+import { sourceMarkupSegments, sourceMarkupSummary } from '../src/v4/source-markup.js';
 
 const valid = (text: string): void => {
   expect(parseInlineText(text).issues.filter((issue) => issue.severity === 'error')).toEqual([]);
@@ -155,5 +156,58 @@ describe('第二批标签', () => {
     expect(split).toEqual({ ok: true, left: '<wave>轻声</wave>说完', right: '了。<nw>', reopened: 0 });
     valid('<wave>轻声</wave>说完');
     valid('了。<nw>');
+  });
+});
+
+describe('按 Core 的上下文提供标签（源码与选项）', () => {
+  it('选项上下文只提供 Core 接受的标签，规则来自 Core 解析器', () => {
+    for (const name of ['w', 'speed', 'nw', 'shake', 'wave'] as const) expect(inlineTagAllowed(name, 'choice')).toBe(false);
+    for (const name of ['b', 'i', 'color', 'size', 'ruby', 'em'] as const) expect(inlineTagAllowed(name, 'choice')).toBe(true);
+    expect(inlineCompletions('', 'choice').map((entry) => entry.key)).toEqual(['b', 'i', 'color', 'size', 'ruby', 'em']);
+    expect(inlineCompletions('s', 'choice').map((entry) => entry.key)).toEqual(['size']);
+    expect(inlineCompletions('s').map((entry) => entry.key)).toEqual(['size', 'speed', 'shake']);
+  });
+  it('选项里包裹不接受的标签时给出 Core 的原因，接受的标签按选项规则校验', () => {
+    expect(wrapInlineSelection('先走', 0, 2, 'shake', undefined, 'choice')).toEqual({ ok: false, reason: parseInlineText('<shake>', 'choice').issues[0]!.message });
+    expect(wrapInlineSelection('先走', 0, 2, 'color', 'accent', 'choice')).toMatchObject({ ok: true, text: '<color=accent>先走</color>' });
+  });
+});
+
+describe('源码视图只解析对白与选项文字', () => {
+  const source = [
+    '@scene start',
+    '// 注释 <b>不算</b>',
+    '@bg <b>hall',
+    '凛：你好<b>重点</b>。',
+    '旁白里的《书名》和{hero}<w=200>。',
+    '@choice',
+    '  <color=accent>先走</color> [if:<b>] -> @goto <i>a',
+    '  <shake>抖</shake> -> @goto a',
+    '@label a',
+    '凛：<size=9>大</size>',
+    '@end',
+  ].join('\n');
+  const segments = sourceMarkupSegments(source);
+  it('取出的范围恰好是 Core 读作对白和选项显示文字的部分，并按各自上下文解析', () => {
+    expect(segments.map((segment) => [segment.line, segment.context, source.slice(segment.start, segment.end)])).toEqual([
+      [3, 'dialogue', '你好<b>重点</b>。'],
+      [4, 'dialogue', '旁白里的《书名》和{hero}<w=200>。'],
+      [6, 'choice', '<color=accent>先走</color>'],
+      [7, 'choice', '<shake>抖</shake>'],
+      [9, 'dialogue', '<size=9>大</size>'],
+    ]);
+    expect(segments[1]!.document.issues).toEqual([]);
+    expect(segments[3]!.document.issues.map((issue) => issue.code)).toEqual(['M005', 'M005']);
+    expect(segments[4]!.document.issues.map((issue) => issue.code)).toContain('M004');
+  });
+  it('光标所在行的问题用 Core 的原话，其他行只给行号', () => {
+    expect(sourceMarkupSummary(segments, 7)).toBe(`第 8 行：${segments[3]!.document.issues.map((issue) => issue.message).join('；')}。另有标签问题在第 10 行`);
+    expect(sourceMarkupSummary(segments, 3)).toBe('标签问题在第 8、10 行');
+    expect(sourceMarkupSummary(sourceMarkupSegments('凛：你好。\n@bg <b>'), 0)).toBe('');
+  });
+  it('CRLF 换成文本框的 LF 后，范围仍对应文本框里的位置', () => {
+    const lf = '@scene s\n凛：<b>好</b>\n@end';
+    const [segment] = sourceMarkupSegments(lf);
+    expect(lf.slice(segment!.start, segment!.end)).toBe('<b>好</b>');
   });
 });
