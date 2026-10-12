@@ -24,6 +24,7 @@
 - 操作和截图在Linux云端用`6ab6dff`构建的真实桌面Editor完成（Playwright驱动Electron，原生目录选择框打桩）。#36/#38/#39相关小节标为「待合入」，截图来自本地合并构建，合并分支未推送。Windows原生选择器、实际导出结果和版本/数据承诺待GPT核对；新作者照指南独立完成全流程的验收尚未执行。
 - 实测中发现的产品问题记录在指南对应位置和PR说明中，本单元不修：桌面版「新建/重命名/移动场景」用了`window.prompt`，Electron不支持，点击后报「prompt() is not supported.」；Editor没有设置`player.endScenes`的界面；标签错误会连带报ENTRY_SCENE_MISSING；同一路径删掉项目后重建同名项目时，保存配置会报409；导入素材后需手动「同步项目」。
 - 按#40评论6128204546补正：开始使用与教程写明再次启动会直接恢复上次项目，新建入口在原生菜单「项目→显示启动页」；默认Windows版本取`package.json.version`（不是`game.config.json.version`）；README与AI指南的作品语言入口改为「设置→阅读」（`game-settings.ts`中`page:'阅读'`）。`window.prompt`与`endScenes`入口另开前端PR，409与ENTRY_SCENE_MISSING由GPT核对。
+- 按#40评论6128340095/6128367042补正：版本与数据页落定为技术核对口径（剧本须符合当前语法、旧档迁移后仍须通过校验、改稿后按原指令位置恢复且不智能重定位、共享Player只记控制台警告）；Windows核对结果写入开始使用、导出与教程（真人系统选择器未核对，不等于陌生作者验收）；ENTRY_SCENE_MISSING改写为旧版已知误报、修复待合入#41；prompt与结束场景入口注明修复待合入#42。409补交原始回执：强杀旧进程后在其会话宽限期内于同路径重建并保存，`POST /workspace/begin`返回`HUMAN_WORKSPACE_STATE_CORRUPT`；正常关闭或超过宽限期不复现。
 
 ### Windows一键导出后端（2026-10-11）
 
