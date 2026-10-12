@@ -69,7 +69,13 @@ state 存在时声明正整数 `stateVersion`；无状态插件不声明。可�
 
 Core 快照增加可选 `plugins: { [id]: { version, value } }`，仍沿原 SaveManager/Player/回退路径。恢复先检查全部所需插件、精确状态版本并生成所有候选 JSON 值，再交换状态；这阶段失败不写当前变量/游标/插件状态。不存在版本别名、自动迁移或忽略坏插件状态的分支。缺少保存项的已启用状态插件回到声明初值，这是新游戏/无该插件状态的明确语义，不继承当前局。
 
-错误消息前缀：PLUGIN_REQUIRED（未启用/缺插件）、PLUGIN_MISSING（入口加载失败）、PLUGIN_API（模块合同）、PLUGIN_STATE（状态）、PLUGIN_VERSION（版本）、PLUGIN_BUSY（交互中）、PLUGIN_EXECUTION（执行）、PLUGIN_INACTIVE（旧操作）。当前 Core 错误带源码位置；前端应显示具体原因，不替作者猜修法。
+错误消息前缀：PLUGIN_REQUIRED（未启用/缺插件）、PLUGIN_MISSING（入口加载失败）、PLUGIN_API（模块合同）、PLUGIN_STATE（状态）、PLUGIN_VERSION（版本）、PLUGIN_BUSY（交互中）、PLUGIN_EXECUTION（执行）、PLUGIN_INACTIVE（旧操作）。状态codec的save/restore/validate抛错统一带PLUGIN_STATE、插件id和原原因；恢复失败保持当前变量、位置、插件状态和已保存的好槽位。当前 Core 错误带源码位置；前端应显示具体原因，不替作者猜修法。
+
+### 插件试玩与正式观察的边界
+
+当前正式观察的来源合同未包含插件代码，因此**所选内容声明任何项目插件时，仅提供本地试玩，不生成可核对的正式观察**。后端begin（含重复请求）和append返回`PREVIEW_OBSERVATION_UNAVAILABLE`；旧记录读取为stale，reasons包含同一错误码，不能拿旧passed记录当current。普通无插件项目的正式观察不变，invalidate仍可清除旧记录。存读档的插件状态能力不受此限制。
+
+Editor读取同一份所选配置的plugins声明，在含插件时不启动正式发布，也不创建或复用“回到上次位置”的成功续接点；已有本地画面和因果调试记录可继续使用，明确这是本地试玩。不要因为不能发布正式观察而阻断当前编辑内容的本地试玩，也不要开放原本不允许执行插件的候选/其他所选版本。未给正式证据补代码来源前，不自行新增哈希字段或放开批准资格。
 
 ## 渲染扩展
 
