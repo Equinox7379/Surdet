@@ -1110,7 +1110,10 @@ function disposeProjectPlugins(): void {
   router?.host.dispose();
 }
 
-/** Import one confirmed entry text as a module; nothing else on disk or in node_modules is reachable from it. */
+/**
+ * Import the confirmed entry text as a Blob module. The Editor confirmed only entries without module
+ * imports; this is trusted same-origin code, not a boundary that keeps it from loading anything.
+ */
 async function importPluginEntry(sources: readonly { entry: string; source: string }[], entry: string): Promise<ProjectPluginModule> {
   const found = sources.find(item => item.entry === entry);
   if (!found) throw new Error('入口没有随本次试玩确认');

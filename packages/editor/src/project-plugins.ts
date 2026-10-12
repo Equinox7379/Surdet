@@ -1,5 +1,6 @@
 import { readProjectPlugins, type ProjectPluginDeclaration } from '@surdet/core';
 import { parseProjectConfigDocument } from '@surdet/authoring';
+import { parse as lexModule } from 'es-module-lexer/js';
 import { previewTextHash } from './preview-content.js';
 
 /**
@@ -7,7 +8,13 @@ import { previewTextHash } from './preview-content.js';
  * runs only after a person confirms it here, for the directory they opened and the exact entry text.
  */
 
-export interface PluginEntryFacts { entry: string; source: string; sha256: string; bytes: number; dependencies: string[] }
+export interface PluginEntryFacts {
+  entry: string; source: string; sha256: string; bytes: number;
+  /** Modules the entry's own syntax loads. */
+  dependencies: string[];
+  /** Why the module lexer could not read the entry, or null. */
+  unlexable: string | null;
+}
 export type PluginStatus =
   | { kind: 'off' }
   | { kind: 'trusted'; sha256: string }
@@ -21,21 +28,23 @@ export function readPluginDeclarations(configText: string): { declarations: Proj
   catch (error) { return { declarations: [], error: error instanceof Error ? error.message : String(error) }; }
 }
 
-/** Module specifiers the entry imports. The preview loads one file, so any of these means it cannot run here. */
-export function pluginEntryDependencies(source: string): string[] {
-  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-  const found = new Set<string>();
-  for (const pattern of [/\bimport\s*(?:[\w*{}\s,$]+?\s*from\s*)?["']([^"']+)["']/g, /\bexport\s*[\w*{}\s,$]*?\s*from\s*["']([^"']+)["']/g, /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g]) {
-    for (const match of code.matchAll(pattern)) found.add(match[1]!);
-  }
-  if (/\bimport\s*\(\s*[^"'\s)]/.test(code)) found.add('（运行时计算的模块路径）');
-  return [...found];
+/**
+ * What the entry's module syntax loads: static imports, re-exports and import() in any form, as the
+ * module lexer Vite uses reads them. import.meta loads nothing. Source the lexer cannot read is not
+ * guessed at; the entry is refused.
+ */
+export function pluginEntryDependencies(source: string): Pick<PluginEntryFacts, 'dependencies' | 'unlexable'> {
+  let imports: ReturnType<typeof lexModule>[0];
+  try { [imports] = lexModule(source); }
+  catch (error) { return { dependencies: [], unlexable: error instanceof Error ? error.message : String(error) }; }
+  return { dependencies: [...new Set(imports.filter(item => item.d !== -2).map(item => item.n ?? '（运行时计算的模块路径）'))], unlexable: null };
 }
 
 /** Why this entry cannot run in the Editor preview, or null. Nothing is compiled or installed for it. */
-export function pluginEntryLimit(entry: string, dependencies: readonly string[]): string | null {
-  if (/\.ts$/i.test(entry)) return 'TypeScript 入口需要先编译；Editor 试玩只运行浏览器可以直接执行的 .js 模块，不会自动编译。';
-  if (dependencies.length) return `入口引用了 ${dependencies.join('、')}；Editor 试玩只能运行不依赖其他文件或包的单个 .js 模块。`;
+export function pluginEntryLimit(facts: Pick<PluginEntryFacts, 'entry' | 'dependencies' | 'unlexable'>): string | null {
+  if (/\.ts$/i.test(facts.entry)) return 'TypeScript 入口需要先编译；Editor 试玩只运行浏览器可以直接执行的 .js 模块，不会自动编译。';
+  if (facts.unlexable !== null) return `入口无法按 JavaScript 模块读取（${facts.unlexable}），Editor 不能确认它没有引用其他模块，因此不运行。`;
+  if (facts.dependencies.length) return `入口引用了 ${facts.dependencies.join('、')}；Editor 试玩只能运行不依赖其他文件或包的单个 .js 模块。`;
   return null;
 }
 
@@ -46,7 +55,7 @@ export async function readPluginEntry(root: FileSystemDirectoryHandle, entry: st
   for (const part of parts.slice(0, -1)) directory = await directory.getDirectoryHandle(part);
   const file = await (await directory.getFileHandle(parts.at(-1)!)).getFile();
   const source = await file.text();
-  return { entry, source, sha256: await previewTextHash(source), bytes: file.size, dependencies: pluginEntryDependencies(source) };
+  return { entry, source, sha256: await previewTextHash(source), bytes: file.size, ...pluginEntryDependencies(source) };
 }
 
 // Trust lives only in this Editor session and only for the directory handle the person opened.
@@ -98,7 +107,7 @@ export async function previewPluginSources(root: FileSystemDirectoryHandle | nul
       withdraw({ kind: 'unreadable', reason: `入口 ${declaration.entry} 无法读取：${error instanceof Error ? error.message : String(error)}` });
       continue;
     }
-    const limit = pluginEntryLimit(declaration.entry, facts.dependencies);
+    const limit = pluginEntryLimit(facts);
     if (limit) { withdraw({ kind: 'unsupported', reason: limit }); continue; }
     if (facts.sha256 !== expected) { withdraw({ kind: 'changed' }); continue; }
     sources.push({ id: declaration.id, entry: declaration.entry, source: facts.source });

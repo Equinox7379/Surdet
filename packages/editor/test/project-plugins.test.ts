@@ -49,18 +49,42 @@ describe('plugin declarations', () => {
 });
 
 describe('entries the Editor preview can run', () => {
-  it('finds imports, re-exports and dynamic imports, but not words in comments', () => {
-    expect(pluginEntryDependencies(ENTRY)).toEqual([]);
-    expect(pluginEntryDependencies([
-      "import { a } from './a.js';", "import 'side-effect';", "export * from \"pixi.js\";",
-      "const x = await import('./lazy.js');", '// import nope from "comment"', '/* import("block") */',
-    ].join('\n'))).toEqual(['./a.js', 'side-effect', 'pixi.js', './lazy.js']);
-    expect(pluginEntryDependencies('const m = await import(name);')).toEqual(['（运行时计算的模块路径）']);
+  const DATA = 'data:text/javascript,export default 42';
+  const found = (source: string) => pluginEntryDependencies(source).dependencies;
+  it('finds import() in every call form, including a trailing comma and a second argument (31-REV-01)', () => {
+    expect(found(`await import('${DATA}');`)).toEqual([DATA]);
+    expect(found(`await import('${DATA}',);`)).toEqual([DATA]);
+    expect(found(`await import('${DATA}', {});`)).toEqual([DATA]);
+    expect(found(`await import('${DATA}' , { with: { type: 'json' } } );`)).toEqual([DATA]);
+    expect(found(`await import(\n  '${DATA}',\n  {},\n);`)).toEqual([DATA]);
+    expect(found('await import(/* where */ "./lazy.js");')).toEqual(['./lazy.js']);
+    expect(found('const s = `${await import("./in-template.js")}`;')).toEqual(['./in-template.js']);
+    // A specifier the source computes is still a load.
+    expect(found('await import(name);')).toEqual(['（运行时计算的模块路径）']);
+    expect(found('await import(`./${name}.js`);')).toEqual(['（运行时计算的模块路径）']);
   });
-  it('refuses TypeScript and any dependency instead of compiling or installing', () => {
-    expect(pluginEntryLimit('plugins/a.js', [])).toBeNull();
-    expect(pluginEntryLimit('plugins/a.ts', [])).toMatch(/TypeScript.*不会自动编译/);
-    expect(pluginEntryLimit('plugins/a.js', ['./b.js'])).toMatch(/\.\/b\.js/);
+  it('finds static imports and re-exports, with or without attributes', () => {
+    expect(found([
+      "import { a } from './a.js';", "import 'side-effect';", 'import data from "./d.json" with { type: "json" };',
+      "export * from 'pixi.js';", "export { b } from './b.js';", "import './a.js';",
+    ].join('\n'))).toEqual(['./a.js', 'side-effect', './d.json', 'pixi.js', './b.js']);
+  });
+  it('does not count text that only looks like an import', () => {
+    expect(found(ENTRY)).toEqual([]);
+    expect(found([
+      "// import('./line-comment.js')", "/* import x from './block-comment.js' */",
+      `const a = "import('./double.js')", b = 'import y from "./single.js"', c = \`import('./template.js')\`;`,
+      "const r = /import\\('.\\/regex.js'\\)/;", "const o = { import(x) { return x; } }; o.import('./member.js');",
+      'export default [a, b, c, r, o, import.meta.url];',
+    ].join('\n'))).toEqual([]);
+  });
+  it('refuses an entry the lexer cannot read, TypeScript, and any dependency, instead of guessing', () => {
+    expect(pluginEntryDependencies("const s = 'unterminated").unlexable).toMatch(/Parse error/);
+    const facts = (entry: string, source: string) => ({ entry, ...pluginEntryDependencies(source) });
+    expect(pluginEntryLimit(facts('plugins/a.js', ENTRY))).toBeNull();
+    expect(pluginEntryLimit(facts('plugins/a.ts', ENTRY))).toMatch(/TypeScript.*不会自动编译/);
+    expect(pluginEntryLimit(facts('plugins/a.js', `await import('${DATA}', {});`))).toMatch(/入口引用了 data:text\/javascript/);
+    expect(pluginEntryLimit(facts('plugins/a.js', 'export default (;'))).toMatch(/无法按 JavaScript 模块读取.*因此不运行/);
   });
 });
 
