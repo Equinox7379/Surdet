@@ -9,6 +9,7 @@ it('keeps source identity across unrelated line shifts but rejects changed branc
   const choice = points.get(4)!;
   const saved = { source: choice.source, optionFingerprint: choice.options![0]!.fingerprint };
   expect(resolvePreviewReplayOption(choice, saved, [{ index: 0, label: '送信' }, { index: 1, label: '等待' }])).toBe(0);
+  expect(resolvePreviewReplayOption(choice, saved, [{ index: 0, label: '<color=accent>送给凛的信</color>' }, { index: 1, label: '等待' }])).toBe(0);
   expect(resolvePreviewReplayOption(choice, saved, [{ index: 1, label: '等待' }])).toBeNull();
   const shifted = (await buildPreviewReplaySources([{ id: 'start', text: script.replace('@label mail', '// 旁注\n@label mail') }], hasher)).get('start')!;
   expect(samePreviewReplaySource(choice.source, shifted.get(5)!.source)).toBe(true);

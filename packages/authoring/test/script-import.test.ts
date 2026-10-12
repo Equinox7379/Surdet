@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { compileScene } from '@surdet/core';
+import { compileScene, inlinePlainText } from '@surdet/core';
 import { previewScriptImport } from '../src/script-import.js';
 import { createSceneText } from '../src/operations.js';
 
 const characters = [{ id: 'rin', name: '凛' }, { id: 'n', name: '旁白' }];
 describe('plain text and CSV dialogue import', () => {
+  it('imports angle tags and backslashes as literal prose, not effects', () => {
+    const source = '凛：<w><b>不是标签</b>\\《红楼梦》';
+    const preview = previewScriptImport({ format: 'text', source }, characters);
+    expect(preview.ready).toBe(true);
+    expect(preview.rows[0]!.value).toBe('<w><b>不是标签</b>\\《红楼梦》');
+    expect(inlinePlainText(preview.blocks[0]!.value)).toBe(preview.rows[0]!.value);
+    expect(preview.blocks[0]!.value).toContain('\\<w>');
+  });
   it('accepts BOM, Chinese, quotes, Unicode separators and mixed EOL, then generates real typed source', () => {
     const preview = previewScriptImport({ format: 'text', source: '\uFEFF凛：雨停了。\r\n\r12:30 天晴。\n凛:前半\u2028后半。\nhttps://example.com/path' }, characters);
     expect(preview.ready).toBe(true);

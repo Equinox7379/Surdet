@@ -1,4 +1,4 @@
-import { decodeStageToken, findChoiceArrow, projectPortraitOverrides, splitOutsideQuotes, stageCommandFromInstruction } from '@surdet/core';
+import { decodeStageToken, findChoiceArrow, Lexer, projectPortraitOverrides, splitOutsideQuotes, stageCommandFromInstruction } from '@surdet/core';
 import { readTextCatalog } from './text-catalog.js';
 import type {
   ProjectAssetFileFact,
@@ -24,12 +24,13 @@ import {
   instructionModifierTokens,
   parseSceneDocument,
   rewriteInstructionArgumentsRaw,
+  rewriteInstructionModifierRaw,
   serializeSceneDocument,
   splitInstruction,
 } from './scene-document.js';
 
 export const PROJECT_ASSET_RELOCATION_KINDS: readonly ProjectAssetKind[] = [
-  'background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license',
+  'background', 'portrait', 'avatar', 'rule', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license',
 ];
 const SUPPORTED_KINDS = new Set(PROJECT_ASSET_RELOCATION_KINDS);
 const KNOWN_ASSET_INSTRUCTIONS = new Set([
@@ -501,6 +502,14 @@ function sceneRewrite(
     };
 
     const mediaCommand = mediaAssetCommand(source.kind);
+    if (source.kind === 'rule' && parsed.name === 'transition' && args[0] === 'rule') {
+      const token = new Lexer().tokenize(raw, file.path).find(token => token.type === 'instruction');
+      if (token?.type === 'instruction' && decodeStageToken(token.modifiers.get('rule') ?? '') === source.key && target.key !== source.key) {
+        references.push({ ...reference('scene', file.path, `场景 · 第 ${lineNumber} 行`, 'transition.rule', `scene:${file.path}:${lineNumber}:transition.rule`, lineNumber), before: source.key, after: target.key });
+        return rewriteInstructionModifierRaw(raw, 'rule', target.key);
+      }
+      return raw;
+    }
     if (mediaCommand !== undefined && parsed.name === mediaCommand && args[0] === source.key
       && target.key !== source.key && !(mediaCommand === 'ambience' && args[0] === 'off')) {
       addChange(0, mediaCommand, source.key, target.key);
@@ -595,6 +604,18 @@ function timelineRewrite(
     const track = isRecord(trackValue) ? trackValue : null;
     if (track === null) return;
     const cues = Array.isArray(track.cues) ? track.cues : [];
+    if (track.kind === 'screen') {
+      cues.forEach((cueValue, cueIndex) => {
+        const cue = isRecord(cueValue) ? cueValue : null;
+        if (!cue || cue.action !== 'rule' || typeof cue.rule !== 'string') return;
+        const path: JsonPath = ['tracks', trackIndex, 'cues', cueIndex, 'rule'];
+        knownPaths.add(pathKey(path));
+        if (source.kind === 'rule' && cue.rule === source.key && target.key !== source.key) {
+          replacements.push({ path, before: source.key, after: target.key,
+            reference: reference('timeline', file.path, `时间轴 · 轨道 ${trackIndex + 1} · 片段 ${cueIndex + 1}`, 'screen.rule', `timeline:${file.path}:${trackIndex}:${cueIndex}:rule`) });
+        }
+      });
+    }
     if (track.kind === 'background' || track.kind === 'layer') {
       cues.forEach((cueValue, cueIndex) => {
         const cue = isRecord(cueValue) ? cueValue : null;

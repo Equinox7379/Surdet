@@ -392,6 +392,27 @@ function changedBatchText(
 }
 
 describe('reference-aware project asset relocation planner', () => {
+  it('renames an actual timeline rule field without changing unrelated strings or CRLF', async () => {
+    const timeline = '{\r\n "version":2,"id":"reveal","durationMs":800, "tracks":[{"kind":"screen","cues":[{"atMs":0,"durationMs":800,"easing":"linear","action":"rule","rule":"mask"}]},{"kind":"background","cues":[{"atMs":0,"durationMs":0,"easing":"linear","action":"set","key":"mask"}]}]\r\n}\r\n';
+    const input = await makeInput({ files: { 'content/timelines/reveal.json': timeline },
+      assets: [{ path: 'content/assets/rule/mask.png', bytes: 10 }], assetDirectories: ['content/assets/rule'],
+      sourcePath: 'content/assets/rule/mask.png', targetPath: 'content/assets/rule/遮罩 @左.png' });
+    const result = await planProjectAssetRelocation(input, hasher);
+    expect(result.plan).toMatchObject({ status: 'ready', affectedReferenceCount: 1, blockers: [] });
+    expect(changedText(result, 'content/timelines/reveal.json')).toBe(timeline.replace('"rule":"mask"', '"rule":"遮罩 @左"'));
+  });
+  it.each(['@rule=mask', '@rule "mask"', "@rule='mask'"])('rewrites only a rule modifier while preserving CRLF, prose and other assets: %s', async modifier => {
+      const scene = `\uFEFF@scene rain\r\n// mask @rule=mask\r\nmask 只是正文。\r\n@bg mask\r\n  @transition rule 800  ${modifier}  @soft=.2 @reverse=false  \r\n@end`;
+      const input = await makeInput({ files: { 'content/scenario/rain.gal': scene },
+        assets: [{ path: 'content/assets/rule/mask.png', bytes: 10 }], assetDirectories: ['content/assets/rule'],
+        sourcePath: 'content/assets/rule/mask.png', targetPath: 'content/assets/rule/遮罩 @左.png' });
+      const result = await planProjectAssetRelocation(input, hasher);
+      expect(result.plan).toMatchObject({ status: 'ready', affectedReferenceCount: 1, blockers: [] });
+      const next = changedText(result, 'content/scenario/rain.gal');
+      const quote = modifier.includes("'") ? "'" : '"';
+      const rewritten = modifier.startsWith('@rule=') ? `@rule=${quote}遮罩 @左${quote}` : `@rule ${quote}遮罩 @左${quote}`;
+      expect(next).toBe(scene.replace(`  ${modifier}  `, `  ${rewritten}  `));
+  });
   it.each(['"', "'"])('rewrites only the real quoted background after unmatched %s prose', async quote => {
     const scene = `@scene rain\r\n@choice\r\n  未闭合的 ${quote}castle_hall 文案 -> @bg ${quote}castle_hall${quote} @goto done\r\n@label done\r\n@end\r\n`;
     const input = await makeInput({ files: { 'content/scenario/rain.gal': scene },

@@ -3,6 +3,7 @@ import {
   collectProjectTextRows, projectTextSources, textSourceId as sourceId, textSourceMatches as sourceMatches,
   textTranslationIssue as translationIssue, isStoryTextSource, TextCatalogError,
   textCatalogEntryText,
+  inlinePlainText,
   type TextSource, type TextCatalog, type CatalogSource,
 } from '@surdet/core';
 export type { TextSource, TextCatalogEntry, TextCatalog, CatalogSource } from '@surdet/core';
@@ -96,7 +97,7 @@ export function exportTextCatalogCsv(inspection: Awaited<ReturnType<typeof inspe
 export function exportVoiceCatalogCsv(inspection: Awaited<ReturnType<typeof inspectTextCatalog>>): string {
   return '\uFEFF' + [VOICE_CSV_COLUMNS.join(','), ...inspection.entries.filter(entry => entry.source.kind === 'dialogue').map(entry => [
     entry.key, inspection.locale, entry.source.version, entry.source.speaker, contextText(entry.source), entry.source.text,
-    entry.spokenText ?? '', entry.voices?.[inspection.locale]?.asset ?? '', 'keep', entry.voiceStatus,
+    inlinePlainText(entry.spokenText ?? ''), entry.voices?.[inspection.locale]?.asset ?? '', 'keep', entry.voiceStatus,
   ].map(csvCell).join(','))].join('\r\n') + '\r\n';
 }
 export async function previewTextCatalogImport(snapshot: ProjectSnapshot, hasher: TextHasher, locale: string, csv: string, assetFiles: readonly ProjectAssetFileFact[] = []) {
@@ -124,7 +125,7 @@ export async function previewTextCatalogImport(snapshot: ProjectSnapshot, hasher
     if (voiceSheet) {
       const action = cells[8], before = entry.voices?.[locale]?.asset ?? '', after = cells[7]!;
       if (action !== 'keep' && action !== 'bind' && action !== 'remove') { fail('配音操作必须为 keep、bind 或 remove'); continue; }
-      if (cells[6] !== (entry.spokenText ?? '')) fail('待录台词已变化，请重新导出配音清单');
+      if (cells[6] !== inlinePlainText(entry.spokenText ?? '')) fail('待录台词已变化，请重新导出配音清单');
       if (action === 'keep' && after !== before) fail('素材键改变时需明确选择 bind 或 remove');
       if (action === 'remove' && after !== '') fail('解除配音请清空 voice 并选择 remove');
       if (action === 'bind') {
@@ -138,7 +139,7 @@ export async function previewTextCatalogImport(snapshot: ProjectSnapshot, hasher
     const after = cells[6]!, before = entry.translations[locale]?.value ?? '';
     // Empty means untranslated, not silent deletion of an existing translation.
     if (!after && before) fail('不能用空单元格删除已有译稿，请保留或填写返修译文');
-    const problem = after ? translationIssue(entry.source.text, after) : undefined;
+    const problem = after ? translationIssue(entry.source.text, after, isStoryTextSource(entry.source) ? entry.source.kind : 'plain') : undefined;
     if (problem) fail(problem);
     rows.push({ line: row.line, key, source: entry.source.text, before, after,
       changed: after !== before || (Boolean(after) && entry.translations[locale]?.sourceVersion !== entry.source.version) });

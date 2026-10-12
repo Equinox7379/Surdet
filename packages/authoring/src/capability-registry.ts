@@ -7,6 +7,7 @@ import type {
 } from './capability-contract.js';
 import { AGENT_IMAGE_MAX_FILES, AGENT_MEDIA_EXTENSIONS } from './agent-image-import.js';
 import { REPLACEABLE_SCENE_INSTRUCTIONS } from './contracts.js';
+import { TIMELINE_TRANSITION_ACTIONS } from '@surdet/core';
 
 const JSON_SCHEMA_DRAFT = 'https://json-schema.org/draft/2020-12/schema' as const;
 
@@ -246,6 +247,12 @@ const scenePatchSchema: JsonSchema = {
       blocks: arrayOf(sceneBlockSchema),
     }, ['kind', 'anchor', 'expectedFingerprint', 'blocks']),
     strictObject({
+      kind: { const: 'insertBefore' },
+      anchor: stringSchema,
+      expectedFingerprint: stringSchema,
+      blocks: arrayOf(sceneBlockSchema),
+    }, ['kind', 'anchor', 'expectedFingerprint', 'blocks']),
+    strictObject({
       kind: { const: 'replaceChoiceOption' },
       target: stringSchema,
       expectedFingerprint: stringSchema,
@@ -293,7 +300,10 @@ const timelineCueSchema = strictObject({
   atMs: { type: 'integer', minimum: 0 },
   durationMs: { type: 'integer', minimum: 0 },
   easing: { enum: ['linear', 'inOutSine', 'outCubic', 'inOutCubic'] },
-  action: { enum: ['pose', 'set', 'show', 'hide', 'move', 'expression', 'zoom', 'pan', 'shake', 'fade', 'tint', 'flash', 'wipe', 'start', 'stop', 'bgm', 'se', 'voice'] },
+  action: { enum: ['pose', 'set', 'show', 'hide', 'move', 'expression', 'zoom', 'pan', 'shake', 'fade', 'tint', 'flash', 'wipe', ...TIMELINE_TRANSITION_ACTIONS, 'start', 'stop', 'bgm', 'se', 'voice'] },
+  rule: { type: 'string', minLength: 1, description: 'screen rule cue only: exact prepared rule asset key' },
+  soft: { type: 'number', minimum: 0, maximum: 1, default: 0.15 },
+  reverse: { type: 'boolean', default: false },
   key: { type: 'string', description: 'background or audio cue: copy the matching project.assets usage.timeline; audio keys are channel-specific' },
   expression: { type: 'string', description: 'portrait cue only: copy project.assets.portraits[].expression for the selected timelineTarget' },
   position: stringSchema,
@@ -383,7 +393,7 @@ const diffEntrySchema = strictObject({
 }, ['kind', 'operationId', 'directChange', 'potentialImpact', 'observedImpact']);
 
 const assetEntrySchema = strictObject({
-  kind: { enum: ['background', 'portrait', 'avatar'] },
+  kind: { enum: ['background', 'portrait', 'avatar', 'rule'] },
   key: stringSchema,
   timelineTarget: { type: 'string', description: 'canonical portrait track.target; copy this value instead of constructing it' },
   role: stringSchema,
@@ -403,7 +413,7 @@ const assetEntrySchema = strictObject({
 }, ['kind', 'key', 'sourcePath', 'format', 'resolved']);
 
 const projectAssetKindSchema = {
-  enum: ['background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license', 'other'],
+  enum: ['background', 'portrait', 'avatar', 'rule', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license', 'other'],
 };
 const projectAssetIssueCodeSchema = {
   enum: ['ASSET_REFERENCE_MISSING', 'ASSET_KEY_DUPLICATE', 'ASSET_NAME_INVALID', 'ASSET_FORMAT_UNSUPPORTED', 'ASSET_UNUSED'],
@@ -447,6 +457,7 @@ const projectAssetByKindSchema = strictObject({
   background: projectAssetKindSummarySchema,
   portrait: projectAssetKindSummarySchema,
   avatar: projectAssetKindSummarySchema,
+  rule: projectAssetKindSummarySchema,
   music: projectAssetKindSummarySchema,
   ambience: projectAssetKindSummarySchema,
   'sound-effect': projectAssetKindSummarySchema,
@@ -455,7 +466,7 @@ const projectAssetByKindSchema = strictObject({
   font: projectAssetKindSummarySchema,
   license: projectAssetKindSummarySchema,
   other: projectAssetKindSummarySchema,
-}, ['background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license', 'other']);
+}, ['background', 'portrait', 'avatar', 'rule', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license', 'other']);
 const projectAssetSummarySchema = strictObject({
   fileCount: integerSchema,
   measuredFileCount: integerSchema,
@@ -483,8 +494,9 @@ const assetCatalogSchema = strictObject({
   backgrounds: arrayOf(assetEntrySchema),
   portraits: arrayOf(assetEntrySchema),
   avatars: arrayOf(assetEntrySchema),
+  rules: arrayOf(assetEntrySchema),
   intelligence: projectAssetIntelligenceSchema,
-}, ['backgrounds', 'portraits', 'avatars', 'intelligence']);
+}, ['backgrounds', 'portraits', 'avatars', 'rules', 'intelligence']);
 
 const emptyAssetIntelligenceExample = {
   items: [],
@@ -499,7 +511,7 @@ const emptyAssetIntelligenceExample = {
     unsupportedCount: 0,
     invalidNameCount: 0,
     byKind: Object.fromEntries([
-      'background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license', 'other',
+      'background', 'portrait', 'avatar', 'rule', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license', 'other',
     ].map((kind) => [kind, { files: 0, measuredFiles: 0 }])),
   },
   issues: [],
@@ -535,6 +547,10 @@ const uiInspectionSchema = strictObject({
 }, ['value', 'defaultPages', 'nodes', 'fingerprint']);
 
 const projectInspectionSchema = strictObject({
+  plugins: arrayOf(strictObject({ id: stringSchema, entry: stringSchema, apiVersion: { const: 1 }, stateVersion: integerSchema,
+    instructions: arrayOf(strictObject({ name: stringSchema, blocking: booleanSchema,
+      parameters: arrayOf(strictObject({ name: stringSchema, type: { enum: ['string', 'number', 'boolean'] }, optional: booleanSchema }, ['name', 'type'])),
+      modifiers: arrayOf(strictObject({ name: stringSchema, type: { enum: ['string', 'number', 'boolean'] }, optional: booleanSchema }, ['name', 'type'])) }, ['name', 'blocking', 'parameters'])) }, ['id', 'entry', 'apiVersion', 'instructions'])),
   playerConfig: playerConfigSchema,
   themeConfig: themeConfigSchema,
   stageConfig: strictObject({ value: { oneOf: [jsonObjectSchema, nullSchema] }, effective: { oneOf: [jsonObjectSchema, nullSchema] }, fingerprint: stringSchema }, ['value', 'effective', 'fingerprint']),
@@ -618,7 +634,7 @@ const simulationPathSchema = strictObject({
   choices: arrayOf(integerSchema),
   finalVariables: jsonValueSchema,
   status: { enum: ['passed', 'failed', 'incomplete'] },
-  termination: { enum: ['ended', 'error', 'pruned', 'budget-exhausted'] },
+  termination: { enum: ['ended', 'error', 'pruned', 'budget-exhausted', 'requires-extension'] },
   prunedReason: { enum: ['state-signature', 'path-budget', 'step-budget'] },
   error: stringSchema,
 }, ['choices', 'finalVariables', 'status', 'termination']);
@@ -634,7 +650,7 @@ const storyCoverageSchema = strictObject({
     ['location', 'optionIndex', 'label', 'available', 'selected', 'conditionFalse', 'budgetStops', 'status'])),
   conditions: arrayOf(strictObject({ location: storyLocationSchema, expression: stringSchema, optionIndex: integerSchema,
     trueCount: integerSchema, falseCount: integerSchema }, ['location', 'expression', 'trueCount', 'falseCount'])),
-  stops: arrayOf(strictObject({ kind: { enum: ['runtime-error', 'path-budget', 'step-budget'] },
+  stops: arrayOf(strictObject({ kind: { enum: ['runtime-error', 'path-budget', 'step-budget', 'requires-extension'] },
     location: { oneOf: [storyLocationSchema, nullSchema] }, message: stringSchema }, ['kind', 'location', 'message'])),
   hostInstructions: arrayOf(storyLocationSchema),
 }, ['scenes', 'branches', 'conditions', 'stops', 'hostInstructions']);
@@ -1218,18 +1234,21 @@ const definitions = {
       ids: { type: 'array', items: stringSchema, minItems: 1, uniqueItems: true, description: 'Select exact native capability IDs. Omit to include all; unknown IDs are rejected.' },
       detail: { enum: ['summary', 'full'], description: 'Defaults to full. Summary omits schemas, examples and repair details. Definitions do not grant permission; session.describe reports actual availability.' },
     }),
-    outputSchema: strictObject({ contractVersion: stringSchema, capabilities: arrayOf({ oneOf: [capabilitySummarySchema, capabilityBriefSchema] }) }, ['contractVersion', 'capabilities']),
-    example: { input: {}, expectedResultShape: { contractVersion: '1.0.0', capabilities: [] } },
+    outputSchema: strictObject({ contractVersion: stringSchema, capabilities: arrayOf({ oneOf: [capabilitySummarySchema, capabilityBriefSchema] }),
+      inlineText: strictObject({ tags: arrayOf(strictObject({ name: stringSchema, paired: booleanSchema, value: { type: ['string', 'null'] }, label: stringSchema, example: stringSchema }, ['name', 'paired', 'value', 'label', 'example'])),
+        ruby: { const: 'explicit-only' }, escape: stringSchema }, ['tags', 'ruby', 'escape']),
+    }, ['contractVersion', 'capabilities', 'inlineText']),
+    example: { input: {}, expectedResultShape: { contractVersion: '2.38.0', capabilities: [], inlineText: { tags: [], ruby: 'explicit-only', escape: '\\< for literal <; \\\\ for literal \\' } } },
   },
   inspect: {
     inputSchema: readViewInputSchema,
     outputSchema: projectInspectionSchema,
-    example: { input: {}, expectedResultShape: { rootIdentity: '...', revision: '...', scenes: [], variables: [], characters: [], assets: { backgrounds: [], portraits: [], avatars: [], intelligence: emptyAssetIntelligenceExample }, objectCount: 0, referenceCount: 0 } },
+    example: { input: {}, expectedResultShape: { rootIdentity: '...', revision: '...', scenes: [], variables: [], characters: [], assets: { backgrounds: [], portraits: [], avatars: [], rules: [], intelligence: emptyAssetIntelligenceExample }, objectCount: 0, referenceCount: 0 } },
   },
   assets: {
     inputSchema: readViewInputSchema,
     outputSchema: assetCatalogSchema,
-    example: { input: {}, expectedResultShape: { backgrounds: [], portraits: [], avatars: [], intelligence: emptyAssetIntelligenceExample } },
+    example: { input: {}, expectedResultShape: { backgrounds: [], portraits: [], avatars: [], rules: [], intelligence: emptyAssetIntelligenceExample } },
   },
   assetSources: {
     inputSchema: strictObject({ sourceId: stringSchema, path: { type: 'string', description: 'Relative path returned here. Omit sourceId to discover startup-authorized roots; inspect a directory to list entries, then inspect a file for its SHA-256.' } }),
@@ -1237,7 +1256,7 @@ const definitions = {
     example: { input: {}, expectedResultShape: { roots: [], supportedFormats: [...AGENT_MEDIA_EXTENSIONS], limits: {}, validation: 'container-header-or-utf8-text' } },
   },
   assetImportStage: {
-    inputSchema: strictObject({ operationId: importUuidSchema, items: { type: 'array', minItems: 1, maxItems: AGENT_IMAGE_MAX_FILES, items: strictObject({ itemId: importUuidSchema, sourceId: stringSchema, sourcePath: stringSchema, sha256: importShaSchema, kind: { enum: ['background', 'portrait', 'avatar', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license'] }, fileName: { type: 'string', description: 'Single filename, never a project path. Portrait: rin_uniform_smile.png (role_outfit_expression). Images PNG/JPEG/WebP; audio WAV/OGG/MP3; video MP4/WebM; fonts TTF/OTF/WOFF2. License: UTF-8 TXT/MD or extensionless LICENSE/LICENCE/COPYING/NOTICE/OFL (optional - or _ suffix), at most 1 MiB. Include the supplied license alongside its font in the same batch, using a distinct filename when needed. Copy SHA-256 from asset.sources and preserve the real extension. No decoding or legal certification.' } }, ['itemId', 'sourceId', 'sourcePath', 'sha256', 'kind', 'fileName']) } }, ['operationId', 'items']),
+    inputSchema: strictObject({ operationId: importUuidSchema, items: { type: 'array', minItems: 1, maxItems: AGENT_IMAGE_MAX_FILES, items: strictObject({ itemId: importUuidSchema, sourceId: stringSchema, sourcePath: stringSchema, sha256: importShaSchema, kind: { enum: ['background', 'portrait', 'avatar', 'rule', 'music', 'ambience', 'sound-effect', 'voice', 'video', 'font', 'license'] }, fileName: { type: 'string', description: 'Single filename, never a project path. Portrait: rin_uniform_smile.png (role_outfit_expression). Images PNG/JPEG/WebP; audio WAV/OGG/MP3; video MP4/WebM; fonts TTF/OTF/WOFF2. License: UTF-8 TXT/MD or extensionless LICENSE/LICENCE/COPYING/NOTICE/OFL (optional - or _ suffix), at most 1 MiB. Include the supplied license alongside its font in the same batch, using a distinct filename when needed. Copy SHA-256 from asset.sources and preserve the real extension. No decoding or legal certification.' } }, ['itemId', 'sourceId', 'sourcePath', 'sha256', 'kind', 'fileName']) } }, ['operationId', 'items']),
     outputSchema: importDetailSchema,
     example: { input: { operationId: '22222222-2222-4222-8222-222222222222', items: [{ itemId: '33333333-3333-4333-8333-333333333333', sourceId: 'source_from_asset_sources', sourcePath: 'night.png', sha256: 'a'.repeat(64), kind: 'background', fileName: 'night.png' }] }, expectedResultShape: importDetailExample },
   },
@@ -1408,6 +1427,24 @@ const definitions = {
     outputSchema: simulationOutputSchema,
     example: { input: {}, expectedResultShape: { view: 'project', status: 'passed', report: { status: 'passed' } } },
   },
+  previewPath: {
+    inputSchema: strictObject({ view: { enum: ['project', 'working'] }, sceneId: stringSchema, line: { type: 'integer', minimum: 1 },
+      mode: { enum: ['search', 'path', 'test'] }, choices: runtimeChoicesSchema, variables: { type: 'object', additionalProperties: jsonValueSchema },
+      targetVisit: { type: 'integer', minimum: 1, maximum: 1000 }, seed: seedSchema,
+      maxPaths: { type: 'integer', minimum: 1, maximum: 2000 }, maxStepsPerPath: { type: 'integer', minimum: 1, maximum: 100000 },
+    }, ['sceneId', 'line']),
+    outputSchema: strictObject({ view: { enum: ['project', 'working'] }, status: { enum: ['reached', 'unreachable', 'budget-exhausted', 'path-mismatch', 'host-boundary', 'runtime-error', 'requires-extension'] },
+      mode: { enum: ['search', 'path', 'test'] }, entryScene: stringSchema, entryLabel: stringSchema, seed: seedSchema,
+      initialVariables: { type: 'object', additionalProperties: jsonValueSchema }, finalVariables: { type: 'object', additionalProperties: jsonValueSchema },
+      target: strictObject({ sceneId: stringSchema, requestedLine: integerSchema, line: integerSchema, index: integerSchema,
+        kind: { enum: ['instruction', 'label-entry', 'choice-group', 'scene-entry'] } }, ['sceneId', 'requestedLine', 'line', 'index', 'kind']),
+      choices: runtimeChoicesSchema, targetVisit: integerSchema, position: { oneOf: [jsonObjectSchema, nullSchema] }, pathsExplored: integerSchema, steps: integerSchema,
+      partialStage: booleanSchema, message: stringSchema, runtimeErrors: arrayOf(strictObject({ scene: { type: ['string', 'null'] }, message: stringSchema }, ['scene', 'message'])), coverage: storyCoverageSchema,
+    }, ['view', 'status', 'mode', 'entryScene', 'seed', 'initialVariables', 'finalVariables', 'target', 'choices', 'targetVisit', 'position', 'pathsExplored', 'steps', 'partialStage', 'message', 'runtimeErrors', 'coverage']),
+    example: { input: { sceneId: 'intro', line: 1 }, expectedResultShape: { view: 'project', status: 'unreachable', mode: 'search', entryScene: 'intro', seed: 1592639710,
+      initialVariables: {}, finalVariables: {}, target: { sceneId: 'intro', requestedLine: 1, line: 1, index: 0, kind: 'instruction' }, choices: [], targetVisit: 1,
+      position: null, pathsExplored: 1, steps: 0, partialStage: false, message: '目标未到达', runtimeErrors: [], coverage: { scenes: [], branches: [], conditions: [], stops: [], hostInstructions: [] } } },
+  },
   runFrom: {
     inputSchema: strictObject({
       sceneId: { type: 'string', description: 'exact scene id to run' },
@@ -1555,6 +1592,7 @@ export const AUTHORING_CAPABILITY_IDS = [
   'project.ui.patch',
   'project.validate',
   'project.simulate',
+  'project.preview-path',
   'runtime.run-from',
   'runtime.read-trace',
   'runtime.read-preview',
@@ -1666,6 +1704,7 @@ const metadata: Record<AuthoringCapabilityId, DefinitionMetadata> = {
   'project.entry-scene.set': { title: 'Set entry scene', purpose: 'Set the project entry scene with an entry-field fingerprint.', minimumPolicy: 'stage', sideEffects: ['change-store-write'], idempotency: 'operation-id', composable: true, preconditions: ['active change is OPEN', 'target scene exists', 'entry fingerprint is current'], possibleErrors: [...commonErrors, 'OBJECT_REF_STALE', 'VALIDATION_FAILED', 'OPERATION_ID_CONFLICT'], repairRecipes: mutateRepair },
   'project.validate': { title: 'Validate project', purpose: 'Run shared validation and write fresh validation evidence.', minimumPolicy: 'observe', sideEffects: ['project-read', 'evidence-write'], idempotency: 'idempotent', composable: false, preconditions: ['project snapshot is readable'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID', 'CHANGE_NOT_FOUND'], repairRecipes: ['inspect the project or change before retrying validation'] },
   'project.simulate': { title: 'Simulate project', purpose: 'Run the shared deterministic simulation and write evidence. A passed status alone does not certify story completion: compare endings with all expected @clear IDs and inspect deadEndScenes for missing transitions or clears; player.endScenes only controls returning to title.', minimumPolicy: 'observe', sideEffects: ['project-read', 'evidence-write'], idempotency: 'idempotent', composable: false, preconditions: ['project snapshot is readable'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID', 'SIMULATION_INCOMPLETE', 'RUNTIME_FAILED'], repairRecipes: ['inspect validation and simulation evidence before retrying'] },
+  'project.preview-path': { title: 'Find preview target path', purpose: 'Read the selected project or working snapshot and execute the real Core debugger to a source line. Search, explicit path and isolated test inputs never certify whole-project simulation or invent state past a host boundary.', minimumPolicy: 'observe', sideEffects: ['project-read'], idempotency: 'pure-read', composable: false, preconditions: ['project snapshot is readable', 'target source line has a real Core instruction'], possibleErrors: ['PROJECT_NOT_FOUND', 'PROJECT_INVALID', 'OBJECT_NOT_FOUND', 'INVALID_REQUEST', 'CHANGE_NOT_FOUND', 'PROJECT_IDENTITY_MISMATCH'], repairRecipes: ['Use sceneId and a one-based executable line from the current read view; comments and blanks are rejected.', 'Only test mode accepts temporary variables. Inspect actual coverage conditions, budget exhaustion, and host-boundary status before retrying.'] },
   'runtime.run-from': { title: 'Run from scene', purpose: 'Run one explicit deterministic runtime path and persist its trace.', minimumPolicy: 'stage', sideEffects: ['runtime-process', 'evidence-write'], idempotency: 'non-idempotent', composable: false, preconditions: ['active change is OPEN', 'scene and choices are explicit'], possibleErrors: ['RUNTIME_FAILED', 'RUNTIME_TIMED_OUT', 'PROJECT_INVALID'], repairRecipes: ['label is an optional in-scene @label name; omit label to run from the scene beginning', 'inspect the scene, validate, and retry with explicit choices'] },
   'runtime.read-trace': { title: 'Read runtime trace', purpose: 'Read a persisted runtime trace with an optional stable query.', minimumPolicy: 'observe', sideEffects: ['change-store-read'], idempotency: 'pure-read', composable: false, preconditions: ['traceId must identify a stored trace'], possibleErrors: ['PROJECT_NOT_FOUND', 'CHANGE_NOT_FOUND'], repairRecipes: readRepair },
   'runtime.read-preview': { title: 'Read actual Editor preview', purpose: 'Read actual bound-Editor preview events, presentation snapshots and source object refs for its selected saved project or isolated working change. Use the Editor 试玩内容 selector to play a working change before committing. Separate from Core explicit-path evidence and screenshots; never certifies pixels or approves/commits a change.', minimumPolicy: 'observe', sideEffects: ['project-read', 'change-store-read'], idempotency: 'pure-read', composable: false,
@@ -1744,6 +1783,7 @@ const schemaKeys = {
   'project.entry-scene.set': 'entrySceneSet',
   'project.validate': 'validate',
   'project.simulate': 'simulate',
+  'project.preview-path': 'previewPath',
   'runtime.run-from': 'runFrom',
   'runtime.read-trace': 'readTrace',
   'runtime.read-preview': 'readPreview',

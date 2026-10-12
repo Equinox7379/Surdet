@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { Container, Sprite, Texture, TextureSource } from 'pixi.js';
+import { ColorMatrixFilter, Container, Sprite, Texture, TextureSource } from 'pixi.js';
 import { isJsonSafeValue } from '@surdet/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
@@ -13,6 +13,35 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it('uses registered plugin effects on the real world and restores only available filters', () => {
+  vi.stubGlobal('document', { createElement: () => ({ getContext: () => null }) });
+  const runtime = makeRuntime(), filter = new ColorMatrixFilter(), destroy = vi.spyOn(filter, 'destroy');
+  const remove = runtime.layer.registerFilter('night_filter', filter);
+  runtime.layer.setFilterActive('night_filter', true);
+  expect(runtime.layer.worldContainer.filters).toContain(filter);
+  const saved = runtime.layer.snapshotPresentation(); expect(saved.pluginFilters).toEqual(['night_filter']);
+  runtime.layer.setFilterActive('night_filter', false); runtime.layer.restorePresentation(saved);
+  expect(runtime.layer.worldContainer.filters).toContain(filter);
+  const before = runtime.layer.snapshotPresentation();
+  expect(() => runtime.layer.restorePresentation({ ...saved, pluginFilters: ['missing'] })).toThrow(/PLUGIN_FILTER_MISSING/);
+  expect(runtime.layer.snapshotPresentation()).toEqual(before);
+  const duplicate = new ColorMatrixFilter(); expect(() => runtime.layer.registerFilter('night_filter', duplicate)).toThrow(/重复/); duplicate.destroy();
+  remove(); remove(); expect(destroy).toHaveBeenCalledOnce(); expect(runtime.layer.worldContainer.filters).toBeNull();
+  expect(() => runtime.layer.restorePresentation(saved)).toThrow(/PLUGIN_FILTER_MISSING/);
+  disposeRuntime(runtime); expect(destroy).toHaveBeenCalledOnce();
+});
+
+it('shares built-in transition ownership with plugins, cancels on restore and unregisters once', () => {
+  const runtime = makeRuntime(), start = vi.fn(), cancel = vi.fn(), update = vi.fn(() => false);
+  const remove = runtime.layer.registerTransition({ name: 'plugin-wipe', start, cancel, update });
+  expect(() => runtime.layer.registerTransition({ name: 'fade', start, cancel, update })).toThrow(/重复/);
+  const saved = runtime.layer.snapshotPresentation(); runtime.layer.transition('plugin-wipe', 40); runtime.layer.update(10);
+  expect(start).toHaveBeenCalledWith(40); expect(update).toHaveBeenCalledWith(10);
+  runtime.layer.restorePresentation(saved); expect(cancel).toHaveBeenCalledOnce();
+  remove(); remove(); expect(runtime.layer.transition('plugin-wipe', 40)).toBe(false);
+  disposeRuntime(runtime);
+});
+
 interface WorldRuntime {
   readonly root: Container;
   readonly layer: WorldLayer;
@@ -21,7 +50,7 @@ interface WorldRuntime {
   readonly requests: { count: number };
 }
 
-function makeRuntime(stageGeometry?: ReturnType<typeof createStageGeometryPolicy>): WorldRuntime {
+function makeRuntime(stageGeometry?: ReturnType<typeof createStageGeometryPolicy>, captureWorld?: () => Texture): WorldRuntime {
   const root = new Container();
   const lifecycle = new RenderLifecycle();
   const assets = new RenderAssetRegistry({ lifecycle });
@@ -34,6 +63,7 @@ function makeRuntime(stageGeometry?: ReturnType<typeof createStageGeometryPolicy
     stageGeometry,
     requestFrame: () => { requests.count += 1; },
     captureThumbnail: () => 'thumbnail',
+    captureWorld,
   });
   root.addChild(
     layer.worldContainer,
@@ -45,6 +75,27 @@ function makeRuntime(stageGeometry?: ReturnType<typeof createStageGeometryPolicy
   );
   return { root, layer, lifecycle, assets, requests };
 }
+
+it('post-process keeps neutral RGB unchanged and composes saturation, brightness and contrast', () => {
+  vi.stubGlobal('document', { createElement: () => ({ getContext: () => null }) });
+  const runtime = makeRuntime();
+  const apply = (rgb: number[]): number[] => {
+    const matrix = (runtime.layer.worldContainer.filters![0] as ColorMatrixFilter).matrix;
+    return [0, 1, 2].map(row => matrix[row * 5]! * rgb[0]! + matrix[row * 5 + 1]! * rgb[1]! + matrix[row * 5 + 2]! * rgb[2]! + matrix[row * 5 + 4]!);
+  };
+  try {
+    const rgb = [.7, .2, .1];
+    runtime.layer.setPostProcess({ enabled: true, saturation: 1, brightness: 1, contrast: 1 });
+    expect(apply(rgb)).toEqual(rgb);
+    runtime.layer.setPostProcess({ saturation: 0 }); const gray = apply(rgb);
+    expect(gray[0]).toBeCloseTo(gray[1]!); expect(gray[1]).toBeCloseTo(gray[2]!);
+    runtime.layer.setPostProcess({ brightness: .5 }); const dim = apply(rgb);
+    dim.forEach((channel, i) => expect(channel).toBeCloseTo(gray[i]! * .5));
+    runtime.layer.setPostProcess({ brightness: 1, saturation: 1, contrast: 0 });
+    apply(rgb).forEach(channel => expect(channel).toBeCloseTo(.5));
+    runtime.layer.setPostProcess({ enabled: false }); expect(runtime.layer.worldContainer.filters).toBeNull();
+  } finally { runtime.layer.dispose(); runtime.assets.dispose(); runtime.lifecycle.dispose(); runtime.root.destroy({ children: true }); }
+});
 
 async function registerWorldAssets(assets: RenderAssetRegistry): Promise<void> {
   await assets.registerBackground('hall', Texture.EMPTY);
@@ -59,6 +110,111 @@ function disposeRuntime(runtime: WorldRuntime): void {
   runtime.assets.dispose();
   runtime.lifecycle.dispose();
 }
+
+it('captures before the first background/portrait change and restores an in-flight dissolve as finished', async () => {
+  const captured: { background: string | null; portraits: number }[] = [], textures: Texture[] = [];
+  const runtime = makeRuntime(undefined, () => {
+    captured.push({ background: runtime.layer.backgroundKey, portraits: runtime.layer.snapshotPresentation().portraits.length });
+    const texture = new Texture({ source: new TextureSource({ width: 1280, height: 720 }) }); textures.push(texture); return texture;
+  });
+  try {
+    await registerWorldAssets(runtime.assets);
+    runtime.layer.setBackground('hall'); runtime.layer.setPortrait('lynn', { charId: 'lynn', costume: 'armor', expression: 'normal', pos: 'left' });
+    runtime.layer.markStageBoundary(); captured.length = 0;
+    runtime.layer.setBackground('night'); runtime.layer.removePortrait('lynn');
+    expect(captured).toEqual([{ background: 'hall', portraits: 1 }]);
+    runtime.layer.transition('dissolve', 1000); runtime.layer.update(500);
+    expect(runtime.layer.screenContainer.children.at(-1)).toMatchObject({ alpha: .5 });
+    const saved = runtime.layer.snapshotPresentation();
+    expect(saved).toMatchObject({ backgroundKey: 'night', portraits: [] });
+    runtime.layer.restorePresentation(saved);
+    expect(textures.at(-1)!.destroyed).toBe(true);
+    expect(runtime.layer.screenContainer.children).toHaveLength(1); // only the tint layer
+    expect(runtime.layer.needsUpdate).toBe(false);
+    runtime.layer.transition('dissolve', 1000); expect(runtime.layer.needsUpdate).toBe(false);
+  } finally { disposeRuntime(runtime); }
+});
+
+it('stage clear keeps its old frame and reduced motion ends a dissolve immediately', async () => {
+  const runtime = makeRuntime(createStageGeometryPolicy(), () => new Texture({ source: new TextureSource({ width: 1280, height: 720 }) }));
+  try {
+    await registerWorldAssets(runtime.assets); runtime.layer.setBackground('hall'); runtime.layer.markStageBoundary();
+    runtime.layer.applyStage({ type: 'clear' }); runtime.layer.transition('dissolve', 1000);
+    expect(runtime.layer.screenContainer.children).toHaveLength(2);
+    runtime.layer.setPresentationPreferences({ reducedMotion: true });
+    expect(runtime.layer.screenContainer.children).toHaveLength(1); expect(runtime.layer.needsUpdate).toBe(false);
+    runtime.layer.markStageBoundary(); runtime.layer.setBackground('night'); runtime.layer.transition('dissolve', 1000);
+    expect(runtime.layer.screenContainer.children).toHaveLength(1); expect(runtime.layer.needsUpdate).toBe(false);
+  } finally { disposeRuntime(runtime); }
+});
+
+it('drives timeline dissolve from cue progress only, and never restarts it after restoration', async () => {
+  const textures: Texture[] = [];
+  const runtime = makeRuntime(undefined, () => {
+    const texture = new Texture({ source: new TextureSource({ width: 1280, height: 720 }) }); textures.push(texture); return texture;
+  });
+  const cue = { atMs: 100, durationMs: 1000, easing: 'outCubic' as const, action: 'dissolve' };
+  const event = { track: 'screen' as const, cue, cueId: 0, runId: 7, started: true, final: false, progress: 0, elapsedMs: 100 };
+  try {
+    await registerWorldAssets(runtime.assets); runtime.layer.setBackground('hall'); runtime.layer.markStageBoundary();
+    runtime.layer.setBackground('night');
+    const stageBeforeReveal = runtime.layer.snapshotPresentation();
+    runtime.layer.applyTimelineFrame(event);
+    expect(runtime.layer.snapshotPresentation()).toEqual(stageBeforeReveal);
+    expect(runtime.layer.screenContainer.children).toHaveLength(2);
+    runtime.layer.update(200);
+    expect(runtime.layer.screenContainer.children.at(-1)!.alpha).toBe(1);
+    runtime.layer.applyTimelineFrame({ ...event, started: false, progress: .875, elapsedMs: 600 });
+    expect(runtime.layer.screenContainer.children.at(-1)!.alpha).toBe(.125);
+    const saved = runtime.layer.snapshotPresentation();
+    runtime.layer.restorePresentation(saved);
+    runtime.layer.applyTimelineFrame({ ...event, started: false, progress: .9, elapsedMs: 650 });
+    expect(runtime.layer.screenContainer.children).toHaveLength(1);
+    expect(runtime.layer.backgroundKey).toBe('night');
+    expect(textures.at(-1)!.destroyed).toBe(true);
+  } finally { disposeRuntime(runtime); }
+});
+
+it('settles timeline transition on stop, zero duration or reduced motion without owning stage attributes', async () => {
+  const runtime = makeRuntime(undefined, () => new Texture({ source: new TextureSource({ width: 1280, height: 720 }) }));
+  const event = { track: 'screen' as const, cue: { atMs: 0, durationMs: 800, easing: 'linear' as const, action: 'dissolve' },
+    cueId: 0, runId: 7, started: true, final: false, progress: 0, elapsedMs: 0 };
+  try {
+    await registerWorldAssets(runtime.assets); runtime.layer.setBackground('hall'); runtime.layer.markStageBoundary();
+    runtime.layer.setBackground('night'); runtime.layer.applyTimelineFrame(event);
+    runtime.layer.applyStage({ type: 'finish-timeline', runId: 8 });
+    expect(runtime.layer.screenContainer.children).toHaveLength(2);
+    runtime.layer.applyStage({ type: 'finish-timeline', runId: 7 });
+    expect(runtime.layer.screenContainer.children).toHaveLength(1);
+    runtime.layer.markStageBoundary(); runtime.layer.setBackground('hall');
+    runtime.layer.applyTimelineFrame({ ...event, cue: { ...event.cue, durationMs: 0 }, progress: 1 });
+    expect(runtime.layer.screenContainer.children).toHaveLength(1);
+    runtime.layer.setPresentationPreferences({ reducedMotion: true });
+    runtime.layer.markStageBoundary(); runtime.layer.setBackground('night'); runtime.layer.applyTimelineFrame(event);
+    expect(runtime.layer.screenContainer.children).toHaveLength(1);
+    expect(runtime.layer.snapshotPresentation().backgroundKey).toBe('night');
+  } finally { disposeRuntime(runtime); }
+});
+
+it('restores sampled author filter progress, rejects malformed snapshots atomically and retains gray in low quality', async () => {
+  vi.stubGlobal('document', { createElement: () => ({ getContext: () => null }) });
+  const runtime = makeRuntime();
+  try {
+    await registerWorldAssets(runtime.assets); runtime.layer.setBackground('hall');
+    runtime.layer.setStoryFilter('grayscale', 1000); runtime.layer.update(400);
+    const saved = runtime.layer.snapshotPresentation(); expect(saved.storyFilters!.values.grayscale).toBe(.4);
+    runtime.layer.setStoryFilter('sepia', 0); const before = runtime.layer.snapshotPresentation();
+    expect(() => runtime.layer.restorePresentation({ ...saved, storyFilters: { values: { ...saved.storyFilters!.values, blur: NaN } } })).toThrow();
+    expect(runtime.layer.snapshotPresentation()).toEqual(before);
+    runtime.layer.restorePresentation(saved); runtime.layer.update(300);
+    expect(runtime.layer.snapshotPresentation().storyFilters!.values.grayscale).toBeCloseTo(.7);
+    runtime.layer.setPresentationPreferences({ reducedMotion: true }); runtime.layer.setQuality('low');
+    expect(runtime.layer.snapshotPresentation().storyFilters!.values.grayscale).toBe(1);
+    expect(runtime.layer.worldContainer.filters).toHaveLength(1); expect(runtime.layer.needsUpdate).toBe(false);
+    runtime.layer.setStoryFilter('off', 1000);
+    expect(runtime.layer.snapshotPresentation().storyFilters).toBeUndefined(); expect(runtime.layer.worldContainer.filters).toBeNull();
+  } finally { disposeRuntime(runtime); }
+});
 
 function findPortrait(root: Container): Sprite {
   const visit = (container: Container): Sprite | undefined => {
@@ -93,6 +249,39 @@ function snapshot(runtime: WorldRuntime): WorldPresentationSnapshot {
 }
 
 describe('WorldLayer direct presentation contract', () => {
+  it('reduced motion suppresses every flash frame/shake, settles fade/transition, and can be disabled again', () => {
+    const runtime = makeRuntime();
+    try {
+      runtime.layer.flash(1000); expect(runtime.layer.flashOverlay.alpha).toBe(1);
+      runtime.layer.setPresentationPreferences({ reducedMotion: true });
+      expect(runtime.layer.flashOverlay.alpha).toBe(0);
+      runtime.layer.shake(1000, 64); runtime.layer.flash(1000); runtime.layer.fade(0, 1, 1000);
+      expect(runtime.layer.fadeOverlay.alpha).toBe(1); expect(runtime.layer.isFadeActive()).toBe(false);
+      expect(runtime.layer.transition('slide-left', 1000)).toBe(true);
+      for (const ms of [0, .2, .5, 16, 50]) { runtime.layer.update(ms); expect(runtime.layer.flashOverlay.alpha).toBe(0); expect(runtime.layer.worldContainer.position.x).toBe(0); }
+      runtime.layer.setPresentationPreferences({ reducedMotion: false });
+      runtime.layer.fade(1, 0, 1000); runtime.layer.update(100); expect(runtime.layer.isFadeActive()).toBe(true);
+      expect(runtime.layer.fadeOverlay.alpha).toBeGreaterThan(0);
+    } finally { disposeRuntime(runtime); }
+  });
+  it('projects reduced timeline motion at its target without skipping the timeline or restoring intermediate pixels', () => {
+    const runtime = makeRuntime(createStageGeometryPolicy());
+    try {
+      runtime.layer.setPresentationPreferences({ reducedMotion: true });
+      const event = { runId: 1, definitionVersion: 2 as const, trackIndex: 0, cueIndex: 0, cueId: 0, track: 'camera' as const,
+        cue: { atMs: 0, durationMs: 1000, easing: 'linear' as const, action: 'pan' as const, x: 100, y: 30 }, started: true, final: false, progress: .1, elapsedMs: 100 };
+      runtime.layer.applyTimelineFrame(event); expect(snapshot(runtime).cameraPan).toEqual({ x: 100, y: 30 });
+      runtime.layer.applyTimelineFrame({ ...event, started: false, progress: .3, elapsedMs: 300 });
+      expect(snapshot(runtime).cameraPan).toEqual({ x: 100, y: 30 });
+      expect(event.progress).toBe(.1);
+      runtime.layer.setPresentationPreferences({ reducedMotion: false });
+      runtime.layer.applyTimelineFrame({ ...event, started: false, progress: .5, elapsedMs: 500 });
+      expect(snapshot(runtime).cameraPan).toEqual({ x: 100, y: 30 });
+      runtime.layer.setPresentationPreferences({ reducedMotion: true });
+      runtime.layer.applyTimelineFrame({ ...event, cueId: 1, track: 'screen', cue: { atMs: 0, durationMs: 1000, easing: 'linear', action: 'flash' } });
+      expect(runtime.layer.flashOverlay.alpha).toBe(0);
+    } finally { disposeRuntime(runtime); }
+  });
   it.each([
     { name: 'legacy frames', metadata: {} },
     { name: 'owned v1 frames', metadata: { runId: 1, definitionVersion: 1 as const, trackIndex: 0, cueIndex: 0 } },
@@ -258,7 +447,8 @@ describe('WorldLayer direct presentation contract', () => {
       expect(snapshot(runtime).tint).toEqual({ color: 0xff0000, alpha: 0.4 });
 
       runtime.layer.setPresentationPreferences({ reducedMotion: true });
-      expect(runtime.layer.getPresentationPreferences().transitionScale).toBe(0);
+      // Reduced motion overrides playback, not the stored scale needed when the preference is disabled.
+      expect(runtime.layer.getPresentationPreferences().transitionScale).toBe(1);
       runtime.layer.transition('fade', 100);
       runtime.layer.update(1);
       expect(runtime.layer.needsUpdate).toBe(false);
@@ -481,7 +671,9 @@ describe('WorldLayer direct presentation contract', () => {
   it('keeps world-only dependencies and performs two stable 50-cycle batches', async () => {
     const sourcePath = fileURLToPath(new URL('../../src/layers/world/world-layer.ts', import.meta.url));
     const source = readFileSync(sourcePath, 'utf8');
-    expect(source).not.toMatch(/from ['"][^'"]*(?:@surdet\/core|interpreter|variable-store|combat|calendar|shop|host)[^'"]*['"]/i);
+    // Shared data parsers are Core contracts, not ownership of the story runtime.
+    expect(source).not.toMatch(/from ['"][^'"]*(?:interpreter|variable-store|combat|calendar|shop|host)[^'"]*['"]/i);
+    expect(source).not.toMatch(/\b(?:Interpreter|VariableStore|EventBus|SceneRegistry)\b/);
     expect(source).not.toMatch(/from ['"][^'"]*\/layers\/(?!world)[^'"]*['"]/i);
 
     const lifecycle = new RenderLifecycle();

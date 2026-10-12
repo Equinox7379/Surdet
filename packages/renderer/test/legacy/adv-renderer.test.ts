@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EventBus, compileScene, Interpreter, SceneRegistry, VariableStore } from '@surdet/core';
+import { EventBus, compileScene, Interpreter, SceneRegistry, VariableStore, parseInlineText } from '@surdet/core';
 import type { CoreEventMap } from '@surdet/core';
 import { AdvRenderer, Typewriter, dequote, Backlog } from '../../src/index.js';
 import type { AdvStage, AudioHandle, PortraitView } from '../../src/types.js';
@@ -11,6 +11,7 @@ class FakeStage implements AdvStage {
   portraits: { key: string; view: PortraitView }[] = [];
   removed: string[] = [];
   texts: { speaker: string | null; value: string }[] = [];
+  textSources: { value: string; visibleUnits?: number }[] = [];
   choices: { index: number; label: string }[][] = [];
   hides = 0;
   fades: number[] = [];
@@ -31,9 +32,10 @@ class FakeStage implements AdvStage {
     this.calls.push(`hide:${key}`);
     this.removed.push(key);
   }
-  showText(speaker: string | null, value: string): void {
+  showText(speaker: string | null, value: string, visibleUnits?: number): void {
     this.calls.push(`text:${value}`);
-    this.texts.push({ speaker, value });
+    this.textSources.push({ value, visibleUnits });
+    this.texts.push({ speaker, value: parseInlineText(value).units.slice(0, visibleUnits).map(unit => unit.text).join('') });
   }
   showChoices(options: { index: number; label: string }[]): void {
     this.calls.push(`choice:${options.map((o) => o.label).join('/')}`);
@@ -341,9 +343,11 @@ describe('AdvRenderer', () => {
     bus.emit('text', { speaker: '凛', value: '你来了。' });
     expect(r.status).toBe('typing');
     expect(stage.texts.at(-1)).toEqual({ speaker: '凛', value: '' });
+    expect(stage.textSources.at(-1)).toEqual({ value: '你来了。', visibleUnits: 0 });
 
     r.update(10); // 1 字符：部分文本已推给舞台
     expect(stage.texts.at(-1)!.value).toBe('你');
+    expect(stage.textSources.at(-1)).toEqual({ value: '你来了。', visibleUnits: 1 });
 
     r.update(1000); // 打字完成
     expect(r.status).toBe('awaiting');
@@ -414,6 +418,8 @@ describe('AdvRenderer', () => {
     const beforeAdvance = stage.texts.length;
     expect(r.advance()).toBe(true);
     expect(stage.texts.slice(beforeAdvance)).toEqual([{ speaker: '凛', value: '' }]);
+    // One projection carries the new source with no visible units; there is no empty-source clear first.
+    expect(stage.textSources.slice(beforeAdvance)).toEqual([{ value: '下一句。', visibleUnits: 0 }]);
   });
 
   it('构造时把 onSelect 绑定到 stage（PixiStage 点击路径可用，修复真实 UI 卡死）', () => {

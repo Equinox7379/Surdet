@@ -1,4 +1,4 @@
-import { extractSpeaker } from '@surdet/core';
+import { extractSpeaker, escapeInlineText } from '@surdet/core';
 import { parseSceneLine } from './scene-document.js';
 import type { SceneBlockInput } from './contracts.js';
 
@@ -70,9 +70,10 @@ export function previewScriptImport(input: ScriptImportInput, characters: readon
     const speaker = Object.hasOwn(input.speakerMap ?? {}, sourceSpeaker) ? input.speakerMap![sourceSpeaker]! : sourceSpeaker;
     const candidates = characters.filter(character => (character.name ?? character.id) === speaker || character.id === speaker);
     // IDs are suggestions only: no silent rename of the imported display name.
-    const parsed = parseSceneLine(speaker ? `${speaker}：${value}` : value, '');
+    const encoded = escapeInlineText(value);
+    const parsed = parseSceneLine(speaker ? `${speaker}：${encoded}` : encoded, '');
     result.rows.push({ line, sourceSpeaker, speaker, value, characterIds: candidates.map(character => character.id) });
-    if (parsed.kind !== 'text' || parsed.speaker !== speaker || parsed.value !== value) {
+    if (parsed.kind !== 'text' || parsed.speaker !== speaker || parsed.value !== encoded) {
       issue(line, 'error', 'UNREPRESENTABLE_TEXT', '这行无法原样表示为台词；请修改文字或明确映射说话人，不会作为指令执行。');
     }
     if (candidates.length > 1) issue(line, 'error', 'AMBIGUOUS_SPEAKER', `说话人“${speaker}”对应多个角色，请明确改用唯一显示名或旁白。`);
@@ -128,6 +129,6 @@ export function previewScriptImport(input: ScriptImportInput, characters: readon
   }
   if (!result.rows.length) issue(1, 'error', 'EMPTY_IMPORT', '没有可导入的台词。');
   result.ready = result.rows.length > 0 && !result.issues.some(item => item.severity === 'error');
-  if (result.ready) result.blocks = result.rows.map(({ speaker, value }) => ({ kind: 'text', speaker, value }));
+  if (result.ready) result.blocks = result.rows.map(({ speaker, value }) => ({ kind: 'text', speaker, value: escapeInlineText(value) }));
   return result;
 }

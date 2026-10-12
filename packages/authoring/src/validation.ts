@@ -1,6 +1,6 @@
 import { staleTextCatalogKeys } from './text-catalog.js';
 import { validateProjectStageContent } from './stage-validation.js';
-import { resolveProjectTheme, resolveProjectTitleLogo, readProjectUi, readTextCatalog, textCatalogEntryText } from '@surdet/core';
+import { decodeStageToken, resolveProjectTheme, resolveProjectTitleLogo, readProjectUi, readTextCatalog, textCatalogEntryText } from '@surdet/core';
 import { validateThemeAssetBindings } from './theme-operations.js';
 import { validateUiAssets } from './ui-operations.js';
 import {
@@ -9,6 +9,8 @@ import {
   checkConsumedModifiers,
   collectSceneSpeakers,
   parseVariableConfig,
+  readProjectPlugins,
+  validatePluginInstructions,
   validateJumpTarget,
   validateSceneVariables,
   validateSwitchTargets,
@@ -136,6 +138,8 @@ export function validateSnapshot(
   const failedScenes = new Set(options.failedScenes ?? []);
   const configPath = snapshot.configFile?.path ?? 'game.config.json';
   const parsed = parseVariableConfig(snapshot.config, configPath, rawIssues);
+  let plugins: ReturnType<typeof readProjectPlugins> = [];
+  try { plugins = readProjectPlugins({ plugins: snapshot.config.plugins }); } catch { /* parseVariableConfig already reports the declaration error. */ }
 
   for (const physicalScene of snapshot.scenes) {
     const scene = physicalScene.compiled;
@@ -153,6 +157,7 @@ export function validateSnapshot(
     }
     validateSwitchTargets(scene, rawIssues);
     validateTransitionInstructions(scene, rawIssues);
+    validatePluginInstructions(scene, plugins, rawIssues);
     validateSceneVariables(
       scene,
       parsed.variables,
@@ -375,6 +380,7 @@ export function validateSnapshot(
     const resolvedBackgrounds = new Map(
       assetCatalog.backgrounds.filter((entry) => entry.resolved).map((entry) => [entry.key, entry]),
     );
+    const resolvedRules = new Set(assetCatalog.rules.filter(entry => entry.resolved).map(entry => entry.key));
     const resolvedPortraits = new Map(
       assetCatalog.portraits
         .filter((entry) => entry.resolved)
@@ -385,6 +391,11 @@ export function validateSnapshot(
       && (value[0] === '"' || value[0] === "'") && value.at(-1) === value[0] ? value.slice(1, -1) : value;
     for (const scene of scenes.values()) {
       for (const instruction of scene.instructions) {
+        if (instruction.op === 'instr' && unquote(instruction.args[0] ?? '') === 'rule' && instruction.name === 'transition') {
+          const rule = decodeStageToken(instruction.modifiers.get('rule') ?? '');
+          if (!resolvedRules.has(rule)) rawIssues.push({ severity: 'error', code: 'RULE_ASSET_UNRESOLVED',
+            text: `${instruction.file}:${instruction.line}: 转场遮罩 '${rule}' 未解析`, file: instruction.file, line: instruction.line, col: instruction.col });
+        }
         if (instruction.op !== 'instr' || !['bg', 'show'].includes(instruction.name)) continue;
         const key = unquote(instruction.args[0] ?? '');
         if (!key) continue;
@@ -402,6 +413,9 @@ export function validateSnapshot(
       if (definition === undefined) continue;
       definition.tracks.forEach((track) => {
         track.cues.forEach((cue) => {
+          if (track.kind === 'screen' && cue.action === 'rule' && typeof cue.rule === 'string' && !resolvedRules.has(cue.rule)) {
+            rawIssues.push({ severity: 'error', code: 'RULE_ASSET_UNRESOLVED', text: `${timeline.path}: 转场遮罩 '${cue.rule}' 未解析`, file: timeline.path, line: 1, col: 1 });
+          }
           if (track.kind === 'background' && cue.action === 'set' && typeof cue.key === 'string') {
             if (!resolvedBackgrounds.has(cue.key)) {
               rawIssues.push({

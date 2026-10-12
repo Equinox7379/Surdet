@@ -103,6 +103,7 @@ import {
 } from './panels/review-tasks.js';
 import { renderTimelineAutosaveConflictPanel } from './panels/timeline-autosave-conflicts.js';
 import { createProjectCreation, renderProjectCreation, type ProjectCreation } from './panels/project-creation.js';
+import { createGameExport, renderGameExport } from './panels/game-export.js';
 import {
   AssetImportClientError,
   createAssetImportAuthorityClient,
@@ -1157,6 +1158,7 @@ function projectBarProjection(): ProjectBarProjection {
     writeLocked: state.projectWriteLock !== null || sceneRecoveryLocked || relay.saving || sceneLifecycleActionRunning
       || state.reviewWorkspace?.authority.state === 'submitting',
     ...(relay.saving ? { writeLockLabel: '正在保存', writeLockTitle: '保存完成后可继续操作' } : {}),
+    ...(state.projectWriteLock === 'game-export' ? { writeLockLabel: '正在导出游戏', writeLockTitle: '导出完成或取消后才能保存和编辑' } : {}),
     ...(sceneRecoveryLocked ? {
       writeLockLabel: sceneAutosaveRecoveryPhase === 'running'
         ? '正在恢复上次未完成的保存'
@@ -1537,6 +1539,36 @@ function renderRecentProjects(bridge: NonNullable<Window['surdetDesktop']>): HTM
     }
   }, () => { if (section.isConnected) list.append(h('p', 'editor-welcome-recent-empty', '暂时无法读取最近项目。')); });
   return section;
+}
+
+let gameExportOpen = false;
+/** Desktop: export the saved project as a Windows game. The dialog holds the form; the main process owns files and output. */
+function openGameExport(): void {
+  const bridge = window.surdetDesktop;
+  if (!bridge || state.dirHandle === null || gameExportOpen) return;
+  const root = state.dirHandle;
+  let refresh = (): void => {};
+  const exporter = createGameExport(bridge, {
+    hasDrafts: hasDirtyProjectFiles,
+    save: async () => { await saveAll(); refreshProjectBarProjection(); },
+    busy: () => state.dirHandle !== root ? '项目已经切换，请重新打开导出。'
+      : state.projectLoading || state.projectWriteLock !== null || sceneAutosaveRecoveryPhase !== 'idle' || sceneLifecycleActionRunning
+        || assetImportActionRunning || editorWorkspaceStatus().saving || isReviewApplyRunning() || isReviewReceiptWriting()
+        ? '项目正在保存、整理素材、恢复或写回审阅结果，请完成后再导出。' : null,
+    // Writes, undo and project switching wait for the export; closing the window is refused while it holds.
+    setExporting: exporting => {
+      if (exporting) state.projectWriteLock = 'game-export';
+      else if (state.projectWriteLock === 'game-export') state.projectWriteLock = null;
+      refreshProjectBarProjection();
+    },
+  }, () => refresh());
+  const icons = state.dirAssets.flatMap(asset => asset.sourcePath?.startsWith('content/assets/') && /\.(png|ico)$/i.test(asset.sourcePath) ? [asset.sourcePath] : []).sort();
+  const view = renderGameExport(exporter, icons, () => { gameExportOpen = false; });
+  refresh = view.refresh;
+  gameExportOpen = true;
+  document.body.append(view.dialog);
+  view.dialog.showModal();
+  void exporter.start();
 }
 
 async function openProjectSafely(): Promise<void> {
@@ -2038,6 +2070,8 @@ function renderAll(): void {
     onLoadDemo: loadDemoProjectSafely,
     onExportCurrent: exportCurrent,
     onSearch: searchProject,
+    // The browser Editor and the preview page have no Windows export.
+    ...(window.surdetDesktop && state.dirHandle !== null ? { onExportGame: openGameExport } : {}),
   });
   appEl.appendChild(header);
 

@@ -24,6 +24,7 @@ import {
   type SystemMenuItemView,
   type TitleView,
 } from '../../ui-views.js';
+import { GAME_SETTING_DEFINITIONS } from '@surdet/core';
 import type { SettingsRowView } from '../../settings-store.js';
 import { DEFAULT_RENDERER_THEME, type RendererTheme } from '../../theme.js';
 import { drawPlayerFrame } from '../../ui-decoration.js';
@@ -558,11 +559,12 @@ export class MenuLayer implements MenuProjectionPort {
     this.#settingsHandlers = { onChange, onClose };
     const layer = this.#settingsLayer;
     const closeSettings = (): void => { const handler = this.#settingsHandlers?.onClose; this.hideSettings(); handler?.(); };
-    const groups = [
-      { label: '阅读', rows: this.#settingsRows.filter((row) => /^(textSpeedCps|autoBaseDelayMs|autoPerCharMs|skipStrategy)$/.test(row.id)) },
-      { label: '声音', rows: this.#settingsRows.filter((row) => /Volume$/.test(row.id)) },
-      { label: '显示与输入', rows: this.#settingsRows.filter((row) => !/^(textSpeedCps|autoBaseDelayMs|autoPerCharMs|skipStrategy)$|Volume$/.test(row.id)) },
-    ].filter((group) => group.rows.length > 0);
+    // Tabs follow the page each setting has in Core's table; rows the table does not know go last.
+    const pageOf = (id: string): string => Object.hasOwn(GAME_SETTING_DEFINITIONS, id)
+      ? GAME_SETTING_DEFINITIONS[id as keyof typeof GAME_SETTING_DEFINITIONS].page : '显示与输入';
+    const groups = ['阅读', '声音', '显示与输入']
+      .map((label) => ({ label, rows: this.#settingsRows.filter((row) => pageOf(row.id) === label) }))
+      .filter((group) => group.rows.length > 0);
     const group = groups.find((item) => item.label === this.#settingsGroup) ?? groups[0];
     this.#settingsGroup = group?.label ?? '阅读';
     const pageSize = 6;
@@ -643,6 +645,11 @@ export class MenuLayer implements MenuProjectionPort {
       }), { fill: 'text', fontSize: 'uiSize' })).position.set(px + 32, y + 16);
       const controls = new Container();
       controls.position.set(px + pw - 300, y + 9);
+      if (row.checked !== undefined) {
+        controls.addChild(this.#settingSwitch(row));
+        layer.addChild(controls);
+        return;
+      }
       const value = bindThemeTextProjection(new PText({
         text: row.display,
         style: { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
@@ -1101,6 +1108,32 @@ export class MenuLayer implements MenuProjectionPort {
     this.#surfacePaints.set(graphic, paint);
     paint();
     return graphic;
+  }
+
+  /** An on/off row: a switch track with its state written beside it; any activation flips it. */
+  #settingSwitch(row: SettingsRowView): Container {
+    const checked = row.checked === true;
+    const holder = new Container();
+    const track = bindThemeGraphicsProjection(new Graphics(), [checked ? 'accent' : 'surface', checked ? 'accent' : 'line', 'text']);
+    const paint = (): void => {
+      track.clear();
+      track.roundRect(96, 2, 68, 36, 18).fill({ color: this.#theme.colors[checked ? 'accent' : 'surface'], alpha: checked ? 1 : 0.9 })
+        .stroke({ width: 1.5, color: this.#theme.colors[checked ? 'accent' : 'line'] });
+      track.circle(checked ? 146 : 114, 20, 13).fill({ color: this.#theme.colors.text });
+    };
+    this.#surfacePaints.set(track, paint);
+    paint();
+    const state = bindThemeTextProjection(new PText({
+      text: row.display,
+      style: { fontSize: this.#theme.typography.uiSize, fill: this.#theme.colors.text, fontWeight: 'bold' } satisfies TextStyleOptions,
+    }), { fill: 'text', fontSize: 'uiSize' });
+    state.position.set(180, 7);
+    holder.addChild(track, state);
+    bindPlayerControl(holder, { label: `${row.label}：${checked ? '已开启' : '已关闭'}，点按切换`, width: 168, height: 48, x: 88, y: -4,
+      adjust: (dir) => this.#settingsHandlers?.onChange(row.id, dir) });
+    holder.cursor = 'pointer';
+    holder.on('pointerdown', () => this.#settingsHandlers?.onChange(row.id, 1));
+    return holder;
   }
 
   #buttonSkin(x: number, y: number, width: number, height: number): Container {

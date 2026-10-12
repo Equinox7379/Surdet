@@ -2,6 +2,17 @@
   "version": 1,
   "capabilities": [
     {
+      "id": "preview-target-path",
+      "kind": "tooling",
+      "core": "implemented",
+      "renderer": "n/a",
+      "editor": "planned",
+      "host": "implemented",
+      "tests": ["packages/authoring/test/preview-path.test.ts", "packages/cli/test/agent-port-tools.test.ts"],
+      "docs": ["docs/preview-target-path-contract.md", "docs/AI-GUIDE.md"],
+      "limitation": "后端只读查询search/path/test三种真实Core目标路径，停在源步骤执行前；预算或宿主接管未完成不能判不可达。测试初值与舞台仅属于本次预览，Editor入口待前端交付。"
+    },
+    {
       "id": "text-catalog-authoring",
       "kind": "tooling",
       "core": "n/a",
@@ -105,7 +116,7 @@
         "README.md",
         "docs/dsl-spec.md"
       ],
-      "limitation": "文字记录为当前会话级数据，不跨存档持久化。"
+      "limitation": "完整最多200条记录随表现快照保存与恢复；默认回看显示最近120条，静态样式保留、节奏与动画不执行；不记录选项或横幅。"
     },
     {
       "id": "battle-formation",
@@ -309,6 +320,17 @@
       ]
     },
     {
+      "id": "filter",
+      "kind": "dsl",
+      "core": "implemented",
+      "renderer": "implemented",
+      "editor": "planned",
+      "host": "n/a",
+      "tests": ["packages/core/test/story-filter.test.ts", "packages/renderer/test/story-filter.test.ts", "packages/renderer/test/layers/world-layer.test.ts"],
+      "docs": ["docs/dsl-spec.md", "docs/presentation-effects-contract.md"],
+      "limitation": "四种作者世界滤镜与当前强度/剩余过渡快照已交付；Editor专用中文选择表单待Claude接入，时间轴filter cue未开放。"
+    },
+    {
       "id": "transition-registry",
       "kind": "ui",
       "core": "n/a",
@@ -325,7 +347,7 @@
         "docs/dsl-spec.md",
         "docs/AI-GUIDE.md"
       ],
-      "limitation": "当前提供内置注册表与四种安全转场；自定义插件转场不在本轮范围。"
+      "limitation": "五种内置转场含旧世界溶解dissolve；rule遮罩和时间轴转场尚未交付，自定义插件转场不在本批范围。"
     },
     {
       "id": "player-shell-coordination",

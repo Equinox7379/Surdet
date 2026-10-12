@@ -7,7 +7,7 @@ export interface RollbackRendererPort {
   readonly backlogOpen: boolean;
   /** True only when the renderer can produce a stable presentation checkpoint. */
   canCaptureRollbackCheckpoint(): boolean;
-  resetSession(options?: { preserveWorld?: boolean; clearAssets?: boolean }): void;
+  resetSession(options?: { preserveWorld?: boolean; clearAssets?: boolean; preserveReadingHistory?: boolean }): void;
   snapshotPresentation(): unknown;
   restorePresentation(snapshot: unknown): void;
 }
@@ -83,7 +83,7 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
     try {
       // Keep restoring=true across every callback that resetSession may trigger:
       // stateReset → host.reset → system-boundary cleanup must not clear history.
-      options.renderer.resetSession({ preserveWorld: false });
+      options.renderer.resetSession({ preserveWorld: false, preserveReadingHistory: true });
       options.interpreter.loadSnapshot(frame.snapshot);
       // Hook-backed snapshots are restored by Core before it replays the text.
       if (frame.snapshot.presentation === undefined) options.renderer.restorePresentation(frame.presentation);

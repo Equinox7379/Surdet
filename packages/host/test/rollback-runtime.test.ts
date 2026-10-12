@@ -129,6 +129,7 @@ describe('rollback runtime — consecutive player rollback', () => {
 
     try {
       expect(fixture.runtime.perform()).toBe(false);
+      expect(fixture.renderer.resetSession).toHaveBeenCalledWith({ preserveWorld: false, preserveReadingHistory: true });
       expect(fixture.runtime.canRollback()).toBe(true);
       expect(warning).toHaveBeenCalledWith(
         '[rollback-test] 回退失败：',

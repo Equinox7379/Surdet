@@ -1,13 +1,14 @@
-import { Lexer, parseInlineInstructions } from '@surdet/core';
+import { decodeStageToken, Lexer, parseInlineInstructions } from '@surdet/core';
 import { decodeInstructionArgument } from '@surdet/authoring';
 import { parseScript, serializeScript, splitInstr, type LineModel } from '../model.js';
 import { InstructionFieldSource } from '../instruction-field-source.js';
+import { splitInlineDialogue } from './inline-markup.js';
 import { instructionLabel } from '../script-presentation.js';
 
 export type ScriptView = 'arrange' | 'manuscript' | 'source';
 export type Position = 'left' | 'center' | 'right';
 export interface StepRange { start: number; end: number }
-export interface SourceEdit { text: string; selectedLine: number }
+export interface SourceEdit { text: string; selectedLine: number; /** Caret in the selected dialogue, when not its start. */ caret?: number }
 
 /** UI grouping, not control-flow evaluation. Source rows and shared line kinds remain authoritative. */
 export function stepAt(lines: readonly LineModel[], index: number): StepRange {
@@ -72,18 +73,23 @@ export function insertStep(text: string, index: number, inserted: readonly strin
   return finishEdit(lines, next, end + 1, eol);
 }
 
-/** Enter replaces the selected dialogue range with a new row, retaining its speaker and local EOL. */
+/**
+ * Enter replaces the selected dialogue range with a new row, retaining its speaker and local EOL.
+ * Styling open at the split point is closed and reopened; a split inside a tag or ruby is refused.
+ */
 export function splitDialogue(text: string, index: number, start: number, end: number): SourceEdit {
   const lines = parseScript(text), line = lines[index];
   if (line?.kind !== 'text' || !Number.isInteger(start) || !Number.isInteger(end)
     || start < 0 || end < start || end > line.value.length) throw new Error('台词或光标位置已变化，请重新选择');
+  const parts = splitInlineDialogue(line.value, start, end);
+  if (!parts.ok) throw new Error(parts.reason);
   const prefix = line.raw.slice(0, line.raw.length - line.value.length);
   const offset = lines.slice(0, index).reduce((size, row) => size + row.raw.length + row.eol.length, 0);
   const eol = line.eol || sourceEol(text);
-  let replacement = prefix + line.value.slice(0, start) + eol + prefix + line.value.slice(end);
+  let replacement = prefix + parts.left + eol + prefix + parts.right;
   // The shared document represents a final blank row by its own EOL, not a phantom trailing token.
-  if (prefix === '' && end === line.value.length && index === lines.length - 1 && !line.eol) replacement += eol;
-  return { text: text.slice(0, offset) + replacement + text.slice(offset + line.raw.length), selectedLine: index + 1 };
+  if (prefix === '' && end === line.value.length && parts.reopened === 0 && index === lines.length - 1 && !line.eol) replacement += eol;
+  return { text: text.slice(0, offset) + replacement + text.slice(offset + line.raw.length), selectedLine: index + 1, ...(parts.reopened ? { caret: parts.reopened } : {}) };
 }
 
 export function deleteStep(text: string, index: number): SourceEdit {
@@ -210,6 +216,30 @@ export function setInstructionPosition(raw: string, position: Position): string 
   }
   const tail = raw.match(/[ \t]*$/)?.[0] ?? '';
   return raw.slice(0, raw.length - tail.length) + ' @ ' + position + tail;
+}
+
+/** The `@name` modifiers as Core decodes them; a bare switch reads as ''. */
+export function instructionModifiers(raw: string): ReadonlyMap<string, string> {
+  const instruction = new Lexer().tokenize(raw, 'editor-field.gal').find((token) => token.type === 'instruction');
+  if (!instruction || instruction.type !== 'instruction') throw new Error('请先在原始行补全指令');
+  return new Map([...instruction.modifiers].map(([key, value]) => [key, decodeStageToken(value)]));
+}
+
+/** Write one `@name=value` modifier (`true` writes a bare switch) or remove it with null; the rest of the line is kept as written. */
+export function setInstructionModifier(raw: string, name: string, value: string | true | null): string {
+  const matching = modifierRanges(raw).filter((part) => new RegExp(`^@\\s*${name}(?:\\s*=|\\s|$)`).test(part.text));
+  if (matching.length > 1) throw new Error(`当前行有多个 @${name}，请先在原始行确认`);
+  const written = value === null ? '' : value === true ? `@${name}` : `@${name}=${quoteAssetArgument(value)}`;
+  const existing = matching[0];
+  if (existing) {
+    const trailing = existing.text.match(/\s*$/)![0];
+    if (written) return raw.slice(0, existing.start) + written + trailing + raw.slice(existing.end);
+    // The last modifier also takes the space before it.
+    return existing.end === raw.length ? raw.slice(0, existing.start).replace(/[ \t]+$/, '') + trailing : raw.slice(0, existing.start) + raw.slice(existing.end);
+  }
+  if (!written) return raw;
+  const tail = raw.match(/[ \t]*$/)?.[0] ?? '';
+  return raw.slice(0, raw.length - tail.length) + ' ' + written + tail;
 }
 
 export interface SimpleChoice { text: string; condition: string; target: string; indent: string; trailing: string }

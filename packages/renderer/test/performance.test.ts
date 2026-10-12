@@ -58,7 +58,8 @@ describe('renderer runtime diagnostics', () => {
 
   it('reduced motion collapses transition duration without disabling final state', () => {
     const preferences = normalizePresentationPreferences({ reducedMotion: true });
-    expect(preferences.transitionScale).toBe(0);
+    expect(preferences.transitionScale).toBe(1);
     expect(presentationDuration(600, preferences)).toBe(1);
+    expect(presentationDuration(600, normalizePresentationPreferences({ ...preferences, reducedMotion: false }))).toBe(600);
   });
 });

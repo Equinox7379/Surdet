@@ -47,7 +47,10 @@ function stageHarness(): AdvStage & {
     setPortrait: () => undefined,
     removePortrait: () => undefined,
     showText: (_speaker: string | null, value: string) => { stage.texts.push(value); },
-    beginText: (speaker: string | null) => { stage.begins.push(speaker); },
+    beginText: (speaker: string | null, value = '', visibleUnits?: number) => {
+      stage.begins.push(speaker);
+      if (value) stage.showText(speaker, value, visibleUnits);
+    },
     clearText: () => { stage.clears += 1; },
     showChoices: (options: { index: number; label: string }[]) => { stage.choices = options.map((option) => ({ ...option })); },
     hideChoices: () => { stage.choices = []; },
@@ -124,6 +127,104 @@ function controllerFor(
 }
 
 describe('PresentationController', () => {
+  it('marks world mutation batches at text, choice and wait through the production ports', () => {
+    const stage = stageHarness(), boundary = vi.fn(); stage.markStageBoundary = boundary;
+    const ports = createPresentationPorts(stage), controller = new PresentationController(ports.commands, ports.queries, NULL_AUDIO, { commands: ports.commands, queries: ports.queries });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus);
+    try {
+      bus.emit('text', { speaker: null, value: '停顿' });
+      bus.emit('choice', { options: [{ index: 0, label: '继续' }] });
+      bus.emit('wait', { ms: 400 }); expect(boundary).toHaveBeenCalledTimes(3);
+    } finally { controller.dispose(); }
+  });
+  it('uses the documented 600ms wipe default and preserves explicit durations', () => {
+    const stage = stageHarness(), wipe = vi.fn(); stage.wipe = wipe;
+    const ports = createPresentationPorts(stage), controller = new PresentationController(ports.commands, ports.queries, NULL_AUDIO, { commands: ports.commands, queries: ports.queries });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus);
+    try {
+      for (const args of [[], ['900']]) bus.emit('instr', { name: 'wipe', args, modifiers: new Map(), pos: { file: 'scene.gal', line: 1, col: 1 } });
+      expect(wipe.mock.calls).toEqual([[600], [900]]);
+    } finally { controller.dispose(); }
+  });
+  it('projects the finite author filter instruction and refuses an unsupported host', () => {
+    const stage = stageHarness(), set = vi.fn(); stage.setStoryFilter = set;
+    const ports = createPresentationPorts(stage), controller = new PresentationController(ports.commands, ports.queries, NULL_AUDIO, { commands: ports.commands, queries: ports.queries });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus);
+    try {
+      bus.emit('instr', { name: 'filter', args: ['sepia', '700'], modifiers: new Map(), pos: { file: 'scene.gal', line: 1, col: 1 } });
+      expect(set).toHaveBeenCalledWith('sepia', 700);
+    } finally { controller.dispose(); }
+    const unsupported = createPresentationPorts(stageHarness()), second = new PresentationController(unsupported.commands, unsupported.queries, NULL_AUDIO, { commands: unsupported.commands, queries: unsupported.queries });
+    const failure = vi.fn(), secondBus = new EventBus<CoreEventMap>({ error: vi.fn() }, { onHandlerError: failure }); second.connect(secondBus);
+    try { secondBus.emit('instr', { name: 'filter', args: ['off'], modifiers: new Map(), pos: { file: 'scene.gal', line: 1, col: 1 } });
+      expect(failure).toHaveBeenCalledWith(expect.objectContaining({ message: '当前宿主未接入作者滤镜' }), 'instr'); }
+    finally { second.dispose(); }
+  });
+  it('a completed nw line advances without voice/auto waits, but respects explicit pauses and does not skip NVL', () => {
+    const stage = stageHarness(), ports = createPresentationPorts(stage), advance = vi.fn();
+    const audio = { ...NULL_AUDIO, isVoicePlaying: () => true, stopVoice: vi.fn() };
+    const controller = new PresentationController(ports.commands, ports.queries, audio, { commands: ports.commands, queries: ports.queries, onAdvance: advance });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus); controller.setTextSpeed(100);
+    try {
+      bus.emit('text', { speaker: null, value: '甲<nw>', voice: 'long-voice' }); controller.setPresentationPaused(true); controller.update(1000);
+      expect(advance).not.toHaveBeenCalled(); controller.setPresentationPaused(false); controller.update(10); expect(advance).toHaveBeenCalledOnce();
+      bus.emit('instr', { name: 'nvl', args: ['on'], modifiers: new Map(), pos: { file: 'test.gal', line: 1, col: 1 } }); bus.emit('text', { speaker: null, value: '乙<nw>' }); controller.update(1000);
+      expect(advance).toHaveBeenCalledOnce(); expect(stage.nvlEntries.at(-1)!.text).toBe('乙');
+    } finally { controller.dispose(); }
+  });
+  it('narrates only unvoiced visible text, waits in auto mode and cancels on menu, skip, reset and dispose', () => {
+    const stage = stageHarness(), ports = createPresentationPorts(stage), advance = vi.fn();
+    let busy = false;
+    const narrator = { get busy() { return busy; }, speak: vi.fn(() => { busy = true; }), stop: vi.fn(() => { busy = false; }), onError: null };
+    const controller = new PresentationController(ports.commands, ports.queries, NULL_AUDIO, { commands: ports.commands, queries: ports.queries, narrator, onAdvance: advance });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus); controller.setReadAloud(true, 'zh-CN', .5);
+    bus.emit('text', { speaker: '凛', value: '<b>《书》</b><w>继续' });
+    expect(narrator.speak).toHaveBeenLastCalledWith('《书》继续', 'zh-CN', .5);
+    controller.advance(); controller.advance(); controller.advance(); controller.toggleAuto(); controller.update(1);
+    expect(advance).not.toHaveBeenCalled();
+    busy = false; controller.update(1); expect(advance).toHaveBeenCalledOnce();
+    bus.emit('text', { speaker: null, value: '有配音', voice: 'voice-key' }); expect(narrator.speak).toHaveBeenCalledOnce();
+    bus.emit('text', { speaker: null, value: '打开菜单' }); expect(busy).toBe(true);
+    controller.setPresentationPaused(true); expect(busy).toBe(false); controller.setPresentationPaused(false);
+    bus.emit('text', { speaker: null, value: '快进' }); controller.toggleSkipAll(); expect(busy).toBe(false);
+    controller.toggleSkipAll(); bus.emit('text', { speaker: null, value: '读档' }); bus.emit('stateReset', { reason: 'load' }); expect(busy).toBe(false);
+    bus.emit('text', { speaker: null, value: '退出' }); controller.dispose(); expect(busy).toBe(false);
+  });
+  it('freezes an inline pause with the menu, consumes clicks within the same line, and never stops its voice at a click-wait', () => {
+    const stage = stageHarness(), ports = createPresentationPorts(stage), advance = vi.fn();
+    const projection = vi.spyOn(stage, 'showText');
+    const audio = { ...NULL_AUDIO, playVoice: vi.fn(), stopVoice: vi.fn() };
+    const controller = new PresentationController(ports.commands, ports.queries, audio, { commands: ports.commands, queries: ports.queries, onAdvance: advance });
+    const bus = new EventBus<CoreEventMap>(); controller.connect(bus); controller.setTextSpeed(10);
+    try {
+      bus.emit('text', { speaker: null, value: '甲<w=500>乙<w>丙', voice: 'spoken' });
+      controller.update(100); expect(projection).toHaveBeenLastCalledWith(null, '甲<w=500>乙<w>丙', 1);
+      controller.setPresentationPaused(true); controller.update(10000);
+      controller.setPresentationPaused(false); controller.update(499);
+      expect(projection).toHaveBeenLastCalledWith(null, '甲<w=500>乙<w>丙', 1);
+      controller.update(101); expect(projection).toHaveBeenLastCalledWith(null, '甲<w=500>乙<w>丙', 2);
+      const stops = audio.stopVoice.mock.calls.length;
+      controller.advance(); expect(advance).not.toHaveBeenCalled(); expect(audio.stopVoice).toHaveBeenCalledTimes(stops);
+      controller.update(100); expect(controller.status).toBe('awaiting');
+      controller.advance(); expect(advance).toHaveBeenCalledTimes(1);
+    } finally { controller.dispose(); }
+  });
+
+  it('auto releases inline click-waits by visible segment length; skip ignores all inline controls', () => {
+    const stage = stageHarness(), controller = controllerFor(stage), bus = new EventBus<CoreEventMap>();
+    controller.connect(bus); controller.setTextSpeed(10); controller.setAutoWait(200, 50);
+    const projection = vi.spyOn(stage, 'showText');
+    try {
+      controller.toggleAuto(); bus.emit('text', { speaker: null, value: '<b>甲</b><w>乙' });
+      controller.update(100); controller.update(249);
+      expect(projection).toHaveBeenLastCalledWith(null, '<b>甲</b><w>乙', 1);
+      controller.update(1); controller.update(100); expect(controller.status).toBe('awaiting');
+      bus.emit('text', { speaker: null, value: '甲<w>乙<w=9999>丙', wasRead: true });
+      controller.toggleSkipAll(); controller.update(1);
+      expect(projection.mock.calls.some(call => call[1] === '甲<w>乙<w=9999>丙' && call[2] === undefined)).toBe(true);
+    } finally { controller.dispose(); }
+  });
+
   it('projects localized voices, waits for completion, keeps historical bindings, and stops on refresh/skip/reset/dispose', () => {
     const stage = stageHarness(), ports = createPresentationPorts(stage), backlog = new Backlog(), advance = vi.fn();
     let busy = false;
@@ -523,6 +624,7 @@ describe('PresentationController', () => {
 
   it('uses explicit begin-line and clear-text commands instead of empty showText for lifecycle boundaries', () => {
     const stage = stageHarness();
+    const projection = vi.spyOn(stage, 'showText');
     const controller = controllerFor(stage, { typewriter: undefined });
     const bus = new EventBus<CoreEventMap>();
     const off = controller.connect(bus);
@@ -530,7 +632,7 @@ describe('PresentationController', () => {
     try {
       bus.emit('text', { speaker: null, value: '第一句中文𠀀🙂' });
       expect(stage.begins).toEqual([null]);
-      expect(stage.texts).toEqual([]);
+      expect(projection).toHaveBeenLastCalledWith(null, '第一句中文𠀀🙂', 0);
 
       controller.update(1_000);
       expect(stage.texts.at(-1)).toBe('第一句中文𠀀🙂');
@@ -538,7 +640,7 @@ describe('PresentationController', () => {
 
       controller.resetSession({ preserveWorld: true });
       expect(stage.clears).toBe(1);
-      expect(stage.texts).toEqual(['第一句中文𠀀🙂']);
+      expect(stage.texts).toEqual(['第一句中文𠀀🙂', '第一句中文𠀀🙂']);
     } finally {
       off();
       controller.dispose();

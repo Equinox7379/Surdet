@@ -42,6 +42,7 @@ export interface PresentationStage extends
   registerBackground?: (key: string, source: string, format?: string) => Promise<void>;
   registerPortrait?: (charId: string, costume: string, expression: string, source: string, format?: string, sourcePath?: string) => Promise<void>;
   registerAvatar?: (key: string, source: string, format?: string) => Promise<void>;
+  registerRule?: (key: string, source: string, format?: string) => Promise<void>;
   registerFontRole?: (role: RendererFontRole, url: string, family?: string, timeoutMs?: number) => Promise<boolean>;
   registerFont?: (url: string, family?: string, timeoutMs?: number) => Promise<boolean>;
   resetFonts?: () => void;
@@ -114,6 +115,11 @@ export function createPresentationPorts(
   options: PresentationPortOptions = {},
 ): PresentationPorts {
   const assetCommands: RendererCommands['assets'] = {
+    registerRule: async (key, source, format) => {
+      if (options.assetRegistry) await options.assetRegistry.registerRule(key, source, format);
+      else if (stage.registerRule) await stage.registerRule(key, source, format);
+      else throw new Error('当前宿主未接入转场遮罩素材');
+    },
     registerBackground: async (key, source, format) => {
       if (options.assetRegistry) {
         await options.assetRegistry.registerBackground(key, source, format);
@@ -160,6 +166,10 @@ export function createPresentationPorts(
   };
 
   const worldCommands: RendererCommands['world'] = {
+    setStoryFilter: options.worldLayer?.setStoryFilter
+      ? (name, durationMs) => options.worldLayer!.setStoryFilter!(name, durationMs) : stage.setStoryFilter?.bind(stage),
+    markStageBoundary: options.worldLayer?.markStageBoundary
+      ? () => options.worldLayer!.markStageBoundary!() : stage.markStageBoundary?.bind(stage),
     setBackground: (key) => { if (options.worldLayer) options.worldLayer.setBackground(key); else stage.setBackground(key); },
     setPortrait: (key, view) => { if (options.worldLayer) options.worldLayer.setPortrait(key, view); else stage.setPortrait(key, view); },
     removePortrait: (key) => { if (options.worldLayer) options.worldLayer.removePortrait(key); else stage.removePortrait(key); },
@@ -167,7 +177,7 @@ export function createPresentationPorts(
     fade: options.worldLayer?.fade ? (from, to, durationMs) => options.worldLayer!.fade!(from, to, durationMs)
       : stage.fade ? (from, to, durationMs) => stage.fade!(from, to, durationMs) : undefined,
     shake: (durationMs = 400, strength = 8, direction = 'both') => { if (options.worldLayer) options.worldLayer.shake(durationMs, strength, direction); else stage.shake?.(durationMs, strength, direction); },
-    transition: (name, durationMs) => options.worldLayer?.transition(name, durationMs) ?? stage.transition?.(name, durationMs) ?? false,
+    transition: (name, durationMs, rule) => options.worldLayer?.transition(name, durationMs, rule) ?? stage.transition?.(name, durationMs, rule) ?? false,
     flash: (durationMs = 300) => { if (options.worldLayer) options.worldLayer.flash(durationMs); else stage.flash?.(durationMs); },
     zoom: (scale = 1, durationMs = 400) => { if (options.worldLayer) options.worldLayer.zoom(scale, durationMs); else stage.zoom?.(scale, durationMs); },
     wipe: (durationMs = 600) => { if (options.worldLayer) options.worldLayer.wipe(durationMs); else stage.wipe?.(durationMs); },
@@ -192,10 +202,10 @@ export function createPresentationPorts(
     }
   };
   const dialogueCommands: RendererCommands['dialogue'] = {
-    showText: (speaker, value) => projectDialogue(() => stage.showText(speaker, value)),
-    beginText: (speaker) => projectDialogue(() => {
-      if (stage.beginText) stage.beginText(speaker);
-      else stage.showText(speaker, '');
+    showText: (speaker, value, visibleUnits) => projectDialogue(() => stage.showText(speaker, value, visibleUnits)),
+    beginText: (speaker, value = '', visibleUnits) => projectDialogue(() => {
+      if (stage.beginText) stage.beginText(speaker, value, visibleUnits);
+      else stage.showText(speaker, value, visibleUnits);
     }),
     clearText: () => projectDialogue(() => {
       if (stage.clearText) stage.clearText();
@@ -207,7 +217,8 @@ export function createPresentationPorts(
     showBacklog: (entries, onReplayVoice, query) => stage.showBacklog?.(entries, onReplayVoice, query),
     hideBacklog: () => stage.hideBacklog?.(),
     setNvlMode: (on) => stage.setNvlMode?.(on),
-    appendNvlText: (speaker, text) => projectDialogue(() => stage.appendNvlText?.(speaker, text)),
+    appendNvlText: (speaker, text, markup) => projectDialogue(() => stage.appendNvlText?.(speaker, text, markup)),
+    setTextSkipping: (skipping) => stage.setTextSkipping?.(skipping),
     clearNvlText: () => projectDialogue(() => stage.clearNvlText?.()),
     showBanner: (text, variant) => stage.showBanner?.(text, variant),
     setChoiceHighlight: (position) => stage.setChoiceHighlight?.(position),
@@ -267,7 +278,14 @@ export function createPresentationPorts(
   let theme: RendererTheme = createRendererTheme();
   const preferenceCommands: RendererCommands['preferences'] = {
     setQuality: (quality) => { if (options.worldLayer) options.worldLayer.setQuality(quality); else stage.setQuality?.(quality); },
-    setPresentationPreferences: (preferences) => { if (options.worldLayer) options.worldLayer.setPresentationPreferences(preferences); else stage.setPresentationPreferences?.(preferences); },
+    setPresentationPreferences: (preferences) => {
+      // The composition root also projects dialogue preferences, not only World.
+      if (stage.setPresentationPreferences) stage.setPresentationPreferences(preferences);
+      else options.worldLayer?.setPresentationPreferences(preferences);
+    },
+    setReadingPreferences: (preferences) => {
+      stage.setReadingPreferences?.(preferences);
+    },
     setPostProcess: (settings) => { if (options.worldLayer) options.worldLayer.setPostProcess(settings); else stage.setPostProcess?.(settings); },
     setTheme: (overrides) => {
       theme = createRendererTheme(overrides);

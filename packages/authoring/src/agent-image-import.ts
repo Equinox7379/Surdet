@@ -12,7 +12,7 @@ export interface AgentImageImportItem {
   sourceId: string;
   sourcePath: string;
   sha256: string;
-  kind: 'background' | 'portrait' | 'avatar' | 'music' | 'ambience' | 'sound-effect' | 'voice' | 'video' | 'font' | 'license';
+  kind: 'background' | 'portrait' | 'avatar' | 'rule' | 'music' | 'ambience' | 'sound-effect' | 'voice' | 'video' | 'font' | 'license';
   fileName: string;
 }
 

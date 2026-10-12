@@ -6,6 +6,7 @@ import type { TimelineCueSelection } from '../state.js';
 import { exportTimeline } from '../project-io.js';
 import { pushTimelineSnapshot } from '../timeline-history.js';
 import { PARTICLE_NAMES } from '../script-presentation.js';
+import { DEFAULT_RULE_SOFT, resolvedRuleKeys } from '../presentation-effects.js';
 import {
   cloneTimeline, createNeutralCue, createResourceCue, createTimeline, createTrack, parseTimelineText,
   stringifyTimeline, easingPath, TIMELINE_ACTIONS, TIMELINE_EASINGS, TIMELINE_TRACKS,
@@ -19,6 +20,8 @@ import {
   timelineTrackLabel,
 } from '../timeline-presentation.js';
 import type { TimelineAssetChoice } from '../timeline-presentation.js';
+
+const NO_RULE_MASK = '项目里还没有可用的转场遮罩；在素材中心导入到「转场遮罩」分类后可以选择。';
 
 let rootContainer: HTMLElement | null = null;
 let timelineZoom = 1;
@@ -421,9 +424,9 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
     const draft = (track.kind === 'portrait' || track.kind === 'layer') && ['pose', 'hide'].includes(action.value)
       ? createObjectCue(track.kind, action.value, track.target)
       : isResourceTrackKind(track.kind) ? selectedChoice ? createResourceCue(track.kind, action.value, selectedChoice) : null
-        : createNeutralCue(track.kind, action.value);
+        : createNeutralCue(track.kind, action.value, resolvedRuleKeys(state.dirAssets)[0]);
     if (!draft) {
-      setStatus('请选择与动作匹配的项目素材', false, 5000);
+      setStatus(action.value === 'rule' ? NO_RULE_MASK : '请选择与动作匹配的项目素材', false, 5000);
       return;
     }
     if (!window.confirm('应用动作会重置此演出片段的动作参数，是否继续？')) return;
@@ -524,6 +527,27 @@ function renderInspector(parent: HTMLElement, definition: TimelineDefinition): v
   if (track.kind === 'screen') {
     if (cue.action === 'fade' || cue.action === 'tint') setNumber('透明度', 'alpha', 0, 1, '0.01');
     if (cue.action === 'tint') setNumber('颜色值', 'color', 0, 0xffffff, '1');
+    if (cue.action === 'rule') {
+      const masks = resolvedRuleKeys(state.dirAssets), current = typeof cue.rule === 'string' ? cue.rule : '';
+      const mask = selectInput(masks.includes(current) ? masks : [current, ...masks], current,
+        (value) => masks.includes(value) ? value : `${value || '尚未指定'}（未找到或无法使用）`);
+      mask.dataset.timelineFocus = 'inspector-rule';
+      mask.onchange = () => { if (mask.isConnected && mask.value) updateCue(selection, (next) => { next.rule = mask.value; }); };
+      const soft = numberInput(typeof cue.soft === 'number' ? cue.soft : DEFAULT_RULE_SOFT, 0, 1);
+      soft.step = '0.05'; soft.value = typeof cue.soft === 'number' ? String(cue.soft) : ''; soft.placeholder = String(DEFAULT_RULE_SOFT);
+      soft.dataset.timelineFocus = 'inspector-soft';
+      soft.onchange = () => { if (!soft.isConnected) return; updateCue(selection, (next) => {
+        const value = Number(soft.value);
+        if (soft.value.trim() === '' || !Number.isFinite(value)) delete next.soft; else next.soft = Math.max(0, Math.min(1, value));
+      }); };
+      const reverse = h('input') as HTMLInputElement; reverse.type = 'checkbox'; reverse.checked = cue.reverse === true;
+      reverse.dataset.timelineFocus = 'inspector-reverse';
+      reverse.onchange = () => { if (reverse.isConnected) updateCue(selection, (next) => { if (reverse.checked) next.reverse = true; else delete next.reverse; }); };
+      payload.append(field('遮罩素材', mask), field('边缘柔和度（0 为硬边）', soft), field('反向揭示', reverse));
+      if (!masks.length) payload.append(h('p', 'hint', NO_RULE_MASK));
+    }
+    if (cue.action === 'dissolve' || cue.action === 'rule') payload.append(h('p', 'hint',
+      '在同一时刻的背景、人物轨道写好修改，这一段会把修改前的画面过渡到新画面；没有舞台修改时不会播放。'));
   }
   if (track.kind === 'particle' && cue.action === 'start') {
     const current = String(cue.kind ?? 'sparkle');
@@ -743,9 +767,9 @@ function renderTracks(parent: HTMLElement, definition: TimelineDefinition): void
       const draft = (track.kind === 'portrait' || track.kind === 'layer') && ['pose', 'hide'].includes(addAction.value)
         ? createObjectCue(track.kind, addAction.value, track.target)
         : isResourceTrackKind(track.kind) ? selectedChoice ? createResourceCue(track.kind, addAction.value, selectedChoice) : null
-          : createNeutralCue(track.kind, addAction.value);
+          : createNeutralCue(track.kind, addAction.value, resolvedRuleKeys(state.dirAssets)[0]);
       if (!draft) {
-        setStatus('请先选择与动作匹配的项目素材', false, 5000);
+        setStatus(addAction.value === 'rule' ? NO_RULE_MASK : '请先选择与动作匹配的项目素材', false, 5000);
         return;
       }
       const cueIndex = track.cues.length;

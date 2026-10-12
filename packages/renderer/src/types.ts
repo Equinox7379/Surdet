@@ -48,7 +48,7 @@ export interface AdvStage {
    *  纯 `角色`（文档规范写法 @hide lynn）移除该角色的全部立绘。 */
   removePortrait(key: string): void;
   /** 显示对话框文本（speaker 为 null 表示旁白） */
-  showText(speaker: string | null, value: string): void;
+  showText(speaker: string | null, value: string, visibleUnits?: number): void;
   /** 显示选择肢 */
   showChoices(options: ChoiceOptionView[]): void;
   /** 隐藏选择肢 */
@@ -86,7 +86,9 @@ export interface AdvStage {
   /** 画面震动（@shake；二次衰减，方向可为 both/horizontal/vertical/diagonal） */
   shake?(durMs: number, strength: number, direction?: ShakeDirection): void;
   /** 注册表驱动的转场；未知名称返回 false。 */
-  transition?(name: TransitionName | string, durMs: number): boolean;
+  markStageBoundary?(): void;
+  setStoryFilter?(name: import('@surdet/core').StoryFilterName, durationMs?: number): void;
+  transition?(name: TransitionName | string, durMs: number, options?: import('@surdet/core').RuleTransitionOptions): boolean;
   /** 白闪（@flash；线性衰减） */
   flash?(durMs: number): void;
   /** 世界层缩放（@zoom；向目标 scale 线性过渡，以画面中心为锚点） */

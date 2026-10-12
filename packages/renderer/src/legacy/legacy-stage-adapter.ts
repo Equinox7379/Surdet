@@ -1,4 +1,4 @@
-import type { Application, Text as PixiText } from 'pixi.js';
+import type { Application } from 'pixi.js';
 import type { BattleHandlers, BattleView } from '../battle-view.js';
 import type { BacklogEntry } from '../backlog.js';
 import type { BasePanelView, MapView, SaveLoadView, SystemMenuItemView, TitleView } from '../ui-views.js';
@@ -63,6 +63,7 @@ export class LegacyStageAdapter implements AdvStage {
   setQuality(quality: RenderQuality): void { this.host.setQuality(quality); }
   getQuality(): RenderQuality { return this.host.getQuality(); }
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void { this.host.setPresentationPreferences(preferences); }
+  setReadingPreferences(preferences: Partial<import('../presentation.js').ReadingPreferences>): void { this.host.setReadingPreferences(preferences); }
   getPresentationPreferences(): PresentationPreferences { return this.host.getPresentationPreferences(); }
   setPostProcess(settings: Partial<PostProcessSettings>): void { this.host.setPostProcess(settings); }
   getPostProcess(): PostProcessSettings { return this.host.getPostProcess(); }
@@ -80,6 +81,7 @@ export class LegacyStageAdapter implements AdvStage {
     return this.host.registerPortrait(charId, costume, expression, source, format);
   }
   registerAvatar(key: string, source: RenderAssetSource, format?: string): Promise<void> { return this.host.registerAvatar(key, source, format); }
+  registerRule(key: string, source: RenderAssetSource, format?: string): Promise<void> { return this.host.registerRule(key, source, format); }
   releaseRegisteredAssetSources(): Promise<void> { return this.host.releaseRegisteredAssetSources(); }
 
   setSpeakerProfiles(profiles: SpeakerProfile[]): void { this.host.setSpeakerProfiles(profiles); }
@@ -91,16 +93,16 @@ export class LegacyStageAdapter implements AdvStage {
   setBackground(key: string | null): void { this.host.setBackground(key); }
   setPortrait(key: string, opts: PortraitView): void { this.host.setPortrait(key, opts); }
   removePortrait(key: string): void { this.host.removePortrait(key); }
-  showText(speaker: string | null, value: string): void {
+  showText(speaker: string | null, value: string, visibleUnits?: number): void {
     const before = this.host.dialogueLayer.projectionVersion;
-    this.host.showText(speaker, value);
+    this.host.showText(speaker, value, visibleUnits);
     if (this.host.dialogueLayer.projectionVersion !== before) {
       this.setPortraitFocus(this.host.dialogueLayer.activeSpeakerId);
     }
   }
-  beginText(speaker: string | null): void {
+  beginText(speaker: string | null, value?: string, visibleUnits?: number): void {
     const before = this.host.dialogueLayer.projectionVersion;
-    this.host.beginText(speaker);
+    this.host.beginText(speaker, value, visibleUnits);
     if (this.host.dialogueLayer.projectionVersion !== before) {
       this.setPortraitFocus(this.host.dialogueLayer.activeSpeakerId);
     }
@@ -130,7 +132,9 @@ export class LegacyStageAdapter implements AdvStage {
   restorePresentation(snapshot: unknown): void { this.host.restorePresentation(snapshot); }
   clearPresentation(): void { this.host.clearPresentation(); }
   shake(durMs = 400, strength = 8, direction: ShakeDirection = 'both'): void { this.host.shake(durMs, strength, direction); }
-  transition(name: TransitionName | string, durMs = 600): boolean { return this.host.transition(name, durMs); }
+  transition(name: TransitionName | string, durMs = 600, options?: import('@surdet/core').RuleTransitionOptions): boolean { return this.host.transition(name, durMs, options); }
+  markStageBoundary(): void { this.host.markStageBoundary(); }
+  setStoryFilter(name: import('@surdet/core').StoryFilterName, durationMs = 0): void { this.host.setStoryFilter(name, durationMs); }
   flash(durMs = 300): void { this.host.flash(durMs); }
   zoom(scale = 1, durMs = 400): void { this.host.zoom(scale, durMs); }
   updateEffects(deltaMs: number): void { this.host.updateEffects(deltaMs); }
@@ -142,9 +146,10 @@ export class LegacyStageAdapter implements AdvStage {
   stopParticles(): void { this.host.stopParticles(); }
   showBanner(text: string, variant: 'chapter' | 'tip'): void { this.host.showBanner(text, variant); }
   setNvlMode(on: boolean): void { this.host.setNvlMode(on); }
-  get nvlLines(): readonly PixiText[] { return this.host.nvlLines; }
-  appendNvlText(speaker: string | null, text: string): void {
-    this.host.appendNvlText(speaker, text);
+  get nvlLines(): RendererStageHost['nvlLines'] { return this.host.nvlLines; }
+  setTextSkipping(skipping: boolean): void { this.host.setTextSkipping(skipping); }
+  appendNvlText(speaker: string | null, text: string, markup?: string): void {
+    this.host.appendNvlText(speaker, text, markup);
     this.setPortraitFocus(this.host.dialogueLayer.activeSpeakerId);
   }
   clearNvlText(): void {

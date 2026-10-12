@@ -9,9 +9,10 @@ import {
   type TextStyleOptions,
 } from 'pixi.js';
 import type { BacklogEntry } from '../../backlog.js';
-import { parseRuby, stripRuby } from '../../ruby.js';
-import { layoutRuby, type RubyGlyphLayout } from '../../ruby-layout.js';
+import { parseInlineText, inlinePlainText, escapeInlineText, type InlineTextDocument } from '@surdet/core';
+import { InlineTextView } from './inline-text-view.js';
 import type { ReadingDiagnostic } from '../../reading-diagnostics.js';
+import { DEFAULT_READING_PREFERENCES, normalizeReadingPreferences, type ReadingPreferences } from '../../presentation.js';
 import { wrapCjk, wrapCjkMeasure } from '../../text-wrap.js';
 import type { PresentationPreferences } from '../../presentation.js';
 import { DEFAULT_PRESENTATION_PREFERENCES } from '../../presentation.js';
@@ -101,6 +102,8 @@ export interface DialogueLayerDebugSnapshot {
 }
 
 interface ChoiceView {
+  readonly document: InlineTextDocument;
+  readonly rich: InlineTextView | null;
   skin?: Sprite;
   readonly holder: Container;
   readonly bg: Graphics;
@@ -157,6 +160,11 @@ export class DialogueLayer implements DialogueProjectionPort {
   #dialogText: PText;
   #lastShownSpeaker: string | null | undefined;
   #lastShownDialog = '';
+  #visibleUnits = Infinity;
+  #visibleDialogText = '';
+  #inlineDocument = parseInlineText('');
+  #plainWrap?: { document: InlineTextDocument; width: number; theme: RendererTheme; family: unknown; lines: string[] };
+  #dialogContentHeight = 0;
   #lineActive = false;
   #speakerPlate: Graphics;
   #dialogCharsPerLine = 40;
@@ -170,9 +178,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   #choiceScroll = 0;
   #nvlScroll = 0;
   #choiceBottom = 720;
-  #dialogRubyLayer: Container;
-  #rubyBasePool: PText[] = [];
-  #rubyTextPool: PText[] = [];
+  #dialogRubyLayer: InlineTextView;
 
   #choiceLayer: Container;
   #choiceViews: ChoiceView[] = [];
@@ -200,7 +206,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   #nvlLayer: Container;
   #nvlTextLayer: Container;
   #nvlBackground: Graphics;
-  #nvlLines: PText[] = [];
+  #nvlLines: (PText | InlineTextView)[] = [];
   #nvlLineCounts: number[] = [];
   #nvlEntries: NvlPresentationEntry[] = [];
   #nvlActive = false;
@@ -226,7 +232,11 @@ export class DialogueLayer implements DialogueProjectionPort {
   #speakerAvatar: Sprite | null = null;
   #interfaceHidden = false;
   #preferences: PresentationPreferences = { ...DEFAULT_PRESENTATION_PREFERENCES };
+  #textSkipping = false;
   #theme: RendererTheme = DEFAULT_RENDERER_THEME;
+  #workTheme: RendererTheme = DEFAULT_RENDERER_THEME;
+  #reading: ReadingPreferences = { ...DEFAULT_READING_PREFERENCES };
+  #backlogContent: { entries: readonly BacklogEntry[]; onReplayVoice?: (voice: string) => void; query: string } | null = null;
 
   constructor(options: DialogueLayerOptions) {
     this.#root = options.uiLayer;
@@ -259,7 +269,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#commandRail = new Container();
     this.#commandRail.visible = false;
 
-    this.#dialogRubyLayer = new Container();
+    this.#dialogRubyLayer = new InlineTextView();
     this.#nvlLayer = new Container();
     this.#nvlTextLayer = new Container();
     // Keep one permanent mask owner even when no NVL paragraph exists.
@@ -380,7 +390,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#onPointerConsumed = handler;
   }
 
-  get nvlLines(): readonly PText[] {
+  get nvlLines(): readonly (PText | InlineTextView)[] {
     return this.#nvlLines;
   }
 
@@ -405,7 +415,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       activeSpeakerId: this.#activeSpeakerId,
       projectionVersion: this.#projectionVersion,
       speakerText: String(this.#speakerText.text),
-      dialogText: String(this.#dialogText.text),
+      dialogText: this.#visibleDialogText,
       panelVisible: this.#dialogPanel.visible,
       choiceLabels: this.#choiceViews.map((view) => String(view.label.text)),
       choiceBounds: this.#choiceViews.map((view) => ({
@@ -415,8 +425,8 @@ export class DialogueLayer implements DialogueProjectionPort {
         height: view.holder.height,
       })),
       visibleChoiceCount: this.#interfaceHidden ? 0 : this.#choiceViews.filter((view) => view.holder.visible && view.holder.alpha > 0).length,
-      rubyBaseCount: this.#rubyBasePool.filter((text) => text.visible).length,
-      rubyTextCount: this.#rubyTextPool.filter((text) => text.visible).length,
+      rubyBaseCount: this.#dialogRubyLayer.baseCount,
+      rubyTextCount: this.#dialogRubyLayer.rubyCount,
       backlogVisible: this.#backlogLayer.visible,
       backlogAboveDialogueText: this.#backlogAboveDialogueText(),
       commandRailVisible: this.#commandRail.visible,
@@ -456,7 +466,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       inspect(this.#speakerText.text, 'speaker', this.#speakerText.width, this.#dialogWidth() - 42);
       if (this.#speakerText.y - this.#speakerText.height / 2 < 0) issues.push({ code: 'TEXT_OVERFLOW', severity: 'warning',
         target: 'speaker', text: this.#speakerText.text, message: '名字栏超过画面顶部，请缩短显示名或调整字号。' });
-      const textNodes = this.#dialogText.visible ? [this.#dialogText] : [...this.#rubyBasePool, ...this.#rubyTextPool].filter(text => text.visible);
+      const textNodes = this.#dialogText.visible ? [this.#dialogText] : this.#dialogRubyLayer.displayTexts;
       const width = this.#dialogText.visible ? this.#dialogText.width
         : Math.max(0, ...textNodes.map(text => text.x + text.width * (1 - text.anchor.x)));
       inspect(textNodes.map(text => text.text).join(''), 'dialogue', width, this.#dialogWidth());
@@ -506,6 +516,8 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   setTheme(theme: RendererTheme): void {
     if (this.#disposed) return;
+    this.#workTheme = theme;
+    theme = { ...theme, typography: { ...theme.typography, bodySize: theme.typography.bodySize * this.#reading.textScale } };
     const previous = this.#theme;
     this.#theme = theme;
     this.#drawDialogPanel();
@@ -517,11 +529,8 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#speakerText.style.stroke = { width: 0, color: theme.colors.textOnAccent };
     this.#dialogText.style.fill = theme.colors.text;
     this.#dialogText.style.stroke = { width: 0, color: theme.colors.textOnAccent };
-    for (const ruby of [...this.#rubyBasePool, ...this.#rubyTextPool]) {
-      ruby.style.fill = theme.colors.text;
-      ruby.style.stroke = { width: 0, color: theme.colors.textOnAccent };
-    }
-    this.#nvlBackground.clear().rect(0, 0, this.#w, this.#h).fill({ color: theme.colors.panel, alpha: 0.86 });
+    this.#nvlBackground.clear().rect(0, 0, this.#w, this.#h).fill({ color: theme.colors.panel, alpha: this.#reading.dialogueOpacity === null ? 0.86
+      : Math.min(1, 0.86 * this.#reading.dialogueOpacity / (theme.opacity.panel || 1)) });
     this.#bannerText.style.fill = theme.colors.text;
     for (const view of this.#choiceViews) this.#drawChoiceCard(view, view === this.#choiceViews[this.#choiceHighlight]);
     repaintThemeProjection(this.#dialogueRoot, previous, theme);
@@ -542,6 +551,14 @@ export class DialogueLayer implements DialogueProjectionPort {
       view.label.style.letterSpacing = theme.typography.uiLetterSpacing;
     }
     this.layout();
+  }
+
+  setReadingPreferences(preferences: Partial<ReadingPreferences>): void {
+    const backlog = this.#backlogLayer.visible ? this.#backlogContent : null, scroll = this.#backlogScroll;
+    this.#reading = normalizeReadingPreferences({ ...this.#reading, ...preferences });
+    this.setTheme(this.#workTheme);
+    if (backlog) { this.showBacklog(backlog.entries, backlog.onReplayVoice, backlog.query); this.scrollBacklog(-scroll); }
+    this.#requestFrame();
   }
 
   /** Hide only the default drawing and hit targets; projection and controller state remain live. */
@@ -571,6 +588,20 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void {
     this.#preferences = { ...this.#preferences, ...preferences };
+    this.#dialogRubyLayer.setAnimationEnabled(!this.#textSkipping && !this.#preferences.reducedMotion);
+    if (this.#preferences.reducedMotion) {
+      this.#choiceFadeRemain = 0;
+      for (const view of this.#choiceViews) view.holder.alpha = 1;
+      this.#lifecycle.release('dialogue', 'tween', 'choice-fade');
+      this.#continueIndicator.y = this.#continueIndicatorAnchorY; this.#continueIndicator.alpha = 1;
+      if (this.#bannerRemain > 0) this.#bannerLayer.alpha = 1;
+    }
+    this.#requestFrame();
+  }
+
+  setTextSkipping(skipping: boolean): void {
+    this.#textSkipping = skipping;
+    this.#dialogRubyLayer.setAnimationEnabled(!skipping && !this.#preferences.reducedMotion);
     this.#requestFrame();
   }
 
@@ -584,6 +615,8 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   applyTypography(): void {
+    this.#plainWrap = undefined;
+    this.#dialogRubyLayer.clearText();
     TextStyle.defaultTextStyle.fontFamily = this.#assets.fontFamily('body');
     this.#dialogText.style.fontFamily = this.#assets.fontFamily('body');
     this.#speakerText.style.fontFamily = this.#assets.fontFamily('body');
@@ -600,9 +633,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   layout(): void {
-    const textHeight = this.#dialogText.visible ? (this.#dialogText.text
-      ? (typeof document === 'undefined' ? this.#dialogText.text.split('\n').length * this.#theme.typography.bodySize * 1.6 : this.#dialogText.height) : 0)
-      : Math.max(0, ...this.#rubyBasePool.filter((text) => text.visible).map((text) => text.y + text.height));
+    const textHeight = this.#dialogContentHeight;
     // Keep the stage visible even for a long paragraph; the existing scroll path exposes every line.
     const heightRatio = this.#theme.layout.dialogHeightRatio;
     const panelBottom = this.#dialogBottom();
@@ -619,8 +650,9 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#drawDialogPanel();
     this.#drawSpeakerPlate();
     const gap = 12;
-    const width = Math.min(this.#w * 0.68, Math.max(440, ...this.#choiceViews.map((view) => view.label.width + 80)));
-    const heights = this.#choiceViews.map((view) => Math.max(56, view.label.height + 24));
+    for (const view of this.#choiceViews) view.rich?.setContent(view.document, this.#w * 0.68 - 80, this.#theme, this.#assets.fontFamily('body'), Infinity, view === this.#choiceViews[this.#choiceHighlight] ? 'accent' : 'text');
+    const width = Math.min(this.#w * 0.68, Math.max(440, ...this.#choiceViews.map((view) => (view.rich?.contentWidth ?? view.label.width) + 80)));
+    const heights = this.#choiceViews.map((view) => Math.max(56, (view.rich?.contentHeight ?? view.label.height) + 24));
     const totalHeight = heights.reduce((sum, height) => sum + height, 0)
       + Math.max(0, heights.length - 1) * gap;
     const nameHeight = this.#speakerPlate.visible ? Math.max(40, this.#speakerText.height + 12) : 0;
@@ -642,10 +674,11 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   needsUpdate(): boolean {
-    return this.#continueIndicator.visible || this.#hasEffectWork();
+    return this.#continueIndicator.visible && !this.#preferences.reducedMotion || this.#dialogRubyLayer.needsUpdate || this.#hasEffectWork();
   }
 
   update(deltaMs: number): void {
+    if (this.#dialogRubyLayer.needsUpdate) this.#dialogRubyLayer.updateAnimation(deltaMs);
     if (!this.#hasEffectWork()) return;
     if (this.#choiceFadeRemain > 0 && this.#choiceViews.length > 0) {
       this.#choiceFadeRemain = Math.max(0, this.#choiceFadeRemain - deltaMs);
@@ -669,7 +702,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     if (this.#bannerRemain > 0) {
       this.#bannerRemain = Math.max(0, this.#bannerRemain - deltaMs);
       const elapsed = this.#bannerDur - this.#bannerRemain;
-      this.#bannerLayer.alpha = Math.min(1, elapsed / 300, this.#bannerRemain / 400);
+      this.#bannerLayer.alpha = this.#preferences.reducedMotion ? 1 : Math.min(1, elapsed / 300, this.#bannerRemain / 400);
       if (this.#bannerRemain === 0) {
         this.#bannerLayer.visible = false;
         this.#lifecycle.release('dialogue', 'tween', 'banner');
@@ -678,12 +711,13 @@ export class DialogueLayer implements DialogueProjectionPort {
     return this.#bannerRemain > 0;
   }
 
-  showText(speaker: string | null, value: string): void {
-    if (this.#lastShownSpeaker === speaker && this.#lastShownDialog === value) return;
+  showText(speaker: string | null, value: string, visibleUnits = Infinity): void {
+    if (this.#lastShownSpeaker === speaker && this.#lastShownDialog === value && this.#visibleUnits === visibleUnits) return;
     this.#requestFrame();
     if ((speaker ?? '').length > 0 || value.length > 0) this.#lineActive = true;
     this.#lastShownSpeaker = speaker;
     this.#lastShownDialog = value;
+    this.#visibleUnits = visibleUnits;
     this.#projectionVersion += 1;
     const profile = speaker ? this.#speakerProfiles.get(speaker.trim()) : undefined;
     this.setActiveSpeaker(profile?.id ?? null);
@@ -703,12 +737,12 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   /** Begin a new ADV line without exposing a transient empty-panel frame. */
-  beginText(speaker: string | null): void {
+  beginText(speaker: string | null, value = '', visibleUnits = Infinity): void {
     this.#advScroll = 0;
     this.#lineActive = true;
     this.#lastShownSpeaker = undefined;
     this.#lastShownDialog = '';
-    this.showText(speaker, '');
+    this.showText(speaker, value, visibleUnits);
     if (!this.#interfaceHidden && !this.#nvlActive) this.#dialogPanel.visible = true;
   }
 
@@ -732,21 +766,24 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#choiceCommitted = false;
     options.forEach((option, index) => {
       const holder = new Container();
+      const document = parseInlineText(option.label, 'choice');
       const label = bindThemeTextProjection(new PText({
-        text: option.label,
+        text: document.plainText,
         style: { fontSize: this.#theme.typography.bodySize, fill: this.#theme.colors.text, fontFamily: this.#assets.fontFamily('body'), letterSpacing: this.#theme.typography.uiLetterSpacing, wordWrap: true, breakWords: true, wordWrapWidth: this.#w * 0.68 - 80 } satisfies TextStyleOptions,
       }), { fill: 'text' });
       label.position.set(40, 12);
       const bg = bindThemeGraphicsProjection(new Graphics(), ['surface', 'line']);
       const bar = bindThemeGraphicsProjection(new Graphics(), ['line']);
       holder.addChild(bg, bar, label);
-      const view = { holder, bg, bar, label, width: 0, height: 0 };
+      const rich = document.units.some(unit => unit.ruby || unit.style.bold || unit.style.italic || unit.style.size || unit.style.color || unit.style.emphasis) ? new InlineTextView() : null;
+      if (rich) { holder.addChild(rich); label.visible = false; }
+      const view = { holder, bg, bar, label, document, rich, width: 0, height: 0 };
       this.#choiceViews.push(view);
       this.#registerDisplay(`choice:${index}`, holder);
       this.#drawChoiceCard(view, false);
       holder.eventMode = 'static';
       holder.cursor = 'pointer';
-      bindPlayerControl(holder, { label: option.label, width: 1, height: 1, reveal: () => {
+      bindPlayerControl(holder, { label: document.plainText, width: 1, height: 1, reveal: () => {
         const delta = holder.y < 24 ? holder.y - 24 : Math.max(0, holder.y + view.height - this.#choiceBottom);
         this.#choiceScroll += delta;
         this.layout();
@@ -765,7 +802,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     });
     this.#choiceHighlight = -1;
     this.layout();
-    if (this.#choiceViews.length > 0) {
+    if (this.#choiceViews.length > 0 && !this.#preferences.reducedMotion) {
       this.#choiceFadeRemain = this.#choiceFadeDur + (this.#choiceViews.length - 1) * 80;
       for (const view of this.#choiceViews) view.holder.alpha = 0;
       this.#lifecycle.register('dialogue', 'tween', 'choice-fade', () => undefined);
@@ -801,12 +838,14 @@ export class DialogueLayer implements DialogueProjectionPort {
 
   updateContinuePulse(deltaMs: number): void {
     if (!this.#continueIndicator.visible) return;
+    if (this.#preferences.reducedMotion) { this.#continueIndicator.y = this.#continueIndicatorAnchorY; this.#continueIndicator.alpha = 1; return; }
     this.#continuePhase = (this.#continuePhase + deltaMs / 1000 * 3) % (Math.PI * 2);
     this.#continueIndicator.y = this.#continueIndicatorAnchorY + Math.sin(this.#continuePhase) * 3;
     this.#continueIndicator.alpha = 0.7 + Math.sin(this.#continuePhase) * 0.28;
   }
 
   showBacklog(entries: readonly BacklogEntry[], onReplayVoice?: (voice: string) => void, query = ''): void {
+    this.#backlogContent = { entries: entries.map(entry => ({ ...entry })), onReplayVoice, query };
     const layer = this.#backlogLayer;
     markPlayerModal(layer, {
       scroll: (delta) => this.scrollBacklog(delta),
@@ -865,6 +904,16 @@ export class DialogueLayer implements DialogueProjectionPort {
     const perLine = Math.max(10, Math.floor(this.#w * 0.68 / this.#theme.typography.bodySize));
     let y = 0;
     for (const entry of entries.slice(-120)) {
+      if (entry.markup !== undefined) {
+        const view = new InlineTextView(); view.setAnimationEnabled(false);
+        const name = entry.speaker ? `<color=accent>${escapeInlineText(`${entry.speaker}：`)}</color>` : '';
+        view.setContent(parseInlineText((entry.voice ? '▶ ' : '') + name + entry.markup), this.#w * .68, this.#theme, this.#assets.fontFamily('body'), Infinity, 'textMuted');
+        view.position.set(this.#w * .16, this.#backlogViewportTop + y);
+        if (entry.voice && onReplayVoice) { view.eventMode = 'static'; view.cursor = 'pointer'; view.on('pointerdown', event => {
+          this.#onPointerConsumed?.(); event.stopPropagation(); onReplayVoice(entry.voice!);
+        }); }
+        entriesLayer.addChild(view); y += view.contentHeight; continue;
+      }
       const text = entry.text.length > 0 ? entry.text : '（无文本）';
       let first = true;
       for (const line of wrapCjk(text, perLine)) {
@@ -901,6 +950,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   hideBacklog(): void {
+    this.#backlogContent = null;
     this.#backlogLayer.visible = false;
     this.#backlogLayer.removeChildren().forEach((child) => child.destroy({ children: true, context: true }));
     this.#backlogEntriesLayer = null;
@@ -1034,7 +1084,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#bannerDur = variant === 'chapter' ? 2200 : 1800;
     this.#bannerRemain = this.#bannerDur;
     this.#bannerLayer.visible = true;
-    this.#bannerLayer.alpha = 0;
+    this.#bannerLayer.alpha = this.#preferences.reducedMotion ? 1 : 0;
     this.#lifecycle.register('dialogue', 'tween', 'banner', () => undefined);
     this.#requestFrame();
   }
@@ -1060,27 +1110,34 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#requestFrame();
   }
 
-  appendNvlText(speaker: string | null, text: string): void {
+  appendNvlText(speaker: string | null, text: string, markup?: string): void {
     const normalizedSpeaker = speaker !== null && speaker.length > 0 ? speaker : null;
     const profile = normalizedSpeaker ? this.#speakerProfiles.get(normalizedSpeaker.trim()) : undefined;
     this.setActiveSpeaker(profile?.id ?? null);
     this.#projectionVersion += 1;
     const wrapped = this.#wrapNvlText(normalizedSpeaker, text);
-    const textNode = bindThemeTextProjection(new PText({
-      text: wrapped.join('\n'),
-      style: { fontSize: this.#theme.typography.bodySize, lineHeight: this.#theme.typography.bodySize * 1.6, fill: this.#theme.colors.text, fontFamily: this.#assets.fontFamily('body') } satisfies TextStyleOptions,
-    }), { fill: 'text' });
+    let textNode: PText | InlineTextView;
+    if (markup !== undefined) {
+      textNode = new InlineTextView(); textNode.setAnimationEnabled(false);
+      const name = normalizedSpeaker ? this.#speakerProfiles.get(normalizedSpeaker.trim())?.name ?? normalizedSpeaker : null;
+      textNode.setContent(parseInlineText((name ? escapeInlineText(`${name}：`) : '') + markup), this.#w * .68, this.#theme, this.#assets.fontFamily('body'));
+    } else {
+      textNode = bindThemeTextProjection(new PText({
+        text: wrapped.join('\n'),
+        style: { fontSize: this.#theme.typography.bodySize, lineHeight: this.#theme.typography.bodySize * 1.6, fill: this.#theme.colors.text, fontFamily: this.#assets.fontFamily('body') } satisfies TextStyleOptions,
+      }), { fill: 'text' });
+    }
     this.#nvlTextLayer.addChild(textNode);
     this.#nvlLines.push(textNode);
-    this.#nvlLineCounts.push(Math.max(1, wrapped.length));
-    this.#nvlEntries.push({ speaker: normalizedSpeaker, text });
+    this.#nvlLineCounts.push(textNode instanceof InlineTextView ? textNode.contentHeight / (this.#theme.typography.bodySize * 1.6) : Math.max(1, wrapped.length));
+    this.#nvlEntries.push({ speaker: normalizedSpeaker, text, ...(markup === undefined ? {} : { markup }) });
     const budget = this.#h - 120;
     while (this.#nvlTotalHeight() > budget && this.#nvlLines.length > 1) {
       const old = this.#nvlLines.shift()!;
       this.#nvlLineCounts.shift();
       this.#nvlEntries.shift();
       this.#nvlTextLayer.removeChild(old);
-      old.destroy();
+      old.destroy({ children: true });
     }
     this.#nvlScroll = 0;
     this.#layoutNvl();
@@ -1091,7 +1148,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#nvlScroll = 0;
     for (const line of this.#nvlLines) {
       this.#nvlTextLayer.removeChild(line);
-      line.destroy();
+      line.destroy({ children: true });
     }
     this.#nvlLines = [];
     this.#nvlLineCounts = [];
@@ -1108,6 +1165,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#requestFrame();
     this.#lastShownSpeaker = undefined;
     this.#lastShownDialog = '';
+    this.#visibleDialogText = ''; this.#visibleUnits = Infinity; this.#dialogContentHeight = 0;
     this.#advScroll = 0;
     this.#choiceScroll = 0;
     this.#lineActive = false;
@@ -1156,7 +1214,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#clearChoices();
     for (const line of this.#nvlLines) {
       this.#nvlTextLayer.removeChild(line);
-      line.destroy();
+      line.destroy({ children: true });
     }
     this.#nvlLines = [];
     this.#nvlLineCounts = [];
@@ -1248,6 +1306,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   #wrapDialogText(plain: string): string[] {
+    if (plain.length === 0) return [];
     this.#dialogCharsPerLine = Math.max(10, Math.floor(this.#dialogWidth() / this.#theme.typography.bodySize));
     const ctx = getDialogMeasureCtx();
     if (!ctx) return wrapCjk(plain, this.#dialogCharsPerLine);
@@ -1267,6 +1326,7 @@ export class DialogueLayer implements DialogueProjectionPort {
   #dialogWidth(): number { return Math.max(120, this.#w - this.#dialogLeft() - this.#dialogMarginX() - 78); }
 
   #drawDialogPanel(): void {
+    const opacity = this.#reading.dialogueOpacity ?? this.#theme.opacity.panel;
     const skinKey = this.#theme.skins.dialogSkin;
     const skinTexture = skinKey ? this.#assets.resolveBackground(skinKey) : null;
     if (skinTexture) {
@@ -1281,7 +1341,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       this.#dialogSkinSprite.position.set(this.#dialogMarginX(), top);
       this.#dialogSkinSprite.width = this.#w - 2 * this.#dialogMarginX();
       this.#dialogSkinSprite.height = Math.max(1, this.#dialogBottom() - top);
-      this.#dialogSkinSprite.alpha = this.#theme.opacity.panel;
+      this.#dialogSkinSprite.alpha = opacity;
       this.#dialogPanelFill.clear();
       bindThemeGraphicsProjection(this.#dialogPanelFill, []);
       return;
@@ -1295,9 +1355,9 @@ export class DialogueLayer implements DialogueProjectionPort {
     const fadeHeight = 44;
     for (let step = 0; step < 22; step++) {
       panel.rect(this.#dialogMarginX(), top - fadeHeight + step * 2, this.#w - 2 * this.#dialogMarginX(), 2)
-        .fill({ color: this.#theme.colors.panel, alpha: this.#theme.opacity.panel * step / 22 });
+        .fill({ color: this.#theme.colors.panel, alpha: opacity * step / 22 });
     }
-    panel.rect(this.#dialogMarginX(), top, this.#w - 2 * this.#dialogMarginX(), this.#dialogBottom() - top).fill({ color: this.#theme.colors.panel, alpha: this.#theme.opacity.panel });
+    panel.rect(this.#dialogMarginX(), top, this.#w - 2 * this.#dialogMarginX(), this.#dialogBottom() - top).fill({ color: this.#theme.colors.panel, alpha: opacity });
     panel.moveTo(this.#dialogMarginX(), top + 1).lineTo(this.#w - this.#dialogMarginX(), top + 1).stroke({ color: this.#theme.colors.line, width: 1.5, alpha: 0.85 });
     bindThemeGraphicsProjection(panel, [...Array<keyof RendererTheme['colors']>(23).fill('panel'), 'line']);
   }
@@ -1312,7 +1372,7 @@ export class DialogueLayer implements DialogueProjectionPort {
     const height = Math.max(40, this.#speakerText.height + 12);
     const x = this.#dialogLeft() - 18, y = this.#dialogTop;
     this.#speakerPlate.poly([x + 10, y - height + 2, x + w, y - height + 2, x + w - 10, y + 2, x, y + 2])
-      .fill({ color: this.#theme.colors.panel, alpha: this.#theme.opacity.panel });
+      .fill({ color: this.#theme.colors.panel, alpha: this.#reading.dialogueOpacity ?? this.#theme.opacity.panel });
     this.#speakerPlate.moveTo(x + 8, y + 1).lineTo(x + w * 0.42, y + 1)
       .bezierCurveTo(x + w * 0.66, y + 2, x + w * 0.73, y - 20, x + w - 4, y - 9)
       .stroke({ color: this.#theme.colors.line, width: 1.5, alpha: 0.9 });
@@ -1322,103 +1382,49 @@ export class DialogueLayer implements DialogueProjectionPort {
   }
 
   #renderDialogText(value: string): void {
-    const unclosed = value.split('《').length !== value.split('》').length;
-    const segs = unclosed ? [] : parseRuby(value);
-    const hasRuby = segs.some((segment) => segment.ruby !== undefined);
-    if (!hasRuby) {
-      this.#hideRubyPool();
-      this.#dialogText.visible = true;
-      const plain = unclosed ? stripRuby(value) : value;
-      this.#dialogText.text = this.#wrapDialogText(plain).join('\n');
-      return;
-    }
-    this.#dialogText.visible = false;
-    this.#dialogText.text = '';
-    this.#hideRubyPool();
-    const ctx = getDialogMeasureCtx();
+    if (this.#inlineDocument.source !== value) this.#inlineDocument = parseInlineText(value);
+    const doc = this.#inlineDocument;
+    this.#visibleDialogText = doc.units.slice(0, this.#visibleUnits).map(unit => unit.text).join('');
     const family = this.#dialogText.style.fontFamily;
     const familyText = Array.isArray(family) ? family.join(', ') : String(family);
-    const measure = {
-      base: (text: string): number => {
-        if (!ctx) return text.length * this.#theme.typography.bodySize;
-        ctx.font = `500 ${this.#theme.typography.bodySize}px ${familyText}`;
-        return ctx.measureText(text).width + Math.max(0, Array.from(text).length - 1) * 0.3;
-      },
-      ruby: (text: string): number => {
-        if (!ctx) return text.length * this.#theme.typography.bodySize / 2;
-        ctx.font = `${this.#theme.typography.bodySize / 2}px ${familyText}`;
-        return ctx.measureText(text).width;
-      },
-    };
-    const layouts = layoutRuby(segs, this.#dialogWidth(), measure, this.#theme.typography.bodySize * 1.6);
-    const baseStyle = {
-      fontSize: this.#theme.typography.bodySize,
-      fill: this.#theme.colors.text,
-      fontWeight: '500',
-      fontFamily: family,
-      letterSpacing: 0.3,
-      lineHeight: this.#theme.typography.bodySize * 1.6,
-      stroke: { width: 0, color: this.#theme.colors.textOnAccent },
-    } satisfies TextStyleOptions;
-    const rubyStyle = {
-      fontSize: this.#theme.typography.bodySize / 2,
-      fill: this.#theme.colors.text,
-      fontFamily: family,
-      stroke: { width: 0, color: this.#theme.colors.textOnAccent },
-    } satisfies TextStyleOptions;
-    let rubyIndex = 0;
-    layouts.forEach((layout: RubyGlyphLayout, index) => {
-      const base = this.#takeRubyText(this.#rubyBasePool, index, layout.base, baseStyle);
-      base.position.set(layout.x + (layout.width - base.width) / 2, layout.y);
-      if (layout.ruby !== undefined) {
-        const ruby = this.#takeRubyText(this.#rubyTextPool, rubyIndex++, layout.ruby, rubyStyle);
-        ruby.anchor.set(0.5, 1);
-        ruby.position.set(layout.x + layout.width / 2, layout.y - 2);
-      }
-    });
-    // Keep the reading above the first base inside the same scrollable viewport.
-    // Actual font metrics may exceed the nominal half-size (especially CJK fonts).
-    const rubyInset = Math.max(0, ...this.#rubyTextPool.filter(text => text.visible).map(text => text.height + 2));
-    const pitch = Math.max(this.#theme.typography.bodySize * 1.6,
-      rubyInset + Math.max(0, ...this.#rubyBasePool.filter(text => text.visible).map(text => text.height)) + 2);
-    rubyIndex = 0;
-    layouts.forEach((layout, index) => {
-      this.#rubyBasePool[index]!.y = layout.line * pitch + rubyInset;
-      if (layout.ruby !== undefined) this.#rubyTextPool[rubyIndex++]!.y = layout.line * pitch + rubyInset - 2;
-    });
-  }
-
-  #takeRubyText(pool: PText[], index: number, text: string, style: TextStyleOptions): PText {
-    let object = pool[index];
-    if (!object) {
-      object = new PText({ text, style });
-      bindThemeTextProjection(object, { fill: 'text', stroke: 'textOnAccent' });
-      pool[index] = object;
-      this.#dialogRubyLayer.addChild(object);
-      this.#registerDisplay(`ruby-${pool === this.#rubyBasePool ? 'base' : 'text'}:${index}`, object);
-    } else {
-      object.text = text;
-      object.style = style;
-      bindThemeTextProjection(object, { fill: 'text', stroke: 'textOnAccent' });
+    const rich = doc.units.some(unit => unit.ruby || unit.style.bold || unit.style.italic || unit.style.color || unit.style.size || unit.style.effect || unit.style.emphasis);
+    this.#dialogText.visible = !rich;
+    this.#dialogRubyLayer.visible = rich;
+    if (rich) {
+      this.#dialogText.text = '';
+      this.#dialogRubyLayer.setContent(doc, this.#dialogWidth(), this.#theme, familyText, this.#visibleUnits);
+      this.#dialogRubyLayer.setAnimationEnabled(!this.#preferences.reducedMotion && !this.#textSkipping);
+      this.#dialogContentHeight = this.#dialogRubyLayer.contentHeight;
+      return;
     }
-    object.visible = true;
-    return object;
+    this.#hideRubyPool();
+    if (!this.#plainWrap || this.#plainWrap.document !== doc || this.#plainWrap.width !== this.#dialogWidth()
+      || this.#plainWrap.theme !== this.#theme || this.#plainWrap.family !== familyText) {
+      this.#plainWrap = { document: doc, width: this.#dialogWidth(), theme: this.#theme, family: familyText, lines: this.#wrapDialogText(doc.plainText) };
+    }
+    const lines = this.#plainWrap.lines, shown = this.#visibleDialogText.length;
+    const revealed: string[] = [];
+    let cursor = 0;
+    for (const line of lines) {
+      if (cursor >= shown) break;
+      revealed.push(line.slice(0, Math.max(0, shown - cursor)));
+      cursor += line.length;
+      if (doc.plainText.startsWith('\r\n', cursor)) cursor += 2;
+      else if (doc.plainText[cursor] === '\n' || doc.plainText[cursor] === '\r') cursor++;
+    }
+    this.#dialogText.text = revealed.join('\n');
+    this.#dialogContentHeight = doc.units.length ? lines.length * this.#theme.typography.bodySize * 1.6 : 0;
   }
 
-  #hideRubyPool(): void {
-    for (const object of this.#rubyBasePool) object.visible = false;
-    for (const object of this.#rubyTextPool) object.visible = false;
-  }
+  #hideRubyPool(): void { this.#dialogRubyLayer.clearText(); }
 
   #destroyRubyPools(): void {
-    this.#dialogRubyLayer.removeChildren();
-    for (let i = 0; i < this.#rubyBasePool.length; i++) this.#lifecycle.release('dialogue', 'display', `ruby-base:${i}`);
-    for (let i = 0; i < this.#rubyTextPool.length; i++) this.#lifecycle.release('dialogue', 'display', `ruby-text:${i}`);
-    this.#rubyBasePool = [];
-    this.#rubyTextPool = [];
+    // Child display resources are owned and destroyed with the registered layer root.
+    this.#dialogRubyLayer.clearText();
   }
 
   #drawChoiceCard(view: ChoiceView, selected: boolean): void {
+    view.rich?.setContent(view.document, this.#w * 0.68 - 80, this.#theme, this.#assets.fontFamily('body'), Infinity, selected ? 'accent' : 'text');
     view.label.style.fontSize = this.#theme.typography.bodySize;
     view.label.style.fill = selected ? this.#theme.colors.accent : this.#theme.colors.text;
     bindThemeTextProjection(view.label, { fill: selected ? 'accent' : 'text', fontSize: 'bodySize' });
@@ -1442,6 +1448,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       .stroke({ color: this.#theme.colors.accent, width: 1.5, alpha: 0.95 });
     bindThemeGraphicsProjection(view.bar, ['accent']);
     view.label.position.set(40, Math.max(12, (h - view.label.height) / 2));
+    view.rich?.position.set(40, Math.max(12, (h - view.rich.contentHeight) / 2));
     this.#requestFrame();
   }
 
@@ -1473,6 +1480,11 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#nvlEntries.forEach((entry, index) => {
       const wrapped = this.#wrapNvlText(entry.speaker, entry.text);
       const node = this.#nvlLines[index]!;
+      if (node instanceof InlineTextView) {
+        const name = entry.speaker ? this.#speakerProfiles.get(entry.speaker.trim())?.name ?? entry.speaker : null;
+        node.setContent(parseInlineText((name ? escapeInlineText(`${name}：`) : '') + (entry.markup ?? escapeInlineText(entry.text))), this.#w * .68, this.#theme, this.#assets.fontFamily('body'));
+        this.#nvlLineCounts[index] = node.contentHeight / (this.#theme.typography.bodySize * 1.6); return;
+      }
       node.text = wrapped.join('\n');
       node.style.fontFamily = this.#assets.fontFamily('body');
       node.style.fontSize = this.#theme.typography.bodySize;

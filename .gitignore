@@ -32,3 +32,4 @@ packages/shell/.pack-stage/
 /games/homeward/
 /games/last-echo/
 /packages/editor/desktop-dist/
+packages/shell/game-runtime/

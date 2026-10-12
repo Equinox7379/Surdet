@@ -4,7 +4,18 @@
  * `surdet lint --json` 输出携带 hint，构成"写剧本 → lint → 按 hint 修复 → 再 lint"的自我修正循环接口。
  */
 
+import { BUILTIN_TRANSITION_NAMES } from './transition.js';
+
 export const LINT_CODE_HINTS: Record<string, string> = {
+  TRANSITION_INVALID: '@transition rule 指定 @rule 素材键；@soft 为0–1，@reverse 为开关或true/false。',
+  RULE_ASSET_UNRESOLVED: '导入指定遮罩图片到content/assets/rule，或更正@rule引用；重名/不支持的图片也不能当作已解析。',
+  FILTER_INVALID: '@filter 使用 blur、grayscale、sepia、vignette 或 off，后接可选0–600000毫秒时长，不接受额外位置参数。',
+  M001: '未知行内标签按原文显示；检查拼写，或用 \\< 明确输出尖括号。',
+  M002: '样式标签必须在同一句内闭合；核对开标签对应的 </名称>。',
+  M003: '标签须按嵌套顺序闭合；<w> 为单标签，不写 </w>。',
+  M004: '检查标签值与范围；标签值不能使用变量，变量只能填入普通正文。',
+  M005: '说话人不解析标签；选项文案只支持文字样式，不支持节奏或动画。',
+  M006: '把 <nw> 放在句末所有成对标签之后；不要放在句中或样式内部。',
   /* ---- 词法（L） ---- */
   L001: '指令名缺失或 @ 后跟空白：指令必须形如 @指令名 参数，@ 后紧跟指令名，不要有空格。',
   L002: '修饰符缺键名：修饰符必须形如 @键=值 或 @键，@ 后必须有键名。',
@@ -61,7 +72,7 @@ export const LINT_CODE_HINTS: Record<string, string> = {
   T001: '@set 值类型与声明类型不匹配：调整右值类型或修改变量声明 type（+=/-= 仅用于 number）。',
   T002: '条件表达式静态类型不是 boolean：条件应产出布尔值（比较/逻辑运算），不要用数值/字符串表达式。',
   T003: '运算符操作数类型明显不符：如数值变量与字符串比较、数值与布尔做 &&；修正操作数或补充类型转换逻辑。',
-  T010: '@transition 类型未知：使用已支持的 fade、slide-left、slide-right 或 circle。',
+  T010: `@transition 类型未知：使用已支持的 ${BUILTIN_TRANSITION_NAMES.join('、')}。`,
   TL001: '时间轴 JSON 顶层必须是对象。',
   TL002: '时间轴 version 必须为 1 或 2；使用 clips 时须为 2。',
   TL003: '时间轴 id 仅用字母、数字、下划线、点号或短横线，且与文件名一致。',

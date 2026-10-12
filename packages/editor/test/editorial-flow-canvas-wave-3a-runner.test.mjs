@@ -173,7 +173,8 @@ describe('Wave 3A browser runner contract', () => {
     expect(source).toContain('window.surdetEditorDebug.state.current === sceneId');
     expect(source).toContain("page.locator('[data-action=\"undo\"]')");
     expect(source).toContain("afterUndo === beforeLink");
-    expect(source).toContain('新增剧情跳转');
+    expect(source).toContain("await linkDialog.getByRole('button', { name: '应用修改' }).click()");
+    expect(source).toContain("afterLink.status.includes('连到') && afterLink.status.includes('可撤销')");
   });
 
   it('proves page-scale command reachability through real visual geometry and activation', () => {

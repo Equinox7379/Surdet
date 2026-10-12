@@ -15,6 +15,7 @@ export interface AssetThumbnailSession {
 
 const KIND_LABELS: Record<ProjectAssetKind, string> = {
   background: '背景',
+  rule: '转场遮罩',
   portrait: '立绘',
   avatar: '头像',
   music: '音乐',
@@ -28,7 +29,7 @@ const KIND_LABELS: Record<ProjectAssetKind, string> = {
 };
 
 function thumbnailFit(kind: ProjectAssetKind): 'cover' | 'contain' {
-  return kind === 'background' || kind === 'avatar' ? 'cover' : 'contain';
+  return kind === 'background' || kind === 'rule' || kind === 'avatar' ? 'cover' : 'contain';
 }
 
 function formatLabel(item: ProjectAssetItem): string {
@@ -44,7 +45,7 @@ export function describeAssetThumbnail(
     return { loadable: false, label: '文件缺失', detail: '无物理文件', fit };
   }
 
-  const imageKind = item.kind === 'background' || item.kind === 'portrait' || item.kind === 'avatar';
+  const imageKind = item.kind === 'background' || item.kind === 'rule' || item.kind === 'portrait' || item.kind === 'avatar';
   if (imageKind && dirAsset?.isImage && dirAsset.handle !== null) {
     return {
       loadable: true,

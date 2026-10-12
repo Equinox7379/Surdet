@@ -4,7 +4,8 @@
  */
 import { IMPLEMENTED_INSTRUCTIONS } from './dsl/compiler.js';
 import { parseExpr, collectVars } from './dsl/expr-parser.js';
-import { STAGE_POSE_MODIFIERS } from './stage.js';
+import { STAGE_POSE_MODIFIERS, decodeStageToken } from './stage.js';
+import { BUILTIN_TRANSITIONS, BUILTIN_TRANSITION_NAMES } from './transition.js';
 import type { ExprAst } from './dsl/expr-ast.js';
 import { collectInterpolatedVars } from './runtime/interpreter.js';
 import { VariableStore } from './state/variable-store.js';
@@ -20,6 +21,7 @@ import type {
   SetInstr,
   TextInstr,
 } from './dsl/ast.js';
+import { readProjectPlugins } from './project-plugins.js';
 
 /** 统一 lint 问题形状（CLI 与编辑器共用）；hint 为可操作的修复建议（M5 支柱1：AI 自我修正闭环，
  *  经 attachHints 按错误码补齐，lint --json 输出携带） */
@@ -76,6 +78,8 @@ export function parseVariableConfig(
       });
     }
   }
+  try { customInstructions.push(...readProjectPlugins({ plugins: raw.plugins }).flatMap(plugin => plugin.instructions.map(instruction => instruction.name))); }
+  catch (error) { issues.push({ severity: 'error', code: 'PLUGIN_CONFIG', text: error instanceof Error ? error.message : String(error), file: cfgPath, line: 0, col: 0 }); }
 
   const entryRaw = raw['entryScene'];
   const entryScene = typeof entryRaw === 'string' && entryRaw.length > 0 ? entryRaw : undefined;
@@ -219,24 +223,19 @@ export function collectSceneSpeakers(scene: CompiledScene): Set<string> {
   return out;
 }
 
-/** 引擎内置转场名称；未知名称必须在内容校验阶段报错，禁止运行时静默回退。 */
-export const BUILTIN_TRANSITIONS: ReadonlySet<string> = new Set([
-  'fade', 'slide-left', 'slide-right', 'circle',
-]);
-
 export function validateTransitionInstructions(scene: CompiledScene, issues: LintIssue[]): void {
   for (const instr of scene.instructions) {
     if (instr.op !== 'instr' || instr.name !== 'transition') continue;
-    const name = instr.args[0] ?? 'fade';
+    const name = decodeStageToken(instr.args[0] ?? 'fade');
     if (BUILTIN_TRANSITIONS.has(name)) continue;
     issues.push({
       severity: 'error',
       code: 'T010',
-      text: `${instr.file}:${instr.line}:${instr.col}: @transition 未知转场 '${name}'（支持 fade/slide-left/slide-right/circle）`,
+      text: `${instr.file}:${instr.line}:${instr.col}: @transition 未知转场 '${name}'（支持 ${BUILTIN_TRANSITION_NAMES.join('/')}）`,
       file: instr.file,
       line: instr.line,
       col: instr.col,
-      hint: '改用 fade、slide-left、slide-right 或 circle；如需扩展，请先在引擎注册转场。',
+      hint: `改用 ${BUILTIN_TRANSITION_NAMES.join('、')}；如需扩展，请先在引擎注册转场。`,
     });
   }
 }
@@ -367,6 +366,10 @@ export function validateSceneVariables(
       case 'choice': {
         const ch = instr as ChoiceInstr;
         for (const opt of ch.options) {
+          for (const name of collectInterpolatedVars(opt.label)) if (!variables.has(name)) issues.push({
+            severity: 'error', code: 'V002', text: `选项插值 '{${name}}' 引用了未声明变量 '${name}'`,
+            file: opt.pos.file, line: opt.pos.line, col: opt.pos.col,
+          });
           if (opt.when !== null) {
             const p = at(opt.pos.file, opt.pos.line, opt.pos.col);
             const ast = checkExpr(opt.when, p, types, issues);
@@ -425,6 +428,11 @@ export function checkConsumedModifiers(
   }
   // system 指令修饰符交付宿主；自定义指令不在 IMPLEMENTED 集 → 两者都跳过
   if (instr.name === 'pose' || instr.name === 'layer' || instr.name === 'stage') return;
+  if (instr.name === 'transition' && decodeStageToken(instr.args[0] ?? '') === 'rule') {
+    for (const key of instr.modifiers.keys()) if (!['rule', 'soft', 'reverse'].includes(key)) issues.push({ severity: 'warning', code: 'W003',
+      text: `${at}: 遮罩转场修饰符 '@${key}' 未被引擎消费`, file: instr.file, line: instr.line, col: instr.col });
+    return;
+  }
   if (SYSTEM_INSTRUCTIONS.has(instr.name) || !IMPLEMENTED_INSTRUCTIONS.has(instr.name)) return;
   for (const key of instr.modifiers.keys()) {
     issues.push({

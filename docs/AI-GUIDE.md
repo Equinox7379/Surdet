@@ -1,10 +1,20 @@
 # Surdet 内容创作指南（给外部 AI 助手）
 
+Windows免安装导出见[导出合同](windows-game-export-contract.md)：导出已保存版本，作品身份沿项目名称，改标题不换存档；需含预制运行时的Editor，不在作者电脑上运行npm构建。插件须由Owner明确信任，自定义项目入口不能悄悄丢弃。
+
 本指南面向编写剧情、配置与演出的内容作者。默认使用正式 Agent Port 工具，在隔离草稿中修改、验证和试玩；不需要先读引擎源码、长期台账或重新接线播放器。已有项目保持原位，新项目使用现有模板。
 
-本批公开创作合同为 **2.30.0**（72 项公开能力），`project.simulate` 新增源位置与版本关联的 `coverage`，失败和预算耗尽的部分报告保留在错误 `details.report`；保留作品界面变量条件、只读数值条、数组列表/数量、有限赋值按钮，以及人物档案、用语辞典、结局册、可选永久收藏、多语言、已有配音、主题、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+本批公开创作合同为 **2.38.0**（73 项公开能力），`project.simulate` 新增源位置与版本关联的 `coverage`，失败和预算耗尽的部分报告保留在错误 `details.report`；保留作品界面变量条件、只读数值条、数组列表/数量、有限赋值按钮，以及人物档案、用语辞典、结局册、可选永久收藏、多语言、已有配音、主题、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+
+项目代码扩展见[插件合同](project-plugins-contract.md)。`project.inspect.plugins` 可读取声明、参数与状态版本；普通创作 Agent 不注册、启用或执行插件代码。剧情检查遇到插件会返回 `requires-extension` / `incomplete`，表示“需要扩展，未运行”，不能用增加预算、占位继续或封装旧通过记录来替代 Owner 明确启用后的真实试玩。
 
 ## 0. 准备项目与会话
+
+流程连接仍用`scene.patch`：`insertBefore`可以在真实结束/跳转指令前插入typed blocks，避免追加到结束之后成为死代码；空标签段可锚定下一个规范label。`replaceInstruction`支持call改目标，选择肢继续用已有choice变体。复制现有对象前置事实，不自行算摘要；参见[流程编辑合同](flow-operations-contract.md)。Editor图上交互仍待前端。
+
+需要找到源行的真实到达路径时，调用`project.preview-path`，传`sceneId`、一基`line`和当前`view`。缺省search从入口找路，path按真实选项index重播，test只用本次临时初值；预算耗尽或宿主接管未完成不能判不可达，不产生项目模拟通过证据。结果停在目标执行前。参见[目标路径合同](preview-target-path-contract.md)。Editor“从这里试玩”入口仍待前端接入。
+
+本批行内文字：`capabilities.describe.result.inlineText.tags`提供实际支持表，使用既有`scene.patch`编写。示例：`凛：<em><color=accent>等一下</color></em><w=500>……<w>继续。`。ADV支持`w/speed/nw/shake/wave`，`nw`仅句末；选项只用样式/注音，NVL和文字记录保留静态样式。注音写`<ruby=せかい>世界</ruby>`，旧`世界《せかい》`现在是普通文字，不作兼容解释。需要字面尖括号时按[行内文字合同](inline-text-contract.md)转义。标签错误通过M类诊断和精确范围修正；变量填入的内容不会成为标签。文字记录完整最多200条进入表现快照，存读档/回退不重复当前句；Editor补全/高亮仍由前端独立接入，不能把后端可用等同于前端已交付。
 
 环境已可用时不要重装依赖或全量重建。由获授权的执行者创建新项目、启动会话；已绑定会话直接进入能力发现。
 
@@ -324,6 +334,8 @@ Editor「配置 → 文本与译稿」使用同一操作：读取目录→填写
 
 ### 从已有素材做一段有演出的剧情
 
+遮罩图片放在 `content/assets/rule/`。读取 `project.assets.rules` 核对唯一可用条目，从 `intelligence.items` 的 rule 条目复制 `usage.scene`，在修改背景/人物之后使用 `@transition rule 800 @rule="实际遮罩键" @soft=.15 @reverse=false`；减少动态立即显示新画面。缺图/重名/不支持格式校验报错，候选只接受基线已解析的 `asset:rule:键`。本批没有时间轴遮罩动作，别编造cue；详见[演出合同](presentation-effects-contract.md)。
+
 先读取 `project.assets({ "view": "working" })`（未建草稿时用 project）。背景和立绘的可用条目带有 `usage.scene` 与 `usage.timeline`：前者是可直接放进 scene.create 的 blocks 或 scene.patch 的 insertAfter.blocks 的指令对象，后者是可放进 timeline.create 的 definition.tracks 的轨道。示例已经使用当前项目的真实键，并处理场景参数的引号，不要把 sourcePath 当成素材键，也不要去掉示例 args 内的引号。
 
 声音和视频从 `intelligence.items` 选择：可用条目也带 `usage.scene`；音乐、音效、语音还提供 `usage.timeline`，可用原 timeline.create/patch 创建和返修 audio 轨道。当前 audio actions 为 bgm/se/voice；环境音与视频只有场景用法，不编造对应轨道。示例是素材接线，不代表媒体已经解码或节奏已经合适。重名、缺失、非法名称和当前未接入格式不会获得示例；环境音保留字 off 表示停止，不用于播放同名文件。
@@ -392,6 +404,8 @@ Player、Editor 的工作稿试玩读取对应版本的角色资料。候选可�
 ```
 
 传给 `timeline.create` 后，在剧情 blocks 的可达位置插入 `{ "kind": "instruction", "name": "timeline", "args": ["arrival"], "modifiers": { "blocking": "" } }`。省略 blocking 就与台词并行；名字是 timeline，不是 timeline.play。不必把时间轴效果再用场景指令重复执行一次。
+
+screen轨道还支持`dissolve`和`rule`。例如`{"atMs":0,"durationMs":800,"easing":"linear","action":"rule","rule":"百叶窗","soft":0.15,"reverse":false}`，遮罩键从`project.assets.intelligence.items[].usage.timeline`复制，不猜文件名；soft缺省0.15、reverse缺省false，不能写字符串开关。给同一时刻加背景/人物轨道即可从修改前的世界过渡；没有舞台修改时不产生转场。已开始的转场读档/回退后视为完成，游标之后的新cue正常播放；转场不接管其他轨道属性。详见[演出接口](presentation-effects-contract.md#时间轴-screen-转场)。
 
 返修原演出：inspect `timeline:arrival`，从 childRefs 逐层取得轨道、cue 的引用和当前指纹；timeline.patch 的 replaceCue 要传完整 cue，而不是仅改过的字段。成功后重读再继续；旧指纹拒绝时不要猜数组序号。背景/表情写错，用场景对象的当前引用和指纹调用 scene.patch 的 replaceInstruction；场景内单行指纹与时间轴指纹不能混用。
 

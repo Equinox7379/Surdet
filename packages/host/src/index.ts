@@ -10,6 +10,7 @@ export type {
 } from './types.js';
 export { createDefaultHost } from './create-host.js';
 export { createSystemHooks } from './save-hooks.js';
+export * from './project-plugins.js';
 export { connectSystemRouter } from './system-router.js';
 export { createElectronSaveStorage } from './electron-save-storage.js';
 export type { ElectronSaveBridge } from './electron-save-storage.js';

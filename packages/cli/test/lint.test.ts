@@ -257,9 +257,9 @@ describe('lintProject', () => {
   });
 
   it('@transition 只允许内置转场名称，未知名称报 T010', () => {
-    const ok = lintProject(makeProject({ 'content/scenario/a.gal': '@transition slide-left 600\n' }));
+    const ok = lintProject(makeProject({ 'content/scenario/a.gal': '@transition slide-left 600\n@transition dissolve 600\n' }));
     expect(ok.ok).toBe(true);
-    const bad = lintProject(makeProject({ 'content/scenario/a.gal': '@transition dissolve 600\n' }));
+    const bad = lintProject(makeProject({ 'content/scenario/a.gal': '@transition not-registered 600\n' }));
     expect(bad.ok).toBe(false);
     expect(bad.issues.some((i) => i.code === 'T010' && i.severity === 'error')).toBe(true);
   });

@@ -6,7 +6,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { compileScene, type GrowthConfig, type VarValue } from '@surdet/core';
+import { compileScene, readProjectPlugins, type GrowthConfig, type VarValue } from '@surdet/core';
 import { parseSceneDocument, simulateSnapshot, type ProjectSnapshot, type StoryCoverage } from '@surdet/authoring';
 import { findGalFiles, sceneIdFromFile } from './scenario-loader.js';
 import { authoringDigest, collectTimelineFiles } from './timeline-loader.js';
@@ -23,6 +23,7 @@ export interface SimulateOptions {
 }
 
 export interface SimulateReport {
+  status: 'passed' | 'failed' | 'incomplete';
   entryScene: string;
   sceneCount: number;
   pathsExplored: number;
@@ -55,6 +56,7 @@ function loadSnapshot(projectDir: string): ProjectSnapshot {
   const customInstructions = Array.isArray(config?.['customInstructions'])
     ? config['customInstructions'].filter((value): value is string => typeof value === 'string')
     : [];
+  customInstructions.push(...readProjectPlugins({ plugins: config?.plugins }).flatMap(plugin => plugin.instructions.map(i => i.name)));
   const sceneFiles = findGalFiles(path.join(projectDir, 'content/scenario'));
   const files = sceneFiles.map((fullPath) => {
     const text = fs.readFileSync(fullPath, 'utf8').replace(/^\uFEFF/, '');
@@ -147,6 +149,7 @@ export function simulateProject(projectDir: string, opts: SimulateOptions = {}):
     seed: opts.seed,
   });
   return {
+    status: report.status,
     entryScene: report.entryScene,
     sceneCount: snapshot.scenes.length,
     pathsExplored: report.pathsExplored,
@@ -222,6 +225,7 @@ export async function cmdSimulate(projectDir: string, argv: string[]): Promise<n
     } else {
       w('运行时错误：0 ✓');
     }
+    if (report.coverage.stops.some(stop => stop.kind === 'requires-extension')) w('需要扩展，未运行；此报告不能作为通过或交付证据。');
   }
-  return report.runtimeErrors.length === 0 ? 0 : 1;
+  return report.status === 'passed' ? 0 : 1;
 }

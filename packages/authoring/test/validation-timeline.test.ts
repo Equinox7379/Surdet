@@ -49,6 +49,20 @@ const goodTimeline = JSON.stringify({
 });
 
 describe('timeline validation wiring', () => {
+  it('rejects a missing rule asset in a timeline and accepts a resolved mask', async () => {
+    const snapshot = await loadProjectSnapshot(storageFor({ 'game.config.json': '{"entryScene":"start","variables":{}}',
+      'content/scenario/start.gal': '@scene start\n@timeline mask\n@end', 'content/timelines/mask.json': JSON.stringify({
+        version: 2, id: 'mask', durationMs: 800, tracks: [{ kind: 'screen', cues: [
+          { atMs: 0, durationMs: 800, easing: 'linear', action: 'rule', rule: '遮罩 @左' },
+        ] }],
+      }) }), hasher);
+    const index = buildObjectIndex(snapshot);
+    const missing = validateSnapshot(snapshot, index, { assetCatalog: catalog });
+    expect(missing.issues).toContainEqual(expect.objectContaining({ code: 'RULE_ASSET_UNRESOLVED', severity: 'error', file: 'content/timelines/mask.json' }));
+    expect(missing.ok).toBe(false);
+    expect(validateSnapshot(snapshot, index, { assetCatalog: buildAssetCatalog(['content/assets/rule/遮罩 @左.png']) }).issues
+      .some(issue => issue.code === 'RULE_ASSET_UNRESOLVED')).toBe(false);
+  });
   it('routes core validateTimeline diagnostics into the validation envelope as errors', async () => {
     const snapshot = await loadProjectSnapshot(storageFor({
       'game.config.json': '{"entryScene":"agent_probe","variables":{}}',

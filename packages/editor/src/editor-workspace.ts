@@ -316,7 +316,8 @@ export async function finishEditorWorkspaceWrite(): Promise<string | undefined> 
       return current.client.finish({ ...stateFor(current), writeLeaseId });
     });
     current.baseline = result.diskBaseline;
-    current.lastOwnWriteId = writeLeaseId;
+    // A save that changed no file leaves no notice, so the last notice still belongs to the previous own write.
+    if (result.changedPaths.length > 0) current.lastOwnWriteId = writeLeaseId;
     current.lost = false;
     if (result.mutationNotice.status === 'unavailable') return result.mutationNotice.message ?? '文件已保存，但变化通知暂时不可用。';
   } catch (error) {

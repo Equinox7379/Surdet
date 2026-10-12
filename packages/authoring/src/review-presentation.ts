@@ -3,6 +3,7 @@ import type {
   JsonValue,
 } from './composition-contracts.js';
 import type { ReviewUnitPresentation } from './review-contracts.js';
+import { inlinePlainText } from '@surdet/core';
 
 const MAX_HIGHLIGHTS = 8;
 const MAX_HIGHLIGHT_CHARS = 160;
@@ -87,8 +88,9 @@ function trackKindLabel(value: string): string {
 
 function choiceOptionFacts(value: JsonValue | undefined): string[] {
   if (!isRecord(value)) return [];
-  const label = stringAt(value, 'label');
-  if (label === undefined) return [];
+  const sourceLabel = stringAt(value, 'label');
+  if (sourceLabel === undefined) return [];
+  const label = inlinePlainText(sourceLabel, 'choice');
   const target = value['target'];
   const details: string[] = [];
   const when = stringAt(value, 'when');
@@ -118,7 +120,8 @@ function sceneBlockFacts(blocks: readonly JsonValue[]): string[] {
         const value = stringAt(block, 'value');
         if (value === undefined) break;
         const speaker = stringAt(block, 'speaker');
-        facts.push(speaker === undefined ? `台词：${value}` : `${speaker}：${value}`);
+        const visible = inlinePlainText(value);
+        facts.push(speaker === undefined ? `台词：${visible}` : `${speaker}：${visible}`);
         break;
       }
       case 'choice': {
@@ -192,8 +195,10 @@ function presentationForOperation(operation: CompositionOperation, full = false)
           const value = stringAt(patch, 'value');
           if (value === undefined) return result('修改场景', [], 'metadata-only');
           const speaker = stringAt(patch, 'speaker');
-          return result('修改场景', [speaker === undefined ? `替换台词：${value}` : `${speaker}：${value}`]);
+          const visible = inlinePlainText(value);
+          return result('修改场景', [speaker === undefined ? `替换台词：${visible}` : `${speaker}：${visible}`]);
         }
+        case 'insertBefore':
         case 'insertAfter': {
           const facts = sceneBlockFacts(arrayAt(patch, 'blocks'));
           return result('修改场景', facts.length === 0 ? [] : facts, facts.length === 0 ? 'metadata-only' : 'content');

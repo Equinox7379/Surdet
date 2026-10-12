@@ -1,5 +1,5 @@
 import { Container } from 'pixi.js';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { compileScene } from '@surdet/core';
 import { EventBus } from '@surdet/core';
 import { Interpreter } from '@surdet/core';
@@ -13,15 +13,27 @@ import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
 import { PresentationController } from '../../src/runtime/presentation-controller.js';
 import { createPresentationPorts } from '../../src/runtime/presentation-ports.js';
 import { NULL_AUDIO, type AudioHandle } from '../../src/types.js';
+import { Backlog } from '../../src/backlog.js';
+
+beforeEach(() => {
+  class TestCanvasContext {
+    font = ''; letterSpacing = ''; textLetterSpacing = '';
+    measureText(text: string) { return { width: text.length * 10, actualBoundingBoxAscent: 20, actualBoundingBoxDescent: 5 }; }
+  }
+  vi.stubGlobal('CanvasRenderingContext2D', TestCanvasContext);
+  vi.stubGlobal('document', { createElement: () => ({ getContext: () => new TestCanvasContext() }) });
+});
+afterEach(() => vi.unstubAllGlobals());
 
 interface IntegrationStage extends Record<string, unknown> {
   readonly text: { speaker: string | null; value: string }[];
   setNvlMode(on: boolean): void;
-  appendNvlText(speaker: string | null, text: string): void;
+  appendNvlText(speaker: string | null, text: string, markup?: string): void;
   setBackground(key: string | null): void;
 }
 
 interface Harness {
+  readonly backlog: Backlog;
   readonly stage: IntegrationStage;
   readonly dialogue: DialogueLayer;
   readonly controller: PresentationController;
@@ -33,7 +45,8 @@ interface Harness {
   dispose(): void;
 }
 
-function makeHarness(audio?: AudioHandle): Harness {
+function makeHarness(audio?: AudioHandle, capacity = 200): Harness {
+  const backlog = new Backlog(capacity);
   const lifecycle = new RenderLifecycle();
   const assets = new RenderAssetRegistry({ lifecycle });
   const root = new Container();
@@ -75,7 +88,7 @@ function makeHarness(audio?: AudioHandle): Harness {
     showBacklog: () => undefined,
     hideBacklog: () => undefined,
     setNvlMode: (on: boolean) => dialogue.setNvlMode(on),
-    appendNvlText: (speaker: string | null, text: string) => dialogue.appendNvlText(speaker, text),
+    appendNvlText: (speaker: string | null, text: string, markup?: string) => dialogue.appendNvlText(speaker, text, markup),
     clearNvlText: () => dialogue.clearNvlText(),
     showBanner: () => undefined,
     setChoiceHighlight: () => undefined,
@@ -97,6 +110,7 @@ function makeHarness(audio?: AudioHandle): Harness {
   } as IntegrationStage;
   const ports = createPresentationPorts(stage as never, { dialogueLayer: dialogue });
   const controller = new PresentationController(ports.commands, ports.queries, audio, {
+    backlog,
     commands: ports.commands,
     queries: ports.queries,
     validateStagePresentation: ports.validateStagePresentation,
@@ -118,6 +132,7 @@ function makeHarness(audio?: AudioHandle): Harness {
   ));
 
   return {
+    backlog,
     stage,
     dialogue,
     controller,
@@ -144,6 +159,56 @@ function nvlEntries(harness: Harness): { speaker: string | null; text: string }[
 }
 
 describe('Renderer presentation save/load integration', () => {
+  it('restores styled NVL and history as static text, with no duplicate or live timing tags', () => {
+    const h = makeHarness();
+    try {
+      h.registry.register(compileScene('@nvl on\n凛：<em><ruby=あめ>雨</ruby></em><wave><color=#cc3344>落下</color></wave><w=20><nw>\n后文\n@end', 'styled.gal', 'styled'));
+      h.interpreter.start('styled');
+      const before = nvlEntries(h);
+      const markup = '<em><ruby=あめ>雨</ruby></em><color=#cc3344>落下</color>';
+      expect(before).toEqual([{ speaker: '凛', text: '雨落下', markup }]);
+      const saved = JSON.parse(JSON.stringify(h.interpreter.saveSnapshot()));
+      h.interpreter.advance();
+      h.interpreter.loadSnapshot(saved);
+      expect(nvlEntries(h)).toEqual(before);
+      expect(h.backlog.entries()).toEqual([{ speaker: '凛', text: '雨落下', markup }]);
+      h.controller.update(1000);
+      expect(h.interpreter.status).toBe('awaiting-advance');
+      const bad = structuredClone(saved);
+      bad.presentation.payload.dialogue.nvlEntries = [{ speaker: '凛', text: '雨落下', markup: '<wave>雨落下</wave>' }];
+      expect(() => h.interpreter.loadSnapshot(bad)).toThrow(/NVL markup/);
+      expect(nvlEntries(h)).toEqual(before);
+    } finally { h.dispose(); }
+  });
+  it('restores full history after capacity eviction, suppresses one replay, and rejects bad history without mutation', () => {
+    const h = makeHarness(undefined, 2);
+    try {
+      h.registry.register(compileScene('甲\n<color=accent>乙</color><w=10>\n丙\n丁\n@end', 'history.gal', 'history'));
+      h.interpreter.start('history'); h.interpreter.advance();
+      const before = h.backlog.entries(); expect(before.map(entry => entry.text)).toEqual(['甲', '乙']);
+      expect(before[1]!.markup).toBe('<color=accent>乙</color>'); expect(Object.isFrozen(before[1])).toBe(true);
+      const saved = h.interpreter.saveSnapshot()!;
+      h.interpreter.advance(); expect(h.backlog.entries().map(entry => entry.text)).toEqual(['乙', '丙']);
+      h.interpreter.loadSnapshot(saved); expect(h.backlog.entries()).toEqual(before);
+      h.interpreter.advance(); expect(h.backlog.entries().map(entry => entry.text)).toEqual(['乙', '丙']);
+      const bad = structuredClone(saved); (bad.presentation!.payload as { dialogue: { backlog: unknown } }).dialogue.backlog = [{ speaker: null, text: 'bad', markup: '<b>other</b>' }];
+      const current = h.backlog.entries(); expect(() => h.interpreter.loadSnapshot(bad)).toThrow(/backlog/); expect(h.backlog.entries()).toEqual(current);
+      h.controller.resetSession(); expect(h.backlog.entries()).toEqual([]);
+    } finally { h.dispose(); }
+  });
+  it('keeps 200 complete historical entries across repeated restores and preserves a saved choice without suppressing its next new line', () => {
+    const h = makeHarness();
+    try {
+      h.registry.register(compileScene(Array.from({length: 202}, (_, i) => `第${i}句`).join('\n') + '\n@choice\n  继续 -> @goto next\n@label next\n新句\n@end', 'full.gal', 'full'));
+      h.interpreter.start('full'); let old = h.interpreter.saveSnapshot()!;
+      for (let i = 1; i < 202; i++) { h.interpreter.advance(); if (i === 199) old = h.interpreter.saveSnapshot()!; }
+      expect(h.backlog.entries()[0]!.text).toBe('第2句');
+      h.interpreter.loadSnapshot(old); expect(h.backlog.size).toBe(200); expect(h.backlog.entries()[0]!.text).toBe('第0句'); expect(h.backlog.latest(1)[0]!.text).toBe('第199句');
+      h.interpreter.advance(); h.interpreter.advance(); h.interpreter.advance();
+      const choice = h.interpreter.saveSnapshot()!; h.interpreter.loadSnapshot(choice); h.interpreter.choose(0);
+      expect(h.backlog.latest(1)[0]!.text).toBe('新句'); expect(h.backlog.size).toBe(200);
+    } finally { h.dispose(); }
+  });
   it.each(['choice', 'wait'] as const)('restores the displayed ADV line without replaying it at a saved %s', kind => {
     const harness = makeHarness();
     let displayed = { speaker: null as string | null, value: '' };

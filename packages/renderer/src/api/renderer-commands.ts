@@ -4,7 +4,7 @@ import type { BattleHandlers, BattleView } from '../battle-view.js';
 import type { GalleryItemView } from '../gallery.js';
 import type { LoadingProgress } from '../loading-progress.js';
 import type { PostProcessSettings } from '../post-process.js';
-import type { PresentationPreferences } from '../presentation.js';
+import type { PresentationPreferences, ReadingPreferences } from '../presentation.js';
 import type { RenderQuality } from '../quality.js';
 import type { SettingsRowView } from '../settings-store.js';
 import type { TimelineFrameEvent } from '../timeline-player.js';
@@ -36,6 +36,7 @@ export interface AssetCommands {
   registerPortraitVisual(charId: string, costume: string, expression: string, definition: import('@surdet/core').PortraitVisualDefinition,
     sources: Readonly<Record<string, { source: RendererAssetSource; format?: string }>>): Promise<void>;
   registerAvatar(key: string, source: RendererAssetSource, format?: string): Promise<void>;
+  registerRule(key: string, source: RendererAssetSource, format?: string): Promise<void>;
   /** URL ownership stays with the host; decoding occurs when the video is played. */
   registerVideo(key: string, source: RendererAssetSource, sourcePath?: string): Promise<void>;
   registerFontRole(role: RendererFontRole, url: string, family?: string, timeoutMs?: number): Promise<boolean>;
@@ -46,6 +47,13 @@ export interface AssetCommands {
 }
 
 export interface WorldCommands {
+  /** Production registry; duplicates (including built-ins) are rejected. Return releases ownership. */
+  registerTransition?(transition: import('../transition-registry.js').StageTransition): () => void;
+  /** Plugin owns the Filter until successful registration; the world then owns its release. */
+  registerFilter?(id: string, filter: import('pixi.js').Filter): () => void;
+  setFilterActive?(id: string, active: boolean): void;
+  /** Releases unused old-frame capture and starts the next mutation batch. */
+  markStageBoundary?(): void;
   /** Finite stage commands; legacy adapters without this port must reject new stage content. */
   applyStage?(command: import('@surdet/core').StageCommand): void;
   setBackground(key: string | null): void;
@@ -55,13 +63,14 @@ export interface WorldCommands {
   /** Atomic, snapshot-backed fade; optional only for existing setFade-only hosts. */
   fade?(from: number, to: number, durationMs: number): void;
   shake(durationMs?: number, strength?: number, direction?: ShakeDirection): void;
-  transition(name: TransitionName | string, durationMs: number): boolean;
+  transition(name: TransitionName | string, durationMs: number, options?: import('@surdet/core').RuleTransitionOptions): boolean;
   flash(durationMs?: number): void;
   zoom(scale?: number, durationMs?: number): void;
   wipe(durationMs?: number): void;
   movePortrait(key: string, pos: string, durationMs?: number): void;
   setTint(color: number, alpha: number, durationMs?: number): void;
   clearTint(durationMs?: number): void;
+  setStoryFilter?(name: import('@surdet/core').StoryFilterName, durationMs?: number): void;
   startParticles(kind: string): void;
   stopParticles(): void;
   applyTimelineFrame(event: TimelineFrameEvent): void;
@@ -98,9 +107,10 @@ export interface WorldProjectionPort extends WorldCommands {
 }
 
 export interface DialogueCommands {
-  showText(speaker: string | null, value: string): void;
-  /** Additive internal lifecycle command: begin a line while keeping its panel visible. */
-  beginText?(speaker: string | null): void;
+  /** Complete marked line plus revealed visible-unit count (omitted means fully visible). */
+  showText(speaker: string | null, value: string, visibleUnits?: number): void;
+  /** Begin a line and project its complete source/reveal count in one lifecycle step. */
+  beginText?(speaker: string | null, value?: string, visibleUnits?: number): void;
   /** Additive internal lifecycle command: explicitly clear and hide the current line. */
   clearText?(): void;
   showChoices(options: readonly ChoiceOptionView[]): void;
@@ -109,7 +119,8 @@ export interface DialogueCommands {
   showBacklog(entries: readonly BacklogEntry[], onReplayVoice?: (voice: string) => void, query?: string): void;
   hideBacklog(): void;
   setNvlMode(on: boolean): void;
-  appendNvlText(speaker: string | null, text: string): void;
+  appendNvlText(speaker: string | null, text: string, markup?: string): void;
+  setTextSkipping(skipping: boolean): void;
   clearNvlText(): void;
   showBanner(text: string, variant: 'chapter' | 'tip'): void;
   setChoiceHighlight(position: number): void;
@@ -132,6 +143,8 @@ export interface DialogueCommands {
  */
 export interface DialogueProjectionPort extends DialogueCommands {
   setTheme(theme: RendererTheme): void;
+  setReadingPreferences(preferences: Partial<ReadingPreferences>): void;
+  setPresentationPreferences(preferences: Partial<PresentationPreferences>): void;
   readonly activeSpeakerId: string | null;
   /** Increments only when a non-idempotent text projection is accepted. */
   readonly projectionVersion: number;
@@ -242,6 +255,7 @@ export interface PreferenceCommands {
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void;
   setPostProcess(settings: Partial<PostProcessSettings>): void;
   setTheme(overrides: RendererThemeOverrides): void;
+  setReadingPreferences(preferences: Partial<ReadingPreferences>): void;
 }
 
 export interface PresentationCommands {
