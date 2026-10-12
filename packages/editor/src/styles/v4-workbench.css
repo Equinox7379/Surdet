@@ -190,9 +190,8 @@
 .v4-authoring #editor .block-choice-option > .v4-step-summary { margin-left: 22px; }
 .v4-authoring #editor .block-choice-option > .v4-step-summary::before { content: '◆'; color: var(--surdet-action-primary); font-size: 9px; }
 .v4-authoring [data-script-view=arrange] { min-width: 0; }
-.v4-authoring[data-script-view=arrange] #editor .block:not(.block-text) > .fields { display: none; }
-.v4-authoring[data-script-view=arrange] #editor .block.v4-empty-dialogue > .fields { display: block; }
-.v4-authoring #editor .block:not(.block-text) > .fields { min-height: 0; padding: 4px 0; }
+/* A step's raw fields live in the inspector in both 编排 and 稿件; the row shows its readable summary. */
+.v4-authoring #editor .block:not(.block-text) > .fields { display: none; min-height: 0; padding: 4px 0; }
 /* The blank-row editor keeps editing the same source line after it receives text: one field in the dialogue column. */
 .v4-authoring #editor .block.v4-empty-dialogue > .fields { display: block; padding: 0; }
 .v4-authoring #editor .v4-empty-dialogue > .v4-step-summary { display: none; }
@@ -203,7 +202,9 @@
 .v4-authoring #editor .v4-empty-dialogue.block-blank:is(:hover,:focus-within,.v4-current) .fields .v4-dialogue-input { opacity: 1; }
 .v4-authoring #editor .v4-empty-dialogue.block-blank:not(:hover,:focus-within,.v4-current) .continuity-line-number { visibility: hidden; }
 .v4-authoring[data-script-view=arrange] #editor .block:not(.block-text):not(.v4-current):not(:focus-within) > .bar .ops { visibility: hidden; }
-.v4-authoring[data-script-view=manuscript] .v4-step-summary { display: none; }
+/* 稿件 reads like a script: non-dialogue steps are quiet notes without chips or thumbnails. */
+.v4-authoring[data-script-view=manuscript] #editor .block:not(.block-label) > .v4-step-summary { min-height: 0; padding: 0; background: transparent; color: var(--surdet-text-secondary); }
+.v4-authoring[data-script-view=manuscript] #editor .v4-step-summary .v4-step-thumb { display: none; }
 .v4-authoring[data-script-view=source] #editor :is(.manuscript-lines,.manuscript-footer) { display: none; }
 .v4-authoring[data-script-view=source] .v4-script-inspector { opacity: .75; pointer-events: none; }
 .v4-source-editor { width: 100%; min-height: 65vh; margin-top: 8px; border: 1px solid var(--surdet-border-default); border-radius: var(--surdet-radius-control); padding: 16px 18px; resize: vertical; background: var(--surdet-surface-panel); color: var(--surdet-text-primary); font: 13px/1.9 var(--surdet-font-mono); tab-size: 2; }
