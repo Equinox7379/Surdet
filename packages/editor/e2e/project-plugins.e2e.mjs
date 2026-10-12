@@ -125,6 +125,13 @@ try {
   page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
   page.on('dialog', (dialog) => { void dialog.accept(); });
   const refused = [];
+  // Every formal observation request; a plugin project's runs are local only and make none.
+  const published = [];
+  page.on('request', (request) => {
+    if (!request.url().includes('/workspace/preview') || request.method() !== 'POST') return;
+    const action = JSON.parse(request.postData() ?? '{}').preview?.action;
+    if (action) published.push(action);
+  });
   page.on('response', async (response) => { if (response.status() >= 400) refused.push(`${response.status()} ${new URL(response.url()).pathname} ${await response.text().catch(() => '')}`); });
   await page.exposeFunction('__surdetNodeFs', createNodeFsBridge({ project: projectRoot }));
   await page.addInitScript(nodeBackedFileSystemInit, { initialRootKey: 'project' });
@@ -205,7 +212,8 @@ try {
   assert.match(await row('letters').textContent(), /@letter_panel @title（文字，可省略） — 等插件界面完成后继续/);
   assert.match(await row('letters').textContent(), /插件接口 1 · 状态版本 1/);
   assert.deepEqual(await lastLoad(), []);
-  assert.equal((await checkpoints()).length, 1, 'the run keeps a position to resume before it stops');
+  assert.equal((await checkpoints()).length, 0, 'a plugin run keeps no position to resume');
+  assert.match(await page.locator('.preview-source-state').textContent(), /^插件试玩仅供本地查看：不生成正式观察记录，也不保留续接位置。/);
   await press('Enter');
   await debug("(d) => d.interp.status === 'error'");
   assert.match(await previewError(), /PLUGIN_REQUIRED：指令 @letter_count 需要明确启用插件 letters/);
@@ -215,9 +223,9 @@ try {
   assert.equal(await section.evaluate((node) => node.open), true, 'the stop opens the plugin list');
   assert.deepEqual(await checkpoints(), [], 'a plugin stop leaves no position to resume');
   await page.getByRole('button', { name: '回到上次位置' }).click();
-  await page.waitForFunction(() => /还没有可续接的实际试玩位置/.test(document.querySelector('.preview-source-state')?.textContent ?? ''));
+  await page.waitForFunction(() => /^插件试玩仅供本地查看，不保留可续接的位置/.test(document.querySelector('.preview-source-state')?.textContent ?? ''));
   if (outDir) await page.screenshot({ path: path.join(outDir, 'plugin-required.png') });
-  console.log('PASS an unconfirmed plugin is never imported; its instruction stops the run and clears the resume position');
+  console.log('PASS an unconfirmed plugin is never imported; its instruction stops the local run, which keeps no resume position');
 
   // 2. A TypeScript entry is refused, not compiled.
   await (await pluginButton('notes', '查看并启用插件')).click();
@@ -337,7 +345,6 @@ try {
   const saved = await page.evaluate((key) => localStorage.getItem(key), quickKey);
   assert.deepEqual(JSON.parse(saved).plugins, { letters: { version: 1, value: 2 } });
   await page.evaluate(({ key, text }) => localStorage.setItem(key, text), { key: quickKey, text: JSON.stringify({ ...JSON.parse(saved), plugins: { letters: { version: 2, value: 2 } } }) });
-  assert.equal((await checkpoints()).length, 1);
   await press('F9');
   await page.waitForFunction(() => /PLUGIN_VERSION/.test(document.querySelector('.preview-plugins-stop')?.textContent ?? ''));
   assert.match(await previewError(), /快速读档失败：PLUGIN_VERSION：插件 letters 状态版本 2 不受支持/);
@@ -345,8 +352,16 @@ try {
     'the refused restore changed nothing');
   assert.equal((await variables()).letterCount, 2);
   assert.deepEqual(await checkpoints(), []);
+  // A state the plugin's own codec rejects is classified as PLUGIN_STATE, with the plugin's reason.
+  await replay();
+  await press('Enter'); await waitText('数过了。');
+  await page.evaluate(({ key, text }) => localStorage.setItem(key, text), { key: quickKey, text: JSON.stringify({ ...JSON.parse(saved), plugins: { letters: { version: 1, value: 'x' } } }) });
+  await press('F9');
+  await page.waitForFunction(() => /PLUGIN_STATE/.test(document.querySelector('.preview-plugins-stop')?.textContent ?? ''));
+  assert.match(await previewError(), /快速读档失败：PLUGIN_STATE：插件 letters 状态校验失败：Error: 计数状态无效/);
+  assert.equal((await variables()).letterCount, 2, 'the refused restore changed nothing');
   await page.evaluate(({ key, text }) => localStorage.setItem(key, text), { key: quickKey, text: saved });
-  console.log('PASS a save with another plugin state version is refused atomically and reported as the stop');
+  console.log('PASS saves with another state version or a state the codec rejects are refused atomically and reported as the stop');
 
   // 10. Turning the plugin off: its code is not loaded, and a save that needs its state is refused.
   const importsBeforeOff = await counter('imported');
@@ -406,17 +421,18 @@ try {
   }
   console.log('PASS an entry with a static import or an import() with a trailing comma or second argument is refused');
 
-  // 14. Another version of the content runs no plugin code, whatever was confirmed here.
+  // 14. Another version of the content runs no plugin code and, declaring plugins, has no observation to play under.
   await fs.writeFile(file('plugins/letters.js'), ENTRY);
   await confirmTrust('letters', sha256(ENTRY));
-  await newRun(() => page.locator('.preview-workspace').getByLabel('试玩内容').selectOption({ label: '来源项目（已保存）' }));
-  await page.waitForFunction(() => /来源项目（已保存）/.test(document.querySelector('.preview-source-state')?.textContent ?? ''));
-  assert.deepEqual(await lastLoad(), []);
+  const loadsBefore = await preview().evaluate(() => window.__pluginLoads.length);
+  await page.locator('.preview-workspace').getByLabel('试玩内容').selectOption({ label: '来源项目（已保存）' });
+  await page.waitForFunction(() => /^所选版本声明了项目插件：插件试玩仅供本地查看/.test(document.querySelector('.preview-source-state')?.textContent ?? ''));
+  assert.equal(await preview().evaluate(() => window.__pluginLoads.length), loadsBefore, 'the selected version was not loaded');
   assert.match(await section.locator('.preview-plugins-blocked').textContent(), /所选版本不运行项目插件代码/);
   assert.equal(await row('letters').getByRole('button', { name: '查看并启用插件 letters' }).isDisabled(), true);
   await newRun(() => page.locator('.preview-workspace').getByLabel('试玩内容').selectOption({ index: 0 }));
   assert.deepEqual(await lastLoad(), ['letters']);
-  console.log('PASS a selected version of the content runs no plugin code');
+  console.log('PASS a selected version that declares plugins runs no plugin code and does not play without its observation');
 
   // 15. The headless story check runs no project code and says so.
   await page.locator('[data-editor-mode="stats"]').click();
@@ -427,6 +443,8 @@ try {
   assert.match(await stops.innerText(), /需要扩展，未运行：/);
   console.log('PASS the story check reports the plugin instruction as 需要扩展，未运行');
 
+  // The plugin project's runs were all local: nothing began or appended a formal observation.
+  assert.deepEqual(published.filter((action) => action !== 'invalidate'), [], `formal observation requests: ${published}`);
   assert.deepEqual(errors, [], `page errors; refused requests: ${refused.join('\n')}`);
   console.log('PASS project plugins');
 } finally {
