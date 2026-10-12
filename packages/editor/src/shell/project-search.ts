@@ -126,7 +126,11 @@ export function openProjectSearch(actions: SearchActions): void {
       } });
       if (entries.length >= 40) break;
     }
-    if (query) for (const match of searchScenes([...state.scenes].map(([key, scene]) => ({ key, id: scene.id, text: scene.text })), query, false, 40)) {
+    // Lines whose source or whose shown dialogue/option text (across style tags) contains the query.
+    const scenes = [...state.scenes].map(([key, scene]) => ({ key, id: scene.id, text: scene.text }));
+    const lineHits = query ? [...searchScenes(scenes, query, false, 'source', 40), ...searchScenes(scenes, query, false, 'visible', 40)]
+      .filter((match, index, all) => all.findIndex((other) => other.sceneKey === match.sceneKey && other.line === match.line) === index).slice(0, 40) : [];
+    for (const match of lineHits) {
       const scene = state.scenes.get(match.sceneKey)!; const text = scene.text;
       entries.push({ title: match.text, location: `${scene.file} · 第 ${match.line + 1} 行`, icon: 'search', open: () => {
         if (state.scenes.get(match.sceneKey) !== scene || scene.text !== text) throw new Error('搜索后正文已变化，请重新搜索再定位');

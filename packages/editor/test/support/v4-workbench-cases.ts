@@ -483,6 +483,8 @@ export const v4WorkbenchCases: BrowserCase[] = [
     control('.search-regex input').dispatchEvent(new Event('change', { bubbles: true })); input('#search-input', '[');
     assert(control<HTMLInputElement>('#search-input').getAttribute('aria-invalid') === 'true' && control('.search-count').textContent === '正则表达式无效', 'invalid regex appeared as no match');
     clickText('#search-panel', '替换'); assert(control<HTMLButtonElement>('.search-replacement button').disabled, 'invalid replacement remained enabled');
+    // Every row, as written: the source mode, where a zero-length regex meets each row once.
+    input('[aria-label="查找方式"]', 'source', 'change');
     input('#search-input', '^'); assert(document.querySelectorAll('.search-item').length === 6, 'zero-length regex lost lines or failed to terminate');
   } },
   { name: 'search keyboard protects project shortcuts, composition and Escape returns to the drawer trigger', run: () => {
@@ -562,7 +564,7 @@ export const v4WorkbenchCases: BrowserCase[] = [
   } },
   { name: 'zero-length regex results locate only real editor rows before a terminal newline', run: () => {
     const { jumps } = searchFixture('@scene start\r\n凛：正文\n@end\r');
-    input('[aria-label="查找范围"]', 'scene', 'change');
+    input('[aria-label="查找范围"]', 'scene', 'change'); input('[aria-label="查找方式"]', 'source', 'change');
     control<HTMLInputElement>('.search-regex input').checked = true;
     control('.search-regex input').dispatchEvent(new Event('change')); input('#search-input', '^');
     assert(document.querySelectorAll('.search-item').length === 3, 'terminal EOL created a phantom row');
