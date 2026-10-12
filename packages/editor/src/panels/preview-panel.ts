@@ -952,6 +952,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   let lastTraceSequence = -1;
   let traceCompleted = false;
   let activeCheckpointKey: string | null = null;
+  let activeLocalOnly = false;
   let currentPlayback: import('@surdet/authoring').PreviewPlaybackCheckpoint | null = null;
   let stagePlayback: import('@surdet/authoring').PreviewPlaybackCheckpoint | null = null;
   notifyPreviewTrace = (message, source) => {
@@ -979,7 +980,8 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     if (current.type === 'surdet-preview-trace-event') {
       if (current.sequence <= lastTraceSequence) return;
       lastTraceSequence = current.sequence;
-      if (current.playback !== undefined) { currentPlayback = current.playback; writePreviewCheckpoint(activeCheckpointKey, current.playback); }
+      // A local-only plugin run keeps no position at all, not even in memory for the stage adjustment's replay.
+      if (current.playback !== undefined && !activeLocalOnly) { currentPlayback = current.playback; writePreviewCheckpoint(activeCheckpointKey, current.playback); }
     } else {
       traceCompleted = true;
       // The run ends after its last event: a plugin stop leaves no position to resume, since resuming meets the same stop.
@@ -1093,7 +1095,8 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     // A position saved before the content declared plugins is not reused either.
     if (localOnly) clearPreviewCheckpoint(checkpointKey);
     const key = localOnly ? null : checkpointKey;
-    const replay = resume ? capturedPlayback ?? readPreviewCheckpoint(key) : null;
+    // Neither a saved position nor the stage adjustment's in-memory one resumes content that declares plugins.
+    const replay = resume && !localOnly ? capturedPlayback ?? readPreviewCheckpoint(key) : null;
     if (resume && replay === null) {
       sourceState.textContent = localOnly ? '插件试玩仅供本地查看，不保留可续接的位置；请从入口重新播放。'
         : '这个内容与入口还没有可续接的实际试玩位置，请先正常播放。';
@@ -1270,6 +1273,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     debugPanel.hidden = !debugging && run === undefined;
     expectedTraceId = traceId;
     activeCheckpointKey = key;
+    activeLocalOnly = localOnly;
     pluginsSection.setStop(null);
     activateStoryPreview(previewRecord);
     frameWindow.postMessage(message, '*', [...new Set(transfer)]);
