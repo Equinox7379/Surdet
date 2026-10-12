@@ -280,8 +280,22 @@ export const v4WorkbenchCases: BrowserCase[] = [
     histories.set('start', { past: [before.replace('只是正文', '先前正文')], future: [before.replace('只是正文', '后来正文')], lastPushAt: 0 });
     histories.set('chapter/other', { past: [caller.text], future: [], lastPushAt: 0 });
     bindLabelEditingHooks({ prepareConfig: prepareConfigLabelRename, onEdited: () => {} });
-    const prompt = window.prompt; window.prompt = () => '抵达';
-    try { clickText('#main', '改名并更新引用'); await nextTask(); } finally { window.prompt = prompt; }
+    const dialogInput = (): HTMLInputElement | null => document.querySelector<HTMLInputElement>('dialog.text-input-dialog[open] input');
+    const submitDialog = async (value: string): Promise<void> => {
+      const field = dialogInput(); assert(field, 'label rename dialog did not open');
+      field.value = value; control<HTMLFormElement>('dialog.text-input-dialog[open] form').requestSubmit();
+      for (let i = 0; i < 100 && dialogInput()?.readOnly; i++) await nextTask();
+    };
+    clickText('#main', '改名并更新引用');
+    assert(dialogInput()?.value === 'opening', 'rename dialog did not start from the current name');
+    clickText('dialog.text-input-dialog[open]', '取消');
+    assert(!dialogInput() && scene.text === before && state.pendingSceneConfigRenames.length === 0, 'cancel wrote a label rename');
+    clickText('#main', '改名并更新引用');
+    await submitDialog('抵 达');
+    assert(dialogInput()?.value === '抵 达' && control('dialog.text-input-dialog[open] [role="alert"]').textContent?.includes('不能重复')
+      && scene.text === before && state.pendingSceneConfigRenames.length === 0, 'refused name closed the dialog, lost the typed value or wrote');
+    await submitDialog('抵达');
+    assert(!dialogInput(), 'accepted rename left the dialog open');
     assert(scene.text === before.replace('@label opening', '@label 抵达'), `definition/prose/BOM/CRLF changed incorrectly: ${JSON.stringify({ text: scene.text, status: control('#status').textContent, lock: state.projectWriteLock })}`);
     assert(caller.text.includes('@call start.抵达') && caller.text.includes('@label opening') && caller.text.includes('旁白：start.opening 不应替换。'), 'cross-scene targets/prose were not distinguished');
     assert(JSON.stringify(state.configFiles.gallery) === JSON.stringify({ texts: [{ id: 'memory', name: '开场回想', scene: 'start', label: '抵达', note: 'opening' }], custom: 'keep' }), 'gallery identity or unknown fields changed');
