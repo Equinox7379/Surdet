@@ -13,7 +13,7 @@ import { assertConfigSourcesReadable, configSourceError, configSourcePath, parse
 import { assetPathForHandle, assertProjectWriteUnlocked, readProjectSourceText, runProjectWriteOperation, writeProjectText } from '../project-io.js';
 import { editorWorkspaceStatus } from '../editor-workspace.js';
 import { AuthoringOperationError, parseProjectConfigDocument, patchUiDocument, renameConfigReferences, renameGalleryLabel, applyConfigReferenceRename, type UiPatch } from '@surdet/authoring';
-import { commitCharacterTable, commitStageConfiguration, commitThemeConfiguration, commitUiConfiguration, parseCharacterVisualsDraft, parseThemeEditorDraft, projectThemeEditorDraft, type CharacterTableEditRow } from '../authoring-project-storage.js';
+import { commitCharacterTable, commitEndScenes, commitStageConfiguration, commitThemeConfiguration, commitUiConfiguration, parseCharacterVisualsDraft, parseThemeEditorDraft, projectThemeEditorDraft, type CharacterTableEditRow } from '../authoring-project-storage.js';
 import { disposeUiDesigner, renderUiDesigner } from '../ui-designer.js';
 import { renderThemeConfigForm } from '../theme-config-form.js';
 import { renderTextCatalogSection, type TextBindingDraft } from './text-catalog.js';
@@ -58,7 +58,8 @@ export type ConfigSectionId =
   | 'stage'
   | 'theme'
   | 'texts'
-  | 'ui';
+  | 'ui'
+  | 'endings';
 
 export interface ConfigDraftInspection {
   dirty: boolean;
@@ -76,6 +77,7 @@ interface ConfigSectionDescriptor {
 const CONFIG_SECTIONS: readonly ConfigSectionDescriptor[] = [
   { id: 'characters', label: '角色', description: '管理显示名称、头像与服装/表情立绘。', file: 'game.config.json', render: renderCharactersSection },
   { id: 'variables', label: '变量', description: '定义剧情状态、初始值、范围和只读约束。', file: 'game.config.json', render: renderVariablesSection },
+  { id: 'endings', label: '结束场景', description: '选择读完后回到标题画面的场景。', file: 'game.config.json', render: renderEndingsSection },
   { id: 'theme', label: '主题外观', description: '配置颜色、字体大小、对话框/按钮皮肤、字标与基础布局。', file: 'game.config.json', render: renderThemeSection },
   { id: 'ui', label: '界面设计', description: '为作品页面排布组件并设置数据与操作。', file: 'game.config.json', render: renderUiSection },
   { id: 'texts', label: '文本与译稿', description: '登记固定文本键，导出译稿并在核对差异后导入。', file: 'game.config.json', render: renderTextCatalogConfig },
@@ -95,7 +97,7 @@ function configDescriptor(id: ConfigSectionId): ConfigSectionDescriptor {
 }
 
 function sectionSource(id: ConfigSectionId): ConfigSourceName {
-  return id === 'characters' || id === 'variables' || id === 'stage' || id === 'theme' || id === 'ui' || id === 'texts' ? 'gameConfig' : id;
+  return id === 'characters' || id === 'variables' || id === 'stage' || id === 'theme' || id === 'ui' || id === 'texts' || id === 'endings' ? 'gameConfig' : id;
 }
 
 function renderConfigWorkspace(root: HTMLElement): void {
@@ -207,6 +209,9 @@ let themeDraft: string | null = null;
 let themeSourceBaseline: string | undefined;
 let uiDraft: ProjectUiDocument | null | undefined;
 let uiSourceBaseline: string | undefined;
+// player.endScenes: null means the field is absent, which stays distinct from an empty list.
+let endingsDraft: string[] | null | undefined;
+let endingsSourceBaseline: string | undefined;
 let textCsvDraft = '';
 let textBindingsDraft: TextBindingDraft[] = [];
 let configSessionRevision = 0;
@@ -252,6 +257,7 @@ function serializeConfigSection(sectionId: ConfigSectionId): string {
     case 'stage': return JSON.stringify(readStageConfigDraft());
     case 'theme': return JSON.stringify(readThemeConfigDraft());
     case 'ui': return JSON.stringify(readUiConfigDraft());
+    case 'endings': return JSON.stringify(readEndingsDraft());
     case 'texts': return JSON.stringify({ csv: textCsvDraft, bindings: textBindingsDraft });
   }
 }
@@ -457,6 +463,68 @@ export async function saveThemeConfigDraftUnlocked() {
   return result;
 }
 
+function readEndScenes(config: Record<string, unknown>): string[] | null {
+  const player = config['player'];
+  if (player !== undefined && (typeof player !== 'object' || player === null || Array.isArray(player))) throw new Error('game.config.json 的 player 必须是对象，请先修正配置文件。');
+  const value = (player as Record<string, unknown> | undefined)?.['endScenes'];
+  if (value === undefined) return null;
+  if (!Array.isArray(value) || !value.every(id => typeof id === 'string')) throw new Error('game.config.json 的 player.endScenes 必须是场景标识列表，请先修正配置文件。');
+  return [...value];
+}
+
+/** Why the source endScenes cannot be edited here, or null. */
+export function endingsSourceError(): string | null {
+  try { readEndScenes(parseConfigObj()); return null; }
+  catch (error) { return error instanceof Error ? error.message : String(error); }
+}
+
+export function readEndingsDraft(): string[] | null {
+  if (endingsDraft === undefined) {
+    // An unreadable source is reported by the section and refused on save; it never becomes "unset".
+    let value: string[] | null = null;
+    try { value = readEndScenes(parseConfigObj()); } catch { /* endingsSourceError() */ }
+    endingsSourceBaseline = JSON.stringify(value);
+    endingsDraft = value;
+    configBaselines.endings = JSON.stringify(value);
+  }
+  return endingsDraft;
+}
+
+export function editEndingsDraft(next: string[] | null): void {
+  assertProjectWriteUnlocked();
+  if (state.reviewWorkspace || state.reviewPreviewReadOnly || state.projectLoading) throw new Error('当前项目不可编辑结束场景。');
+  const source = endingsSourceError();
+  if (source) throw new Error(source);
+  if (JSON.stringify(readEndingsDraft()) === JSON.stringify(next)) return;
+  pushConfigHistory(false);
+  endingsDraft = next === null ? null : [...next];
+  configSessionLoaded = true;
+  scheduleConfigDraftStateChanged();
+}
+
+export function reloadEndingsDraft(): void {
+  const value = readEndScenes(parseConfigObj());
+  editEndingsDraft(value);
+  endingsSourceBaseline = JSON.stringify(value);
+  configBaselines.endings = JSON.stringify(value);
+  notifyConfigDraftStateChanged();
+}
+
+export async function saveEndingsDraftUnlocked() {
+  assertProjectWriteUnlocked();
+  assertConfigSaveReady('gameConfig');
+  const submitted = readEndingsDraft(), revision = configSessionRevision;
+  if (JSON.stringify(readEndScenes(parseConfigObj())) !== endingsSourceBaseline) throw new Error('结束场景的来源配置已经变化，请保留草稿并重新核对。');
+  const result = await commitEndScenes(submitted, state.gameConfigText);
+  if (revision === configSessionRevision) {
+    endingsSourceBaseline = JSON.stringify(result.after);
+    markConfigSectionSaved('endings', submitted, revision);
+    for (const snapshot of [...configHist.past, ...configHist.future]) snapshot.gameConfigText = result.text;
+    requestValidateHook();
+  }
+  return result;
+}
+
 export function readUiConfigDraft(): ProjectUiDocument | null {
   if (uiDraft === undefined) {
     const config = parseConfigObj();
@@ -612,6 +680,7 @@ interface ConfigSnapshot {
   stageDraft: string | null;
   themeDraft: string | null;
   uiDraft: ProjectUiDocument | null | undefined;
+  endingsDraft?: string[] | null;
   textCsvDraft: string;
   textBindingsDraft: TextBindingDraft[];
   gameConfigText: string;
@@ -637,6 +706,8 @@ function clearConfigRowsAndHistory(): void {
   themeSourceBaseline = undefined;
   uiDraft = undefined;
   uiSourceBaseline = undefined;
+  endingsDraft = undefined;
+  endingsSourceBaseline = undefined;
   textCsvDraft = '';
   textBindingsDraft = [];
   configSessionLoaded = false;
@@ -658,7 +729,7 @@ function clone<T>(v: T): T {
 }
 
 function takeConfigSnapshot(): ConfigSnapshot {
-  return { ...clone({ restoredConfigSources, historyRestoreBefore, charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows, stageDraft, themeDraft, uiDraft, textCsvDraft, textBindingsDraft }), gameConfigText: state.gameConfigText };
+  return { ...clone({ restoredConfigSources, historyRestoreBefore, charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows, stageDraft, themeDraft, uiDraft, endingsDraft, textCsvDraft, textBindingsDraft }), gameConfigText: state.gameConfigText };
 }
 
 function rewriteHistoryConfigSources(snapshot: ConfigSnapshot, rewrite: (name: ConfigSourceName, text: string) => string): void {
@@ -679,6 +750,7 @@ export function prepareConfigSceneRename(from: string, to: string, fallbackEntry
     renameConfigReferences(files, from, to, fallbackEntry);
     return files[file]!;
   };
+  const renameEnding = (ids: string[]): string[] => ids.map(id => id === from ? to : id);
   const rewrite = (snapshot: ConfigSnapshot): ConfigSnapshot => {
     const next = clone(snapshot);
     rewriteHistoryConfigSources(next, rewriteHistoryText);
@@ -693,6 +765,7 @@ export function prepareConfigSceneRename(from: string, to: string, fallbackEntry
     }) });
     renameConfigReferences(files, from, to, fallbackEntry);
     next.gameConfigText = files['game.config.json']!;
+    if (next.endingsDraft) next.endingsDraft = renameEnding(next.endingsDraft);
     if (next.calRows) next.calRows = JSON.parse(files['content/config/calendar.json']!) as CalendarRows;
     if (next.evRows) next.evRows = JSON.parse(files['content/config/events.json']!) as EventsRows;
     if (next.gaRows) next.gaRows = JSON.parse(files['content/config/gallery.json']!) as GalleryRows;
@@ -719,8 +792,17 @@ export function prepareConfigSceneRename(from: string, to: string, fallbackEntry
       baselines[section] = JSON.stringify(rewrite(snap)[field]);
     }
   }
+  const renameEndingBaseline = (text: string | undefined): string | undefined => {
+    if (text === undefined) return undefined;
+    const value = JSON.parse(text) as string[] | null;
+    return JSON.stringify(value === null ? null : renameEnding(value));
+  };
+  const endingBaselines = { section: renameEndingBaseline(baselines.endings), source: renameEndingBaseline(endingsSourceBaseline) };
   return () => {
     ({ charRows, varRows, achRows, calRows, evRows, grRows, gaRows, termRows } = current);
+    if (endingsDraft !== undefined) endingsDraft = current.endingsDraft ?? null;
+    if (endingBaselines.section !== undefined) baselines.endings = endingBaselines.section;
+    endingsSourceBaseline = endingBaselines.source;
     configHist.past = past;
     configHist.future = future;
     lastHistoryPublishedText = published;
@@ -789,6 +871,7 @@ function restoreConfigSnapshot(snap: ConfigSnapshot): void {
   stageDraft = snap.stageDraft;
   themeDraft = snap.themeDraft;
   uiDraft = snap.uiDraft;
+  endingsDraft = snap.endingsDraft === undefined || snap.endingsDraft === null ? snap.endingsDraft : [...snap.endingsDraft];
   textCsvDraft = snap.textCsvDraft;
   textBindingsDraft = clone(snap.textBindingsDraft);
   state.gameConfigText = snap.gameConfigText; // 内存态同步回退（磁盘不回滚，与行模型同语义）
@@ -1928,6 +2011,80 @@ function renderThemeSection(): HTMLElement {
   return sec;
 }
 
+function renderEndingsSection(): HTMLElement {
+  const { sec, ops } = sectionShell('endings');
+  sec.appendChild(h('p', 'config-section-help', '玩家读完这些场景的最后一句后，游戏回到标题画面；没有列出的场景读完后停在最后一句。这里只决定是否回到标题，不算作通关：通关仍由剧本里的 @clear 记录。修改先进入草稿，可撤销，保存后生效。'));
+  const status = h('p', 'dim');
+  status.setAttribute('role', 'status');
+  const sourceError = endingsSourceError();
+  if (sourceError) {
+    sec.append(h('p', 'config-empty', sourceError));
+    return sec;
+  }
+  const draft = readEndingsDraft();
+  const edit = (next: string[] | null): void => {
+    try { editEndingsDraft(next); rerenderConfig(); }
+    catch (error) { status.textContent = `结束场景未更新：${error instanceof Error ? error.message : String(error)}`; }
+  };
+  const body = h('div', 'config-subsection config-endings');
+  body.append(h('p', 'config-endings-state', draft === null ? '当前未设置：读完任何场景都停在最后一句。'
+    : draft.length === 0 ? '已设置为空列表：读完任何场景都停在最后一句。' : `读完以下 ${draft.length} 个场景后回到标题画面：`));
+  const files = new Map<string, string[]>();
+  for (const scene of state.scenes.values()) files.set(scene.id, [...(files.get(scene.id) ?? []), scene.file]);
+  if (draft && draft.length > 0) {
+    const list = h('ul', 'config-endings-list');
+    draft.forEach((id, index) => {
+      const row = h('li', 'config-endings-row');
+      const where = files.get(id);
+      row.append(h('span', 'config-endings-id', id),
+        h('span', where ? 'dim' : 'config-endings-missing', where ? where.join('、') : '项目中没有这个场景，保存时会被拒绝'));
+      const remove = h('button', 'config-row-delete', '移除');
+      remove.type = 'button';
+      remove.setAttribute('aria-label', `移除结束场景 ${id}`);
+      remove.onclick = () => edit(draft.filter((_, i) => i !== index));
+      row.append(remove);
+      list.append(row);
+    });
+    body.append(list);
+  }
+  const add = h('div', 'config-endings-add');
+  const select = h('select');
+  select.setAttribute('aria-label', '要添加的结束场景');
+  const option = (label: string, value: string): HTMLOptionElement => { const item = h('option', undefined, label); item.value = value; return item; };
+  select.append(option('选择场景', ''));
+  for (const id of [...files.keys()].filter(id => !(draft ?? []).includes(id)).sort((a, b) => a.localeCompare(b))) select.append(option(id, id));
+  const addButton = h('button', 'config-row-add', '添加');
+  addButton.type = 'button';
+  addButton.onclick = () => {
+    if (!select.value) { status.textContent = '请先选择场景。'; return; }
+    edit([...(draft ?? []), select.value]);
+  };
+  add.append(select, addButton);
+  body.append(add);
+  const save = h('button', 'primary', '保存结束场景');
+  save.onclick = async () => {
+    status.textContent = '正在保存…';
+    try {
+      await runProjectWriteOperation(saveEndingsDraftUnlocked);
+      status.textContent = '结束场景已保存。重新试玩后生效。';
+    } catch (error) {
+      status.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
+    }
+  };
+  const unset = h('button', undefined, '取消设置');
+  unset.title = '从配置中删除这一项，和空列表的效果相同';
+  unset.disabled = draft === null;
+  unset.onclick = () => edit(null);
+  const reload = h('button', undefined, '放弃编辑并重读');
+  reload.onclick = () => {
+    try { reloadEndingsDraft(); rerenderConfig(); }
+    catch (error) { status.textContent = `结束场景重读失败：${error instanceof Error ? error.message : String(error)}`; }
+  };
+  ops.append(save, unset, reload);
+  sec.append(body, status, ops);
+  return sec;
+}
+
 function renderUiSection(): HTMLElement {
   const { sec, ops } = sectionShell('ui');
   const status = h('p', 'dim');
@@ -2086,6 +2243,7 @@ export async function saveDirtyConfigSections(): Promise<ConfigSaveOutcome> {
     if (failures === 0) {
       charRows = null; varRows = null; achRows = null; calRows = null; evRows = null; grRows = null; gaRows = null; termRows = null;
       stageDraft = null; stageSourceBaseline = undefined; themeDraft = null; themeSourceBaseline = undefined; uiDraft = undefined; uiSourceBaseline = undefined;
+      endingsDraft = undefined; endingsSourceBaseline = undefined;
       captureAllConfigBaselines();
       requestValidateHook();
       rerenderConfig();
@@ -2112,6 +2270,10 @@ export async function saveDirtyConfigSections(): Promise<ConfigSaveOutcome> {
           break;
         case 'ui':
           await saveUiConfigDraftUnlocked();
+          ok = true;
+          break;
+        case 'endings':
+          await saveEndingsDraftUnlocked();
           ok = true;
           break;
         case 'characters':

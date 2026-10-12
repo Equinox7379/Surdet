@@ -608,6 +608,33 @@
   white-space: nowrap;
 }
 
+/* ---- End scenes ---- */
+
+#config-view .config-endings-list {
+  display: grid;
+  gap: var(--surdet-space-8);
+  margin: var(--surdet-space-12) 0;
+  padding: 0;
+  list-style: none;
+}
+
+#config-view .config-endings-row,
+#config-view .config-endings-add {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--surdet-space-12);
+  min-width: 0;
+}
+
+#config-view .config-endings-id {
+  font-family: var(--surdet-font-mono);
+}
+
+#config-view .config-endings-missing {
+  color: var(--surdet-state-danger);
+}
+
 /* ---- Actions and empty states ---- */
 
 #config-view .config-actions {
