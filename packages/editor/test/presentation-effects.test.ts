@@ -79,11 +79,16 @@ describe('transition and filter source edits', () => {
 
 describe('transition masks', () => {
   it('offers only the masks project.assets.rules resolves: supported, unique images', () => {
+    // The shared catalog lists masks in the runtime's localeCompare order of their paths (a Chinese
+    // locale puts 百叶窗 first); the expected list follows the same order instead of fixing one.
+    const resolved = ['content/assets/rule/百叶窗 遮罩.png', 'content/assets/rule/radial.webp'];
+    const expected = [...resolved].sort((a, b) => a.localeCompare(b)).map((path) => path.slice(path.lastIndexOf('/') + 1, path.lastIndexOf('.')));
     expect(resolvedRuleKeys([
-      asset('content/assets/rule/百叶窗 遮罩.png'), asset('content/assets/rule/radial.webp'),
+      asset(resolved[0]!), asset(resolved[1]!),
       asset('content/assets/rule/notes.txt'), asset('content/assets/rule/twice.png'), asset('content/assets/rule/twice.jpg'),
       { ...asset('content/assets/bg/room.png'), kind: 'bg' },
-    ])).toEqual(['radial', '百叶窗 遮罩']);
+    ])).toEqual(expected);
+    expect([...expected].sort()).toEqual(['radial', '百叶窗 遮罩']);
   });
   it('creates timeline screen dissolve and mask cues the shared validation accepts', () => {
     expect(TIMELINE_ACTIONS.screen).toEqual(['fade', 'tint', 'flash', 'wipe', 'dissolve', 'rule']);
