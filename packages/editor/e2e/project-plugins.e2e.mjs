@@ -196,6 +196,9 @@ try {
     await dialog.waitFor({ state: 'detached' });
   };
 
+  // The Windows export belongs to the desktop Editor; the browser Editor and its preview offer none.
+  assert.equal(await page.locator('[data-action="export-game"]').count(), 0, 'the browser Editor offers no Windows export');
+
   // 1. The declaration alone loads nothing: the run stops at the first plugin instruction.
   await openPreview();
   assert.equal(await section.locator('summary').textContent(), '项目插件（2 个 · 已启用 0）');

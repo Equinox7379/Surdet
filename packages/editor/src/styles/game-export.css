@@ -1,0 +1,43 @@
+/* Windows game export dialog: one column, form fields read top to bottom. */
+.game-export-dialog { width: min(680px, calc(100vw - 24px)); }
+.game-export-dialog [hidden] { display: none !important; }
+.game-export-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.game-export-header h2 { margin: 0 0 12px; }
+.game-export-intro, .game-export-note { margin: 0 0 12px; color: var(--surdet-text-secondary); font-size: 13px; }
+.game-export-status { margin: 0 0 12px; }
+.game-export-status:empty { display: none; }
+.game-export-status[data-tone="error"] { color: var(--surdet-state-danger); }
+.game-export-status[data-tone="success"] { color: var(--surdet-state-success); }
+.game-export-drafts, .game-export-unavailable { margin-bottom: 12px; }
+.game-export-identity { margin: 0 0 12px; font-size: 13px; color: var(--surdet-text-secondary); }
+.game-export-identity code, .game-export-issue code, .game-export-plugin code { font-family: var(--surdet-font-mono); }
+.game-export-issues h3, .game-export-plugins h3 { margin: 16px 0 8px; font-size: 14px; }
+.game-export-issue-list { display: grid; gap: 6px; max-height: 180px; margin: 0; padding: 0; overflow: auto; list-style: none; font-size: 13px; }
+.game-export-issue { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; align-items: baseline; }
+.game-export-issue small { grid-column: 2; color: var(--surdet-text-secondary); overflow-wrap: anywhere; }
+.game-export-issue--error strong { color: var(--surdet-state-danger); }
+.game-export-issue--warning strong { color: var(--surdet-state-warning); }
+.game-export-plugin { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
+.game-export-plugin input { width: 16px; height: 16px; margin: 0; }
+.game-export-form { display: grid; gap: 12px; margin-top: 16px; }
+.game-export-field { display: grid; gap: 6px; }
+.game-export-label { color: var(--surdet-text-secondary); font-size: 12px; font-weight: 600; }
+.game-export-field small { color: var(--surdet-text-muted); font-size: 12px; }
+.game-export-field :is(input, select) {
+  min-height: 32px; padding: 0 10px; border: 1px solid var(--surdet-border-default); border-radius: var(--surdet-radius-tight);
+  background: var(--surdet-surface-app); color: var(--surdet-text-primary); font: inherit;
+}
+.game-export-location { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.game-export-where, .game-export-target { overflow-wrap: anywhere; }
+.game-export-progress { margin: 4px 0 12px; }
+.game-export-phases { display: grid; gap: 4px; margin: 0 0 6px; padding-left: 20px; }
+.game-export-phases [data-phase-state="waiting"] { color: var(--surdet-text-muted); }
+.game-export-phases [data-phase-state="current"] { color: var(--surdet-text-primary); font-weight: 600; }
+.game-export-phases [data-phase-state="done"] { color: var(--surdet-state-success); }
+.game-export-result { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.game-export-result .game-export-facts { flex: 1 0 100%; }
+.game-export-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; margin: 0 0 12px; }
+.game-export-facts dt { color: var(--surdet-text-secondary); }
+.game-export-facts dd { margin: 0; overflow-wrap: anywhere; }
+.game-export-dialog footer { align-items: center; }
+.game-export-blocker { margin-right: auto; color: var(--surdet-text-secondary); }
