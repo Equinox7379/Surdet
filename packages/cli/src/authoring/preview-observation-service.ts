@@ -1,8 +1,9 @@
 import * as crypto from 'node:crypto';
 import * as path from 'node:path';
+import { readProjectPlugins } from '@surdet/core';
 import {
   AuthoringOperationError, buildObjectIndex, isPreviewAssetPath, isPreviewSourcePath, loadProjectSnapshot,
-  locateObjectForTraceEvent, normalizePreviewTraceMessage, parsePreviewPublishInput,
+  locateObjectForTraceEvent, normalizePreviewTraceMessage, parsePreviewPublishInput, parseProjectConfigDocument,
   PREVIEW_MAX_EVENTS, previewSourceText, stableStringify,
   type PreviewObservation, type PreviewPublishInput, type PreviewPublishAck, type PreviewReadInput,
   type PreviewReadResult, type PreviewSourceFacts, type ProjectStorage, type PreviewContentTarget,
@@ -92,10 +93,19 @@ export class PreviewObservationService {
     return workspace.availability === 'clean' || (target !== undefined && target.kind !== 'saved-project' && workspace.availability === 'dirty');
   }
   private async contentStorage(root: string, disk: NodeProjectStorage, content?: PreviewObservation['content']): Promise<ProjectStorage> {
-    if (content === undefined) return disk;
-    const resolved = await this.contents.resolve(root, content.target);
-    if (resolved.content.contentRevision !== content.contentRevision) return failure('PREVIEW_OBSERVATION_STALE', '试玩内容版本已变化，请重新加载');
-    return resolved.storage;
+    let texts: ProjectStorage = disk;
+    if (content !== undefined) {
+      const resolved = await this.contents.resolve(root, content.target);
+      if (resolved.content.contentRevision !== content.contentRevision) return failure('PREVIEW_OBSERVATION_STALE', '试玩内容版本已变化，请重新加载');
+      texts = resolved.storage;
+    }
+    // Plugin code is not part of the observation's existing source contract. Keep local playtesting
+    // available, but never publish, append or read it as current formally verified evidence.
+    if ((await texts.listFiles()).includes('game.config.json')
+      && readProjectPlugins(parseProjectConfigDocument((await texts.readText('game.config.json')).text)).length > 0) {
+      return failure('PREVIEW_OBSERVATION_UNAVAILABLE', '含项目插件的试玩仅供本地查看，当前不能生成可核对的正式观察记录。');
+    }
+    return texts;
   }
   private async diskSource(storage: NodeProjectStorage, source: PreviewSourceFacts, texts: ProjectStorage = storage): Promise<{ source: PreviewSourceFacts; assetPaths: string[] }> {
     const paths = await storage.listFiles();
@@ -125,6 +135,8 @@ export class PreviewObservationService {
         invalidated: input.reason, assetPaths: [], observation: null };
     } else if (input.action === 'begin') {
       if (!this.available(workspace, input.content?.target)) return failure('HUMAN_WORKSPACE_DIRTY', '来源预览需要保存草稿；隔离试玩不会保存草稿，但仍需等待当前操作结束');
+      const storage = await NodeProjectStorage.open(root);
+      const texts = await this.contentStorage(root, storage, input.content);
       if (previous && input.previewGeneration === previous.previewGeneration) {
         const observed = previous.observation;
         if (observed?.previewId === input.previewId && previous.invalidated === null
@@ -139,14 +151,12 @@ export class PreviewObservationService {
         }
         return failure('PREVIEW_OBSERVATION_STALE', '同一预览代次不能替换来源或恢复已失效观察');
       }
-      const storage = await NodeProjectStorage.open(root);
       const before = await loadProjectCoordinationBaseline(storage);
       if (before.projectRevision !== input.expectedProjectRevision || before.coordinationRevision !== input.expectedCoordinationRevision
         || workspace.loadedProjectRevision !== before.projectRevision || workspace.loadedCoordinationRevision !== before.coordinationRevision) {
         return failure('PREVIEW_OBSERVATION_STALE', '预览载入版本与当前已保存项目不一致');
       }
       let actual: Awaited<ReturnType<PreviewObservationService['diskSource']>>;
-      const texts = await this.contentStorage(root, storage, input.content);
       try { actual = await this.diskSource(storage, input.source, texts); }
       catch (error) {
         if (!(error instanceof AuthoringOperationError) && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
