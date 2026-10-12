@@ -901,4 +901,7 @@
 #config-view .text-catalog :is(.text-catalog-entries, .text-catalog-bindings, .text-catalog-differences) > p { margin: 0; padding: 5px 12px; font-size: 12.5px; line-height: 1.6; overflow-wrap: anywhere; }
 #config-view .text-catalog :is(.text-catalog-entries, .text-catalog-bindings, .text-catalog-differences) > p + p { margin-top: 6px; }
 #config-view .text-catalog textarea { font: 12.5px/1.7 var(--surdet-font-mono); }
+/* Inline tags in source and translated texts are small marks, so the words stay readable. */
+#config-view .text-catalog .text-catalog-tag { display: inline-block; margin: 0 1px; padding: 0 4px; border-radius: var(--surdet-radius-tight); background: color-mix(in srgb, var(--surdet-action-primary) 14%, transparent); color: var(--surdet-text-secondary); font: 11px/1.7 var(--surdet-font-mono); vertical-align: 1px; }
+#config-view .text-catalog .text-catalog-note { display: block; color: var(--surdet-state-warning); }
 #config-view .text-catalog .text-catalog-step > .config-field { margin-top: 16px; }

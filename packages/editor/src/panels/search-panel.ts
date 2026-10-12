@@ -1,6 +1,6 @@
 /** Search UI only. Documents and replacements keep the shared search/history paths. */
 import { state, h, setStatus, type SceneEntry } from '../state.js';
-import { buildMatcher, searchScenes, previewSceneReplacement, type SearchResult } from '../search.js';
+import { buildMatcher, searchScenes, previewSceneReplacement, type SearchMode, type SearchResult } from '../search.js';
 import { setSceneText } from '../history.js';
 import { renderSidebar } from './sidebar.js';
 import { renderEditor } from './editor.js';
@@ -13,9 +13,15 @@ export function bindSearchHooks(opts: { onJump: (sceneKey: string, line: number)
 }
 
 function initialView() {
-  return { query: '', replacement: '', regex: false, scope: 'project', expanded: false, replaceExpanded: false,
+  return { query: '', replacement: '', regex: false, scope: 'project', mode: 'visible' as SearchMode, expanded: false, replaceExpanded: false,
     active: null as Pick<SearchResult, 'sceneKey' | 'line'> | null };
 }
+const MODES: Record<SearchMode, { label: string; title: string; placeholder: string; empty: string }> = {
+  visible: { label: '显示文字', title: '只查对白和选项文字，按玩家看到的文字匹配，可跨过样式标签；替换只写入文字。',
+    placeholder: '查找对白和选项文字', empty: '没有匹配的对白或选项文字。要查说话人、指令、条件、跳转或标签，请改为按原文查找。' },
+  source: { label: '原文（含标签）', title: '逐行查剧本原文，包括标签、说话人、指令、条件和跳转；替换按原样写入，会让对白或选项标签出错的行不替换。',
+    placeholder: '查找剧本原文', empty: '没有匹配的原文。' },
+};
 let searchView = initialView();
 /** Called only when a project is actually adopted, not on a failed open. */
 export function resetSearchSession(): void { searchView = initialView(); }
@@ -53,13 +59,17 @@ export function renderSearchPanel(container: HTMLElement): void {
   bar.append(query, previous, next, button('×', '关闭查找（Esc）', dismiss));
 
   const options = h('div', 'search-options');
+  const mode = h('select'); mode.setAttribute('aria-label', '查找方式');
+  for (const value of ['visible', 'source'] as const) {
+    const option = h('option', undefined, MODES[value].label); option.value = value; option.title = MODES[value].title; mode.append(option);
+  }
+  mode.value = view.mode;
   const scope = h('select'); scope.setAttribute('aria-label', '查找范围');
   for (const [value, label] of [['project', '整个项目'], ['scene', '当前场景']] as const) {
     const option = h('option', undefined, label); option.value = value; scope.append(option);
   }
   scope.value = view.scope;
   const regexLabel = h('label', 'search-regex');
-  regexLabel.title = '按正文行匹配：^ 为行首，$ 为行尾，不跨行';
   const regex = h('input'); regex.type = 'checkbox'; regex.checked = view.regex;
   regexLabel.append(regex, document.createTextNode('正则'));
   const replaceToggle = button('替换', '展开或收起替换', () => {
@@ -68,7 +78,7 @@ export function renderSearchPanel(container: HTMLElement): void {
   });
   replaceToggle.setAttribute('aria-controls', 'search-replacement');
   const count = h('span', 'search-count'); count.setAttribute('role', 'status');
-  options.append(scope, regexLabel, replaceToggle, count);
+  options.append(mode, scope, regexLabel, replaceToggle, count);
   const replacementRow = h('div', 'search-replacement'); replacementRow.id = 'search-replacement';
   const replacement = h('input', 'search-input'); replacement.placeholder = '替换为（可空）';
   replacement.setAttribute('aria-label', '替换为（可空）'); replacement.value = view.replacement;
@@ -91,7 +101,10 @@ export function renderSearchPanel(container: HTMLElement): void {
     if (!current()) return;
     const matcher = buildMatcher(view.query, view.regex);
     query.setAttribute('aria-invalid', String(matcher === null));
-    const matches = matcher ? searchScenes(sceneEntries(), view.query, view.regex, 501) : [];
+    query.placeholder = MODES[view.mode].placeholder;
+    mode.title = MODES[view.mode].title;
+    regexLabel.title = view.mode === 'visible' ? '按每句对白或选项文字匹配：^ 为文字开头，$ 为结尾' : '按原文行匹配：^ 为行首，$ 为行尾，不跨行';
+    const matches = matcher ? searchScenes(sceneEntries(), view.query, view.regex, view.mode, 501) : [];
     found = matches.slice(0, 200);
     snapshots = new Map([...state.scenes].map(([key, scene]) => [key, { scene, text: scene.text }]));
     results.replaceChildren();
@@ -101,7 +114,7 @@ export function renderSearchPanel(container: HTMLElement): void {
     count.textContent = !view.query ? 'Enter 定位' : !matcher ? '正则表达式无效'
       : selected < 0 ? matches.length > 200 ? '显示前 200 行' : `${matches.length} 行匹配`
       : `${selected + 1} / ${matches.length > 200 ? '前 200' : matches.length} 行`;
-    if (view.query && matcher && !found.length) results.append(h('p', 'search-empty', '没有匹配的正文。'));
+    if (view.query && matcher && !found.length) results.append(h('p', 'search-empty', MODES[view.mode].empty));
     for (const [index, match] of found.entries()) {
       const item = button('', `${match.sceneId}，第 ${match.line + 1} 行：${match.text}`, () => activate(index, false));
       item.className = 'search-item'; item.setAttribute('aria-current', String(index === selected));
@@ -117,7 +130,7 @@ export function renderSearchPanel(container: HTMLElement): void {
       excerpt.append(document.createTextNode((from ? '…' : '') + shown.slice(from, start)));
       excerpt.append(length ? h('mark', undefined, shown.slice(start, start + length)) : document.createTextNode(''));
       excerpt.append(document.createTextNode(shown.slice(start + length, to) + (to < shown.length ? '…' : '')));
-      if (match.visible) excerpt.title = '按显示文字匹配（跨过了样式标签）';
+      excerpt.title = !match.visible ? '按原文匹配' : match.visible.acrossTags ? '按显示文字匹配（跨过了样式标签）' : '按显示文字匹配';
       item.append(excerpt); results.append(item);
     }
     if (matches.length > 200) results.append(h('p', 'search-empty', matches.length > 500
@@ -148,19 +161,23 @@ export function renderSearchPanel(container: HTMLElement): void {
   function replaceAll(): void {
     if (!current() || !allowedToEdit(container) || state.reviewPreviewReadOnly || !view.query) return;
     if (container.querySelector('.search-replace-dialog')) return;
-    const request = { query: view.query, replacement: view.replacement, regex: view.regex, scope: view.scope, current: state.current };
+    const request = { query: view.query, replacement: view.replacement, regex: view.regex, scope: view.scope, mode: view.mode, current: state.current };
     // Include unchanged scoped documents, so adding/removing a scene cannot silently widen a preview.
     const originals = sceneEntries().map(scene => ({ ...scene, entry: state.scenes.get(scene.key)!, file: state.scenes.get(scene.key)!.file }));
-    const previews = originals.map(scene => ({ ...scene, result: previewSceneReplacement(scene.text, request.query, request.replacement, request.regex) }));
+    const previews = originals.map(scene => ({ ...scene, result: previewSceneReplacement(scene.text, request.query, request.replacement, request.regex, request.mode) }));
     const skipped = previews.reduce((sum, scene) => sum + (scene.result?.skipped ?? 0), 0);
+    const refused = previews.reduce((sum, scene) => sum + (scene.result?.refused ?? 0), 0);
     const changes = previews.filter(scene => scene.result !== null && scene.result.changes.length > 0);
-    const skippedNote = skipped ? `另有 ${skipped} 处跨过或位于行内标签内，不能安全替换，已保持原样，请手动修改。` : '';
-    if (!changes.length) { setStatus(skippedNote || '没有需要替换的内容', !skipped, skipped ? 6000 : 2500); refresh(); return; }
+    const skippedNote = [
+      skipped ? `另有 ${skipped} 处跨过或位于行内标签内，不能安全替换，已保持原样，请手动修改。` : '',
+      refused ? `另有 ${refused} 行替换后会让对白或选项的标签出错，已保持原样，请手动修改。` : '',
+    ].join('');
+    if (!changes.length) { setStatus(skippedNote || '没有需要替换的内容', !skippedNote, skippedNote ? 6000 : 2500); refresh(); return; }
     const total = changes.reduce((sum, scene) => sum + scene.result!.changes.reduce((count, line) => count + line.count, 0), 0);
     const dialog = h('dialog', 'v4-insert-dialog search-replace-dialog'); dialog.setAttribute('aria-label', '替换预览');
     const summary = request.scope === 'scene' ? `当前场景 ${originals[0]?.file ?? ''}` : `整个项目（检查 ${originals.length} 个场景）`;
     dialog.append(h('h2', undefined, '替换预览'), h('p', undefined, `${summary}；将修改 ${changes.length} 个场景、${total} 处。确认后仅改变草稿，可逐场景撤销。`),
-      h('p', undefined, `${request.regex ? '正则' : '查找'}：${request.query} → ${request.replacement || '（清空）'}`));
+      h('p', undefined, `${request.regex ? '正则' : '查找'}（按${MODES[request.mode].label}）：${request.query} → ${request.replacement || '（清空）'}`));
     if (skippedNote) dialog.append(h('p', 'search-replace-skipped', skippedNote));
     for (const [index, scene] of changes.entries()) {
       const section = h('details'); section.open = index === 0;
@@ -182,7 +199,7 @@ export function renderSearchPanel(container: HTMLElement): void {
     const confirm = button('确认替换', '确认替换', () => {
       if (!allowedToEdit(container) || state.reviewPreviewReadOnly) { message.textContent = '当前项目不可编辑，请关闭预览后重试。'; return; }
       const latest = sceneEntries();
-      const stale = request.query !== view.query || request.replacement !== view.replacement || request.regex !== view.regex || request.scope !== view.scope
+      const stale = request.query !== view.query || request.replacement !== view.replacement || request.regex !== view.regex || request.scope !== view.scope || request.mode !== view.mode
         || (request.scope === 'scene' && request.current !== state.current) || latest.length !== originals.length
         || originals.some((scene, index) => latest[index]?.key !== scene.key || state.scenes.get(scene.key) !== scene.entry
           || scene.entry.text !== scene.text || scene.entry.id !== scene.id || scene.entry.file !== scene.file);
@@ -190,7 +207,7 @@ export function renderSearchPanel(container: HTMLElement): void {
       for (const scene of changes) setSceneText(scene.key, scene.result!.text);
       close();
       onEditedHook(); renderSidebar(); renderEditor();
-      setStatus(`已替换 ${total} 处（${changes.length} 个场景，可逐场景撤销；尚未保存）${skipped ? `；${skipped} 处跨标签未替换` : ''}`, true, 5000);
+      setStatus(`已替换 ${total} 处（${changes.length} 个场景，可逐场景撤销；尚未保存）${skipped ? `；${skipped} 处跨标签未替换` : ''}${refused ? `；${refused} 行会让标签出错未替换` : ''}`, true, 5000);
       view.active = null; refresh();
     });
     const footer = h('footer'); footer.append(button('取消', '取消替换', close), confirm);
@@ -205,6 +222,7 @@ export function renderSearchPanel(container: HTMLElement): void {
   query.oninput = () => { if (usable(query)) { view.query = query.value; view.active = null; refresh(); } };
   replacement.oninput = () => { if (usable(replacement)) view.replacement = replacement.value; };
   regex.onchange = () => { if (usable(regex)) { view.regex = regex.checked; view.active = null; refresh(); } };
+  mode.onchange = () => { if (usable(mode)) { view.mode = mode.value as SearchMode; view.active = null; refresh(); } };
   scope.onchange = () => { if (usable(scope)) { view.scope = scope.value; view.active = null; refresh(); } };
   if (drawer) drawer.onkeydown = event => {
     if (current() && !drawer.closest('[inert]') && event.target === summary && !event.isComposing && event.key === 'Escape') {
