@@ -63,8 +63,11 @@ try {
     const index = (await text()).split(/\r\n|\n|\r/).findIndex(line => line.trim() === `@label ${from}`);
     assert.ok(index >= 0, `missing ${from}`);
     await page.locator(`.block[data-line="${index}"] .v4-step-summary`).click();
-    page.once('dialog', dialog => dialog.accept(to));
-    await settle(() => page.getByRole('button', { name: '改名并更新引用', exact: true }).click());
+    await page.getByRole('button', { name: '改名并更新引用', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: `重命名标签「${from}」` });
+    await dialog.getByRole('textbox', { name: '新标签名' }).fill(to);
+    await settle(() => dialog.getByRole('button', { name: '改名', exact: true }).click());
+    return dialog;
   };
   const save = async () => {
     await settle(() => page.locator('[data-action="save-project"]').click());
@@ -76,8 +79,11 @@ try {
   await page.locator('.v4-insert-dialog > label select').selectOption('choice');
   await page.getByRole('button', { name: '插入到当前步骤之后', exact: true }).click();
   const draft = await text(); assert.match(draft, /@label branch_1_a/);
-  await rename('branch_1_a', 'middle');
-  assert.match(await page.locator('#status').textContent(), /先保存.*新标签/);
+  const refused = await rename('branch_1_a', 'middle');
+  assert.match(await refused.getByRole('alert').textContent(), /先保存.*新标签/);
+  assert.equal(await refused.getByRole('textbox', { name: '新标签名' }).inputValue(), 'middle');
+  await refused.getByRole('button', { name: '取消', exact: true }).click();
+  await refused.waitFor({ state: 'detached' });
   assert.equal(await text(), draft);
   assert.deepEqual(await page.evaluate(() => window.surdetEditorDebug.state.pendingSceneConfigRenames), []);
   assert.equal(await fs.readFile(file, 'utf8'), original);
@@ -87,7 +93,8 @@ try {
   await page.getByRole('button', { name: '源码', exact: true }).click();
   await page.locator('.v4-source-editor').fill(draft.replace('原有正文。', '同稿返修仍保留。'));
   await page.getByRole('button', { name: '编排', exact: true }).click();
-  await rename('branch_1_a', 'middle'); await rename('middle', 'arrival');
+  await (await rename('branch_1_a', 'middle')).waitFor({ state: 'detached' });
+  await (await rename('middle', 'arrival')).waitFor({ state: 'detached' });
   const renamed = await text(); assert.match(renamed, /@goto arrival/); assert.match(renamed, /同稿返修仍保留/);
   assert.equal(await fs.readFile(file, 'utf8'), draft);
   await save(); assert.equal(await fs.readFile(file, 'utf8'), renamed);

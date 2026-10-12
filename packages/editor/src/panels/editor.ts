@@ -12,6 +12,7 @@ import { selectAuthoringObject } from '../causal-selection.js';
 import { InstructionFieldSource } from '../instruction-field-source.js';
 import { installScriptV4, prepareScriptV4Render } from '../v4/script-workbench.js';
 import { editSceneLabel } from '../label-editing.js';
+import { openTextInputDialog } from './text-input-dialog.js';
 import { instructionLabel, PARTICLE_NAMES } from '../script-presentation.js';
 import { decodeInstructionArgument } from '@surdet/authoring';
 import { sceneTextCharacters } from '../stats.js';
@@ -44,13 +45,36 @@ export function deleteLine(index: number): void {
   renderEditor();
 }
 
-function requestLabelEdit(index: number, expectedRaw: string, to?: string): void {
+/** Delete (no `to`) or rename a label through the shared operation; refusals throw. */
+async function editLabel(key: string, index: number, expectedRaw: string, to?: string): Promise<void> {
+  await editSceneLabel(key, index, expectedRaw, to);
+  state.selectedObjectRef = null; renderEditor();
+  setStatus(to === undefined ? '未引用的标签已删除（未保存，可撤销）' : `标签已改为 ${to}，引用已同步（保存全部后写入磁盘）`, true, 6000);
+}
+
+function requestLabelEdit(index: number, expectedRaw: string): void {
   const key = state.current, host = document.getElementById('editor');
   if (!key || !host?.isConnected || host.closest('[inert]')) return;
-  void editSceneLabel(key, index, expectedRaw, to).then(() => {
-    state.selectedObjectRef = null; renderEditor();
-    setStatus(to === undefined ? '未引用的标签已删除（未保存，可撤销）' : `标签已改为 ${to}，引用已同步（保存全部后写入磁盘）`, true, 6000);
-  }).catch(error => { setStatus(error instanceof Error ? error.message : String(error), false, 7000); });
+  void editLabel(key, index, expectedRaw).catch(error => { setStatus(error instanceof Error ? error.message : String(error), false, 7000); });
+}
+
+/** Ask for the new label name in the Editor; a refused name keeps the dialog open. */
+function openLabelRenameDialog(index: number, expectedRaw: string, name: string): void {
+  const key = state.current, host = document.getElementById('editor');
+  if (!key || !host?.isConnected || host.closest('[inert]')) return;
+  const scene = state.scenes.get(key);
+  openTextInputDialog({
+    title: `重命名标签「${name}」`,
+    label: '新标签名',
+    value: name,
+    hint: '会同步本场景、跨场景调用与回想入口；保存全部后写入磁盘。',
+    confirm: '改名',
+    submit: async (value) => {
+      if (value === name) return;
+      if (state.scenes.get(key) !== scene) throw new Error('场景已变化，请重新选择标签后再试');
+      await editLabel(key, index, expectedRaw, value);
+    },
+  });
 }
 
 export function insertLine(index: number): void {
@@ -386,9 +410,7 @@ function renderBlock(line: LineModel, index: number, lineCount: number): HTMLEle
       const rename = h('button', undefined, '改名并更新引用'); rename.type = 'button';
       rename.onclick = () => {
         if (readBoundLine() === null) return;
-        const next = window.prompt('新标签名（会同步本场景、跨场景调用与回想入口）', model.name);
-        if (next === null || next === model.name) return;
-        requestLabelEdit(index, expectedRaw, next);
+        openLabelRenameDialog(index, expectedRaw, model.name);
       };
       fields.append(name, rename);
     } else if (model.kind === 'instr') {
