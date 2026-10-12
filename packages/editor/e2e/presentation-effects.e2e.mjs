@@ -117,6 +117,12 @@ try {
     catch { throw new Error(`line ${index + 1} never became ${JSON.stringify(text)}; it is ${JSON.stringify(await lineAt(index))}`); }
   };
   await row(4).waitFor();
+  // The shared asset catalog lists masks in the page's localeCompare order of their paths (a Chinese
+  // locale puts 百叶窗 first). The expected list and the default mask follow that order, derived the same way.
+  const masks = await page.evaluate(() => ['content/assets/rule/百叶窗 遮罩.png', 'content/assets/rule/radial.png']
+    .sort((a, b) => a.localeCompare(b)).map((path) => path.slice(path.lastIndexOf('/') + 1, path.lastIndexOf('.'))));
+  assert.deepEqual([...masks].sort(), ['radial', '百叶窗 遮罩']);
+  const ruleOption = { radial: '@rule=radial', '百叶窗 遮罩': '@rule="百叶窗 遮罩"' };
 
   // 1. The transition inspector lists the Core names in Chinese and writes the mask options.
   await select(4);
@@ -124,9 +130,12 @@ try {
   assert.deepEqual(await effect.locator('option').allTextContents(), ['淡入淡出', '向左滑动', '向右滑动', '圆形展开', '溶解', '遮罩']);
   assert.equal(await effect.inputValue(), 'fade');
   await effect.selectOption('rule');
-  await waitLine(4, '@transition rule 600 @rule=radial');
+  await waitLine(4, `@transition rule 600 ${ruleOption[masks[0]]}`);
   const mask = inspector.getByLabel('遮罩素材');
-  assert.deepEqual(await mask.locator('option').allTextContents(), ['radial', '百叶窗 遮罩']);
+  assert.deepEqual(await mask.locator('option').allTextContents(), masks);
+  // Choosing the other mask writes it, whichever came first.
+  await mask.selectOption(masks[1]);
+  await waitLine(4, `@transition rule 600 ${ruleOption[masks[1]]}`);
   await mask.selectOption('百叶窗 遮罩');
   await waitLine(4, '@transition rule 600 @rule="百叶窗 遮罩"');
   await commit(inspector.getByLabel('边缘柔和度（0 为硬边）'), '0.3');
@@ -143,16 +152,16 @@ try {
   assert.equal(await inspector.getByLabel('边缘柔和度（0 为硬边）').inputValue(), '0.3', 'the refused value is not kept in the form');
   if (outDir) await page.screenshot({ path: path.join(outDir, 'transition-inspector.png') });
   // The edits are scene history: undo goes back to the original line, redo returns.
-  for (let step = 0; step < 6 && (await lineAt(4)) !== '@transition fade 600'; step += 1) await page.locator('[data-action="undo"]').click();
+  for (let step = 0; step < 8 && (await lineAt(4)) !== '@transition fade 600'; step += 1) await page.locator('[data-action="undo"]').click();
   assert.equal(await lineAt(4), '@transition fade 600');
-  for (let step = 0; step < 6 && (await lineAt(4)) !== ruleLine; step += 1) await page.locator('[data-action="redo"]').click();
+  for (let step = 0; step < 8 && (await lineAt(4)) !== ruleLine; step += 1) await page.locator('[data-action="redo"]').click();
   assert.equal(await lineAt(4), ruleLine);
   // Another effect drops the mask options it would not consume; the mask choice comes back with rule.
   await select(4);
   await inspector.getByLabel('转场效果').selectOption('dissolve');
   await waitLine(4, '@transition dissolve 800');
   await inspector.getByLabel('转场效果').selectOption('rule');
-  await waitLine(4, '@transition rule 800 @rule=radial');
+  await waitLine(4, `@transition rule 800 ${ruleOption[masks[0]]}`);
   await inspector.getByLabel('遮罩素材').selectOption('百叶窗 遮罩');
   await commit(inspector.getByLabel('边缘柔和度（0 为硬边）'), '0.3');
   await inspector.getByLabel('反向揭示').check();
@@ -218,7 +227,7 @@ try {
   await page.locator('[data-timeline-focus="track-1-add"]').click();
   const timelineCue = async () => JSON.parse(await page.evaluate(() => window.surdetEditorDebug.state.timelines.find((entry) => entry.id === 'cut').text)).tracks[1].cues[0];
   await page.locator('[data-timeline-focus="inspector-rule"]').waitFor();
-  assert.equal((await timelineCue()).rule, 'radial');
+  assert.equal((await timelineCue()).rule, masks[0]);
   await page.locator('[data-timeline-focus="inspector-rule"]').selectOption('百叶窗 遮罩');
   await commit(page.locator('[data-timeline-focus="inspector-soft"]'), '0.2');
   await page.locator('[data-timeline-focus="inspector-reverse"]').check();
