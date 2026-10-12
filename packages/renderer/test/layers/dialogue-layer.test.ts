@@ -175,6 +175,30 @@ describe('DialogueLayer visual layout contracts', () => {
       expect(texts(backlogRoot(runtime.root)).some(text => text.text === '海' && text.style.fill === '#ff0000')).toBe(true);
     } finally { disposeRuntime(runtime); }
   });
+  it('draws plain and styled backlog entries with one weight and colour, keeping bold, speaker accent and voice replay', () => {
+    const runtime = makeRuntime(), texts = (node: Container): PText[] => [...(node instanceof PText ? [node] : []), ...node.children.flatMap(texts)];
+    const replay = vi.fn();
+    try {
+      runtime.layer.showBacklog([
+        { speaker: '凛', text: '普通台词', voice: 'v1' },
+        { speaker: '凛', text: '强调', markup: '<b>强调</b>' },
+        { speaker: null, text: '旁白一句' },
+      ], replay);
+      const drawn = texts(backlogRoot(runtime.root));
+      const find = (text: string): PText => { const found = drawn.find(item => item.text === text); expect(found, text).toBeDefined(); return found!; };
+      for (const body of ['普通台词', '旁白一句']) {
+        expect(find(body).style.fontWeight).toBe('500');
+        expect(find(body).style.fill).toBe(DEFAULT_RENDERER_THEME.colors.textMuted);
+      }
+      expect(find('强调').style.fontWeight).toBe('700');
+      const speakers = drawn.filter(item => item.text.endsWith('凛：'));
+      expect(speakers.length).toBe(2);
+      for (const speaker of speakers) { expect(speaker.style.fill).toBe(DEFAULT_RENDERER_THEME.colors.accent); expect(speaker.style.fontWeight).toBe('500'); }
+      const voiced = find('普通台词').parent!;
+      voiced.emit('pointerdown', { stopPropagation: () => {} } as unknown as FederatedPointerEvent);
+      expect(replay).toHaveBeenCalledWith('v1');
+    } finally { disposeRuntime(runtime); }
+  });
   it('scales dialogue/ruby and choices relative to the work theme without compounding or changing UI text size', () => {
     const runtime = makeRuntime(), texts = (node: Container): PText[] => [...(node instanceof PText ? [node] : []), ...node.children.flatMap(texts)];
     try {
