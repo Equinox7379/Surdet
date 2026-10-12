@@ -39,6 +39,8 @@ export interface ProjectBarActions {
   onKeepProjectDrafts?(): void;
   onSearch?(): void;
   onShowProblems?(): void;
+  /** Desktop only, with a project open: export the saved project as a Windows game. */
+  onExportGame?(): void;
 }
 
 function element<K extends keyof HTMLElementTagNameMap>(
@@ -186,7 +188,7 @@ export function updateProjectBarProjection(
   const saveState = root.querySelector<HTMLElement>('.editor-save-state');
   const saveButton = root.querySelector<HTMLButtonElement>('[data-action="save-project"]');
   const lockedCommands = root.querySelectorAll<HTMLButtonElement>(
-    '[data-action="open-project"], [data-action="open-review"], [data-action="undo"], [data-action="redo"]',
+    '[data-action="open-project"], [data-action="open-review"], [data-action="undo"], [data-action="redo"], [data-action="export-game"]',
   );
   if (projectName) projectName.textContent = projection.projectName;
   if (currentObject) currentObject.textContent = projection.objectLabel;
@@ -266,6 +268,9 @@ export function renderProjectBar(
   }
   if (!fsSupported && projection.hasScenes && actions.onExportCurrent) {
     projectCommands.appendChild(actionButton('导出当前场景', 'export-current', actions.onExportCurrent));
+  }
+  if (actions.onExportGame) {
+    projectCommands.appendChild(actionButton('导出游戏', 'export-game', actions.onExportGame, projection.writeLocked === true));
   }
   editCommands.append(
     actionButton('撤销', 'undo', actions.onUndo, projection.writeLocked === true || !projection.canUndo, 'Ctrl+Z'),
