@@ -1082,11 +1082,21 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     }
     // A found path starts at its own entry; it is not the toolbar entry's resumable position.
     const startLabel = target !== undefined ? target.report.entryLabel : labelSel.value || undefined;
-    const key = target !== undefined ? null : previewCheckpointKey(isolated?.projectIdentity ?? editorWorkspaceStatus().latest?.projectIdentity,
+    // A formal observation's sources do not cover plugin code: content whose config declares plugins plays
+    // for local viewing only, with no formal observation and no position to resume from.
+    const localOnly = ((): boolean => {
+      try { const read = readPluginDeclarations(capturePreviewContent(projected).configText); return read.declarations.length > 0 || read.error !== null; }
+      catch { return false; }
+    })();
+    const checkpointKey = target !== undefined ? null : previewCheckpointKey(isolated?.projectIdentity ?? editorWorkspaceStatus().latest?.projectIdentity,
       selectedTarget, cur.id, labelSel.value || undefined);
+    // A position saved before the content declared plugins is not reused either.
+    if (localOnly) clearPreviewCheckpoint(checkpointKey);
+    const key = localOnly ? null : checkpointKey;
     const replay = resume ? capturedPlayback ?? readPreviewCheckpoint(key) : null;
     if (resume && replay === null) {
-      sourceState.textContent = '这个内容与入口还没有可续接的实际试玩位置，请先正常播放。';
+      sourceState.textContent = localOnly ? '插件试玩仅供本地查看，不保留可续接的位置；请从入口重新播放。'
+        : '这个内容与入口还没有可续接的实际试玩位置，请先正常播放。';
       sourceState.dataset.previewSourceState = 'stale';
       return;
     }
@@ -1136,7 +1146,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     // not the publisher captured before those asynchronous reads.
     publisher = editorPreviewPublisher(requestRoot);
     const status = editorWorkspaceStatus();
-    if (publisher !== null && state.reviewWorkspace === null && target?.report.mode !== 'test' && (isolated !== undefined || state.previewTimelineId === null)
+    if (publisher !== null && !localOnly && state.reviewWorkspace === null && target?.report.mode !== 'test' && (isolated !== undefined || state.previewTimelineId === null)
       && ((!status.dirty && !inspectConfigDraftState().dirty) || (isolated !== undefined && isolated.target.kind !== 'saved-project')) && !status.saving && status.update === 'none') {
       const previewGeneration = ++publishedPreviewGeneration;
       try {
@@ -1157,6 +1167,12 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       } catch (error) {
         observationError = error instanceof Error ? error.message : String(error);
       }
+    }
+    // A selected version plays only with its observation; with plugins declared it has none, and runs no plugin code.
+    if (isolated !== undefined && localOnly && target?.report.mode !== 'test') {
+      sourceState.dataset.previewSourceState = 'stale';
+      sourceState.textContent = '所选版本声明了项目插件：插件试玩仅供本地查看，不能生成正式观察，所选版本也不运行插件代码，因此没有在这里试玩。需要试玩请选择「当前编辑内容」。';
+      return;
     }
     if (isolated !== undefined && formal === null && target?.report.mode !== 'test') {
       sourceState.dataset.previewSourceState = 'stale';
@@ -1271,6 +1287,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     sourceState.dataset.previewSourceState = 'fresh';
     if (run !== undefined) targetSection?.setStatus(`正在按找到的路径前进到 ${targetLabel}…`);
     sourceState.textContent = run?.mode === 'test' ? '测试起点：临时初值只用于本次试玩，没有写回作品，也不作为正式试玩记录。'
+      : localOnly ? '插件试玩仅供本地查看：不生成正式观察记录，也不保留续接位置。'
       : observationError !== null ? `预览可继续，观察记录未能同步：${observationError}`
       : isolated !== undefined ? `${isolated.title}；未写回来源，智能体可读取本次实际播放记录。${isolated.target.kind === 'candidate' || isolated.target.kind === 'integration-result' ? '返修请切回原工作变更，完成后重新封装或组合。' : ''}`
       : formal !== null ? '已载入保存的内容；智能体可读取本次实际播放记录。'
