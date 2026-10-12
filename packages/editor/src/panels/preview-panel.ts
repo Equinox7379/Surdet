@@ -1,6 +1,10 @@
 import { createStageWorkspace } from '../stage-workspace.js';
 import { projectThemeAssetKeys, resolveProjectTheme, resolveProjectTitleLogo, type RuntimeDebugLocation } from '@surdet/core';
 import { debugInstructionOptions, validDebugBreakpoints, normalizePreviewDebugState, type PreviewBreakpoint, type PreviewDebugState, type PreviewDebugCommand } from '../preview-debug.js';
+import { describePreviewPath, normalizePreviewTargetState, type PreviewTargetRun, type PreviewTargetState } from '../preview-target.js';
+import { createPreviewTargetSection, writableDeclarations } from './preview-target-section.js';
+import { createPreviewPluginsSection } from './preview-plugins-section.js';
+import { pluginStatuses, previewPluginSources, readPluginDeclarations } from '../project-plugins.js';
 import '../styles/stage-workspace.css';
 /**
  * 预览面板（M6 E4，父窗口侧）：iframe 承载 preview.html 运行器，
@@ -13,7 +17,8 @@ import { assertConfigSourcesReadable } from '../config-source.js';
 import { parseScript } from '../model.js';
 import { buildProjectAssetIntelligence, isPreviewSourcePath, loadProjectSnapshot, normalizePreviewTraceMessage, parseProjectConfigDocument, previewSourceText,
   type RuntimeTraceEvent, type PreviewTraceMessage, type PreviewTraceEventMessage,
-  type ProjectSnapshot, type PreviewSourceFacts, type PreviewPublishInput, type PreviewContent, type PreviewContentOption, type PreviewContentTarget } from '@surdet/authoring';
+  type ProjectSnapshot, type PreviewSourceFacts, type PreviewPublishInput, type PreviewContent, type PreviewContentOption, type PreviewContentTarget,
+  type PreviewPathOptions, type PreviewPathReport } from '@surdet/authoring';
 export { normalizePreviewTraceMessage, type PreviewTraceMessage, type PreviewTraceStartMessage,
   type PreviewTraceEventMessage, type PreviewTraceCompleteMessage } from '@surdet/authoring';
 import { createEditorProjectStorage } from '../authoring-project-storage.js';
@@ -22,7 +27,8 @@ import type { DirAsset } from '../assets.js';
 import { editorPreviewPublisher, editorWorkspaceStatus } from '../editor-workspace.js';
 import { inspectConfigDraftState, previewStageConfigText, previewThemeConfigText, previewUiConfigText, readUiConfigDraft, readStageConfigDraft, readThemeConfigDraft } from './config.js';
 import { previewTextHash, projectPreviewContent } from '../preview-content.js';
-import { previewCheckpointKey, readPreviewCheckpoint, writePreviewCheckpoint } from '../preview-checkpoints.js';
+import { clearPreviewCheckpoint, previewCheckpointKey, readPreviewCheckpoint, writePreviewCheckpoint } from '../preview-checkpoints.js';
+import { NO_READING_TRIAL, readingTrialScales, type ReadingTrial } from '../preview-reading-trial.js';
 import type { FontRole } from '@surdet/renderer';
 import { assertUniquePortraitBindings, portraitSourcePaths, resolveProjectPortraits, resolveProjectFontPaths, type PortraitVisualDefinition } from '@surdet/core';
 import { normalizePreviewDiagnostic, type PreviewDiagnostic } from '../preview-diagnostics.js';
@@ -44,10 +50,13 @@ let publishedPreviewGeneration = 0;
 let activePreviewCleanup: (() => void) | null = null;
 let notifyPreviewSourceEdited: (() => void) | null = null;
 let notifyPreviewDebug: ((message: PreviewDebugState, source: MessageEventSource | null) => void) | null = null;
+let notifyPreviewTarget: ((message: PreviewTargetState, source: MessageEventSource | null) => void) | null = null;
 let debugProjectRoot: typeof state.dirHandle | undefined;
 let debugging = false;
 let breakpoints: PreviewBreakpoint[] = [];
 let debugContentKey = '';
+/** Toolbar try-out of text size and motion; kept for this Editor session only. */
+let readingTrial: ReadingTrial = NO_READING_TRIAL;
 
 /** One actual runtime owner across script, standalone preview and result review. */
 export function disposePreviewPanel(): void {
@@ -59,6 +68,7 @@ export function disposePreviewPanel(): void {
   notifyPreviewTrace = null;
   notifyPreviewSourceEdited = null;
   notifyPreviewDebug = null;
+  notifyPreviewTarget = null;
   // Completed observations remain available when their source is opened.
   // Resource teardown must not erase the causal navigation's selected trace.
   cleanup?.();
@@ -158,6 +168,10 @@ function bindPreviewReadyListenerOnce(): void {
       const debug = normalizePreviewDebugState(e.data);
       if (debug) notifyPreviewDebug?.(debug, e.source);
     }
+    if (d?.type === 'surdet-preview-target-state') {
+      const target = normalizePreviewTargetState(e.data);
+      if (target) notifyPreviewTarget?.(target, e.source);
+    }
     if (d?.type === 'surdet-preview-diagnostic') {
       const diagnostic = normalizePreviewDiagnostic((d as { diagnostic?: unknown }).diagnostic);
       if (diagnostic) notifyPreviewDiagnostic?.(diagnostic, e.source);
@@ -245,6 +259,7 @@ interface PreviewAssets {
   portraits: { charId: string; costume: string; expression: string; image: PreviewImage; configured?: true }[];
   visuals: { charId: string; costume: string; expression: string; definition: PortraitVisualDefinition; images: Record<string, PreviewImage> }[];
   avatars: { key: string; image: PreviewImage }[];
+  rules: { key: string; image: PreviewImage }[];
   audio: { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }[];
 }
 
@@ -357,6 +372,7 @@ export async function readProjectImages(configText: string, signal: AbortSignal,
   const visualImages = new Map<string, PreviewImage>();
   const visuals: PreviewAssets['visuals'] = [];
   const avatars = new Map<string, { key: string; image: PreviewImage }>();
+  const rules = new Map<string, { key: string; image: PreviewImage }>();
   const videos = new Map<string, { key: string; file: PreviewImage }>();
   const audio = new Map<string, { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }>();
   const config = JSON.parse(configText.replace(/^\uFEFF/, '') || '{}');
@@ -388,10 +404,14 @@ export async function readProjectImages(configText: string, signal: AbortSignal,
         });
         continue;
       }
-      if (!asset.isImage || (asset.kind !== 'bg' && asset.kind !== 'portrait' && asset.kind !== 'avatar')) continue;
+      if (!asset.isImage || (asset.kind !== 'bg' && asset.kind !== 'rule' && asset.kind !== 'portrait' && asset.kind !== 'avatar')) continue;
       const image = { buffer, mime: file.type || IMAGE_MIME[ext] || 'application/octet-stream', sourcePath };
       if (asset.kind === 'bg') {
         backgrounds.set(asset.key, { key: asset.key, image });
+        continue;
+      }
+      if (asset.kind === 'rule') {
+        rules.set(asset.key, { key: asset.key, image });
         continue;
       }
       if (asset.kind === 'avatar') {
@@ -428,7 +448,7 @@ export async function readProjectImages(configText: string, signal: AbortSignal,
     if (!backgrounds.has(key) || assetEntries.filter(asset => asset.kind === 'bg' && asset.key === key).length !== 1)
       throw new Error(`主题图片不存在、不唯一或不可读取：${key}`);
   }
-  return { backgrounds: [...backgrounds.values()], portraits: [...portraits.values()], visuals, avatars: [...avatars.values()], audio: [...audio.values()], videos: [...videos.values()] };
+  return { backgrounds: [...backgrounds.values()], portraits: [...portraits.values()], visuals, avatars: [...avatars.values()], rules: [...rules.values()], audio: [...audio.values()], videos: [...videos.values()] };
 }
 
 /** Fix one request's text, metadata and handles before the first resource await.
@@ -465,6 +485,18 @@ export function capturePreviewContent(projection?: Awaited<ReturnType<typeof pro
   };
 }
 
+/** The files this preview would play, for the shared path query: the same config, scenes, timelines and configs. */
+export function previewQueryFiles(content: ReturnType<typeof capturePreviewContent>): Record<string, string> {
+  const files: Record<string, string> = { 'game.config.json': content.configText };
+  for (const scene of content.sourceScenes) files[scene.file.startsWith('content/scenario/') ? scene.file : `content/scenario/${scene.file}`] = scene.text;
+  for (const timeline of content.timelines) {
+    const file = 'file' in timeline ? String(timeline.file) : timeline.id;
+    files[file.startsWith('content/timelines/') ? file : `content/timelines/${file}`] = timeline.text;
+  }
+  for (const [name, config] of Object.entries(content.configs)) if (config !== undefined) files[`content/config/${name}.json`] = JSON.stringify(config);
+  return files;
+}
+
 /** Read only the captured request. It must not pick up another project's handles. */
 export async function loadPreviewResources(content: ReturnType<typeof capturePreviewContent>, signal: AbortSignal) {
   signal.throwIfAborted();
@@ -486,7 +518,7 @@ async function previewSourceFacts(assets: PreviewAssets, fonts: Partial<Record<F
       sha256: await previewTextHash(previewSourceText(path, text)) })));
   const buffers = [...assets.backgrounds.map(value => value.image), ...assets.portraits.map(value => value.image),
     ...assets.visuals.flatMap(value => Object.values(value.images)),
-    ...assets.avatars.map(value => value.image), ...assets.audio.map(value => value.file), ...assets.videos.map(value => value.file), ...Object.values(fonts)];
+    ...assets.avatars.map(value => value.image), ...assets.rules.map(value => value.image), ...assets.audio.map(value => value.file), ...assets.videos.map(value => value.file), ...Object.values(fonts)];
   const facts = await Promise.all(buffers.map(async value => {
     if (!value.sourcePath) throw new Error('无法核对预览素材来源，请重新加载项目。');
     const hash = await crypto.subtle.digest('SHA-256', value.buffer);
@@ -505,7 +537,12 @@ export interface PreviewPanelOptions {
   embedded?: boolean;
   onSourceStateChange?: () => void;
   onDebugSource?: (source: RuntimeDebugLocation) => void;
+  /** "从这一行试玩": a one-based source line in the scene being edited. */
+  target?: { sceneId: string; line: number };
 }
+
+/** A query result that reached its target, tied to the content it was found on. */
+interface FoundTarget { report: PreviewPathReport; sourceKey: string; selected: PreviewContentTarget | null }
 
 export function renderPreviewPanel(container: HTMLElement, options: PreviewPanelOptions = {}): void {
   if (!container.isConnected) return;
@@ -555,6 +592,11 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   sceneControl.hidden = true;
   controls.appendChild(sceneControl);
   let sourceOptions: PreviewContentOption[] = [];
+  /** What a found start depends on: the content played, the editor text its line was picked in, and a selected version's revision. */
+  const targetKey = (sceneId: string): string => JSON.stringify({ request: requestKey(),
+    editing: [...state.scenes.values()].find(scene => scene.id === sceneId)?.text ?? null,
+    content: selectedTarget === null ? null : isolated?.contentRevision ?? null });
+  const targetStale = (found: FoundTarget): boolean => targetKey(found.report.target.sceneId) !== found.sourceKey;
   const requestKey = () => selectedTarget === null ? previewSourceKey() : JSON.stringify({ target: selectedTarget,
     scene: sceneSel.value, assets: state.dirAssets.map(asset => [asset.sourcePath, asset.key, asset.bytes, asset.lastModified]) });
   const entryControl = h('label', 'preview-entry-control');
@@ -581,6 +623,28 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   fastWrap.append(fastChk, document.createTextNode(' 跳过逐字显示'));
   controls.appendChild(fastWrap);
 
+  const trialControl = h('label', 'preview-entry-control preview-trial-control');
+  trialControl.title = '只改变本次预览画面，不改作品配置，也不改玩家的设置';
+  const trialScale = h('select');
+  trialScale.setAttribute('aria-label', '试看文字大小');
+  const scaleDefault = h('option', undefined, '字号按设置'); scaleDefault.value = '';
+  trialScale.appendChild(scaleDefault);
+  for (const scale of readingTrialScales()) {
+    const option = h('option', undefined, `字号 ${Math.round(scale * 100)}%`); option.value = String(scale); trialScale.appendChild(option);
+  }
+  trialScale.value = readingTrial.textScale === null ? '' : String(readingTrial.textScale);
+  const trialMotion = h('select');
+  trialMotion.setAttribute('aria-label', '试看动态效果');
+  for (const [value, label] of [['', '动态按设置'], ['reduce', '减少动态'], ['full', '正常动态']] as const) {
+    const option = h('option', undefined, label); option.value = value; trialMotion.appendChild(option);
+  }
+  trialMotion.value = readingTrial.reducedMotion === null ? '' : readingTrial.reducedMotion ? 'reduce' : 'full';
+  trialControl.append(h('span', 'preview-control-label', '临时试看'), trialScale, trialMotion);
+  controls.appendChild(trialControl);
+  const sendReadingTrial = (): void => { frame.contentWindow?.postMessage({ type: 'surdet-preview-reading-trial', ...readingTrial }, '*'); };
+  trialScale.onchange = () => { readingTrial = { ...readingTrial, textScale: trialScale.value ? Number(trialScale.value) : null }; sendReadingTrial(); };
+  trialMotion.onchange = () => { readingTrial = { ...readingTrial, reducedMotion: trialMotion.value ? trialMotion.value === 'reduce' : null }; sendReadingTrial(); };
+
   const playBtn = h('button', 'preview-replay-action preview-play-action', '重新播放');
   playBtn.setAttribute('data-action', 'reload-preview');
   playBtn.setAttribute('data-action-scope', 'workspace');
@@ -606,6 +670,18 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   frame.title = '剧情预览';
   stage.appendChild(frame);
   workspace.appendChild(stage);
+  let targetDeclarations: Record<string, unknown>[] = [];
+  try { targetDeclarations = parsePreviewVariables(capturePreviewContent().configText); } catch { /* The query reports an unreadable config itself. */ }
+  const targetSection = options.target === undefined ? null : createPreviewTargetSection(options.target, writableDeclarations(targetDeclarations));
+  if (targetSection) workspace.appendChild(targetSection.element);
+  let targetWorker: Worker | null = null;
+  let pendingTarget: FoundTarget | null = null;
+  /** The trace of the run that is replaying a found path, if the current one is. */
+  let targetTraceId: string | null = null;
+  let targetLabel = '';
+  /** The found start being loaded, and the one the current run replays. */
+  let loadingTarget: FoundTarget | null = null;
+  let runningTarget: FoundTarget | null = null;
   const diagnostics = h('div', 'preview-diagnostics');
   diagnostics.setAttribute('aria-live', 'polite');
   workspace.appendChild(diagnostics);
@@ -613,6 +689,19 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   sourceState.dataset.previewSourceState = 'idle';
   sourceState.setAttribute('aria-live', 'polite');
   workspace.appendChild(sourceState);
+  // Another version's files are not the ones confirmed in this directory, so it runs no plugin code.
+  const pluginsBlocked = (): string | null => selectedTarget === null ? null
+    : '所选版本不运行项目插件代码：插件只按当前打开目录中经你确认的入口运行，无法对应这个版本；试玩到插件指令时会停下。';
+  const pluginsSection = createPreviewPluginsSection({ root: () => state.dirHandle, onChange: () => { showPlugins(); void send(); } });
+  const showPlugins = (): void => {
+    let read: ReturnType<typeof readPluginDeclarations>;
+    try { read = readPluginDeclarations(capturePreviewContent(projected).configText); }
+    catch { return; }
+    const blocked = pluginsBlocked();
+    pluginsSection.show({ ...read, blocked, statuses: blocked ? new Map() : pluginStatuses(state.dirHandle, read.declarations) });
+  };
+  showPlugins();
+  workspace.appendChild(pluginsSection.element);
   const debugPanel = h('section', 'preview-debugger'); debugPanel.hidden = !debugging; debugPanel.setAttribute('aria-label', '真实调试');
   const debugActions = h('div', 'preview-controls');
   const pauseDebug = h('button', undefined, '暂停'), stepDebug = h('button', undefined, '单步'), continueDebug = h('button', undefined, '继续运行');
@@ -630,7 +719,10 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   debugPanel.append(debugActions, debugStatus, variableDetails, debugCalls, breakpointControls, breakpointList); workspace.appendChild(debugPanel);
   let debugState: PreviewDebugState | null = null;
   let debugSources: { id: string; text: string }[] = [];
-  const debugFresh = (): boolean => debugging && publishedSource !== null && publishedSource === requestKey()
+  // A run replaying a found start is debuggable only while that start still matches the script, whether
+  // or not the debug switch is on; any other run needs the switch.
+  const debugFresh = (): boolean => (targetTraceId !== null && targetTraceId === expectedTraceId ? runningTarget !== null && !targetStale(runningTarget) : debugging)
+    && publishedSource !== null && publishedSource === requestKey()
     && sourceState.dataset.previewSourceState === 'fresh' && currentTraceId === expectedTraceId && currentTraceGeneration >= 0;
   const sendDebug = (action: PreviewDebugCommand['action']): void => {
     if (!debugFresh()) { debugStatus.textContent = '当前内容或预览身份已变化，请重新播放后再调试。'; return; }
@@ -714,8 +806,20 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   let sendRevision = 0;
   let loading: AbortController | null = null;
   let loadingSource: string | null = null;
-  activePreviewCleanup = () => { loading?.abort(); stageWorkbench?.dispose(); expectedTraceId = null; void invalidate('closed').catch(() => {}); frame.remove(); };
+  activePreviewCleanup = () => { loading?.abort(); targetWorker?.terminate(); targetWorker = null; stageWorkbench?.dispose(); expectedTraceId = null; void invalidate('closed').catch(() => {}); frame.remove(); };
   notifyPreviewSourceEdited = () => {
+    // A selected version's request key does not cover the editor text; a found start does.
+    if (sourceState.dataset.previewSourceState === 'loading' && loadingTarget !== null && targetStale(loadingTarget)) {
+      loading?.abort();
+      loadingTarget = null;
+      sourceState.dataset.previewSourceState = 'stale';
+      sourceState.textContent = '剧本已修改，找到的起点属于旧版本，本次未启动。';
+      targetSection?.setStatus('剧本已修改，这次起点属于旧版本；请重新查找。', 'warning');
+    }
+    if (runningTarget !== null && targetTraceId !== null && targetTraceId === expectedTraceId && targetStale(runningTarget)) {
+      targetSection?.setStatus('剧本已修改，这次起点属于旧版本；请重新查找。', 'warning');
+      refreshDebug();
+    }
     if (sourceState.dataset.previewSourceState === 'loading' && loadingSource !== null && loadingSource !== requestKey()) {
       loading?.abort();
       sourceState.dataset.previewSourceState = 'stale';
@@ -878,6 +982,12 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       if (current.playback !== undefined) { currentPlayback = current.playback; writePreviewCheckpoint(activeCheckpointKey, current.playback); }
     } else {
       traceCompleted = true;
+      // The run ends after its last event: a plugin stop leaves no position to resume, since resuming meets the same stop.
+      if (current.type === 'surdet-preview-trace-complete' && current.status === 'failed' && current.firstError !== undefined && /PLUGIN_[A-Z]+/.test(current.firstError)) {
+        clearPreviewCheckpoint(activeCheckpointKey);
+        currentPlayback = null;
+        pluginsSection.setStop(current.firstError);
+      }
     }
     currentPreviewTrace = [...currentPreviewTrace, current];
     appendStoryPreview(current);
@@ -895,11 +1005,23 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     latestGeneration = diagnostic.generation;
     if (diagnostic.level === 'error' && expectedTraceId !== null && diagnostic.generation === currentTraceGeneration)
       appendStoryPreviewError(expectedTraceId, diagnostic.phase, diagnostic.message, diagnostic);
+    if (diagnostic.level === 'error' && targetTraceId !== null && targetTraceId === expectedTraceId && diagnostic.generation === currentTraceGeneration)
+      targetSection?.setStatus(`没有从这一行开始：${diagnostic.message}`, 'warning');
     diagnostics.textContent = `${diagnostic.level === 'error' ? '错误' : diagnostic.level === 'warning' ? '警告' : '状态'}：${diagnostic.message}${diagnostic.label ? `（@label ${diagnostic.label}）` : ''}`;
     diagnostics.className = `preview-diagnostics ${diagnostic.level}`;
   };
   /** 异步读取素材期间若用户重新选择播放入口，旧请求不得晚到覆盖新选择。 */
-  const send = async (resume = false, capturedPlayback?: import('@surdet/authoring').PreviewPlaybackCheckpoint | null): Promise<void> => {
+  const send = async (resume = false, capturedPlayback?: import('@surdet/authoring').PreviewPlaybackCheckpoint | null, target?: FoundTarget): Promise<void> => {
+    if (target === undefined && (targetWorker !== null || targetTraceId !== null)) {
+      stopTargetQuery();
+      targetSection?.setStatus('已改为正常播放；需要时可重新查找。');
+      targetSection?.setDetails([]);
+    }
+    pendingTarget = null;
+    // Any new start supersedes the run that replayed an earlier found start.
+    runningTarget = null;
+    targetTraceId = null;
+    loadingTarget = target ?? null;
     loading?.abort();
     const controller = new AbortController();
     loading = controller;
@@ -932,6 +1054,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       if (signal.aborted || mountRevision !== previewPanelMountRevision) return;
       sourceState.dataset.previewSourceState = 'stale';
       sourceState.textContent = `所选内容未能加载；保留的旧画面不代表新版本：${error instanceof Error ? error.message : String(error)}`;
+      if (target !== undefined) targetSection?.setStatus('所选内容未能重新读取，这次起点没有开始；请重新查找。', 'warning');
       return;
     }
     if (revision !== sendRevision || selectedTarget !== requestedTarget || state.dirHandle !== requestRoot || mountRevision !== previewPanelMountRevision) return;
@@ -944,12 +1067,22 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
         : projected.entryScene ?? projected.scenes[0]?.id ?? '';
       sceneControl.hidden = false;
     } else sceneControl.hidden = true;
-    const cur = projected?.scenes.find(scene => scene.id === sceneSel.value) ?? (requestedTarget === null && state.current ? state.scenes.get(state.current) : undefined);
+    // After the selected version is read again: a new revision or an edited line needs a new query.
+    if (target !== undefined && (target.selected !== requestedTarget || targetStale(target))) {
+      sourceState.dataset.previewSourceState = 'stale';
+      sourceState.textContent = '剧本或所选内容已更新，找到的起点属于旧版本，本次未启动。';
+      targetSection?.setStatus('剧本或所选内容已更新，这次起点属于旧版本；请重新查找。', 'warning');
+      return;
+    }
+    const cur = target !== undefined ? (projected?.scenes ?? collectPreviewScenes(state.scenes)).find(scene => scene.id === target.report.entryScene)
+      : projected?.scenes.find(scene => scene.id === sceneSel.value) ?? (requestedTarget === null && state.current ? state.scenes.get(state.current) : undefined);
     if (!cur) {
       setStatus('预览：请先选择一个场景', false, 4000);
       return;
     }
-    const key = previewCheckpointKey(isolated?.projectIdentity ?? editorWorkspaceStatus().latest?.projectIdentity,
+    // A found path starts at its own entry; it is not the toolbar entry's resumable position.
+    const startLabel = target !== undefined ? target.report.entryLabel : labelSel.value || undefined;
+    const key = target !== undefined ? null : previewCheckpointKey(isolated?.projectIdentity ?? editorWorkspaceStatus().latest?.projectIdentity,
       selectedTarget, cur.id, labelSel.value || undefined);
     const replay = resume ? capturedPlayback ?? readPreviewCheckpoint(key) : null;
     if (resume && replay === null) {
@@ -957,11 +1090,12 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       sourceState.dataset.previewSourceState = 'stale';
       return;
     }
-    const seed = replay?.seed ?? crypto.getRandomValues(new Uint32Array(1))[0]!;
+    const seed = target?.report.seed ?? replay?.seed ?? crypto.getRandomValues(new Uint32Array(1))[0]!;
     const requestSceneKey = state.current;
     const requestScene = state.current ? state.scenes.get(state.current) : undefined;
     const requestAssets = state.dirAssets;
     const requestSource = requestKey();
+    const sameRequest = (): boolean => requestKey() === requestSource && (target === undefined || !targetStale(target));
     loadingSource = requestSource;
     // 使用本次选择的内容版本，不从编辑器原配置借用字体。
     let capturedContent: ReturnType<typeof capturePreviewContent>;
@@ -978,13 +1112,19 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     }
     const { cachedFonts, assets, timelineContent } = resources;
     const requestConfigText = capturedContent.configText;
+    // Only entries confirmed for this directory and still unchanged are sent; the checks below cover this read too.
+    const pluginDeclarations = readPluginDeclarations(requestConfigText);
+    const pluginRun = pluginsBlocked() === null ? await previewPluginSources(requestRoot, pluginDeclarations.declarations) : { sources: [], statuses: new Map() };
+    if (mountRevision === previewPanelMountRevision && state.dirHandle === requestRoot) {
+      pluginsSection.show({ ...pluginDeclarations, blocked: pluginsBlocked(), statuses: pluginRun.statuses });
+    }
     const fonts = clonePreviewFontsForTransfer(cachedFonts);
     if (projected !== undefined && timelineContent.issues.length) { sourceState.textContent = `所选版本的演出无法加载：${timelineContent.issues.join('；')}`; sourceState.dataset.previewSourceState = 'stale'; return; }
     const timelines = timelineContent.definitions;
     if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !container.isConnected) return;
     if (state.dirHandle !== requestRoot || state.current !== requestSceneKey
       || (requestSceneKey !== null && state.scenes.get(requestSceneKey) !== requestScene)
-      || state.dirAssets !== requestAssets || requestKey() !== requestSource) {
+      || state.dirAssets !== requestAssets || !sameRequest()) {
       sourceState.dataset.previewSourceState = 'stale';
       sourceState.textContent = '读取素材期间内容或项目发生变化，本次未启动，请重新播放。';
       return;
@@ -996,19 +1136,19 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     // not the publisher captured before those asynchronous reads.
     publisher = editorPreviewPublisher(requestRoot);
     const status = editorWorkspaceStatus();
-    if (publisher !== null && state.reviewWorkspace === null && (isolated !== undefined || state.previewTimelineId === null)
+    if (publisher !== null && state.reviewWorkspace === null && target?.report.mode !== 'test' && (isolated !== undefined || state.previewTimelineId === null)
       && ((!status.dirty && !inspectConfigDraftState().dirty) || (isolated !== undefined && isolated.target.kind !== 'saved-project')) && !status.saving && status.update === 'none') {
       const previewGeneration = ++publishedPreviewGeneration;
       try {
         const source = await previewSourceFacts(assets, cachedFonts, capturedContent.storage, isolated);
-        if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || requestKey() !== requestSource) return;
+        if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !sameRequest()) return;
         await publisher.publish({ action: 'begin', previewId: traceId, previewGeneration, sceneId: cur.id,
           seed,
-          ...(labelSel.value ? { label: labelSel.value } : {}), source,
+          ...(startLabel ? { label: startLabel } : {}), source,
           expectedProjectRevision: publisher.baseline.projectRevision,
           expectedCoordinationRevision: publisher.baseline.coordinationRevision,
           ...(isolated === undefined ? {} : { content: { target: isolated.target, contentRevision: isolated.contentRevision } }) });
-        if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || requestKey() !== requestSource
+        if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !sameRequest()
           || state.dirHandle !== requestRoot || !container.isConnected) {
           await publisher.publish({ action: 'invalidate', previewGeneration, reason: 'source-changed' }).catch(() => {});
           return;
@@ -1018,12 +1158,12 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
         observationError = error instanceof Error ? error.message : String(error);
       }
     }
-    if (isolated !== undefined && formal === null) {
+    if (isolated !== undefined && formal === null && target?.report.mode !== 'test') {
       sourceState.dataset.previewSourceState = 'stale';
       sourceState.textContent = `隔离内容尚未开始试玩：${observationError ?? '工作区当前无法发布所选版本的观察，请等待当前操作结束'}`;
       return;
     }
-    if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || requestKey() !== requestSource
+    if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !sameRequest()
       || state.dirHandle !== requestRoot || !container.isConnected) return;
     const gameConfig = parseProjectConfigDocument(requestConfigText || '{}');
     debugSources = capturedContent.scenes;
@@ -1033,6 +1173,14 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     breakpointScene.replaceChildren(...debugSources.map(scene => { const option = h('option', undefined, scene.id); option.value = scene.id; return option; }));
     breakpointScene.value = debugSources.some(scene => scene.id === previousBreakpointScene) ? previousBreakpointScene : cur.id;
     refreshBreakpointSteps(); refreshBreakpoints();
+    const userBreakpoints = validDebugBreakpoints(breakpoints, debugSources);
+    const position = target?.report.position ?? null;
+    const run: PreviewTargetRun | undefined = target === undefined || position === null ? undefined : {
+      mode: target.report.mode, breakpoint: { sceneId: position.sceneId, sceneHash: position.sceneHash, index: position.index },
+      line: target.report.target.line, choices: [...target.report.choices], targetVisit: target.report.targetVisit,
+      ...(target.report.mode === 'test' ? { variables: structuredClone(target.report.initialVariables) } : {}),
+      afterBreakpoints: debugging ? userBreakpoints : [],
+    };
     const message = {
       type: 'surdet-preview-load',
       payload: {
@@ -1054,11 +1202,15 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
         fonts: Object.keys(fonts).length > 0 ? fonts : undefined,
         assets,
         timelines: timelines.length > 0 ? timelines : undefined,
-        timelinePreviewId: capturedContent.timelinePreviewId,
+        timelinePreviewId: run === undefined ? capturedContent.timelinePreviewId : undefined,
         choices: capturedContent.choices,
-        startLabel: labelSel.value || undefined,
+        startLabel,
         fast: fastChk.checked,
-        debug: { enabled: debugging, pauseOnStart: debugging && !resume, breakpoints: validDebugBreakpoints(breakpoints, debugSources) },
+        // A found path pauses only at its temporary breakpoint; the user's own ones return once it is reached.
+        debug: run === undefined ? { enabled: debugging, pauseOnStart: debugging && !resume, breakpoints: userBreakpoints }
+          : { enabled: true, pauseOnStart: false, breakpoints: [run.breakpoint] },
+        target: run,
+        plugins: pluginRun.sources.length ? pluginRun.sources : undefined,
       },
     };
     const transfer = [
@@ -1066,12 +1218,13 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       ...assets.portraits.map((a) => a.image.buffer),
       ...assets.visuals.flatMap(a => Object.values(a.images).map(image => image.buffer)),
       ...assets.avatars.map((a) => a.image.buffer),
+      ...assets.rules.map((a) => a.image.buffer),
       ...assets.audio.map((a) => a.file.buffer),
       ...assets.videos.map((a) => a.file.buffer),
       ...Object.values(fonts).map((font) => font.buffer),
     ];
-    const target = frame.contentWindow;
-    if (!target) return;
+    const frameWindow = frame.contentWindow;
+    if (!frameWindow) return;
     const sourceKey = storyPreviewSourceKey(requestSource);
     const previewRecord = await prepareStoryPreview({ traceId, owner: requestRoot, seed, working: isolated === undefined && reviewResult === null,
       scope: isolated === undefined ? reviewResult === null ? '当前编辑内容（含草稿）' : '固定审阅内容'
@@ -1083,14 +1236,27 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
       contentKey: JSON.stringify({ scenes: message.payload.scenes, gameConfig, configs: message.payload.configs, timelines: message.payload.timelines }),
       isCurrent: () => state.dirHandle === requestRoot && storyPreviewSourceKey() === sourceKey,
     });
-    if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || requestKey() !== requestSource
+    if (target !== undefined && targetStale(target) && revision === sendRevision && mountRevision === previewPanelMountRevision) {
+      void invalidate('source-changed').catch(() => {});
+      sourceState.dataset.previewSourceState = 'stale';
+      sourceState.textContent = '剧本或所选内容已更新，找到的起点属于旧版本，本次未启动。';
+      targetSection?.setStatus('剧本或所选内容已更新，这次起点属于旧版本；请重新查找。', 'warning');
+      return;
+    }
+    if (revision !== sendRevision || mountRevision !== previewPanelMountRevision || !sameRequest()
       || state.dirHandle !== requestRoot || !container.isConnected) return;
     stageWorkbench?.reset();
     currentPlayback = null;
+    loadingTarget = null;
+    runningTarget = run === undefined ? null : target!;
+    targetTraceId = run === undefined ? null : traceId;
+    targetLabel = run === undefined ? '' : `${target!.report.target.sceneId} 第 ${target!.report.target.line} 行`;
+    debugPanel.hidden = !debugging && run === undefined;
     expectedTraceId = traceId;
     activeCheckpointKey = key;
+    pluginsSection.setStop(null);
     activateStoryPreview(previewRecord);
-    target.postMessage(message, '*', [...new Set(transfer)]);
+    frameWindow.postMessage(message, '*', [...new Set(transfer)]);
     // A rejected or superseded read has not begun a new run. Only a published
     // payload replaces the previous observations and their source selection.
     currentTraceId = null;
@@ -1103,7 +1269,9 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     renderTraceList();
     publishedSource = requestSource;
     sourceState.dataset.previewSourceState = 'fresh';
-    sourceState.textContent = observationError !== null ? `预览可继续，观察记录未能同步：${observationError}`
+    if (run !== undefined) targetSection?.setStatus(`正在按找到的路径前进到 ${targetLabel}…`);
+    sourceState.textContent = run?.mode === 'test' ? '测试起点：临时初值只用于本次试玩，没有写回作品，也不作为正式试玩记录。'
+      : observationError !== null ? `预览可继续，观察记录未能同步：${observationError}`
       : isolated !== undefined ? `${isolated.title}；未写回来源，智能体可读取本次实际播放记录。${isolated.target.kind === 'candidate' || isolated.target.kind === 'integration-result' ? '返修请切回原工作变更，完成后重新封装或组合。' : ''}`
       : formal !== null ? '已载入保存的内容；智能体可读取本次实际播放记录。'
       : reviewResultLabel !== null ? `${reviewResultLabel}；本页展示当前审阅结果及其实际轨迹。`
@@ -1166,11 +1334,86 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
   refreshSources.onclick = () => { void loadSources(); };
   void loadSources();
 
+  notifyPreviewTarget = (message, source) => {
+    if (mountRevision !== previewPanelMountRevision || !container.isConnected || source !== frame.contentWindow
+      || message.traceId !== expectedTraceId || message.traceId !== currentTraceId || message.traceId !== targetTraceId
+      || message.generation !== currentTraceGeneration) return;
+    if (runningTarget !== null && targetStale(runningTarget)) return; // The edit already marked this start as old.
+    if (message.status === 'reached') {
+      const again = message.visit !== undefined && message.visit > 1 ? `（第 ${message.visit} 次到达）` : '';
+      targetSection?.setStatus(`已停在 ${targetLabel}之前${again}。这一行还没有执行，按“继续运行”执行它。`, 'reached');
+    } else targetSection?.setStatus(`没有到达 ${targetLabel}：${message.message}`, 'warning');
+  };
+  function stopTargetQuery(): void { targetWorker?.terminate(); targetWorker = null; targetSection?.setBusy(false); }
+  /** Run the shared query on exactly the content this preview plays; only a reached result starts. */
+  const findTarget = (): void => {
+    const request = options.target;
+    if (!targetSection || !request) return;
+    stopTargetQuery();
+    pendingTarget = null;
+    const selected = selectedTarget;
+    let input: PreviewPathOptions, files: Record<string, string>, sourceKey: string;
+    try {
+      input = targetSection.request();
+      if (selected === null) {
+        if (state.current === null || state.scenes.get(state.current)?.id !== request.sceneId) throw new Error('当前场景已切换，请回到这个场景后重新选择行。');
+        files = previewQueryFiles(capturePreviewContent());
+      } else {
+        // A selected version is used only when this scene is the text being edited; line numbers must agree.
+        const chosen = projected?.scenes.find(scene => scene.id === request.sceneId);
+        const editing = [...state.scenes.values()].find(scene => scene.id === request.sceneId);
+        if (isolated === undefined || JSON.stringify(isolated.target) !== JSON.stringify(selected)) throw new Error('所选试玩内容还在载入，请稍后再查找。');
+        if (chosen === undefined || editing === undefined || chosen.text !== editing.text)
+          throw new Error('所选“试玩内容”里的这个场景与正在编辑的剧本不同，行号对不上；请把试玩内容切回当前编辑内容。');
+        files = { ...isolated.files };
+      }
+      sourceKey = targetKey(request.sceneId);
+    } catch (error) {
+      targetSection.setStatus(error instanceof Error ? error.message : String(error), 'warning');
+      targetSection.setDetails([]);
+      return;
+    }
+    const worker = new Worker(new URL('../preview-path-worker.ts', import.meta.url), { type: 'module' });
+    targetWorker = worker;
+    targetSection.setBusy(true);
+    targetSection.setStatus('正在用真实运行查找路径…');
+    targetSection.setDetails([]);
+    const settle = (): boolean => targetWorker === worker && mountRevision === previewPanelMountRevision && container.isConnected;
+    worker.onmessage = (event: MessageEvent<{ result?: { report: PreviewPathReport }; error?: { message: string; code: string } }>) => {
+      if (!settle()) return;
+      stopTargetQuery();
+      if (event.data.error) { targetSection.setStatus(`不能从这一行开始：${event.data.error.message}`, 'warning'); return; }
+      const report = event.data.result!.report;
+      if (selectedTarget !== selected || targetKey(request.sceneId) !== sourceKey) {
+        targetSection.setStatus('查找期间剧本已修改，结果属于旧版本；请重新查找。', 'warning');
+        return;
+      }
+      const summary = describePreviewPath(report);
+      targetSection.setStatus(summary.title, report.status === 'reached' ? 'reached' : 'warning');
+      targetSection.setDetails(summary.details);
+      if (report.status !== 'reached' || report.position === null) return;
+      pendingTarget = { report, sourceKey, selected };
+      if (ready) void send(false, undefined, pendingTarget);
+    };
+    worker.onerror = (event) => {
+      if (!settle()) return;
+      stopTargetQuery();
+      targetSection.setStatus(`查找没有完成：${event.message || '查找进程出错'}`, 'warning');
+    };
+    worker.postMessage({ input: { files }, options: input });
+  };
+  targetSection?.onFind(findTarget);
+  targetSection?.onCancel(() => { stopTargetQuery(); targetSection.setStatus('已取消查找。'); });
+
   notifyPreviewReady = (source) => {
     if (mountRevision !== previewPanelMountRevision || container.isConnected === false) return;
     if (!isCurrentPreviewFrameSource(source, frame.contentWindow)) return;
     ready = true;
-    void send(); // 就绪即播放当前场景
+    // A fresh preview starts without a try-out; only an active one is sent again.
+    if (readingTrial.textScale !== null || readingTrial.reducedMotion !== null) sendReadingTrial();
+    // "从这一行试玩" starts only from a reached result, never from the toolbar entry.
+    if (options.target === undefined) void send(); // 就绪即播放当前场景
+    else if (pendingTarget !== null) void send(false, undefined, pendingTarget);
   };
   bindPreviewReadyListenerOnce();
 
@@ -1185,6 +1428,7 @@ export function renderPreviewPanel(container: HTMLElement, options: PreviewPanel
     frame.contentWindow?.postMessage({ type: 'surdet-preview-fast', fast: fastChk.checked }, '*');
   };
 
+  findTarget();
   if (!sc) {
     diagnostics.textContent = '请先在左侧选择一个场景，再回到这里播放预览。';
     diagnostics.className = 'preview-diagnostics info';

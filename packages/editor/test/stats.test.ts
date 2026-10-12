@@ -2,7 +2,7 @@
  * M6 E5-2 制作统计纯逻辑测试 + E4 预览标签列表。
  */
 import { describe, expect, it } from 'vitest';
-import { computeProjectStats } from '../src/stats.js';
+import { computeProjectStats, sceneTextCharacters } from '../src/stats.js';
 import { listLabels } from '../src/panels/preview-panel.js';
 
 describe('computeProjectStats', () => {
@@ -71,5 +71,17 @@ describe('listLabels（预览"从标签播放"目标）', () => {
   it('按出现顺序收集 @label', () => {
     expect(listLabels('@label start\n凛：好。\n@label end_x\n@label start'.split('\n').join('\n'))).toEqual(['start', 'end_x', 'start']);
     expect(listLabels('凛：无标签。')).toEqual([]);
+  });
+});
+
+describe('sceneTextCharacters', () => {
+  it('counts visible dialogue and narration like the statistics page, without tags or commands', () => {
+    const text = '@scene a\n@label top\n凛：<color=accent>再说</color><w=400>一遍。\n<ruby=せかい>世界</ruby>很大。\n@choice\n  <b>走</b> -> @goto top\n';
+    expect(sceneTextCharacters(text)).toBe(computeProjectStats([{ id: 'a', text }]).totalChars);
+    expect(sceneTextCharacters(text)).toBe(10);
+  });
+
+  it('still counts a scene that does not compile', () => {
+    expect(sceneTextCharacters('凛：你好<color=red>世界</color>\n@goto nowhere')).toBe('你好<color=red>世界</color>'.length);
   });
 });

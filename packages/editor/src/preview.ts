@@ -12,6 +12,7 @@ import { readProjectStage, resolvePlayerTheme, resolveProjectTitleLogo, stageCon
  * postMessage 协议（父窗口 → 预览）：
  *  { type: 'surdet-preview-load', payload: { sceneId, scenes, variables?, configs?, startLabel?, fast? } } → 编译并播放
  *  { type: 'surdet-preview-fast', fast: boolean }                                  → 切换打字速度
+ *  { type: 'surdet-preview-reading-trial', textScale, reducedMotion }              → 临时试看字号/减少动态（不保存）
  * 预览就绪后向父窗口回 { type: 'surdet-preview-ready' }。
  *
  * system 类指令无宿主部分（@battle/@calendar 缺配置等）：解释器直接穿透，
@@ -21,7 +22,7 @@ import {
   compileScene, EventBus, Interpreter, SceneRegistry, VariableStore, SaveManager, QUICK_SLOT, AUTO_SLOT,
   TimelineRegistry, SourceError,
   createSeededRandomSource,
-  CalendarRunner, GrowthSystem, AchievementSystem, AffectionSystem, EventScheduler,
+  CalendarRunner, GrowthSystem, AchievementSystem, AffectionSystem, EventScheduler, readProjectPlugins,
 } from '@surdet/core';
 import type {
   CoreEventMap, VarDeclaration, SaveSnapshot,
@@ -33,10 +34,13 @@ import { buildPreviewReplaySources, parsePreviewPlaybackCheckpoint,
 import { PreviewReplayController } from './preview-replay-runtime.js';
 import { previewTextHash } from './preview-content.js';
 import { parsePreviewDebugCommand, type PreviewDebugState } from './preview-debug.js';
+import { PreviewTargetDriver, type PreviewTargetRun, type PreviewTargetState } from './preview-target.js';
 import {
   AudioManager, Backlog, Typewriter, RenderPerformanceMonitor, buildMapView, createRendererRuntime,
-  SettingsStore, SETTING_STEPS, stepSetting, createSettingsUpdateHandler,
+  SettingsStore, stepSetting, createSettingsUpdateHandler, createSettingsRows, applyReadingSettings, RendererPluginHost,
 } from '@surdet/renderer';
+import { ProjectPluginHost, createDefaultHost, type DefaultHostController, type ProjectPluginModule } from '@surdet/host';
+import { NO_READING_TRIAL, parseReadingTrial, withReadingTrial, type ReadingTrial } from './preview-reading-trial.js';
 import type { AudioHandle, FontRole, GameSettings, RendererRuntime, SaveSlotView, SettingsStorage, SpeakerProfile, NumericSettingKey } from '@surdet/renderer';
 import { PreviewGeneration, readingPreviewDiagnostic, type PreviewDiagnostic } from './preview-diagnostics.js';
 import { createDirectTimelinePreviewScene } from './preview-direct-timeline.js';
@@ -61,6 +65,8 @@ interface PreviewAssets {
   portraits: { charId: string; costume: string; expression: string; image: PreviewImage; configured?: true }[];
   visuals?: { charId: string; costume: string; expression: string; definition: import('@surdet/core').PortraitVisualDefinition; images: Record<string, PreviewImage> }[];
   avatars: { key: string; image: PreviewImage }[];
+  /** Transition masks from content/assets/rule, keyed by file name as in the Player. */
+  rules?: { key: string; image: PreviewImage }[];
   audio: { kind: 'bgm' | 'ambience' | 'se' | 'voice'; key: string; file: PreviewImage }[];
 }
 
@@ -102,6 +108,10 @@ interface LoadPayload {
   replay?: PreviewPlaybackCheckpoint;
   strictSource?: boolean;
   debug?: { enabled: boolean; pauseOnStart: boolean; breakpoints: import('@surdet/core').RuntimeBreakpoint[] };
+  /** "从这一行试玩": replay a path found by the shared query up to a temporary breakpoint. */
+  target?: PreviewTargetRun;
+  /** Entries a person confirmed in the Editor for this run. A config declaration alone loads nothing. */
+  plugins?: { id: string; entry: string; source: string }[];
 }
 
 /** 快进速度：每秒 1000 字（近似瞬时）；常规 30 字/秒 */
@@ -129,6 +139,12 @@ let sessionStart = Date.now();
 let systemMenuOpen = false;
 let saveLoadOpen = false;
 let settingsOpen = false;
+/** Toolbar try-out over the preview settings; applied through Renderer commands, never stored. */
+let readingTrial: ReadingTrial = NO_READING_TRIAL;
+/** Re-applies the current reading settings and trial to the live runtime. */
+let applyPreviewReading: (() => void) | null = null;
+/** The work theme's dialogue panel opacity, where stepping "跟随作品" starts. */
+let previewPanelOpacity: number | undefined;
 /** 已应用字体的识别键与 Blob URL（同字体重复 load 不重复注册；换字体时按角色回收旧 URL） */
 const appliedFontKeys: Partial<Record<FontRole, string>> = {};
 const appliedFontUrls: Partial<Record<FontRole, string>> = {};
@@ -138,6 +154,11 @@ let runtimeLifecycle: PreviewRuntimeLifecycle<RendererRuntime> | null = null;
 let previewDisposed = false;
 let previewStageConfig: ProjectStage | null = null;
 let stageBridge: ReturnType<typeof installStagePreviewBridge> | null = null;
+/** Project plugins of the current run, routed through the shared Host system router as in the Player. */
+let projectPlugins: ProjectPluginHost | null = null;
+let pluginRouter: { host: DefaultHostController; interpreter: Interpreter; off: () => void } | null = null;
+/** Frame callbacks of the current runtime; recreated with it. */
+let pluginFrames: RendererPluginHost | null = null;
 
 interface ActivePreviewTrace {
   traceId: string;
@@ -154,6 +175,7 @@ interface ActivePreviewTrace {
 
 let activePreviewTrace: ActivePreviewTrace | null = null;
 let replayController: PreviewReplayController | null = null;
+let targetDriver: PreviewTargetDriver | null = null;
 
 function createPreviewTraceId(): string {
   return `preview-${Date.now()}-${globalThis.crypto.randomUUID()}`;
@@ -340,6 +362,7 @@ function guardRun(fn: () => void): void {
     showError(`预览运行时错误：${err instanceof Error ? err.message : String(err)}`);
   }
   publishDebugState();
+  targetDriver?.poke();
 }
 
 function publishDebugState(error?: string): void {
@@ -436,9 +459,12 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
   await settings.load();
   const typewriter = new Typewriter({ charsPerSecond: settings.settings.textSpeedCps });
   const root = document.getElementById('preview-root');
+  const frames = new RendererPluginHost();
+  pluginFrames = frames;
   runtimeLifecycle = new PreviewRuntimeLifecycle({
     createRuntime: () => createRendererRuntime({
       stage: stageConfig,
+      pluginHost: frames,
       audio: previewAudio,
       typewriter,
       backlog: new Backlog(),
@@ -463,11 +489,17 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
   const menu = commands.menu;
   const system = commands.system;
   settings.apply(typewriter, previewAudio);
+  applyPreviewReading = () => {
+    if (runtime !== activeRuntime || queries.diagnostics.isDisposed()) return;
+    applyReadingSettings(withReadingTrial(settings.settings, readingTrial), commands, controller, settings.settings.locale || document.documentElement.lang);
+  };
+  applyPreviewReading();
   controller.connect(bus);
-  bus.on('choice', ({ options }) => replayController?.choice(options));
+  bus.on('choice', ({ options }) => { replayController?.choice(options); targetDriver?.choice(options); });
   let debugPublishQueued = false;
   bus.on('runtimeTrace', (event) => {
     captureRuntimeTrace(event, () => createPreviewTraceEvidenceSnapshot(queries.presentation.snapshot(), queries.diagnostics.projectionSnapshot()));
+    targetDriver?.poke();
     if (interp?.debugEnabled && !debugPublishQueued) {
       debugPublishQueued = true;
       queueMicrotask(() => { debugPublishQueued = false; publishDebugState(); });
@@ -480,6 +512,25 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
     if (thumbnail) snap.meta.thumbnail = thumbnail;
     snap.meta.playTimeSec = Math.max(0, Math.round((Date.now() - sessionStart) / 1000));
     return snap;
+  }
+
+  /** The plugin host refuses a save while its interaction is open; that is a tip, not an error out of the input handler. */
+  function takeSnapshot(kind: SaveSnapshot['kind']): SaveSnapshot | null {
+    try {
+      const snap = interp?.saveSnapshot(kind) ?? null;
+      if (!snap) dialogue.showBanner('当前没有可存档的剧情状态', 'tip');
+      return snap;
+    } catch (err) {
+      dialogue.showBanner(`当前不能存档：${err instanceof Error ? err.message : String(err)}`, 'tip');
+      return null;
+    }
+  }
+
+  /** A refused restore leaves the run as it was; a plugin reason is still this run's stop, as a menu read reports it. */
+  function reportQuickLoadFailure(err: unknown): void {
+    const message = `快速读档失败：${err instanceof Error ? err.message : String(err)}`;
+    if (/PLUGIN_[A-Z]+/.test(message)) showError(message);
+    else dialogue.showBanner(message, 'tip');
   }
 
   bus.on('autosave', (snap) => {
@@ -521,11 +572,8 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
     menu.showSaveLoad({ mode, slots }, (slotId) => {
       saveLoadOpen = false;
       if (mode === 'save') {
-        const snap = interp?.saveSnapshot(slotId === QUICK_SLOT ? 'quick' : slotId === AUTO_SLOT ? 'auto' : 'manual');
-        if (!snap) {
-          dialogue.showBanner('当前没有可存档的剧情状态', 'tip');
-          return;
-        }
+        const snap = takeSnapshot(slotId === QUICK_SLOT ? 'quick' : slotId === AUTO_SLOT ? 'auto' : 'manual');
+        if (!snap) return;
         void saves.save(slotId, enrichSnapshot(snap)).then(() => {
           dialogue.showBanner(`已保存至槽位 ${slotId}`, 'tip');
         }).catch((err) => {
@@ -552,6 +600,7 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
     apply: confirmed => {
       settings.apply(typewriter, previewAudio);
       controller.setAutoWait(confirmed.autoBaseDelayMs, confirmed.autoPerCharMs);
+      applyPreviewReading?.();
       if (settingsOpen) refreshSettingsPanel();
     },
     onError: error => showError(`预览设置保存失败，已保留原设置：${error instanceof Error ? error.message : String(error)}`),
@@ -560,13 +609,10 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
   function refreshSettingsPanel(): void {
     const current = settings.settings;
     menu.showSettings(
-      SETTING_STEPS.map((def) => ({
-        id: def.key,
-        label: def.label,
-        display: def.format(current[def.key]),
-      })),
+      createSettingsRows(current),
       (id, dir) => {
-        void updateSettings(confirmed => stepSetting(confirmed, id as NumericSettingKey, dir));
+        if (id === 'reducedMotion' || id === 'readAloud') { void updateSettings(confirmed => ({ [id]: !confirmed[id] })); return; }
+        void updateSettings(confirmed => stepSetting(confirmed, id as NumericSettingKey, dir, previewPanelOpacity));
       },
       () => {
         settingsOpen = false;
@@ -655,7 +701,7 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
         break;
       case 'backlog': controller.toggleBacklog(); break;
       case 'qsave': {
-        const snap = interp?.saveSnapshot('quick');
+        const snap = takeSnapshot('quick');
         if (snap) {
           void saves.save(QUICK_SLOT, enrichSnapshot(snap)).then(() => dialogue.showBanner('快速存档已保存', 'tip')).catch((err) => {
             dialogue.showBanner(`快速存档失败：${err instanceof Error ? err.message : String(err)}`, 'tip');
@@ -664,9 +710,7 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
         break;
       }
       case 'qload':
-        void saves.load(QUICK_SLOT).then((snap) => interp?.loadSnapshot(snap)).catch((err) => {
-          dialogue.showBanner(`快速读档失败：${err instanceof Error ? err.message : String(err)}`, 'tip');
-        });
+        void saves.load(QUICK_SLOT).then((snap) => interp?.loadSnapshot(snap)).catch(reportQuickLoadFailure);
         break;
       case 'settings':
         if (settingsOpen) {
@@ -796,15 +840,13 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
 
     if (e.key === 'F5') {
       e.preventDefault();
-      const snap = interp?.saveSnapshot('quick');
+      const snap = takeSnapshot('quick');
       if (snap) {
         void saves.save(QUICK_SLOT, enrichSnapshot(snap)).then(() => {
           dialogue.showBanner('快速存档已保存', 'tip');
         }).catch((err) => {
           showError(`快速存档失败：${err instanceof Error ? err.message : String(err)}`);
         });
-      } else {
-        dialogue.showBanner('当前没有可存档的剧情状态', 'tip');
       }
       return;
     }
@@ -813,9 +855,7 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
       e.preventDefault();
       void saves.load(QUICK_SLOT).then((snap) => {
         interp?.loadSnapshot(snap);
-      }).catch((err) => {
-        dialogue.showBanner(`快速读档失败：${err instanceof Error ? err.message : String(err)}`, 'tip');
-      });
+      }).catch(reportQuickLoadFailure);
       return;
     }
 
@@ -1046,16 +1086,49 @@ async function applyPreviewAssets(assets: PreviewAssets | undefined, requiredBac
       asset.image.mime,
       (url) => rendererAssets.registerAvatar(asset.key, url, asset.image.mime),
     )),
+    // A mask that fails to load is reported by the renderer at its transition, which falls back to fade.
+    ...(assets.rules ?? []).map((asset) => register(
+      asset.image.buffer,
+      asset.image.mime,
+      (url) => rendererAssets.registerRule(asset.key, url, asset.image.mime),
+    )),
   ]);
   if (previewDisposed) { for (const url of urls) URL.revokeObjectURL(url); return; }
   appliedAssetUrls = urls;
   if (configuredFailure) throw configuredFailure;
 }
 
+/** Dispose the run's plugins: their abort signals close project panels, and their code is released. */
+function disposeProjectPlugins(): void {
+  const plugins = projectPlugins, router = pluginRouter;
+  projectPlugins = null;
+  pluginRouter = null;
+  // Releasing an open plugin operation resumes the host pause; the replaced run must not go on on the shared bus.
+  router?.interpreter.failHost();
+  try { plugins?.dispose(); } catch (error) { console.warn('[preview] 项目插件释放失败：', error); }
+  router?.off();
+  router?.host.dispose();
+}
+
+/**
+ * Import the confirmed entry text as a Blob module. The Editor confirmed only entries without module
+ * imports; this is trusted same-origin code, not a boundary that keeps it from loading anything.
+ */
+async function importPluginEntry(sources: readonly { entry: string; source: string }[], entry: string): Promise<ProjectPluginModule> {
+  const found = sources.find(item => item.entry === entry);
+  if (!found) throw new Error('入口没有随本次试玩确认');
+  const url = URL.createObjectURL(new Blob([found.source], { type: 'text/javascript' }));
+  try { return await import(/* @vite-ignore */ url) as ProjectPluginModule; }
+  finally { URL.revokeObjectURL(url); }
+}
+
 function invalidatePreviewSession(): void {
+  disposeProjectPlugins();
   runtime?.controller.setPresentationPaused?.(false);
   replayController?.dispose();
   replayController = null;
+  targetDriver?.dispose();
+  targetDriver = null;
   interp = null;
   store = null;
   registry = null;
@@ -1133,11 +1206,14 @@ async function load(p: LoadPayload): Promise<void> {
         }
       }
     }
+    // Declarations are data: they name the instructions to compile, and never load code by themselves.
+    const pluginDeclarations = readProjectPlugins((p.gameConfig ?? {}) as { plugins?: unknown });
+    const pluginInstructions = pluginDeclarations.flatMap(plugin => plugin.instructions.map(instruction => instruction.name));
     const reg = new SceneRegistry();
     // 全量场景编译入注册表（逐场景捕获错误，报出具体哪个场景编译失败）
     for (const s of p.scenes ?? []) {
       try {
-        reg.register(compileScene(s.text, `${s.id}.gal`, s.id));
+        reg.register(compileScene(s.text, `${s.id}.gal`, s.id, pluginInstructions));
       } catch (err) {
         throw new Error(`场景 ${s.id} 编译失败：${err instanceof Error ? err.message : String(err)}`);
       }
@@ -1163,6 +1239,8 @@ async function load(p: LoadPayload): Promise<void> {
     }
     // 变量表来自 game.config.json（父窗口下发）：真实剧本的 @set/@mod/@if 需要它
     const vs = new VariableStore((p.variables ?? []) as unknown as VarDeclaration[]);
+    // A test start's temporary values; Core checks each declared name and type.
+    if (p.target?.mode === 'test') for (const [name, value] of Object.entries(p.target.variables ?? {})) vs.set(name, value);
     // 轻宿主系统按配置重建（构造注入 store；形状容错：非法配置按 null 走占位横幅）
     const cfg = p.configs ?? {};
     calendar = cfg.calendar ? tryBuild(() => new CalendarRunner(cfg.calendar as CalendarConfig, vs)) : null;
@@ -1185,7 +1263,17 @@ async function load(p: LoadPayload): Promise<void> {
     await applyPreviewAssets(p.assets, requiredThemeImages);
     if (previewDisposed) return;
     commands.preferences.setTheme(theme);
+    previewPanelOpacity = theme.opacity.panel;
     postPreviewDiagnostic({ generation, level: 'info', phase: 'assets', message: '素材加载完成', sceneId: p.sceneId });
+    const confirmed = p.plugins ?? [];
+    const plugins = await ProjectPluginHost.load(pluginDeclarations, {
+      trustedIds: confirmed.map(plugin => plugin.id),
+      loadEntry: entry => importPluginEntry(confirmed, entry),
+      // A blocking instruction can fail after the step that opened it; the run stops here, not later.
+      onFailure: error => { if (projectPlugins === plugins) { showError(error.message); publishDebugState(); } },
+    });
+    if (previewDisposed) { plugins.dispose(); return; }
+    projectPlugins = plugins;
     interp = new Interpreter(vs, bus!, reg, undefined, undefined, {
       snapshot: (): SystemSnapshots => ({
         ...(calendar ? { calendar: calendar.snapshot() } : {}),
@@ -1205,6 +1293,14 @@ async function load(p: LoadPayload): Promise<void> {
       restore: (payload) => presentation.restore(payload),
     });
     interp.setRandomSource(createSeededRandomSource(p.seed!));
+    // Blocking plugin instructions share the one-active-system router; other system events keep the preview's own handler.
+    const router = createDefaultHost({ interpreter: interp, renderer: controller, stage: commands.system, adapters: plugins.adapters(),
+      onError: error => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (projectPlugins === plugins && plugins.failure !== message) showError(`项目插件停止：${message}`);
+      } });
+    pluginRouter = { host: router, interpreter: interp, off: bus!.on('stateReset', () => router.reset()) };
+    plugins.bind(interp, vs, router, activeRuntime, pluginFrames ?? undefined);
     if (p.debug?.enabled && !controller.setPresentationPaused) throw new Error('当前运行器不支持调试暂停，请使用同批 Renderer 构建');
     interp.configureDebugger(p.debug ?? { enabled: false });
     const sources = await buildPreviewReplaySources(p.scenes, { sha256: previewTextHash });
@@ -1219,10 +1315,22 @@ async function load(p: LoadPayload): Promise<void> {
       },
     });
     replayController.attach(interp, controller);
+    if (p.target) {
+      const activeInterp = interp;
+      targetDriver = new PreviewTargetDriver({ interpreter: activeInterp, input: controller, run: p.target,
+        continuePast: () => { controller.setPresentationPaused?.(false); activeInterp.debugContinue(); publishDebugState(); },
+        report: (outcome) => {
+          publishDebugState();
+          const message: PreviewTargetState = { type: 'surdet-preview-target-state', traceId: trace.traceId, generation: trace.generation,
+            ...(outcome.status === 'reached' ? { status: 'reached', message: '已到达目标', visit: outcome.visit } : outcome) };
+          window.parent.postMessage(message, location.origin);
+        } });
+    }
     turnResumeSnap = null;
     if (typeof p.fast === 'boolean') controller.setTextSpeed(p.fast ? FAST_CPS : NORMAL_CPS);
     interp.start(directTimelineId ? timelinePreviewSceneId : p.sceneId, directTimelineId ? undefined : p.startLabel);
     publishDebugState();
+    targetDriver?.poke();
     if (!replayReportedStatus) {
       postPreviewDiagnostic({ generation, level: 'info', phase: 'compile', message: '预览已启动', sceneId: p.sceneId, ...(p.startLabel ? { label: p.startLabel } : {}) });
     }
@@ -1266,6 +1374,10 @@ window.addEventListener('message', (e: MessageEvent) => {
     void loadQueue;
   }
   if (d.type === 'surdet-preview-fast') runtime?.controller.setTextSpeed(d.fast ? FAST_CPS : NORMAL_CPS);
+  if (d.type === 'surdet-preview-reading-trial') {
+    const trial = parseReadingTrial(e.data);
+    if (trial) { readingTrial = trial; applyPreviewReading?.(); }
+  }
   if (d.type === 'surdet-preview-reading-check' && e.source === window.parent) {
     const reading = readCurrentReading();
     if (!reading) return;

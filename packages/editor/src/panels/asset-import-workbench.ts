@@ -9,6 +9,7 @@ import type {
 
 const CATEGORY_LABELS: Readonly<Record<ProjectAssetKind, string>> = {
   background: '背景',
+  rule: '转场遮罩',
   portrait: '立绘',
   avatar: '头像',
   music: '音乐',
@@ -23,6 +24,7 @@ const CATEGORY_LABELS: Readonly<Record<ProjectAssetKind, string>> = {
 
 const CATEGORY_ORDER: readonly ProjectAssetKind[] = [
   'background',
+  'rule',
   'portrait',
   'avatar',
   'music',
@@ -137,6 +139,7 @@ function entryStateCopy(state: AssetImportWorkspaceProjection['entryState']): st
 function destinationDirectory(kind: ProjectAssetKind): string {
   const directories: Readonly<Record<ProjectAssetKind, string>> = {
     background: '背景',
+    rule: '转场遮罩',
     portrait: '立绘',
     avatar: '头像',
     music: '音乐',

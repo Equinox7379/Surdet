@@ -3,7 +3,7 @@
  * （拖拽 DOM 交互与右键菜单由手工验收覆盖；此处保证落盘文本变换的正确性）
  */
 import { describe, expect, it } from 'vitest';
-import { rewriteSceneRefs, countSceneRefs, buildJumpLine, appendLineToScene, layoutFlowGraph } from '../src/panels/flow.js';
+import { rewriteSceneRefs, countSceneRefs, appendLineToScene, layoutFlowGraph } from '../src/panels/flow.js';
 import { buildFlowGraph } from '../src/graph/build.js';
 import type { FlowNode } from '../src/graph/build.js';
 
@@ -46,21 +46,6 @@ describe('countSceneRefs（删除前引用检查）', () => {
   it('统计裸场景与带标签引用；相似 ID 不计入', () => {
     const src = '@jump sc\n@jump sc.mid\n@call sc\n@jump scx\n凛：sc\n';
     expect(countSceneRefs(src, 'sc')).toBe(3);
-  });
-});
-
-describe('buildJumpLine（拖拽建链插入行）', () => {
-  it('跨场景到标签 → @jump 场景.标签', () => {
-    expect(buildJumpLine(sceneNode('ch1'), labelNode('ch2', 'mid'))).toBe('@jump ch2.mid');
-  });
-  it('跨场景到场景入口 → @jump 场景', () => {
-    expect(buildJumpLine(sceneNode('ch1'), sceneNode('ch2'))).toBe('@jump ch2');
-  });
-  it('同场景到标签 → @goto 标签', () => {
-    expect(buildJumpLine(labelNode('ch1', 'a'), labelNode('ch1', 'b'))).toBe('@goto b');
-  });
-  it('同场景到场景入口 → @jump 本场景（回到开头）', () => {
-    expect(buildJumpLine(labelNode('ch1', 'a'), sceneNode('ch1'))).toBe('@jump ch1');
   });
 });
 

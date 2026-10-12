@@ -82,6 +82,11 @@ try {
   await frame.waitForFunction(() => window.surdetPreviewDebug?.presentationSnapshot?.stage?.backgroundKey === 'castle_hall'
     && JSON.stringify(window.surdetPreviewDebug.runtime.queries.diagnostics.projectionSnapshot()).includes('独立窗口保存成功'));
   assert.equal(await frame.evaluate(() => typeof window.surdetDesktop), 'undefined');
+  // A confirmed project plugin entry is imported in the preview frame as a module from its text.
+  assert.equal(await frame.evaluate(async () => {
+    const url = URL.createObjectURL(new Blob(['export default () => 42;'], { type: 'text/javascript' }));
+    try { return (await import(url)).default(); } finally { URL.revokeObjectURL(url); }
+  }), 42);
   await project.screenshot({ path: path.join(output, 'desktop-preview.png') });
   console.log('PREVIEW: real background and saved dialogue visible; no native bridge in preview frame');
   // Native reopen focuses the existing project instead of making two owners.
