@@ -121,17 +121,19 @@ export function createPreviewPluginsSection(options: {
       dialog.append(footer);
       return;
     }
-    const limit = pluginEntryLimit(declaration.entry, facts.dependencies);
+    const limit = pluginEntryLimit(facts);
     status.textContent = limit === null ? '请确认你了解这段代码的来源和权限。' : `不能启用：${limit}`;
     const factList = h('dl', 'preview-plugin-facts');
     const fact = (term: string, value: string): void => { factList.append(h('dt', undefined, term), h('dd', undefined, value)); };
     fact('来源', `你打开的项目目录「${root.name}」中的 ${facts.entry}`);
     fact('代码', `${formatBytes(facts.bytes)} · SHA-256 ${facts.sha256}`);
-    fact('依赖', facts.dependencies.length ? facts.dependencies.join('、') : '无（单个 .js 模块）');
+    fact('依赖', facts.unlexable !== null ? '无法读取' : facts.dependencies.length ? facts.dependencies.join('、')
+      : '代码中没有 import / export … from / import() 模块导入（单个 .js 模块）');
     fact('指令', declaration.instructions.map(instruction => `@${instruction.name}`).join('、'));
     fact('运行环境', '代码在 Editor 的试玩画面中运行，与 Editor 同源，拥有与 Editor 页面相同的权限：'
       + '可以访问试玩画面和 Editor 页面本身，以及 Editor 已获得的能力（例如项目目录的读写、桌面版提供给 Editor 的接口）。'
-      + '这不是沙箱；它造成的副作用 Editor 无法撤销，也不能中止死循环。Editor 不会编译它、安装依赖，或在 Node / 桌面主进程中运行它。');
+      + '这不是沙箱；它造成的副作用 Editor 无法撤销，也不能中止死循环。Editor 不会编译它、安装依赖，或在 Node / 桌面主进程中运行它。'
+      + 'Editor 只检查代码里的模块导入写法；代码运行时自行取得并执行其他代码，不在这项检查之内。');
     fact('有效范围', '只在本次 Editor 会话、只对这个目录、只对上面这份代码内容有效；文件内容一变就自动停用，需要重新确认。'
       + '作品配置和智能体的请求都不能替你启用。只用于试玩「当前编辑内容」，所选版本、候选等其他内容不运行插件代码。');
     const code = h('details', 'preview-plugin-code');

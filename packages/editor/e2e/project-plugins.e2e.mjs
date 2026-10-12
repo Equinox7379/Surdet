@@ -32,6 +32,8 @@ async function choosePort() {
 const ENTRY = `const count = (name) => localStorage.setItem('e2e:letters:' + name, String(Number(localStorage.getItem('e2e:letters:' + name) ?? 0) + 1));
 // Runs when the module is imported: an entry nobody confirmed must never get here.
 count('imported');
+// Text that only looks like a module import: import('./a-comment.js') loads nothing.
+const note = "import('./a-string.js') is a string, not a load";
 export default () => ({
   apiVersion: 1,
   state: {
@@ -74,6 +76,9 @@ export default () => ({
 const BROKEN = ENTRY.replace(/letter_panel\(values, context\) \{[\s\S]*?\n {4}\},\n {2}\},/, "async letter_panel() { throw new Error('信纸破了'); },\n  },");
 assert.notEqual(BROKEN, ENTRY);
 const IMPORTING = `import './helper.js';\n${ENTRY}`;
+// Valid module code that loads another module through import() with a trailing comma or a second argument.
+const DATA_MODULE = 'data:text/javascript,export default 42';
+const DYNAMIC = [`${ENTRY}export const extra = await import('${DATA_MODULE}',);\n`, `${ENTRY}export const extra = await import('${DATA_MODULE}', {});\n`];
 const sha256 = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
 
 const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'surdet-project-plugins-'));
@@ -230,7 +235,9 @@ try {
   const facts = await dialog.innerText();
   assert.match(facts, /你打开的项目目录「project」中的 plugins\/letters\.js/);
   assert.match(facts, new RegExp(`SHA-256 ${sha256(ENTRY)}`));
-  assert.match(facts, /无（单个 \.js 模块）/);
+  // The entry's comment and string mention import() but load nothing.
+  assert.match(facts, /依赖\s*代码中没有 import \/ export … from \/ import\(\) 模块导入（单个 \.js 模块）/);
+  assert.match(facts, /代码运行时自行取得并执行其他代码，不在这项检查之内/);
   assert.match(facts, /与 Editor 同源/);
   assert.match(facts, /这不是沙箱/);
   assert.match(facts, /作品配置和智能体的请求都不能替你启用/);
@@ -376,15 +383,28 @@ try {
   assert.deepEqual(await checkpoints(), []);
   console.log('PASS a failing plugin instruction stops the run with its reason');
 
-  // 13. An entry that imports another file is withdrawn and cannot be confirmed.
-  await fs.writeFile(file('plugins/letters.js'), IMPORTING);
-  await replay();
-  assert.match(await pluginStatus('letters'), /已停用，无法在 Editor 试玩中运行：入口引用了 \.\/helper\.js/);
-  await (await pluginButton('letters', '查看并启用插件')).click();
-  await dialog.getByText(/^不能启用：入口引用了 \.\/helper\.js/).waitFor();
-  assert.equal(await dialog.getByRole('button', { name: '确认运行这份代码' }).count(), 0);
-  await dialog.getByRole('button', { name: '取消' }).click();
-  console.log('PASS an entry with an import is refused');
+  // 13. A confirmed entry that gains a module import, static or import() in any call form, is withdrawn,
+  // not imported, and cannot be confirmed (31-REV-01).
+  const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const [source, named] of [[IMPORTING, './helper.js'], ...DYNAMIC.map((code) => [code, DATA_MODULE])]) {
+    // The next run reads the entry again: a confirmation of other code is withdrawn first.
+    await fs.writeFile(file('plugins/letters.js'), ENTRY);
+    await replay();
+    await confirmTrust('letters', sha256(ENTRY));
+    assert.deepEqual(await lastLoad(), ['letters']);
+    await fs.writeFile(file('plugins/letters.js'), source);
+    const importsBefore = await counter('imported');
+    await replay();
+    assert.deepEqual(await lastLoad(), [], `no code is sent for ${named}`);
+    assert.equal(await counter('imported'), importsBefore, `nothing is imported for ${named}`);
+    assert.match(await pluginStatus('letters'), new RegExp(`^已停用，无法在 Editor 试玩中运行：入口引用了 ${literal(named)}；`));
+    await (await pluginButton('letters', '查看并启用插件')).click();
+    await dialog.getByText(new RegExp(`^不能启用：入口引用了 ${literal(named)}；`)).waitFor();
+    assert.equal(await dialog.getByRole('button', { name: '确认运行这份代码' }).count(), 0);
+    await dialog.getByRole('button', { name: '取消' }).click();
+    await dialog.waitFor({ state: 'detached' });
+  }
+  console.log('PASS an entry with a static import or an import() with a trailing comma or second argument is refused');
 
   // 14. Another version of the content runs no plugin code, whatever was confirmed here.
   await fs.writeFile(file('plugins/letters.js'), ENTRY);
