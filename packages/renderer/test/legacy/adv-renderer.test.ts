@@ -417,8 +417,9 @@ describe('AdvRenderer', () => {
     r.update(1000);
     const beforeAdvance = stage.texts.length;
     expect(r.advance()).toBe(true);
-    expect(stage.texts.slice(beforeAdvance)).toEqual([{ speaker: '凛', value: '' }, { speaker: '凛', value: '' }]);
-    expect(stage.textSources.at(-1)).toEqual({ value: '下一句。', visibleUnits: 0 });
+    expect(stage.texts.slice(beforeAdvance)).toEqual([{ speaker: '凛', value: '' }]);
+    // One projection carries the new source with no visible units; there is no empty-source clear first.
+    expect(stage.textSources.slice(beforeAdvance)).toEqual([{ value: '下一句。', visibleUnits: 0 }]);
   });
 
   it('构造时把 onSelect 绑定到 stage（PixiStage 点击路径可用，修复真实 UI 卡死）', () => {
