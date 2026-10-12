@@ -496,9 +496,10 @@ describe('live Pixi player-layer theme projection', () => {
 
     layer.setTheme(DEFAULT_RENDERER_THEME);
     layer.showBacklog([{ speaker: 'Lynn', text: 'Backlog line' }]);
-    const backlogText = findText(root, 'Lynn：Backlog line');
+    findText(root, 'Backlog line');
     layer.setTheme(theme);
-    expect(backlogText.style.fill).toBe(theme.colors.accent);
+    expect(findText(root, 'Lynn：').style.fill).toBe(theme.colors.accent);
+    expect(findText(root, 'Backlog line').style.fill).toBe(theme.colors.textMuted);
 
     layer.dispose();
     assets.dispose();
