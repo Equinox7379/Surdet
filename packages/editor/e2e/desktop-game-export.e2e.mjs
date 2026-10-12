@@ -94,7 +94,7 @@ try {
   assert.equal(inspection.id, 'export-check');
   assert.equal(await dialog.getByLabel('游戏标题').inputValue(), '导出验证');
   assert.equal(await dialog.getByLabel('Windows 版本').inputValue(), '0.2.0');
-  assert.equal(await dialog.getByLabel('新文件夹名称').inputValue(), 'export-check-windows');
+  assert.equal(await dialog.getByLabel('新文件夹名称').inputValue(), '导出验证-windows');
   assert.equal(await dialog.locator('.game-export-issue').count(), inspection.issues.length, 'every inspected issue is listed');
   const plugin = dialog.getByLabel('允许把插件 letters 打包进游戏');
   assert.equal(await plugin.isChecked(), false);
@@ -114,7 +114,7 @@ try {
   await app.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] }); }, exportParent);
   await dialog.getByRole('button', { name: '选择位置…' }).click();
   await dialog.locator('.game-export-where').getByText(exportParent).waitFor();
-  assert.match(await dialog.locator('.game-export-target').innerText(), /将新建：.*export-check-windows（已有同名文件夹时不会覆盖）/);
+  assert.match(await dialog.locator('.game-export-target').innerText(), /将新建：.*导出验证-windows（已有同名文件夹时不会覆盖）/);
   assert.equal(await run.isDisabled(), false);
   if (process.env.SURDET_DESKTOP_E2E_OUTPUT) await page.screenshot({ path: path.join(output, 'export-form.png') });
   console.log('PASS the real inspection fills the form; the plugin needs its own permission; version and location are required');

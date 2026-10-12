@@ -69,6 +69,12 @@ export function gameExportBlocker(state: Pick<GameExportState, 'inspection' | 't
   return null;
 }
 
+/** A readable default for the new folder: the title, cleaned to what the exporter accepts, else the identity. */
+export function suggestedExportFolder(title: string, id: string): string {
+  const name = title.replace(/[<>:"/\\|?*\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100).trim();
+  return `${name || id}-windows`;
+}
+
 export function createGameExport(bridge: GameExportBridge, hooks: GameExportHooks, onChange: () => void) {
   const state: GameExportState = { stage: 'inspecting', inspection: null, title: '', version: '', icon: '', folderName: '', location: null,
     choosing: false, allowed: new Set(), progress: null, result: null, message: null };
@@ -82,7 +88,7 @@ export function createGameExport(bridge: GameExportBridge, hooks: GameExportHook
     try {
       const inspection = await bridge.inspectGameExport();
       // Permission is never carried over from an earlier inspection or from the declaration.
-      update({ stage: 'form', inspection, title: inspection.title, version: inspection.version, folderName: state.folderName || `${inspection.id}-windows`,
+      update({ stage: 'form', inspection, title: inspection.title, version: inspection.version, folderName: state.folderName || suggestedExportFolder(inspection.title, inspection.id),
         allowed: new Set(), message: inspection.version ? null : { text: '项目还没有版本号，请填写 Windows 版本。', tone: 'info' } });
     } catch (error) {
       update({ stage: 'unavailable', message: { text: desktopErrorMessage(error, '无法检查项目'), tone: 'error' } });
