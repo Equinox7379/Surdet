@@ -121,8 +121,15 @@ async function openWindow(project: Directory | null) {
   window.webContents.on('will-navigate', event => { event.preventDefault(); });
   window.webContents.on('will-attach-webview', event => event.preventDefault());
   window.webContents.on('will-prevent-unload', event => {
-    if (state.busy || state.exportController) {
-      dialog.showMessageBoxSync(window, { type: 'info', title: '暂时不能关闭', message: '项目正在保存、写回审阅结果、整理或恢复，请完成后再关闭。审阅结果尚未确认时，请先检查或恢复原操作。', buttons: ['返回编辑器'] });
+    // reportUnloadState is a snapshot for this close attempt, not a live operation flag.
+    // Consume it now; retaining it would reject later exports after the operation had finished.
+    const reportedBusy = state.busy;
+    state.busy = false;
+    if (reportedBusy || state.exportController) {
+      const message = state.exportController
+        ? '游戏正在导出，请完成后再关闭；也可先在导出窗口取消并等待清理。'
+        : '项目正在保存、写回审阅结果、整理或恢复，请完成后再关闭。审阅结果尚未确认时，请先检查或恢复原操作。';
+      dialog.showMessageBoxSync(window, { type: 'info', title: '暂时不能关闭', message, buttons: ['返回编辑器'] });
       return;
     }
     const choice = dialog.showMessageBoxSync(window, { type: 'question', title: '尚有未保存修改', message: '修改尚未保存。返回编辑器保存，还是不保存并关闭？', buttons: ['继续编辑', '不保存并关闭'], defaultId: 0, cancelId: 0, noLink: true });
