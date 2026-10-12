@@ -103,6 +103,17 @@ describe('character validation wiring', () => {
     expect(result.ok).toBe(false);
   });
 
+  it('does not report a failed entry scene as missing, but still reports a different missing entry', async () => {
+    const snapshot = await loadProjectSnapshot(storageFor({
+      'game.config.json': JSON.stringify({ entryScene: 'broken', characters: {} }),
+    }), hasher);
+    const options = { failedScenes: new Set(['broken']) };
+    const failedEntry = validateSnapshot(snapshot, undefined, options);
+    expect(failedEntry.issues.filter(issue => issue.code === 'ENTRY_SCENE_MISSING')).toEqual([]);
+    const missingEntry = validateSnapshot({ ...snapshot, config: { entryScene: 'missing' } }, undefined, options);
+    expect(missingEntry.issues.filter(issue => issue.code === 'ENTRY_SCENE_MISSING')).toHaveLength(1);
+  });
+
   it('reports unresolved avatars and unknown speakers as non-blocking warnings', async () => {
     const snapshot = await loadProjectSnapshot(storageFor({
       'game.config.json': JSON.stringify({

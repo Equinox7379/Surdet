@@ -11,6 +11,14 @@ const sc = (id: string, source: string, key?: string) => ({
 });
 
 describe('validateProject', () => {
+  it('keeps the original compile error without calling an existing entry scene missing', async () => {
+    const scenes = [sc('start', '@scene start\n<b>尚未闭合。\n@end')];
+    const result = await validateProject(scenes, 'start', { path: 'game.config.json', raw: { entryScene: 'start' } });
+    expect(result.issues.filter(issue => issue.severity === 'error').map(issue => issue.code)).toEqual(['M002']);
+    const missing = await validateProject(scenes, 'missing', { path: 'game.config.json', raw: { entryScene: 'missing' } });
+    expect(missing.issues.map(issue => issue.code)).toEqual(expect.arrayContaining(['M002', 'ENTRY_SCENE_MISSING']));
+  });
+
   it('gives editor-only checks the same code-specific advice as surdet lint', async () => {
     const result = await validateProject([sc('a', '@scene a\n@label unused\n凛：继续。\n@end')], 'a', { path: 'game.config.json', raw: { entryScene: 'a' } });
     const unused = result.issues.find(issue => issue.code === 'W006');
