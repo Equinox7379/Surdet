@@ -91,6 +91,17 @@ try {
     node.setSelectionRange(at + offset, at + offset);
   }, { needle, offset });
   const completionCodes = (list) => list.locator('code').allTextContents();
+  /** Moves the caret to the row end (source) or the text end without any event the field listens to,
+   *  as a caret change the field never sees would. The open list is then left behind. */
+  const moveCaretUnseen = (locator) => locator.evaluate(async (node) => {
+    const swallow = (event) => { if (event.target === node) event.stopImmediatePropagation(); };
+    window.addEventListener('select', swallow, true);
+    const rowEnd = node.value.indexOf('\n', node.selectionEnd);
+    const at = node.classList.contains('v4-source-editor') && rowEnd >= 0 ? rowEnd : node.value.length;
+    node.setSelectionRange(at, at);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    window.removeEventListener('select', swallow, true);
+  });
 
   // 1. Only dialogue and option text are marked: the comment's tag, the book title and the variable are left alone.
   await page.locator('[data-script-view="source"]').click();
@@ -128,6 +139,38 @@ try {
   }
   assert.equal(await sceneText(), source, 'the source is back to its original text and line endings');
   console.log('PASS source completion follows the row: dialogue tags, option tags only; none in instructions, comments, conditions or jumps');
+
+  // 2b. 36-REV-01: a list offered at one `<` never writes at another place. End leaves the prefix and
+  //     closes it, so Enter is an ordinary Enter; a caret moved without a key or a click is checked
+  //     again when the list is used, by Enter or by a click on an entry.
+  const sourceRow = async (index) => (await src.inputValue()).split('\n')[index];
+  const offerAtLineStart = async () => {
+    await page.waitForTimeout(650);
+    await caretAt('普通的一句话。');
+    await page.keyboard.type('<co');
+    await sourceCompletion.waitFor();
+  };
+  await offerAtLineStart();
+  await page.keyboard.press('End');
+  assert.equal(await sourceCompletion.count(), 0, 'End leaves the prefix and closes the list');
+  await page.keyboard.press('Enter');
+  assert.deepEqual([await sourceRow(5), await sourceRow(6)], ['凛：<co普通的一句话。', ''], 'Enter after End is an ordinary new line; the line is kept');
+  await undoUntil(source);
+  await offerAtLineStart();
+  await moveCaretUnseen(src);
+  assert.equal(await sourceCompletion.count(), 1, 'the list offered at the line start is still open');
+  await page.keyboard.press('Enter');
+  assert.deepEqual([await sourceRow(5), await sourceRow(6)], ['凛：<co普通的一句话。', ''], 'a list offered elsewhere is not used by Enter');
+  assert.equal(await sourceCompletion.count(), 0);
+  await undoUntil(source);
+  await offerAtLineStart();
+  await moveCaretUnseen(src);
+  assert.equal(await sourceCompletion.count(), 1, 'the list offered at the line start is still open');
+  await sourceCompletion.locator('.v4-inline-completion-option').first().dispatchEvent('pointerdown');
+  assert.equal(await sourceRow(5), '凛：<co普通的一句话。', 'a list offered elsewhere is not used by a click');
+  assert.equal(await sourceCompletion.count(), 0);
+  await undoUntil(source);
+  console.log('PASS 36-REV-01 source: End closes the list; a moved caret never accepts by Enter or click; the line is kept');
 
   // 3. Accepting inserts through the normal edit path; the file keeps CRLF; undo goes through the existing history.
   await page.waitForTimeout(650);
@@ -241,6 +284,31 @@ try {
   assert.equal(await optionRow(), '  <color=accent><b>先走</b></color> -> @goto after');
   console.log('PASS option completion and toolbar limited to option tags; Enter adds no line; wrapping writes the source row');
 
+  // 8b. 36-REV-01 in the option field: Home, `<co`, End, Enter keeps the option text; so does a moved caret.
+  const boldOption = await sceneText();
+  const offerAtOptionStart = async () => {
+    await page.waitForTimeout(650);
+    await optionBox.evaluate((node) => { node.focus(); node.setSelectionRange(0, 0); });
+    await page.keyboard.type('<co');
+    await optionCompletion.waitFor();
+  };
+  await offerAtOptionStart();
+  await page.keyboard.press('End');
+  assert.equal(await optionCompletion.count(), 0, 'End closes the option list');
+  await page.keyboard.press('Enter');
+  assert.equal(await optionBox.inputValue(), '<co<color=accent><b>先走</b></color>', 'the option text is kept');
+  await undoUntil(boldOption);
+  await page.locator('[data-step-summary="7"]').click();
+  await offerAtOptionStart();
+  await moveCaretUnseen(optionBox);
+  assert.equal(await optionCompletion.count(), 1, 'the list offered at the option start is still open');
+  await page.keyboard.press('Enter');
+  assert.equal(await optionBox.inputValue(), '<co<color=accent><b>先走</b></color>', 'a list offered elsewhere is not used by Enter');
+  assert.equal(await optionCompletion.count(), 0);
+  await undoUntil(boldOption);
+  await page.locator('[data-step-summary="7"]').click();
+  console.log('PASS 36-REV-01 option: End closes the list; a moved caret never accepts; the option text is kept');
+
   // 9. Problems are reported in Core's words and written as typed; an edit makes the old location stale.
   await optionBox.evaluate((node) => { node.focus(); node.setSelectionRange(node.value.length, node.value.length); });
   await page.waitForTimeout(650);
@@ -270,6 +338,31 @@ try {
   assert.equal(await optionBox.inputValue(), '<color=accent><b>先走</b></color>', 'the inspector shows the undone option');
   if (outDir) await page.screenshot({ path: path.join(outDir, 'option-text.png') });
   console.log('PASS option problems in Core words, written as typed, stale after an edit; book title and variable plain; undo restores');
+
+  // 9b. 36-REV-01 in a dialogue box (the same field code): the line is kept, and Enter then splits it as usual.
+  const beforeDialogue = await sceneText();
+  const dialogueBox = page.locator('.v4-authoring .block[data-line="10"] .v4-dialogue-input');
+  const dialogueCompletion = page.locator('.v4-authoring .block[data-line="10"] .v4-inline-completion');
+  const offerAtDialogueStart = async () => {
+    await page.waitForTimeout(650);
+    await dialogueBox.click();
+    await dialogueBox.evaluate((node) => node.setSelectionRange(0, 0));
+    await page.keyboard.type('<co');
+    await dialogueCompletion.waitFor();
+  };
+  await offerAtDialogueStart();
+  await page.keyboard.press('End');
+  assert.equal(await dialogueCompletion.count(), 0, 'End closes the dialogue list');
+  await page.keyboard.press('Enter');
+  assert((await sceneText()).includes('\r\n凛：<co到了。\r\n'), 'the dialogue is kept');
+  await undoUntil(beforeDialogue);
+  await offerAtDialogueStart();
+  await moveCaretUnseen(dialogueBox);
+  assert.equal(await dialogueCompletion.count(), 1, 'the list offered at the dialogue start is still open');
+  await page.keyboard.press('Enter');
+  assert((await sceneText()).includes('\r\n凛：<co到了。\r\n'), 'a list offered elsewhere is not used by Enter');
+  await undoUntil(beforeDialogue);
+  console.log('PASS 36-REV-01 dialogue: End closes the list; a moved caret never accepts; the line is kept');
 
   // 10. Save and reopen: the file has exactly these edits with its CRLF, and both entries show them again.
   const finalSource = sourceEdited.replace('  <color=accent>先走</color> -> @goto after', '  <color=accent><b>先走</b></color> -> @goto after');

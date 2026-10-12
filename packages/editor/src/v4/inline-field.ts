@@ -150,7 +150,8 @@ export function attachInlineField(textarea: HTMLTextAreaElement, options: Inline
   field.append(mirror, view, textarea);
   const signal = options.signal;
 
-  let completion: { list: HTMLElement; entries: InlineCompletion[]; active: number; start: number } | null = null;
+  /** An open list: the `<` it was offered at and the text it was offered in. */
+  let completion: { list: HTMLElement; entries: InlineCompletion[]; active: number; start: number; value: string } | null = null;
   let toolbar: HTMLElement | null = null;
   let pendingCaret: number | null = null;
   let composing = false;
@@ -183,32 +184,47 @@ export function attachInlineField(textarea: HTMLTextAreaElement, options: Inline
     textarea.removeAttribute('aria-activedescendant');
   };
 
-  const acceptCompletion = (entry: InlineCompletion): void => {
-    if (!completion || !options.editable()) return;
+  /** The `<prefix` at the caret right now, with the tags this field's context accepts. */
+  const completionAtCaret = (): { start: number; entries: InlineCompletion[] } | null => {
+    if (composing || !markupActive() || !options.editable() || textarea.selectionStart !== textarea.selectionEnd) return null;
+    const found = completionPrefix(textarea.value, textarea.selectionEnd);
+    const entries = found ? inlineCompletions(found.prefix, context) : [];
+    return found && entries.length ? { start: found.start, entries } : null;
+  };
+  /** Whether the open list still belongs to the caret: same `<`, same text. A moved caret or changed text does not. */
+  const offeredHere = (): boolean => {
+    const current = completionAtCaret();
+    return completion !== null && current !== null && current.start === completion.start && completion.value === textarea.value;
+  };
+
+  /** Writes an entry only at the `<` the list was offered for; otherwise closes the list and writes nothing. */
+  const acceptCompletion = (entry: InlineCompletion): boolean => {
+    if (!completion || !offeredHere() || !completionAtCaret()!.entries.some((candidate) => candidate.key === entry.key)) { closeCompletion(); return false; }
     const caret = textarea.selectionEnd, start = completion.start;
     closeCompletion();
     insertText(textarea, start, caret, entry.snippet);
     textarea.setSelectionRange(start + entry.select[0], start + entry.select[1]);
     refresh();
+    return true;
   };
 
   const showCompletion = (): void => {
-    if (composing || !markupActive() || !options.editable() || textarea.selectionStart !== textarea.selectionEnd) { closeCompletion(); return; }
-    const found = completionPrefix(textarea.value, textarea.selectionEnd);
-    const entries = found ? inlineCompletions(found.prefix, context) : [];
-    if (!found || entries.length === 0) { closeCompletion(); return; }
+    const current = completionAtCaret();
+    if (!current) { closeCompletion(); return; }
     const caretNode = renderMarks(mirror, textarea.value, documentMarks(parse()), textarea.selectionEnd);
     const list = completion?.list ?? h('div', 'v4-inline-completion');
-    const active = Math.min(completion?.active ?? 0, entries.length - 1);
-    renderCompletionList(list, entries, active, acceptCompletion);
+    const active = completion?.start === current.start ? Math.min(completion.active, current.entries.length - 1) : 0;
+    renderCompletionList(list, current.entries, active, acceptCompletion);
     textarea.setAttribute('aria-activedescendant', `v4-inline-option-${active}`);
     if (caretNode) {
       list.style.left = `${Math.max(0, Math.min(caretNode.offsetLeft, field.clientWidth - 240))}px`;
       list.style.top = `${caretNode.offsetTop + caretNode.offsetHeight + 4}px`;
     }
     if (!list.isConnected) field.append(list);
-    completion = { list, entries, active, start: found.start };
+    completion = { list, entries: current.entries, active, start: current.start, value: textarea.value };
   };
+  /** After the caret moves (keys, clicks, selection), the list follows it or closes. */
+  const followCaret = (): void => { if (completion) showCompletion(); };
 
   const moveCompletion = (step: number): void => {
     if (!completion) return;
@@ -273,9 +289,14 @@ export function attachInlineField(textarea: HTMLTextAreaElement, options: Inline
 
   textarea.addEventListener('keydown', (event) => {
     if (event.isComposing) return;
+    // A list left behind by a caret moved without a key or click is closed; the key then does its usual work.
+    if (completion && !offeredHere()) closeCompletion();
     if (completion) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); event.stopImmediatePropagation(); moveCompletion(event.key === 'ArrowDown' ? 1 : -1); return; }
-      if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); event.stopImmediatePropagation(); acceptCompletion(completion.entries[completion.active]!); return; }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        if (acceptCompletion(completion.entries[completion.active]!)) { event.preventDefault(); event.stopImmediatePropagation(); }
+        return;
+      }
       if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); closeCompletion(); return; }
     }
     if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && (event.key === 'b' || event.key === 'i')
@@ -292,10 +313,11 @@ export function attachInlineField(textarea: HTMLTextAreaElement, options: Inline
     closeCompletion();
     queueMicrotask(() => { if (!field.contains(document.activeElement)) closeToolbar(); refresh(); });
   }, { signal });
-  for (const type of ['select', 'keyup', 'mouseup'] as const) textarea.addEventListener(type, updateToolbar, { signal });
+  for (const type of ['select', 'keyup', 'mouseup'] as const) textarea.addEventListener(type, () => { followCaret(); updateToolbar(); }, { signal });
   textarea.addEventListener('click', () => {
     if (pendingCaret !== null && textarea.selectionStart === textarea.selectionEnd) textarea.setSelectionRange(pendingCaret, pendingCaret);
     pendingCaret = null;
+    followCaret();
     updateToolbar();
   }, { signal });
   // In the reading view, put the caret at the unit that was clicked rather than where the hidden source happens to be.

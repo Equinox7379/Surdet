@@ -57,7 +57,8 @@ export function attachSourceMarkup(textarea: HTMLTextAreaElement, options: { edi
   const signal = options.signal;
 
   let segments: SourceMarkupSegment[] = [];
-  let completion: { list: HTMLElement; entries: InlineCompletion[]; active: number; start: number } | null = null;
+  /** An open list: the `<` it was offered at and the text it was offered in. */
+  let completion: { list: HTMLElement; entries: InlineCompletion[]; active: number; start: number; value: string } | null = null;
   let composing = false;
 
   const sync = (): void => { mirror.scrollTop = textarea.scrollTop; mirror.scrollLeft = textarea.scrollLeft; };
@@ -81,25 +82,37 @@ export function attachSourceMarkup(textarea: HTMLTextAreaElement, options: { edi
     completion = null;
     textarea.removeAttribute('aria-activedescendant');
   };
-  const accept = (entry: InlineCompletion): void => {
-    if (!completion || !options.editable()) return;
+  /** The `<prefix` at the caret right now, inside a dialogue or option text, with the tags that text accepts. */
+  const completionAtCaret = (): { start: number; entries: InlineCompletion[] } | null => {
+    if (composing || !options.editable() || textarea.selectionStart !== textarea.selectionEnd) return null;
+    const caret = textarea.selectionEnd;
+    const segment = segments.find((entry) => entry.start <= caret && caret <= entry.end);
+    const found = segment ? completionPrefix(textarea.value, caret) : null;
+    const entries = segment && found && found.start >= segment.start ? inlineCompletions(found.prefix, segment.context) : [];
+    return found && entries.length ? { start: found.start, entries } : null;
+  };
+  /** Whether the open list still belongs to the caret: same `<`, same text. A moved caret or changed text does not. */
+  const offeredHere = (): boolean => {
+    const current = completionAtCaret();
+    return completion !== null && current !== null && current.start === completion.start && completion.value === textarea.value;
+  };
+  /** Writes an entry only at the `<` the list was offered for; otherwise closes the list and writes nothing. */
+  const accept = (entry: InlineCompletion): boolean => {
+    if (!completion || !offeredHere() || !completionAtCaret()!.entries.some((candidate) => candidate.key === entry.key)) { closeCompletion(); return false; }
     const caret = textarea.selectionEnd, start = completion.start;
     closeCompletion();
     insertText(textarea, start, caret, entry.snippet);
     textarea.setSelectionRange(start + entry.select[0], start + entry.select[1]);
     refresh();
+    return true;
   };
   const showCompletion = (): void => {
-    if (composing || !options.editable() || textarea.selectionStart !== textarea.selectionEnd) { closeCompletion(); return; }
-    const caret = textarea.selectionEnd;
-    const segment = segments.find((entry) => entry.start <= caret && caret <= entry.end);
-    const found = segment ? completionPrefix(textarea.value, caret) : null;
-    const entries = segment && found && found.start >= segment.start ? inlineCompletions(found.prefix, segment.context) : [];
-    if (!found || entries.length === 0) { closeCompletion(); return; }
-    const caretNode = refresh(caret);
+    const current = completionAtCaret();
+    if (!current) { closeCompletion(); return; }
+    const caretNode = refresh(textarea.selectionEnd);
     const list = completion?.list ?? h('div', 'v4-inline-completion');
-    const active = Math.min(completion?.active ?? 0, entries.length - 1);
-    renderCompletionList(list, entries, active, accept);
+    const active = completion?.start === current.start ? Math.min(completion.active, current.entries.length - 1) : 0;
+    renderCompletionList(list, current.entries, active, accept);
     textarea.setAttribute('aria-activedescendant', `v4-inline-option-${active}`);
     if (caretNode) {
       // The caret mark is laid out in the mirror, which scrolls with the textarea.
@@ -107,18 +120,21 @@ export function attachSourceMarkup(textarea: HTMLTextAreaElement, options: { edi
       list.style.top = `${caretNode.offsetTop - mirror.scrollTop + caretNode.offsetHeight + 4}px`;
     }
     if (!list.isConnected) box.append(list);
-    completion = { list, entries, active, start: found.start };
+    completion = { list, entries: current.entries, active, start: current.start, value: textarea.value };
   };
+  /** After the caret moves (keys, clicks, selection), the list follows it or closes. */
+  const followCaret = (): void => { if (completion) showCompletion(); describe(); };
 
   textarea.addEventListener('keydown', (event) => {
     if (event.isComposing || !completion) return;
+    // A list left behind by a caret moved without a key or click is closed; the key then does its usual work.
+    if (!offeredHere()) { closeCompletion(); return; }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault(); event.stopImmediatePropagation();
       completion.active = (completion.active + (event.key === 'ArrowDown' ? 1 : -1) + completion.entries.length) % completion.entries.length;
       showCompletion();
     } else if (event.key === 'Enter' || event.key === 'Tab') {
-      event.preventDefault(); event.stopImmediatePropagation();
-      accept(completion.entries[completion.active]!);
+      if (accept(completion.entries[completion.active]!)) { event.preventDefault(); event.stopImmediatePropagation(); }
     } else if (event.key === 'Escape') {
       event.preventDefault(); event.stopImmediatePropagation();
       closeCompletion();
@@ -129,7 +145,8 @@ export function attachSourceMarkup(textarea: HTMLTextAreaElement, options: { edi
   textarea.addEventListener('input', () => { refresh(); showCompletion(); }, { signal });
   textarea.addEventListener('scroll', () => { sync(); closeCompletion(); }, { signal });
   textarea.addEventListener('blur', closeCompletion, { signal });
-  for (const type of ['focus', 'keyup', 'click'] as const) textarea.addEventListener(type, describe, { signal });
+  textarea.addEventListener('focus', describe, { signal });
+  for (const type of ['keyup', 'click', 'mouseup', 'select'] as const) textarea.addEventListener(type, followCaret, { signal });
   signal.addEventListener('abort', closeCompletion, { once: true });
   refresh();
   return field;
