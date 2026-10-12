@@ -27,7 +27,7 @@ describe('project plugins', () => {
     let count = 3, invalid = false;
     interpreter.setProjectPlugins(plugins, {
       execute: () => {}, snapshot: () => ({ counter: { version: 1, value: count } }),
-      prepareRestore: state => { if (invalid) throw new Error('restore failed'); const next = state.counter.value as number; return () => { count = next; }; },
+      prepareRestore: state => { if (invalid) throw new Error('restore failed'); const next = state.counter!.value as number; return () => { count = next; }; },
     });
     interpreter.start('intro'); const saved = interpreter.saveSnapshot()!;
     count = 9; store.set('n', 7); invalid = true;

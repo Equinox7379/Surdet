@@ -37,8 +37,8 @@ describe('trusted project plugin host', () => {
     const { plugins, interpreter, store } = await runtime(def); interpreter.start('intro');
     const before = interpreter.saveSnapshot()!, saves = new SaveManager(new MemoryStorage()); await saves.save('good', before);
     store.set('n', 8); const position = interpreter.position;
-    expect(() => interpreter.loadSnapshot(before)).toThrow('restore broken');
-    const incompatible = structuredClone(before); incompatible.plugins!.counter.version = 2;
+    expect(() => interpreter.loadSnapshot(before)).toThrow(/PLUGIN_STATE.*counter.*restore broken/);
+    const incompatible = structuredClone(before); incompatible.plugins!.counter!.version = 2;
     expect(() => interpreter.loadSnapshot(incompatible)).toThrow('PLUGIN_VERSION');
     const missing = structuredClone(before); missing.plugins!.other = { version: 1, value: 0 };
     expect(() => interpreter.loadSnapshot(missing)).toThrow('PLUGIN_REQUIRED');
@@ -50,6 +50,33 @@ describe('trusted project plugin host', () => {
     expect(interpreter.status).toBe('paused'); expect(() => interpreter.saveSnapshot()).toThrow('PLUGIN_BUSY');
     complete(); await Promise.resolve(); await Promise.resolve(); expect(interpreter.status).toBe('awaiting-advance');
     expect(interpreter.position?.pc).toBe(4); plugins.dispose();
+  });
+  it('classifies codec validation failures without changing the live state or a good save', async () => {
+    let reject = false;
+    const def = definition();
+    def.state!.validate = () => { if (reject) throw new Error('validate broken'); };
+    const { plugins, interpreter, store } = await runtime(def); interpreter.start('intro');
+    const snapshot = interpreter.saveSnapshot()!, saves = new SaveManager(new MemoryStorage());
+    await saves.save('good', snapshot);
+    store.set('n', 8); const position = interpreter.position;
+    reject = true;
+    expect(() => interpreter.loadSnapshot(snapshot)).toThrow(/PLUGIN_STATE.*counter.*validate broken/);
+    expect(store.get('n')).toBe(8); expect(interpreter.position).toEqual(position);
+    expect((await saves.load('good')).plugins).toEqual(snapshot.plugins);
+    reject = false;
+    expect(interpreter.saveSnapshot()!.plugins).toEqual(snapshot.plugins);
+    interpreter.loadSnapshot(snapshot); expect(store.get('n')).toBe(2);
+    plugins.dispose();
+  });
+  it('classifies a save codec failure and preserves the previous good slot', async () => {
+    const def = definition();
+    const { plugins, interpreter } = await runtime(def); interpreter.start('intro');
+    const snapshot = interpreter.saveSnapshot()!, saves = new SaveManager(new MemoryStorage());
+    await saves.save('good', snapshot);
+    def.state!.save = () => { throw new Error('save broken'); };
+    expect(() => interpreter.saveSnapshot()).toThrow(/PLUGIN_STATE.*counter.*save broken/);
+    expect((await saves.load('good')).plugins).toEqual(snapshot.plugins);
+    plugins.dispose();
   });
   it('stops on panel failure instead of resuming or allowing a save', async () => {
     const def = definition(); def.instructions.panel = async () => { throw new Error('panel broken'); };
