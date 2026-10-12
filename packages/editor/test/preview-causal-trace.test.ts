@@ -79,6 +79,18 @@ describe('preview causal trace contract', () => {
     expect(previewTraceEvidenceChanged(after, createPreviewTraceEvidenceSnapshot(worldPresentation, projectionAfter))).toBe(false);
   });
 
+  it('keeps the saved reading history out of trace evidence', () => {
+    const history = Array.from({ length: 200 }, (_, index) => ({ speaker: '凛', text: `第${index}句`.repeat(20), markup: `<em>第${index}句</em>` }));
+    const presentation = { version: 1, stage: { backgroundKey: 'hall' }, dialogue: { nvlActive: false, nvlEntries: [], backlog: history, backlogReplayCurrent: true } };
+    const evidence = createPreviewTraceEvidenceSnapshot(presentation, {});
+    expect(evidence.presentation).toEqual({ version: 1, stage: { backgroundKey: 'hall' }, dialogue: { nvlActive: false, nvlEntries: [] } });
+    expect(presentation.dialogue.backlog).toHaveLength(200);
+    expect(JSON.stringify(evidence).length).toBeLessThan(200);
+    // A new history line alone is not a presentation change.
+    const longer = { ...presentation, dialogue: { ...presentation.dialogue, backlog: [...history, { speaker: null, text: '新的一句' }] } };
+    expect(previewTraceEvidenceChanged(evidence, createPreviewTraceEvidenceSnapshot(longer, {}))).toBe(false);
+  });
+
   it('drops a normalized event from an older iframe generation', () => {
     const old = normalizePreviewTraceMessage({
       type: 'surdet-preview-trace-event',

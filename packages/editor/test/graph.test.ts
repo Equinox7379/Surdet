@@ -27,7 +27,7 @@ describe('buildFlowGraph（标签级流程图数据模型）', () => {
       ? [{ from: sceneNodeId('ch1'), to: labelNodeId('ch1', 'after'), kind: 'goto' }]
       : [{ from: sceneNodeId('ch1'), to: sceneNodeId('ch1'), kind: 'goto' }]);
     const missing = buildFlowGraph(scenesOf([['real', '@jump missing\n']]));
-    expect(missing.edges).toContainEqual({ from: sceneNodeId('real'), to: sceneNodeId('missing'), kind: 'jump' });
+    expect(missing.edges).toContainEqual({ from: sceneNodeId('real'), to: sceneNodeId('missing'), kind: 'jump', line: 1 });
   });
 
   it.each([true, false])('keeps a real effect-only choice and its continuation in the target flow unit (labelled=%s)', (labelled) => {
@@ -42,6 +42,14 @@ describe('buildFlowGraph（标签级流程图数据模型）', () => {
     expect(graph.edges.filter((edge) => edge.kind === 'goto')).toEqual([
       { from: sceneNodeId('ch1'), to, kind: 'goto' },
     ]);
+  });
+
+  it('carries the source line of real jumps, calls and options, never of compiler-internal jumps', () => {
+    const graph = buildFlowGraph(scenesOf([['ch1', '@scene ch1\n@goto a\n@label a\n@call ch2\n@choice\n  去 -> @jump ch2\n  留 -> @mod x +1\n@if x > 1\n凛：多。\n@else\n凛：少。\n@endif\n@end\n'],
+      ['ch2', '@scene ch2\n@return\n']]));
+    const lines = graph.edges.filter((edge) => edge.from.includes('ch1') && edge.kind !== 'flow')
+      .map((edge) => `${edge.kind}:${edge.label ?? ''}:${edge.line ?? '-'}`).sort();
+    expect(lines).toEqual(['call::4', 'choice:去:6', 'choice:留:-', 'goto::-', 'goto::2', 'goto::-', 'jump::6'].sort());
   });
 
   it.each([0, 2])('labels a conditional skip with the actual false condition for x=%d', (x) => {

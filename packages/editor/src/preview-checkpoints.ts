@@ -19,3 +19,9 @@ export function writePreviewCheckpoint(key: string | null, checkpoint: PreviewPl
   if (key === null) return false;
   try { localStorage.setItem(key, JSON.stringify(checkpoint)); return true; } catch { return false; }
 }
+
+/** A run that stopped for a reason the next one would meet again leaves nothing to resume. */
+export function clearPreviewCheckpoint(key: string | null): void {
+  if (key === null) return;
+  try { localStorage.removeItem(key); } catch { /* Unavailable storage holds no checkpoint. */ }
+}

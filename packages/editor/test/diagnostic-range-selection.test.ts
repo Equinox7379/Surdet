@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { sourceRangeOffsets } from '../src/v4/source-range.js';
+import { compileScene, DslError, type SourceRange } from '@surdet/core';
+import { dialogueRangeOffsets, sourceRangeOffsets } from '../src/v4/source-range.js';
 import { parseScript } from '../src/model.js';
 
 /** The source textarea holds LF-joined rows, whatever the file's line endings. */
@@ -29,5 +30,48 @@ describe('diagnostic range selection in the source view', () => {
     expect(select(source, 1, { start: { line: 3, col: 1 }, end: { line: 3, col: 2 } })).toBeNull();
     expect(select(source, 1, { start: { line: 2, col: 7 }, end: { line: 2, col: 99 } })).toBeNull();
     expect(select(source, 1, { start: { line: 2, col: 7 }, end: { line: 2, col: 7 } })).toBeNull();
+  });
+});
+
+describe('diagnostic range selection in a manuscript dialogue box', () => {
+  /** The compiler's own range for an invalid inline tag, mapped into the dialogue-only box. */
+  function compiledRange(source: string): SourceRange {
+    try { compileScene(source, 's.gal', 's'); } catch (error) {
+      if (error instanceof DslError && error.pos.range) return error.pos.range;
+      throw error;
+    }
+    throw new Error('expected a compile error');
+  }
+
+  it('selects the exact tag reported by Core after the speaker prefix', () => {
+    const source = '@scene s\n凛：危险<color=red>真的</color>来了';
+    const range = compiledRange(source);
+    const line = parseScript(source)[1]!;
+    if (line.kind !== 'text') throw new Error('expected dialogue');
+    const offsets = dialogueRangeOffsets(line, 1, range)!;
+    expect(line.value.slice(offsets.start, offsets.end)).toBe('<color=red>');
+  });
+
+  it('selects a misplaced <nw> that Core reports as M006', () => {
+    const text = '@scene s\n凛：<b>先走<nw></b>吧';
+    let code = '';
+    try { compileScene(text, 's.gal', 's'); } catch (error) { code = (error as { code?: string }).code ?? ''; }
+    expect(code).toBe('M006');
+    const line = parseScript(text)[1]!;
+    if (line.kind !== 'text') throw new Error('expected dialogue');
+    const offsets = dialogueRangeOffsets(line, 1, compiledRange(text))!;
+    expect(line.value.slice(offsets.start, offsets.end)).toBe('<nw>');
+  });
+
+  it('works for narration and does not use ranges outside the dialogue', () => {
+    const narration = '@scene s\n门外<size=9>响了</size>';
+    const line = parseScript(narration)[1]!;
+    if (line.kind !== 'text') throw new Error('expected narration');
+    const offsets = dialogueRangeOffsets(line, 1, compiledRange(narration))!;
+    expect(line.value.slice(offsets.start, offsets.end)).toBe('<size=9>');
+    const speaker = parseScript('@scene s\n凛：你好')[1]!;
+    if (speaker.kind !== 'text') throw new Error('expected dialogue');
+    expect(dialogueRangeOffsets(speaker, 1, { start: { line: 2, col: 1 }, end: { line: 2, col: 2 } })).toBeNull();
+    expect(dialogueRangeOffsets(speaker, 0, { start: { line: 2, col: 3 }, end: { line: 2, col: 4 } })).toBeNull();
   });
 });
