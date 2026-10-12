@@ -39,7 +39,10 @@ interface LoadedPlugin { declaration: ProjectPluginDeclaration; definition: Proj
 const clone = <T>(value: T): T => (globalThis as unknown as { structuredClone<V>(value: V): V }).structuredClone(value);
 function validState(plugin: LoadedPlugin, value: unknown): unknown {
   if (!isJsonSafeValue(value)) throw new Error(`PLUGIN_STATE：插件 ${plugin.declaration.id} 状态必须是 JSON 安全值`);
-  const copied = clone(value); plugin.definition.state?.validate(copied); return copied;
+  const copied = clone(value);
+  try { plugin.definition.state?.validate(copied); }
+  catch (cause) { throw new Error(`PLUGIN_STATE：插件 ${plugin.declaration.id} 状态校验失败：${String(cause)}`, { cause }); }
+  return copied;
 }
 
 /** Trusted project code shares its browser/host environment. This is NOT a sandbox. */
@@ -171,7 +174,9 @@ export class ProjectPluginHost {
       if (this.#disposed || this.#failed || this.#pending.size) throw new Error(this.#failed ?? 'PLUGIN_BUSY：插件交互尚未完成，不能创建可续接存档');
       const snapshot: ProjectPluginSnapshots = {};
       for (const plugin of this.#loaded.values()) if (plugin.definition.state) {
-        const value = plugin.definition.state.save ? plugin.definition.state.save(clone(plugin.state)) : clone(plugin.state);
+        let value: unknown;
+        try { value = plugin.definition.state.save ? plugin.definition.state.save(clone(plugin.state)) : clone(plugin.state); }
+        catch (cause) { throw new Error(`PLUGIN_STATE：插件 ${plugin.declaration.id} 状态保存失败：${String(cause)}`, { cause }); }
         snapshot[plugin.declaration.id] = { version: plugin.declaration.stateVersion!, value };
       }
       assertPluginSnapshots(snapshot); return snapshot;
@@ -188,7 +193,9 @@ export class ProjectPluginHost {
       try {
         for (const [id, plugin] of this.#loaded) if (plugin.definition.state) {
           const saved = snapshot[id];
-          const value = saved ? (plugin.definition.state.restore ? plugin.definition.state.restore(clone(saved.value)) : saved.value) : plugin.definition.state.initial;
+          let value: unknown;
+          try { value = saved ? (plugin.definition.state.restore ? plugin.definition.state.restore(clone(saved.value)) : saved.value) : plugin.definition.state.initial; }
+          catch (cause) { throw new Error(`PLUGIN_STATE：插件 ${id} 状态恢复失败：${String(cause)}`, { cause }); }
           prepared.set(id, validState(plugin, value));
         }
       } finally { this.#preparing = false; }
