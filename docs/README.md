@@ -14,6 +14,7 @@ Windows免安装导出后端及Claude导出界面接入：[Windows导出合同](
 
 | 需要做什么 | 阅读入口 |
 | --- | --- |
+| 用 Editor 从零做作品（中文作者指南与完整教程） | [作者指南](guide/README.md) |
 | 安装、启动、创建或试玩项目 | [仓库 README](../README.md)、[Starter 指南](../examples/starter/README.md) |
 | 接入桌面“新建项目”界面 | [桌面创建项目接口](desktop-project-creation.md) |
 | 给外部 Agent 建立创作上下文 | [AI-GUIDE](AI-GUIDE.md)、[剧本提示词](ai-writing-prompt.md) |
