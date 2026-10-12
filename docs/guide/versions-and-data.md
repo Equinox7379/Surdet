@@ -12,7 +12,7 @@
 
 ## 项目文件
 
-- `game.config.json` 里的 `version` 是**作品**的版本号，导出 Windows 游戏时作为默认的「Windows 版本」，和引擎版本无关。
+- 导出 Windows 游戏时，「Windows 版本」的默认值取自 `package.json` 里的 `version`。`game.config.json` 里也有一个 `version`，导出不读它。两者都是**作品**的版本号，和引擎版本无关。
 - `package.json` 里的 `name` 是作品身份，决定玩家存档的位置，不要修改。
 - 配置里各部分（例如译稿目录 `textCatalog`、作品界面 `ui`）有各自的结构版本号，由 Editor 读写，作者不需要手动改。
 

@@ -23,6 +23,7 @@
 - 按#39评论6124255520交付成熟化第11节文档初稿：`docs/guide/`下的总览、完整教程《雨夜车站》（空白模板、两条分支、一个结局）及开始使用、写剧本、行内标签、素材与演出、试玩与检查、存读档与阅读设置、文本与译稿、Windows导出、版本与数据支持（草稿，待GPT核对）。只链接DSL规范和合同，不另抄语法表；没有改Core/Authoring/CLI/Player或前端。
 - 操作和截图在Linux云端用`6ab6dff`构建的真实桌面Editor完成（Playwright驱动Electron，原生目录选择框打桩）。#36/#38/#39相关小节标为「待合入」，截图来自本地合并构建，合并分支未推送。Windows原生选择器、实际导出结果和版本/数据承诺待GPT核对；新作者照指南独立完成全流程的验收尚未执行。
 - 实测中发现的产品问题记录在指南对应位置和PR说明中，本单元不修：桌面版「新建/重命名/移动场景」用了`window.prompt`，Electron不支持，点击后报「prompt() is not supported.」；Editor没有设置`player.endScenes`的界面；标签错误会连带报ENTRY_SCENE_MISSING；同一路径删掉项目后重建同名项目时，保存配置会报409；导入素材后需手动「同步项目」。
+- 按#40评论6128204546补正：开始使用与教程写明再次启动会直接恢复上次项目，新建入口在原生菜单「项目→显示启动页」；默认Windows版本取`package.json.version`（不是`game.config.json.version`）；README与AI指南的作品语言入口改为「设置→阅读」（`game-settings.ts`中`page:'阅读'`）。`window.prompt`与`endScenes`入口另开前端PR，409与ENTRY_SCENE_MISSING由GPT核对。
 
 ### Windows一键导出后端（2026-10-11）
 
