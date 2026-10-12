@@ -160,8 +160,9 @@
 .v4-inline-completion-option { display: grid; grid-template-columns: 96px 1fr; gap: 10px; padding: 5px 8px; border-radius: var(--surdet-radius-tight); color: var(--surdet-text-secondary); font: 12px/1.6 var(--surdet-font-ui); cursor: pointer; }
 .v4-inline-completion-option code { color: var(--surdet-text-primary); font: 12px/1.6 var(--surdet-font-mono); }
 .v4-inline-completion-option[aria-selected=true], .v4-inline-completion-option:hover { background: var(--surdet-surface-hover); color: var(--surdet-text-primary); }
-.v4-inline-toolbar { position: absolute; right: 0; bottom: calc(100% + 4px); z-index: 40; display: flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--surdet-border-strong); border-radius: var(--surdet-radius-control); background: var(--surdet-surface-raised); box-shadow: var(--surdet-shadow-popover); }
-.v4-inline-tool { min-width: 28px; height: 26px; padding: 0 7px; border: 0; border-radius: var(--surdet-radius-tight); background: transparent; color: var(--surdet-text-primary); font: 500 12px/1 var(--surdet-font-ui); cursor: pointer; }
+/* Whole labels on one line: the bar grows left past a narrow field and wraps by button, never by character. */
+.v4-inline-toolbar { position: absolute; right: 0; bottom: calc(100% + 4px); z-index: 40; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; width: max-content; max-width: min(560px, calc(100vw - 32px)); padding: 3px; border: 1px solid var(--surdet-border-strong); border-radius: var(--surdet-radius-control); background: var(--surdet-surface-raised); box-shadow: var(--surdet-shadow-popover); }
+.v4-inline-tool { flex: none; min-width: 28px; height: 26px; padding: 0 7px; white-space: nowrap; border: 0; border-radius: var(--surdet-radius-tight); background: transparent; color: var(--surdet-text-primary); font: 500 12px/1 var(--surdet-font-ui); cursor: pointer; }
 .v4-inline-tool:is(:hover, :focus-visible) { background: var(--surdet-surface-hover); outline: none; }
 .v4-inline-reading { width: 132px; height: 26px; padding: 0 8px; border: 1px solid var(--surdet-border-strong); border-radius: var(--surdet-radius-tight); background: var(--surdet-surface-app); color: var(--surdet-text-primary); font: 12px/1 var(--surdet-font-ui); }
 /* A row typed into from empty keeps the textarea's indent and, while still empty, its compact size. */
