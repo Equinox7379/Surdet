@@ -1,5 +1,5 @@
 import { compareCanonicalText } from './canonical-order.js';
-import { compileScene, type CompiledScene, type GrowthConfig } from '@surdet/core';
+import { compileScene, readProjectPlugins, type CompiledScene, type GrowthConfig } from '@surdet/core';
 import { parseProjectConfigDocument } from './config-document.js';
 import { parseSceneDocument } from './scene-document.js';
 import type { SceneDocumentLine } from './contracts.js';
@@ -61,6 +61,7 @@ export async function loadProjectSnapshot(storage: ProjectStorage, hasher: TextH
   const customInstructions = Array.isArray(config['customInstructions'])
     ? config['customInstructions'].filter((value): value is string => typeof value === 'string')
     : [];
+  customInstructions.push(...readProjectPlugins({ plugins: config.plugins }).flatMap(plugin => plugin.instructions.map(instruction => instruction.name)));
   const scenes = canonicalFiles
     .filter((file) => file.path.startsWith('content/scenario/') && file.path.toLowerCase().endsWith('.gal'))
     .map((file) => {

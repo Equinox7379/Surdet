@@ -8,6 +8,16 @@ import {
 import { resolvedCompositionAssetRefs } from '../src/composition-object-facts.js';
 
 describe('shared asset catalog', () => {
+  it('resolves rule images only when their physical key is unique and supported', () => {
+    const path = 'content/assets/rule/遮罩 @左.png';
+    const valid = buildAssetCatalog([path, path]);
+    expect(valid.rules).toEqual([{ kind: 'rule', key: '遮罩 @左', sourcePath: path, format: 'png', resolved: true }]);
+    expect(resolvedCompositionAssetRefs([path])).toContain('asset:rule:遮罩 @左');
+    expect(valid.intelligence.items[0]?.usage?.scene).toMatchObject({ name: 'transition', args: ['rule', '800'], modifiers: { rule: '"遮罩 @左"' } });
+    const invalid = [path, 'content/assets/rule/nested/遮罩 @左.webp', 'content/assets/rule/raw.psd'];
+    expect(buildAssetCatalog(invalid).rules.every(entry => !entry.resolved)).toBe(true);
+    expect(resolvedCompositionAssetRefs(invalid)).not.toContain('asset:rule:遮罩 @左');
+  });
   it('keeps invalid automatic variants out of the valid slot while preserving their diagnostic', () => {
     const valid = 'content/assets/portrait/rin_coat_smile.png', invalid = 'content/assets/portrait/rin_coat_smile_v2.png';
     const catalog = buildAssetCatalog([valid, invalid]);

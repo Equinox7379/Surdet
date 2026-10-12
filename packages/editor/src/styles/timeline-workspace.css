@@ -604,6 +604,11 @@
   min-width: 0;
 }
 
+.timeline-field input[type="checkbox"] {
+  width: auto;
+  align-self: flex-start;
+}
+
 .timeline-inspector h4 {
   margin: 18px 0 9px;
   padding-top: 16px;

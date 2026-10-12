@@ -25,6 +25,7 @@ const COMMANDS: readonly PaletteCommand[] = [
   { label: '打开审阅任务', selector: '[data-action="open-review"]', icon: 'open-review', keywords: 'review' },
   { label: '加载演示项目', selector: '[data-action="load-demo"]', icon: 'folder', keywords: 'demo' },
   { label: '导出当前场景', selector: '[data-action="export-current"]', icon: 'blank', keywords: 'export gal' },
+  { label: '导出 Windows 游戏…', selector: '[data-action="export-game"]', icon: 'blank', keywords: 'export windows exe 打包 发布' },
   { label: '查看外部改动范围', selector: '[data-action="view-project-changes"]', icon: 'history', keywords: '接力 同步' },
   { label: '同步项目', selector: '[data-action="sync-project"]', icon: 'history', keywords: '接力 sync' },
   { label: '新建场景', selector: '[data-action="create-scene"]', icon: 'editor', mode: 'editor', keywords: 'new scene' },

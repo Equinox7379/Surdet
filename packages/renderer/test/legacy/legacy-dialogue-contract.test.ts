@@ -6,6 +6,7 @@ import { createPresentationPorts } from '../../src/adv-renderer.js';
 import { RenderPerformanceMonitor } from '../../src/performance.js';
 import { PresentationController } from '../../src/runtime/presentation-controller.js';
 import { RendererFacade } from '../../src/runtime/renderer-facade.js';
+import { RendererStageHost } from '../../src/pixi-stage-host.js';
 import type { DialogueProjectionPort, WorldProjectionPort } from '../../src/api/renderer-commands.js';
 
 describe('legacy dialogue stage contract', () => {
@@ -256,5 +257,37 @@ describe('legacy dialogue stage contract', () => {
       stage.clearNvlText();
       expect(stage.snapshotPresentation()).toMatchObject({ activeSpeakerId: null });
     } finally { stage.destroy(); }
+  });
+
+  it.each(['legacy', 'runtime'] as const)('starts each ADV cue once through the %s projection without exposing old or unrevealed text', (kind) => {
+    const stage = kind === 'legacy' ? new PixiStage() : new RendererStageHost();
+    const ports = createPresentationPorts(stage, kind === 'runtime'
+      ? { dialogueLayer: stage.dialogueLayer, worldLayer: stage.worldLayer } : {});
+    const controller = new PresentationController(ports.commands, ports.queries, NULL_AUDIO);
+    const focus = vi.spyOn(kind === 'legacy' ? stage : stage.worldLayer, 'setPortraitFocus');
+    const layer = stage.dialogueLayer as DialogueProjectionPort & { debugSnapshot(): { dialogText: string; dialogVisible: boolean } };
+    const bus = new EventBus<CoreEventMap>();
+    controller.connect(bus);
+    try {
+      stage.setSpeakerProfiles([{ id: 'lynn', name: '凛' }]);
+      stage.showText('凛', '上一句已显示');
+      for (const value of ['<b>新的对白</b>', '<w>等待点击', '<b></b>', '']) {
+        focus.mockClear();
+        const version = layer.projectionVersion;
+        bus.emit('text', { speaker: '凛', value });
+        expect(focus).toHaveBeenCalledTimes(1);
+        expect(focus).toHaveBeenLastCalledWith('lynn');
+        expect(layer.projectionVersion).toBe(version + 1);
+        expect(layer.debugSnapshot().dialogText).toBe('');
+        expect(controller.status).toBe(value === '' || value === '<b></b>' ? 'awaiting' : 'typing');
+        if (value === '<w>等待点击') {
+          controller.update(1000);
+          expect(layer.debugSnapshot().dialogText).toBe('');
+          controller.dispatchInput({ type: 'advance' });
+        }
+        controller.update(1000);
+        expect(layer.debugSnapshot().dialogText).toBe(value.includes('新的') ? '新的对白' : value.includes('等待') ? '等待点击' : '');
+      }
+    } finally { controller.dispose(); stage.destroy(); }
   });
 });

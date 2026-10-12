@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -8,6 +8,7 @@ import { findRecentProject, parseRecentProjects, summarizeRecentProjects, withRe
 import { startEditorServer } from './server.js';
 import { DESKTOP_ORIGIN } from './contracts.js';
 import { createDesktopProject, selectProjectLocation, type SelectedProjectLocation } from './project-creation.js';
+import { exportDesktopGame, inspectWindowsExport } from './game-export.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 app.setName('Surdet Editor');
@@ -16,7 +17,8 @@ app.setPath('userData', isolatedData || path.join(app.getPath('appData'), 'Surde
 protocol.registerSchemesAsPrivileged([{ scheme: 'surdet-editor', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
 
 type Directory = Awaited<ReturnType<typeof openDirectory>>;
-type WindowState = { window: BrowserWindow; project: Directory | null; grants: Map<string, Directory>; busy: boolean; creationLocation: SelectedProjectLocation | null; creating: boolean };
+type WindowState = { window: BrowserWindow; project: Directory | null; grants: Map<string, Directory>; busy: boolean; creationLocation: SelectedProjectLocation | null; creating: boolean;
+  exportLocation: SelectedProjectLocation | null; exportController: AbortController | null; exported: string | null };
 const windows = new Map<number, WindowState>();
 const closing = new Set<Promise<void>>();
 let picking = false;
@@ -111,21 +113,30 @@ async function openWindow(project: Directory | null) {
     backgroundColor: '#111317',
     webPreferences: { preload: path.join(here, 'preload.cjs'), session: browserSession, sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false },
   });
-  const state: WindowState = { window, project, grants: new Map(project ? [[project.grant.token, project]] : []), busy: false, creationLocation: null, creating: false };
+  const state: WindowState = { window, project, grants: new Map(project ? [[project.grant.token, project]] : []), busy: false, creationLocation: null, creating: false,
+    exportLocation: null, exportController: null, exported: null };
   windows.set(window.webContents.id, state);
   const id = window.webContents.id;
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => { event.preventDefault(); });
   window.webContents.on('will-attach-webview', event => event.preventDefault());
   window.webContents.on('will-prevent-unload', event => {
-    if (state.busy) {
-      dialog.showMessageBoxSync(window, { type: 'info', title: '暂时不能关闭', message: '项目正在保存、写回审阅结果、整理或恢复，请完成后再关闭。审阅结果尚未确认时，请先检查或恢复原操作。', buttons: ['返回编辑器'] });
+    // reportUnloadState is a snapshot for this close attempt, not a live operation flag.
+    // Consume it now; retaining it would reject later exports after the operation had finished.
+    const reportedBusy = state.busy;
+    state.busy = false;
+    if (reportedBusy || state.exportController) {
+      const message = state.exportController
+        ? '游戏正在导出，请完成后再关闭；也可先在导出窗口取消并等待清理。'
+        : '项目正在保存、写回审阅结果、整理或恢复，请完成后再关闭。审阅结果尚未确认时，请先检查或恢复原操作。';
+      dialog.showMessageBoxSync(window, { type: 'info', title: '暂时不能关闭', message, buttons: ['返回编辑器'] });
       return;
     }
     const choice = dialog.showMessageBoxSync(window, { type: 'question', title: '尚有未保存修改', message: '修改尚未保存。返回编辑器保存，还是不保存并关闭？', buttons: ['继续编辑', '不保存并关闭'], defaultId: 0, cancelId: 0, noLink: true });
     if (choice === 1) event.preventDefault();
   });
   window.on('closed', () => {
+    state.exportController?.abort(new Error('窗口已关闭，导出取消。'));
     windows.delete(id);
     state.grants.clear();
     browserSession.protocol.unhandle('surdet-editor');
@@ -147,6 +158,39 @@ async function openWindow(project: Directory | null) {
 }
 
 ipcMain.handle('editor:context', event => trusted(event).project?.grant ?? null);
+function exportRuntime() {
+  const resources = app.isPackaged ? process.resourcesPath : here;
+  return { directory: path.dirname(process.execPath), executable: path.basename(process.execPath), gameRuntime: path.join(resources, 'game-runtime'), templates: path.join(resources, 'templates') };
+}
+ipcMain.handle('editor:export-inspect', async event => {
+  const state = trusted(event);
+  if (!state.project) throw new Error('请先打开游戏项目。');
+  return inspectWindowsExport(state.project.root, exportRuntime().templates);
+});
+ipcMain.handle('editor:export-location', async event => {
+  const state = trusted(event);
+  if (state.exportController || picking) return null;
+  picking = true;
+  try {
+    const result = await dialog.showOpenDialog(state.window, { title: '选择Windows游戏的导出位置', properties: ['openDirectory'] });
+    if (result.canceled || !result.filePaths[0] || state.window.isDestroyed()) return null;
+    state.exportLocation = selectProjectLocation(result.filePaths[0]);
+    return { id: state.exportLocation.id, location: state.exportLocation.location };
+  } finally { picking = false; }
+});
+ipcMain.handle('editor:export-game', async (event, request: unknown) => {
+  const state = trusted(event);
+  if (!state.project) throw new Error('请先打开游戏项目。');
+  if (state.exportController || state.busy) throw new Error('项目正在进行其他操作，请完成后再导出。');
+  const controller = new AbortController(); state.exportController = controller;
+  const operation = exportDesktopGame(state.project.root, state.exportLocation, request, exportRuntime(), controller.signal,
+    progress => { if (!state.window.isDestroyed()) state.window.webContents.send('editor:export-progress', progress); });
+  const cleanup = operation.then(() => {}, () => {}); closing.add(cleanup);
+  try { const result = await operation; state.exported = result.executable; state.exportLocation = null; return result; }
+  finally { state.exportController = null; closing.delete(cleanup); }
+});
+ipcMain.handle('editor:export-cancel', event => { trusted(event).exportController?.abort(new Error('导出已取消。')); });
+ipcMain.handle('editor:export-show', event => { const state = trusted(event); if (state.exported) shell.showItemInFolder(state.exported); });
 ipcMain.handle('editor:open-project', async event => { const state = trusted(event); await chooseProject(state.window); });
 ipcMain.handle('editor:choose-project-location', async event => {
   const state = trusted(event);

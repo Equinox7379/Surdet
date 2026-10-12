@@ -566,6 +566,10 @@ export function assertProjectWriteUnlocked(): void {
   if (state.projectWriteLock === 'asset-relocation') {
     throw new Error('素材整理进行中，完成后才能保存其他修改');
   }
+  // The export compares the saved project before and after; a write in between would fail it.
+  if (state.projectWriteLock === 'game-export') {
+    throw new Error('正在导出 Windows 游戏，导出完成或取消后才能保存');
+  }
 }
 
 export async function writeFileHandle(fh: FileSystemFileHandle, text: string): Promise<void> {

@@ -70,7 +70,8 @@ export function resolvePreviewReplayOption(point: PreviewReplayPoint | undefined
   if (!point?.unique || !samePreviewReplaySource(point.source, saved.source)) return null;
   const options = point.options?.filter(option => option.fingerprint === saved.optionFingerprint) ?? [];
   const option = options.length === 1 ? options[0] : undefined;
-  return option !== undefined && available.some(current => current.index === option.index && current.label === option.label) ? option.index : null;
+  // Source identity already pins this exact option; rendered labels may contain interpolation or markup.
+  return option !== undefined && available.some(current => current.index === option.index) ? option.index : null;
 }
 
 /** Checkpoints contain actual source identities, not variables or saved interpreter state. */

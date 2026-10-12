@@ -223,11 +223,17 @@ function defaultEol(lines: readonly SceneDocumentLine[]): Exclude<SceneEol, ''> 
 }
 
 function operationTarget(patch: ScenePatchOperation): string {
-  if (patch.kind === 'insertAfter') return patch.anchor;
+  if (patch.kind === 'insertAfter' || patch.kind === 'insertBefore') return patch.anchor;
   return patch.target;
 }
 
 function patchLineIndex(lines: readonly SceneDocumentLine[], patch: ScenePatchOperation): number {
+  if (patch.kind === 'insertBefore' && patch.anchor.startsWith('label:')) {
+    const name = patch.anchor.slice(patch.anchor.indexOf('.') + 1);
+    const index = lines.findIndex(line => line.kind === 'label' && line.name === name);
+    if (index < 0) throw new AuthoringOperationError('OBJECT_NOT_FOUND', `标签不存在：${patch.anchor}`);
+    return index;
+  }
   const lineNumber = lineNumberFromTarget(operationTarget(patch));
   if (lineNumber === undefined || lineNumber < 1 || lineNumber > lines.length) {
     throw new AuthoringOperationError('OBJECT_NOT_FOUND', `无法从 objectRef 定位行：${operationTarget(patch)}`);
@@ -867,6 +873,14 @@ export async function applyScenePatch(change: ChangeSession, input: ScenePatchIn
       const raw = /^\s*/.exec(current.raw)![0] + replacement + /\s*$/.exec(current.raw)![0];
       nextLines = [...lines];
       nextLines[index] = parseSceneLine(raw, previousKind(lines, index), current.eol);
+    } else if (patch.kind === 'insertBefore') {
+      if (current.kind === 'instr' && current.name === 'scene') throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '不能在场景声明之前插入正文或指令');
+      const nextContent = lines.slice(index).find(line => line.kind !== 'blank' && line.kind !== 'comment');
+      const previous = previousKind(lines, index);
+      if (nextContent?.kind === 'choice-option' && (previous === 'choice' || previous === 'choice-option')) {
+        throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', '不能在选择组内部插入正文或指令；请用 replaceChoiceGroup 修改完整选择组');
+      }
+      nextLines = insertLinesAfter(lines, index - 1, renderBlocks(patch.blocks), defaultEol(lines));
     } else if (patch.kind === 'insertAfter') {
       const nextContent = lines.slice(index + 1).find(line => line.kind !== 'blank' && line.kind !== 'comment');
       if ((current.kind === 'choice-option' || previousKind(lines, index + 1) === 'choice-option')

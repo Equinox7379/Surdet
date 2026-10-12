@@ -12,6 +12,18 @@ const valid = {
 };
 
 describe('timeline validation', () => {
+  it.each([1, 2])('accepts dissolve and typed rule cues in timeline version %s', version => {
+    const definition = { version, id: 'transition', durationMs: 800, tracks: [{ kind: 'screen', cues: [
+      { atMs: 0, durationMs: 800, easing: 'outCubic', action: 'dissolve' },
+      { atMs: 0, durationMs: 800, easing: 'linear', action: 'rule', rule: '遮罩 @左', soft: 0, reverse: true },
+    ] }] };
+    expect(validateTimeline(definition)).toEqual([]);
+    const cue = definition.tracks[0]!.cues[1]!;
+    for (const patch of [{ rule: '' }, { rule: ' mask ' }, { soft: -.1 }, { soft: 1.1 }, { reverse: 'false' }]) {
+      expect(validateTimeline({ ...definition, tracks: [{ kind: 'screen', cues: [{ ...cue, ...patch }] }] })
+        .some(issue => issue.code === 'TL009')).toBe(true);
+    }
+  });
   it('accepts parallel tracks', () => {
     expect(validateTimeline(valid)).toEqual([]);
   });

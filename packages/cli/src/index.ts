@@ -31,8 +31,8 @@ const VERSION = readVersion();
 
 function projectArguments(command: string, args: string[]): { positional: string[]; options: Map<string, string> } {
   const flags: Record<string, string[]> = { new: ['--directory', '--template'], lint: ['--json'], stats: ['--json'], audit: ['--no-run'],
-    build: ['--web'], manifest: [], pack: [], simulate: ['--json', '--assume', '--seed', '--max-paths', '--max-steps'] };
-  const values = new Set(['--assume', '--seed', '--max-paths', '--max-steps', '--directory', '--template']);
+    build: ['--web'], manifest: [], pack: ['--output', '--title', '--version', '--icon', '--trust-plugins', '--runtime'], simulate: ['--json', '--assume', '--seed', '--max-paths', '--max-steps'] };
+  const values = new Set(['--assume', '--seed', '--max-paths', '--max-steps', '--directory', '--template', '--output', '--title', '--version', '--icon', '--trust-plugins', '--runtime']);
   const options = new Map<string, string>();
   const positional: string[] = [];
   let literal = false;
@@ -76,7 +76,13 @@ const HELP = `Surdet Engine CLI v${VERSION}
   surdet build [dir]       构建游戏（vite）
       --web               同时产出 Web 试玩包信息（dist/ 可直接上传静态托管）
   surdet manifest [dir]    生成版本补丁清单 release/update-manifest.json
-  surdet pack <dir>        打包指定游戏的 Windows exe（M7）
+  surdet pack <dir>        使用预制运行时导出Windows免安装文件夹（无需先构建作品）
+      --output <dir>       新输出文件夹，不覆盖已有目录
+      --title <title>      显示标题，不改变项目的存档身份
+      --version <version>  Windows数字版本；缺省使用package.json.version
+      --icon <path>        项目content/assets内的PNG或ICO
+      --trust-plugins <ids> 明确信任的插件id，以逗号分隔
+      --runtime <exe>      提供含game-runtime的Editor运行文件；源码开发使用预构建Shell运行时
   surdet capabilities describe --json
   surdet project|object|change|scene|script|variable|character|timeline|gallery|runtime|composition|review|asset ... --json
       --input <file|->      按 capabilities describe 返回的 schema 传入完整 JSON
@@ -175,7 +181,7 @@ async function main(): Promise<number> {
     }
 
     case 'pack': {
-      return await cmdPack(positional[0]);
+      return await cmdPack(positional[0], undefined, options);
     }
 
     default:

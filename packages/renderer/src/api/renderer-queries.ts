@@ -20,6 +20,7 @@ export interface WorldQueries {
 export interface NvlPresentationEntry {
   readonly speaker: string | null;
   readonly text: string;
+  readonly markup?: string;
 }
 
 export interface DialogueQueries {

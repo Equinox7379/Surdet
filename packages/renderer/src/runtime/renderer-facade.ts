@@ -126,6 +126,7 @@ export interface RendererStagePort extends PresentationStage {
   restorePresentation?: (snapshot: unknown) => void;
   clearPresentation?: () => void;
   setTheme?: (theme: RendererTheme) => void;
+  setReadingPreferences?: RendererCommands['preferences']['setReadingPreferences'];
   setDeclarativeUiSuppression?: (pages: Partial<Record<import('@surdet/core').ProjectUiPageId, boolean>>) => void;
 }
 
@@ -277,6 +278,12 @@ export class RendererFacade {
     this.#projectionSnapshot = options.projectionSnapshot;
 
     const assets: AssetCommands = {
+      registerRule: async (key, source, format) => {
+        this.#ensureActive('assets', 'registerRule');
+        if (this.#assetRegistry) await this.#assetRegistry.registerRule(key, source, format);
+        else if (this.#stage.registerRule) await this.#stage.registerRule(key, source, format);
+        else this.#missing('assets', 'registerRule');
+      },
       registerVideo: async (key, source, sourcePath) => {
         this.#ensureActive('assets', 'registerVideo');
         if (!this.#assetRegistry) this.#missing('assets', 'registerVideo');
@@ -354,6 +361,16 @@ export class RendererFacade {
     };
 
     const world: WorldCommands = {
+      registerTransition: this.#worldPort?.registerTransition || this.#stage.registerTransition
+        ? transition => this.#callWorld('registerTransition', this.#worldPort?.registerTransition, this.#stage.registerTransition, transition) : undefined,
+      registerFilter: this.#worldPort?.registerFilter || this.#stage.registerFilter
+        ? (id, filter) => this.#callWorld('registerFilter', this.#worldPort?.registerFilter, this.#stage.registerFilter, id, filter) : undefined,
+      setFilterActive: this.#worldPort?.setFilterActive || this.#stage.setFilterActive
+        ? (id, active) => this.#callWorld('setFilterActive', this.#worldPort?.setFilterActive, this.#stage.setFilterActive, id, active) : undefined,
+      setStoryFilter: this.#worldPort?.setStoryFilter || this.#stage.setStoryFilter
+        ? (name, durationMs) => this.#callWorld('setStoryFilter', this.#worldPort?.setStoryFilter, this.#stage.setStoryFilter, name, durationMs) : undefined,
+      markStageBoundary: this.#worldPort?.markStageBoundary || this.#stage.markStageBoundary
+        ? () => this.#callWorld('markStageBoundary', this.#worldPort?.markStageBoundary, this.#stage.markStageBoundary) : undefined,
       applyStage: (command) => this.#callWorld('applyStage', this.#worldPort?.applyStage, this.#stage.applyStage, command),
       setBackground: (key) => this.#callWorld('setBackground', this.#worldPort?.setBackground, this.#stage.setBackground, key),
       setPortrait: (key, view) => this.#callWorld('setPortrait', this.#worldPort?.setPortrait, this.#stage.setPortrait, key, view),
@@ -361,7 +378,7 @@ export class RendererFacade {
       setFade: (alpha) => this.#callWorld('setFade', this.#worldPort?.setFade, this.#stage.setFade, alpha),
       fade: this.#worldPort?.fade || this.#stage.fade ? (from, to, durationMs) => this.#callWorld('fade', this.#worldPort?.fade, this.#stage.fade, from, to, durationMs) : undefined,
       shake: (durationMs = 400, strength = 8, direction = 'both') => this.#callWorld('shake', this.#worldPort?.shake, this.#stage.shake, durationMs, strength, direction),
-      transition: (name, durationMs) => this.#callWorld('transition', this.#worldPort?.transition, this.#stage.transition, name, durationMs),
+      transition: (name, durationMs, rule) => this.#callWorld('transition', this.#worldPort?.transition, this.#stage.transition, name, durationMs, rule),
       flash: (durationMs = 300) => this.#callWorld('flash', this.#worldPort?.flash, this.#stage.flash, durationMs),
       zoom: (scale = 1, durationMs = 400) => this.#callWorld('zoom', this.#worldPort?.zoom, this.#stage.zoom, scale, durationMs),
       wipe: (durationMs = 600) => this.#callWorld('wipe', this.#worldPort?.wipe, this.#stage.wipe, durationMs),
@@ -377,28 +394,28 @@ export class RendererFacade {
     };
 
     const dialogue: DialogueCommands = {
-      showText: (speaker, value) => {
+      showText: (speaker, value, visibleUnits) => {
         if (!this.#dialoguePort) {
-          this.#callDialogue('showText', undefined, this.#stage.showText, speaker, value);
+          this.#callDialogue('showText', undefined, this.#stage.showText, speaker, value, visibleUnits);
           return;
         }
         const before = this.#dialoguePort.projectionVersion;
-        this.#callDialogue('showText', this.#dialoguePort.showText, this.#stage.showText, speaker, value);
+        this.#callDialogue('showText', this.#dialoguePort.showText, this.#stage.showText, speaker, value, visibleUnits);
         if (this.#dialoguePort.projectionVersion !== before) {
           this.#coordinateWorldFocus(this.#dialoguePort.activeSpeakerId);
         }
       },
-      beginText: (speaker) => {
+      beginText: (speaker, value = '', visibleUnits) => {
         if (!this.#dialoguePort) {
-          if (this.#stage.beginText) this.#callDialogue('beginText', undefined, this.#stage.beginText, speaker);
-          else this.#callDialogue('beginText', undefined, this.#stage.showText, speaker, '');
+          if (this.#stage.beginText) this.#callDialogue('beginText', undefined, this.#stage.beginText, speaker, value, visibleUnits);
+          else this.#callDialogue('beginText', undefined, this.#stage.showText, speaker, value, visibleUnits);
           return;
         }
         const before = this.#dialoguePort.projectionVersion;
         if (this.#dialoguePort.beginText) {
-          this.#callDialogue('beginText', this.#dialoguePort.beginText, this.#stage.beginText, speaker);
+          this.#callDialogue('beginText', this.#dialoguePort.beginText, this.#stage.beginText, speaker, value, visibleUnits);
         } else {
-          this.#callDialogue('beginText', this.#dialoguePort.showText, this.#stage.showText, speaker, '');
+          this.#callDialogue('beginText', this.#dialoguePort.showText, this.#stage.showText, speaker, value, visibleUnits);
         }
         if (this.#dialoguePort.projectionVersion !== before) {
           this.#coordinateWorldFocus(this.#dialoguePort.activeSpeakerId);
@@ -424,9 +441,10 @@ export class RendererFacade {
       showBacklog: (entries, onReplayVoice, query) => this.#callDialogue('showBacklog', this.#dialoguePort?.showBacklog, this.#stage.showBacklog, entries.map((entry) => ({ ...entry })), onReplayVoice, query),
       hideBacklog: () => this.#callDialogue('hideBacklog', this.#dialoguePort?.hideBacklog, this.#stage.hideBacklog),
       setNvlMode: (on) => this.#callDialogue('setNvlMode', this.#dialoguePort?.setNvlMode, this.#stage.setNvlMode, on),
-      appendNvlText: (speaker, text) => {
+      setTextSkipping: (skipping) => this.#callDialogue('setTextSkipping', this.#dialoguePort?.setTextSkipping, this.#stage.setTextSkipping, skipping),
+      appendNvlText: (speaker, text, markup) => {
         const before = this.#dialoguePort?.projectionVersion;
-        this.#callDialogue('appendNvlText', this.#dialoguePort?.appendNvlText, this.#stage.appendNvlText, speaker, text);
+        this.#callDialogue('appendNvlText', this.#dialoguePort?.appendNvlText, this.#stage.appendNvlText, speaker, text, markup);
         if (this.#dialoguePort && this.#dialoguePort.projectionVersion !== before) this.#coordinateWorldFocus(this.#dialoguePort.activeSpeakerId);
       },
       clearNvlText: () => {
@@ -749,7 +767,15 @@ export class RendererFacade {
 
     const preferences: PreferenceCommands = {
       setQuality: (quality) => this.#callWorld('setQuality', this.#worldPort?.setQuality, this.#stage.setQuality, quality),
-      setPresentationPreferences: (preferences) => this.#callWorld('setPresentationPreferences', this.#worldPort?.setPresentationPreferences, this.#stage.setPresentationPreferences, { ...preferences }),
+      setPresentationPreferences: (preferences) => {
+        this.#callWorld('setPresentationPreferences', this.#worldPort?.setPresentationPreferences, this.#stage.setPresentationPreferences, { ...preferences });
+        this.#dialoguePort?.setPresentationPreferences(preferences);
+      },
+      setReadingPreferences: (preferences) => {
+        this.#ensureActive('preferences', 'setReadingPreferences');
+        if (this.#dialoguePort) this.#dialoguePort.setReadingPreferences(preferences);
+        else this.#callStage('preferences', 'setReadingPreferences', this.#stage.setReadingPreferences, preferences);
+      },
       setPostProcess: (settings) => this.#callWorld('setPostProcess', this.#worldPort?.setPostProcess, this.#stage.setPostProcess, { ...settings }),
       setTheme: (overrides: RendererThemeOverrides) => {
         this.#ensureActive('preferences', 'setTheme');

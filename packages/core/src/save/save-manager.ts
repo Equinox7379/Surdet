@@ -6,6 +6,7 @@ import type { EventSchedulerSnapshot } from '../systems/event-scheduler.js';
 import type { GrowthSnapshot } from '../systems/growth.js';
 import type { AchievementSnapshot } from '../systems/achievement.js';
 import { assertValidRandomState, type RandomState } from '../runtime/random-source.js';
+import { assertPluginSnapshots, type ProjectPluginSnapshots } from '../project-plugins.js';
 
 /**
  * 全家桶系统快照（可选，由宿主经 Interpreter 的 SystemHooks 提供）。
@@ -77,6 +78,8 @@ export interface SaveSnapshot {
   presentation?: { version: 1; payload: unknown };
   /** 可选的 seeded DSL @random 状态；旧档缺失时保持向后兼容。 */
   random?: RandomState;
+  /** Explicitly enabled project extension state; no data here can authorize code loading. */
+  plugins?: ProjectPluginSnapshots;
 }
 
 /**
@@ -160,6 +163,10 @@ export function assertValidSnapshot(
     } catch (error) {
       fail(`random ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+  if (s.plugins !== undefined) {
+    try { assertPluginSnapshots(s.plugins); }
+    catch (error) { fail(error instanceof Error ? error.message : String(error)); }
   }
 
   if (typeof s.kind !== 'string' || !(['manual', 'quick', 'auto'] as const).includes(s.kind as SaveSnapshot['kind'])) {

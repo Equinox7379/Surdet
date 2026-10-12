@@ -1,6 +1,7 @@
 /** Declarative work UI. Coordinates are in the 1280 × 720 design canvas. */
 import { collectVars, parseExpr } from './dsl/expr-parser.js';
 import { checkExprOperands } from './scene-lint.js';
+import { GAME_SETTING_DEFINITIONS } from './game-settings.js';
 
 export const PROJECT_UI_PAGES = [
   'title', 'system-menu', 'save-load', 'settings', 'gallery', 'backlog',
@@ -82,12 +83,8 @@ const PAGE_SET = new Set<string>(PROJECT_UI_PAGES);
 const TYPE_SET = new Set<string>(PROJECT_UI_NODE_TYPES);
 const CHILD_TYPES = new Set<ProjectUiNodeType>(['container', 'scroll', 'tabs', 'content']);
 const CONTENT_SOURCES = new Set<ProjectUiContentSource>(['save-slots', 'backlog', 'gallery-cgs', 'gallery-music', 'gallery-texts', 'gallery-endings', 'gallery-profiles', 'gallery-terms', 'choices', 'settings', 'terms']);
-const SETTING_TYPES: Record<string, 'number' | 'string'> = {
-  textSpeedCps: 'number', autoBaseDelayMs: 'number', autoPerCharMs: 'number',
-  masterVolume: 'number', bgmVolume: 'number', ambienceVolume: 'number', seVolume: 'number', voiceVolume: 'number',
-  skipStrategy: 'number', keyPreset: 'string', locale: 'string',
-};
-const WRITABLE_SETTINGS = new Set(['textSpeedCps', 'autoBaseDelayMs', 'masterVolume', 'bgmVolume', 'ambienceVolume', 'seVolume', 'voiceVolume', 'skipStrategy']);
+const SETTING_TYPES: Record<string, string> = Object.fromEntries(Object.entries(GAME_SETTING_DEFINITIONS).map(([key, definition]) => [key, definition.type]));
+const WRITABLE_SETTINGS = new Set(Object.entries(GAME_SETTING_DEFINITIONS).filter(([, definition]) => definition.writable).map(([key]) => key));
 const ACTION_KINDS = new Set(['start', 'continue', 'close', 'back', 'advance', 'rollback', 'auto', 'skip', 'hide', 'open', 'save', 'load', 'choice', 'gallery-item', 'setting-step', 'variable-set']);
 
 function record(value: unknown, location: string): Record<string, unknown> {

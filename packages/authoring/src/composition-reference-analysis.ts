@@ -1,9 +1,11 @@
 import { compareCanonicalText } from './canonical-order.js';
 import {
   collectVars,
+  collectInterpolatedVars,
   findChoiceArrow,
   parseExpr,
   parseInlineInstructions,
+  Lexer,
 } from '@surdet/core';
 import type { RawCompositionReference } from './composition-contracts.js';
 import { decodeInstructionArgument, parseSceneDocument, splitInstruction } from './scene-document.js';
@@ -218,6 +220,7 @@ function analyzeChoiceOption(
   const labelPart = arrowIndex >= 0 ? trimmed.slice(0, arrowIndex) : trimmed;
   const inlinePart = arrowEnd >= 0 ? trimmed.slice(arrowEnd).trim() : '';
   const labelText = labelPart.trim();
+  for (const name of collectInterpolatedVars(labelText.replace(/\[if:.+?\]\s*$/, ''))) addVariableReference(references, name, source);
   const whenMatch = /\[if:(.+?)\]\s*$/.exec(labelText);
   if (whenMatch !== null) addExpressionVariables(references, whenMatch[1]!.trim(), source);
 
@@ -297,6 +300,11 @@ export function analyzeSceneCompositionReferences(input: {
           continue;
         }
         choiceOptionIndex = null;
+        if (name === 'transition' && cleanToken(args[0]) === 'rule') {
+          const token = new Lexer().tokenize(line.raw, input.path).find(token => token.type === 'instruction');
+          const rule = token?.type === 'instruction' ? cleanToken(token.modifiers.get('rule')) : '';
+          if (rule) addReference(references, 'rule-asset', 'candidate-external', rule, lineSource, `asset:rule:${rule}`);
+        }
         addSceneInstructionReferences(references, input.sceneId, name, args, lineSource);
         continue;
       }
@@ -311,6 +319,7 @@ export function analyzeSceneCompositionReferences(input: {
       if ((line.kind === 'blank' || line.kind === 'comment') && choiceOptionIndex !== null) continue;
       choiceOptionIndex = null;
       if (line.kind !== 'text') continue;
+      for (const name of collectInterpolatedVars(line.value + '\n' + line.speaker)) addVariableReference(references, name, lineSource);
       const speaker = line.speaker.trim();
       if (speaker.length === 0) continue;
       const characterRef = speakerRefs.get(speaker);
@@ -364,6 +373,10 @@ export function analyzeTimelineCompositionReferences(input: {
       if (!isRecord(rawCue)) continue;
       const action = rawCue['action'];
       const source = timelineSource(input.path, trackIndex, cueIndex);
+      if (kind === 'screen' && action === 'rule' && typeof rawCue.rule === 'string' && rawCue.rule.trim()) {
+        addReference(references, 'rule-asset', 'candidate-external', rawCue.rule, source, `asset:rule:${rawCue.rule}`);
+        continue;
+      }
       if (kind === 'audio' && (action === 'bgm' || action === 'se' || action === 'voice') && typeof rawCue['key'] === 'string') {
         addReference(references, 'audio-asset', 'candidate-external', rawCue['key'], source, `asset:${action}:${rawCue['key']}`);
         continue;

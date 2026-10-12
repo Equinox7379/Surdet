@@ -50,6 +50,8 @@ const ACTION_LABELS: Record<TimelineTrackKind, Readonly<Record<string, string>>>
     tint: '叠加色调',
     flash: '闪白',
     wipe: '擦除转场',
+    dissolve: '溶解转场',
+    rule: '遮罩转场',
   },
   particle: {
     start: '启动粒子特效',

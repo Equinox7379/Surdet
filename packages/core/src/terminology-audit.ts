@@ -5,6 +5,7 @@
  * 纯函数，不依赖 fs/CLI；解析形状容错（非法条目跳过而非抛错）。
  */
 import type { CompiledScene } from './dsl/ast.js';
+import { inlinePlainText } from './inline-text.js';
 
 export interface AuditFinding {
   severity: 'error' | 'warning' | 'info';
@@ -86,9 +87,9 @@ export function auditTerminology(compiled: Map<string, CompiledScene>, terms: Te
       for (const scene of compiled.values()) {
         for (const instr of scene.instructions) {
           const spots: { text: string; file: string; line: number }[] = [];
-          if (instr.op === 'text') spots.push({ text: `${instr.speaker ?? ''} ${instr.value}`, file: instr.file, line: instr.line });
+          if (instr.op === 'text') spots.push({ text: `${instr.speaker ?? ''} ${inlinePlainText(instr.value)}`, file: instr.file, line: instr.line });
           if (instr.op === 'choice') {
-            for (const opt of instr.options) spots.push({ text: opt.label, file: opt.pos.file, line: opt.pos.line });
+            for (const opt of instr.options) spots.push({ text: inlinePlainText(opt.label, 'choice'), file: opt.pos.file, line: opt.pos.line });
           }
           for (const spot of spots) {
             if (spot.text.includes(variant)) {

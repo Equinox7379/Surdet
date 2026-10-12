@@ -192,6 +192,7 @@ function createControllerOptions(
   stage.onPointerConsumed = options.onPointerConsumed ?? null;
   return {
     ...(options.typewriter ? { typewriter: options.typewriter } : {}),
+    ...(options.narrator ? { narrator: options.narrator } : {}),
     ...(options.backlog ? { backlog: options.backlog } : {}),
     ...(options.pluginHost ? { pluginHost: options.pluginHost } : {}),
     ...(options.onAdvance ? { onAdvance: options.onAdvance } : {}),

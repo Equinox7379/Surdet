@@ -1,5 +1,9 @@
 import {
   EventBus,
+  inlinePlainText,
+  inlineTextLength,
+  inlineStaticText,
+  escapeInlineText,
   type CoreEventMap,
   type Unsubscribe,
   type TextEventPayload,
@@ -10,12 +14,14 @@ import {
   type PresentationRestoreResult,
   validateTimeline,
   stageCommandFromInstruction,
+  parseStoryFilter,
+  parseRuleTransition,
 } from '@surdet/core';
-import type { Backlog } from '../backlog.js';
+import { prepareBacklog, DEFAULT_BACKLOG_CAPACITY, type Backlog, type BacklogEntry } from '../backlog.js';
 import type { AudioPlaybackSnapshot } from '../rollback-buffer.js';
 import { dequote } from '../dequote.js';
-import { stripRuby } from '../ruby.js';
 import { Typewriter } from '../text-buffer.js';
+import { SystemNarrator } from '../system-narrator.js';
 import { FadeTween } from '../transitions.js';
 import type { AudioHandle, FrameRequestHandler, PortraitView } from '../types.js';
 import { NULL_AUDIO } from '../types.js';
@@ -61,8 +67,10 @@ function prepareDialogueRestore(payload: unknown): {
   readonly nvlActive: boolean;
   readonly nvlEntries: readonly NvlPresentationEntry[];
   readonly advText: NvlPresentationEntry | null;
+  readonly backlog: readonly BacklogEntry[];
+  readonly backlogReplayCurrent: boolean;
 } {
-  if (payload === undefined) return { nvlActive: false, nvlEntries: [], advText: null };
+  if (payload === undefined) return { nvlActive: false, nvlEntries: [], advText: null, backlog: [], backlogReplayCurrent: false };
   if (!isRecord(payload)) throw invalidPresentation('Presentation dialogue is invalid');
   if (typeof payload.nvlActive !== 'boolean') {
     throw invalidPresentation('Presentation dialogue nvlActive must be boolean');
@@ -80,9 +88,11 @@ function prepareDialogueRestore(payload: unknown): {
     if (typeof entry.text !== 'string') {
       throw invalidPresentation('Presentation dialogue entry text must be string');
     }
+    if (entry.markup !== undefined && (typeof entry.markup !== 'string' || inlinePlainText(entry.markup) !== entry.text || inlineStaticText(entry.markup) !== entry.markup)) throw invalidPresentation('Presentation NVL markup is invalid');
     entries.push({
       speaker: speaker === '' ? null : speaker,
       text: entry.text,
+      ...(entry.markup === undefined ? {} : { markup: entry.markup as string }),
     });
   }
   if (!payload.nvlActive && entries.length > 0) {
@@ -97,7 +107,11 @@ function prepareDialogueRestore(payload: unknown): {
     if (payload.nvlActive) throw invalidPresentation('Presentation ADV text requires nvlActive=false');
     advText = { speaker: entry.speaker, text: entry.text };
   }
-  return { nvlActive: payload.nvlActive, nvlEntries: entries, advText };
+  let backlog: readonly BacklogEntry[];
+  try { backlog = prepareBacklog(payload.backlog); } catch (error) { throw invalidPresentation('Presentation backlog is invalid', error); }
+  if (payload.backlogReplayCurrent !== undefined && typeof payload.backlogReplayCurrent !== 'boolean') throw invalidPresentation('Presentation backlog replay flag must be boolean');
+  if (payload.backlogReplayCurrent === true && backlog.length === 0) throw invalidPresentation('Presentation replay flag requires a recorded current line');
+  return { nvlActive: payload.nvlActive, nvlEntries: entries, advText, backlog, backlogReplayCurrent: payload.backlogReplayCurrent === true };
 }
 
 function withoutReplayedCurrentNvlLine(
@@ -108,7 +122,7 @@ function withoutReplayedCurrentNvlLine(
   if (!nvlActive || !current || entries.length === 0) return entries;
   const expectedSpeaker = current.speaker !== null && current.speaker.length > 0 ? current.speaker : null;
   const last = entries.at(-1)!;
-  return last.speaker === expectedSpeaker && last.text === stripRuby(current.value)
+  return last.speaker === expectedSpeaker && last.text === inlinePlainText(current.value)
     ? entries.slice(0, -1)
     : entries;
 }
@@ -129,6 +143,8 @@ export interface PreparedPresentationRestore {
     readonly nvlActive: boolean;
     readonly nvlEntries: readonly NvlPresentationEntry[];
     readonly advText: NvlPresentationEntry | null;
+    readonly backlog: readonly BacklogEntry[];
+    readonly backlogReplayCurrent: boolean;
   };
 }
 
@@ -148,7 +164,7 @@ export function preparePresentationRestore(
       stage: null,
       timelines: [],
       timelineSequence: currentTimelineSequence + 1,
-      dialogue: { nvlActive: false, nvlEntries: [], advText: null },
+      dialogue: { nvlActive: false, nvlEntries: [], advText: null, backlog: [], backlogReplayCurrent: false },
     };
   }
   if (!isRecord(payload) || payload.version !== 1) {
@@ -227,6 +243,7 @@ export function preparePresentationRestore(
 }
 
 export interface AdvRendererOptions {
+  narrator?: Pick<SystemNarrator, 'speak' | 'stop' | 'busy' | 'onError'>;
   typewriter?: Typewriter;
   /** 玩家推进到下一行时回调（连接 Interpreter.advance） */
   onAdvance?: () => void;
@@ -284,6 +301,13 @@ export class PresentationController {
   #connectionCleanup: (() => void) | null = null;
   #disposed = false;
   #audio: AudioHandle;
+  #narrator: Pick<SystemNarrator, 'speak' | 'stop' | 'busy' | 'onError'>;
+  #readAloud = false;
+  #narrationLocale = '';
+  #narrationVolume = 1;
+  #currentVoice: string | null = null;
+  #autoContinueLine = false;
+  #skipBacklogReplay = false;
   #tw: Typewriter;
   #status: RenderStatus = 'idle';
   #current: { speaker: string | null; value: string } | null = null;
@@ -298,6 +322,8 @@ export class PresentationController {
   #autoPerCharMs: number;
   /** 进入 awaiting 的时刻（自动播放停留计时起点） */
   #awaitSince = 0;
+  #inlineAutoElapsed = 0;
+  #lineVisibleLength = 0;
   /** 文字记录（可选注入） */
   #backlog: Backlog | null;
   /** Backlog 覆盖层展示中 */
@@ -355,6 +381,8 @@ export class PresentationController {
     this.#lifecycle = options.lifecycle;
     this.#detachPlugin = options.detachPlugin;
     this.#audio = audio;
+    this.#narrator = options.narrator ?? new SystemNarrator();
+    this.#narrator.onError = message => { if (!this.#disposed) { this.#commands.dialogue.showBanner(message, 'tip'); this.#requestFrame(); } };
     this.#tw = options.typewriter ?? new Typewriter();
     this.#onAdvance = options.onAdvance;
     this.#onSelect = options.onSelect;
@@ -386,6 +414,16 @@ export class PresentationController {
 
   get status(): RenderStatus {
     return this.#status;
+  }
+
+  setReadAloud(enabled: boolean, locale = '', volume = 1): void {
+    this.#readAloud = enabled; this.#narrationLocale = locale; this.#narrationVolume = volume;
+    if (!enabled) this.#narrator.stop();
+  }
+
+  #stopVoice(): void { this.#narrator.stop(); this.#audio.stopVoice?.(); }
+  #narrate(value: string): void {
+    if (this.#readAloud && !this.#currentVoice && !this.#audio.isVoicePlaying() && !this.#skipMode && !this.presentationPaused) this.#narrator.speak(inlinePlainText(value), this.#narrationLocale, this.#narrationVolume);
   }
 
   /**
@@ -426,7 +464,7 @@ export class PresentationController {
       bus.on('choice', (p) => { this.#onChoice(p); this.#requestFrame(); }),
       bus.on('textRefresh', (p) => { this.#refreshDisplayedText(p); this.#requestFrame(); }),
       bus.on('runtimeTrace', event => { if (event.kind === 'instruction') {
-        if (this.#instructionOrigin?.kind === 'scene' && this.#instructionOrigin.sceneId !== event.source.sceneId) { this.#audio.stopVoice?.(); this.#pendingVoice = null; }
+        if (this.#instructionOrigin?.kind === 'scene' && this.#instructionOrigin.sceneId !== event.source.sceneId) { this.#stopVoice(); this.#pendingVoice = null; }
         this.#instructionOrigin = { kind: 'scene', file: event.source.file, line: event.source.line, sceneId: event.source.sceneId, instructionIndex: event.source.index };
       } }),
       bus.on('instr', (p) => { this.#onInstr(p); this.#requestFrame(); }),
@@ -434,10 +472,11 @@ export class PresentationController {
       bus.on('video', (p) => { this.#onVideo(p); this.#requestFrame(); }),
       bus.on('timeline', (p) => { this.#onTimeline(p); this.#requestFrame(); }),
       bus.on('stateReset', () => { this.#onStateReset(); this.#requestFrame(); }),
-      bus.on('sceneEnd', () => { this.#audio.stopVoice?.(); this.#pendingVoice = null; }),
+      bus.on('sceneEnd', () => { this.#stopVoice(); this.#pendingVoice = null; }),
     ];
     const cleanup = (): void => {
       if (!active) return;
+      this.#narrator.stop();
       active = false;
       if (this.#unsubs === unsubs) this.#unsubs = [];
       for (const off of unsubs) off();
@@ -469,7 +508,7 @@ export class PresentationController {
 
   destroy(): void {
     if (this.#disposed) return;
-    this.#audio.stopVoice?.();
+    this.#stopVoice(); this.#narrator.onError = null;
     this.#unbindAudioErrors?.();
     this.#unbindAudioErrors = undefined;
     this.#waitSession += 1;
@@ -493,8 +532,10 @@ export class PresentationController {
   }
 
   /** 开始一轮新的剧情会话：清理渲染状态，但保留宿主注入的设置（如打字速度）。 */
-  resetSession(options: { preserveWorld?: boolean; clearAssets?: boolean } = {}): void {
-    this.#audio.stopVoice?.(); this.#audio.setVoicePaused?.(false);
+  resetSession(options: { preserveWorld?: boolean; clearAssets?: boolean; preserveReadingHistory?: boolean } = {}): void {
+    this.#stopVoice(); this.#audio.setVoicePaused?.(false);
+    if (!options.preserveReadingHistory) this.#backlog?.clear();
+    this.#skipBacklogReplay = false; this.#autoContinueLine = false;
     this.#status = 'idle';
     this.#current = null;
     this.#advCurrent = null;
@@ -507,6 +548,7 @@ export class PresentationController {
     this.#choiceCursor = -1;
     this.#skipMode = false;
     this.#skipAll = false;
+    this.#commands.dialogue.setTextSkipping(false);
     this.#backlogOpen = false;
     this.#backlogSearch.clear();
     this.#backlogSearch.blur();
@@ -556,6 +598,7 @@ export class PresentationController {
 
   setPresentationPaused(paused: boolean): void {
     this.#explicitPaused = paused;
+    if (this.presentationPaused) this.#narrator.stop();
     // Settle old clocks before the host can create a new wait/text in this same task.
     if (!this.presentationPaused) this.#resumePausedClock();
     this.#audio.setVoicePaused?.(this.presentationPaused); this.#requestFrame();
@@ -577,6 +620,7 @@ export class PresentationController {
     if (this.#disposed) return;
     this.#audio.setVoicePaused?.(this.presentationPaused);
     if (this.presentationPaused) {
+      this.#narrator.stop();
       this.#pausedSince ??= nowMs();
       // 只推进菜单和顶层提示，不推进世界、打字、选项或章节演出。
       this.#menuProjectionBusy = this.#updateMenuProjection?.(deltaMs) === true;
@@ -592,10 +636,18 @@ export class PresentationController {
         this.#onWaitEnd?.();
       }
     }
+    const wasInlineWaiting = this.#tw.isWaiting;
     this.#tw.update(deltaMs);
     if (this.#status === 'typing') {
       const c = this.#current;
-      this.#commands.dialogue.showText(c?.speaker ?? null, this.#tw.text);
+      if (this.#tw.isWaiting && this.#autoPlay) {
+        this.#inlineAutoElapsed = wasInlineWaiting ? this.#inlineAutoElapsed + deltaMs : 0;
+        if (this.#inlineAutoElapsed >= this.#autoBaseDelayMs + this.#autoPerCharMs * this.#tw.waitingLength) {
+          this.#tw.resumeWait(); this.#inlineAutoElapsed = 0;
+        }
+      } else this.#inlineAutoElapsed = 0;
+      this.#commands.world.setPortraitSpeaking?.(!this.#tw.isPaused && !this.#tw.isDone && !this.#skipMode);
+      this.#commands.dialogue.showText(c?.speaker ?? null, c?.value ?? '', this.#tw.shown);
     }
 
     if (this.#skipMode) {
@@ -608,7 +660,7 @@ export class PresentationController {
           this.#tw.skip(); // onComplete → status 'awaiting'
         }
         if (this.#status === 'awaiting') {
-          this.#audio.stopVoice?.();
+          this.#stopVoice();
           this.#status = 'idle';
           this.#onAdvance?.(); // 解释器同步发出下一事件（text/choice/end）
           if (nowMs() > deadline) break;
@@ -616,18 +668,20 @@ export class PresentationController {
         }
         break; // choice/idle（解释器已结束且无后续事件）：停止
       }
+    } else if (this.#autoContinueLine && this.#status === 'awaiting') {
+      this.#stopVoice(); this.#autoContinueLine = false; this.#status = 'idle'; this.#onAdvance?.();
     } else if (this.#autoPlay && this.#status === 'awaiting') {
       // 自动播放：文本显示完成后停留（基础 + 按长度）再推进；语音播放中先等语音
       // （isVoicePlaying 恒 false 的音频实现不受影响）。choice 挂起时不推进。
       const waited = nowMs() - this.#awaitSince;
-      const need = this.#autoBaseDelayMs + this.#autoPerCharMs * (this.#current?.value.length ?? 0);
-      if (waited >= need && !this.#audio.isVoicePlaying()) {
+      const need = this.#autoBaseDelayMs + this.#autoPerCharMs * this.#lineVisibleLength;
+      if (waited >= need && !this.#audio.isVoicePlaying() && !this.#narrator.busy) {
         this.#status = 'idle';
         this.#onAdvance?.();
       }
     }
     // 点击等待指示器投影（▼ 仅在文本等待推进时可见；fake stage 可未实现）
-    this.#syncAwaiting(this.#status === 'awaiting');
+    this.#syncAwaiting(this.#status === 'awaiting' || this.#status === 'typing' && this.#tw.isWaiting);
     // Projection time was advanced once, at timeline boundaries, above.
 
     const fade = this.#fade;
@@ -643,9 +697,10 @@ export class PresentationController {
   #hasRendererWork(): boolean {
     return this.#timelineRuns.size > 0
       || this.#waitDeadline !== null
-      || this.#status === 'typing'
+      || this.#status === 'typing' && (!this.#tw.isWaiting || this.#autoPlay || this.#skipMode)
       || (this.#skipMode && this.#status === 'awaiting')
       || (this.#autoPlay && this.#status === 'awaiting')
+      || (this.#autoContinueLine && this.#status === 'awaiting')
       || this.#fade !== null;
   }
 
@@ -674,7 +729,8 @@ export class PresentationController {
   toggleBacklog(): boolean {
     if (!this.#backlog) return false;
     this.#backlogOpen = !this.#backlogOpen;
-    if (!this.#backlogOpen) this.#audio.stopVoice?.();
+    this.#narrator.stop();
+    if (!this.#backlogOpen) this.#stopVoice();
     this.#audio.setVoicePaused?.(this.presentationPaused);
     if (this.#backlogOpen) {
       this.#renderBacklog();
@@ -771,7 +827,8 @@ export class PresentationController {
   /** 切换快进（瞬时文本 + 连续推进；默认仅跳已读行） */
   toggleSkip(): boolean {
     this.#skipMode = !this.#skipMode;
-    if (this.#skipMode) this.#audio.stopVoice?.();
+    this.#commands.dialogue.setTextSkipping(this.#skipMode);
+    if (this.#skipMode) this.#stopVoice();
     this.#skipAll = false;
     this.#requestFrame();
     return this.#skipMode;
@@ -781,7 +838,8 @@ export class PresentationController {
   toggleSkipAll(): boolean {
     this.#skipAll = !this.#skipAll;
     this.#skipMode = this.#skipAll;
-    if (this.#skipMode) this.#audio.stopVoice?.();
+    this.#commands.dialogue.setTextSkipping(this.#skipMode);
+    if (this.#skipMode) this.#stopVoice();
     this.#requestFrame();
     return this.#skipAll;
   }
@@ -815,11 +873,15 @@ export class PresentationController {
       return this.choiceConfirm();
     }
     if (this.#status === 'typing') {
-      this.#tw.skip();
+      this.#inlineAutoElapsed = 0;
+      this.#tw.revealToNextWait();
+      if (this.#current) this.#commands.dialogue.showText(this.#current.speaker, this.#current.value, this.#tw.shown);
+      this.#commands.world.setPortraitSpeaking?.(!this.#tw.isPaused && !this.#tw.isDone);
+      this.#syncAwaiting(this.#tw.isWaiting || this.#tw.isDone);
       return true;
     }
     if (this.#status === 'awaiting') {
-      this.#audio.stopVoice?.();
+      this.#stopVoice();
       this.#status = 'idle';
       this.#onAdvance?.();
       return true;
@@ -844,53 +906,70 @@ export class PresentationController {
       this.#commands.dialogue.setChoiceHighlight(this.#choiceCursor);
     }
     if (!p.text || (this.#status !== 'typing' && this.#status !== 'awaiting')) return;
+    this.#narrator.stop();
     if (p.text.voice !== undefined) {
-      this.#audio.stopVoice?.(); this.#audio.setVoicePaused?.(this.presentationPaused);
+      this.#stopVoice(); this.#audio.setVoicePaused?.(this.presentationPaused);
+      this.#currentVoice = p.text.voice;
       if (p.text.voice && !this.#skipMode) this.#audio.playVoice(p.text.voice);
     }
     if (this.#nvl) {
       const entries = this.#queries.dialogue.nvlPresentationEntries();
       const prior = withoutReplayedCurrentNvlLine(entries, this.#current, true);
       this.#commands.dialogue.clearNvlText();
-      for (const entry of prior) this.#commands.dialogue.appendNvlText(entry.speaker, entry.text);
-      this.#commands.dialogue.appendNvlText(p.text.speaker, stripRuby(p.text.value));
+      for (const entry of prior) this.#commands.dialogue.appendNvlText(entry.speaker, entry.text, entry.markup);
+      const plain = inlinePlainText(p.text.value), markup = inlineStaticText(p.text.value);
+      this.#commands.dialogue.appendNvlText(p.text.speaker, plain, markup === escapeInlineText(plain) ? undefined : markup);
     } else {
       this.#tw.replaceText(p.text.value);
-      this.#commands.dialogue.showText(p.text.speaker, this.#tw.text);
+      this.#autoContinueLine = this.#tw.noWait;
+      this.#inlineAutoElapsed = 0;
+      this.#commands.dialogue.showText(p.text.speaker, p.text.value, this.#tw.shown);
       if (this.#status === 'typing' && this.#tw.isDone) {
         this.#status = 'awaiting'; this.#awaitSince = this.#pausedSince ?? nowMs();
       }
     }
     this.#current = { speaker: p.text.speaker, value: p.text.value };
+    this.#lineVisibleLength = inlineTextLength(p.text.value);
+    this.#narrate(p.text.value);
     if (!this.#nvl) this.#advCurrent = this.#current;
   }
 
   #onText(p: TextEventPayload): void {
+    this.#commands.world.markStageBoundary?.();
     // 遇未读即停：快进中遇到从未播放过的文本（wasRead === false）时自动退出快进，
     // 按正常打字显示给玩家。旧载荷缺 wasRead（undefined）时保持旧行为（连续推进），向后兼容。
     // 快进遇未读即停；"全部跳过"模式（skipAll）则无视已读状态一路到底
     if (this.#skipMode && !this.#skipAll && p.wasRead === false) this.#skipMode = false;
     this.#commands.world.setPortraitSkipping?.(this.#skipMode);
+    this.#commands.dialogue.setTextSkipping(this.#skipMode);
     // Backlog 语音关联：@voice 紧跟的文本行带上语音 key（回看可重播）
     const voice = p.voice !== undefined ? p.voice : this.#pendingVoice;
-    if (p.voice !== undefined || this.#pendingVoice === null) this.#audio.stopVoice?.();
+    if (p.voice !== undefined || this.#pendingVoice === null) this.#stopVoice();
+    this.#currentVoice = voice ?? null;
     this.#audio.setVoicePaused?.(this.presentationPaused);
     if (p.voice && !this.#skipMode) this.#audio.playVoice(p.voice);
-    this.#backlog?.add(p.displaySpeaker ?? p.speaker, stripRuby(p.value), voice ?? undefined);
+    const plainText = inlinePlainText(p.value), markup = inlineStaticText(p.value);
+    if (!this.#skipBacklogReplay) this.#backlog?.add(p.displaySpeaker ?? p.speaker, plainText, voice ?? undefined,
+      markup === escapeInlineText(plainText) ? undefined : markup);
+    this.#skipBacklogReplay = false;
     if (this.#backlogOpen) this.#renderBacklog();
     this.#pendingVoice = null;
     this.#current = { speaker: p.speaker, value: p.value };
+    this.#lineVisibleLength = inlineTextLength(p.value);
+    this.#autoContinueLine = false;
+    this.#narrate(p.value);
     if (this.#nvl) {
       this.#commands.world.setPortraitSpeaking?.(false);
       // NVL 模式：整行瞬时追加到全屏文本页（不走打字机），等待推进
-      this.#commands.dialogue.appendNvlText(p.speaker, stripRuby(p.value));
+      this.#commands.dialogue.appendNvlText(p.speaker, plainText, markup === escapeInlineText(plainText) ? undefined : markup);
       this.#status = 'awaiting';
       this.#awaitSince = nowMs();
       return;
     }
     this.#advCurrent = this.#current;
-    this.#beginText(p.speaker);
+    this.#inlineAutoElapsed = 0;
     if (p.value.length === 0) {
+      this.#beginText(p.speaker);
       this.#commands.world.setPortraitSpeaking?.(false);
       // 空文本行（如只有说话人前缀的“凛：”）：无可打字内容，直接进入等待推进，
       // 否则状态机永远卡在 typing（Typewriter 空文本 done=true 但不触发 onComplete），剧情无法推进。
@@ -898,16 +977,24 @@ export class PresentationController {
       this.#awaitSince = nowMs();
       return;
     }
-    this.#status = 'typing';
-    this.#commands.world.setPortraitSpeaking?.(!this.#skipMode);
+    // Preparing a tag-only line may complete synchronously; do not publish it twice.
+    this.#status = 'idle';
     this.#tw.text = p.value;
+    this.#status = this.#tw.isDone ? 'awaiting' : 'typing';
+    if (this.#tw.isDone) this.#awaitSince = nowMs();
+    this.#autoContinueLine = this.#tw.noWait;
+    this.#beginText(p.speaker, p.value, this.#tw.shown);
+    this.#commands.world.setPortraitSpeaking?.(!this.#tw.isPaused && !this.#tw.isDone && !this.#skipMode);
+    this.#syncAwaiting(this.#tw.isWaiting || this.#tw.isDone);
   }
 
   #onChoice(p: ChoiceEventPayload): void {
-    this.#audio.stopVoice?.(); this.#pendingVoice = null;
+    this.#commands.world.markStageBoundary?.();
+    this.#stopVoice(); this.#pendingVoice = null;
     // 遇选择肢自动退出快进/自动播放：玩家必须做出选择，不应被连续推进越过
     this.#skipMode = false;
     this.#skipAll = false;
+    this.#commands.dialogue.setTextSkipping(false);
     this.#status = 'choice';
     this.#commands.world.setPortraitSkipping?.(false);
     this.#commands.world.setPortraitSpeaking?.(false);
@@ -951,14 +1038,16 @@ export class PresentationController {
   /** @wait：记录截止时间，update 到点后回调 onWaitEnd（宿主连 Interpreter.finishWait）。
    *  快进中不等待：下一帧 update 立即结束（也可由玩家 advance 点击跳过）。 */
   #onWait(p: { ms: number }): void {
+    this.#commands.world.markStageBoundary?.();
     this.#waitDeadline = nowMs() + Math.max(0, p.ms);
   }
 
   /** 读档状态重置（审计修复 C1）：作废等待计时并递增会话号，
    *  残留的 video 结束/计时到点回调不再调 onWaitEnd → finishWait 状态失配抛错 */
   #onStateReset(): void {
-    this.#audio.stopVoice?.(); this.#audio.setVoicePaused?.(false);
+    this.#stopVoice(); this.#audio.setVoicePaused?.(false);
     this.#explicitPaused = false; this.#pausedSince = null;
+    this.#skipBacklogReplay = false; this.#autoContinueLine = false;
     this.#backlogOpen = false;
     this.#commands.dialogue.hideBacklog();
     this.#clearRestoreInteractiveTransients();
@@ -982,6 +1071,7 @@ export class PresentationController {
    */
   #clearRestoreInteractiveTransients(): void {
     this.#skipMode = false; this.#skipAll = false;
+    this.#commands.dialogue.setTextSkipping(false);
     this.#commands.world.setPortraitSkipping?.(false);
     this.#commands.world.setPortraitSpeaking?.(false);
     this.#interfaceHidden = false;
@@ -1041,13 +1131,17 @@ export class PresentationController {
   }
 
   #applyTimelineEvents(events: readonly import('../timeline-player.js').TimelineFrameEvent[]): void {
-    for (const event of events) {
+    // At a shared start boundary every stage mutation must precede the reveal,
+    // even when the screen track was authored before the background track.
+    const startsTransition = (event: TimelineFrameEvent) => event.started && event.track === 'screen'
+      && (event.cue.action === 'dissolve' || event.cue.action === 'rule');
+    for (const event of [...events.filter(event => !startsTransition(event)), ...events.filter(startsTransition)]) {
       if (event.track === 'audio' && this.#skipTimelineAudio && event.cue.action !== 'bgm') continue;
       if (event.track === 'audio' && typeof event.cue.key === 'string' && (event.started || (event.final && event.cue.action === 'bgm'))) {
         if (event.cue.action === 'bgm') this.#audio.playBgm(event.cue.key);
         else if (event.cue.action === 'ambience') this.#audio.playAmbience?.(event.cue.key, event.cue.durationMs);
         else if (event.cue.action === 'se') this.#audio.playSe(event.cue.key);
-        else if (event.cue.action === 'voice') this.#audio.playVoice(event.cue.key);
+        else if (event.cue.action === 'voice') { this.#narrator.stop(); this.#audio.playVoice(event.cue.key); }
       } else {
         this.#commands.world.applyTimelineFrame(event);
       }
@@ -1099,6 +1193,8 @@ export class PresentationController {
       })),
       dialogue: {
         nvlActive: this.#nvl,
+        backlog: this.#backlog?.latest(DEFAULT_BACKLOG_CAPACITY) ?? [],
+        backlogReplayCurrent: context?.replayCurrentText !== false && (this.#status === 'typing' || this.#status === 'awaiting') && (this.#backlog?.size ?? 0) > 0,
         nvlEntries: context?.replayCurrentText === false ? dialogueEntries
           : withoutReplayedCurrentNvlLine(dialogueEntries, this.#current, this.#nvl),
         ...(!this.#nvl && context?.replayCurrentText === false && this.#advCurrent
@@ -1132,7 +1228,7 @@ export class PresentationController {
     this.#commands.dialogue.setNvlMode(this.#nvl);
     this.#commands.dialogue.clearNvlText();
     for (const entry of prepared.dialogue.nvlEntries) {
-      this.#commands.dialogue.appendNvlText(entry.speaker, entry.text);
+      this.#commands.dialogue.appendNvlText(entry.speaker, entry.text, entry.markup);
     }
     if (prepared.dialogue.advText) {
       const entry = prepared.dialogue.advText;
@@ -1156,6 +1252,8 @@ export class PresentationController {
       if (timeline.blocking) this.#blockingTimelineId = timeline.id;
       this.#applyTimelineEvents(timeline.events.map(event => ({ ...event, runId: timeline.id })));
     }
+    this.#backlog?.restore(prepared.dialogue.backlog);
+    this.#skipBacklogReplay = prepared.dialogue.backlogReplayCurrent;
     this.#requestFrame();
     return { awaitingTimer: this.#blockingTimelineId !== null };
   }
@@ -1242,6 +1340,7 @@ export class PresentationController {
       }
       case 'voice': {
         if (args[0]) {
+          this.#narrator.stop();
           this.#audio.setVoicePaused?.(this.presentationPaused);
           if (!this.#skipMode) this.#audio.playVoice(args[0]);
           this.#pendingVoice = args[0]; // 下一行文本进 Backlog 时带上（语音回放）
@@ -1269,8 +1368,13 @@ export class PresentationController {
       case 'transition': {
         const name = args[0] ?? 'fade';
         const durationMs = parseTransitionDuration(args[1]);
-        if (!this.#commands.world.transition(name, durationMs)) {
-          console.warn(`[surdet] 未知转场：${name}`);
+        const rule = name === 'rule' ? parseRuleTransition(mods) : undefined;
+        if (!this.#commands.world.transition(name, durationMs, rule)) {
+          if (rule) {
+            this.#commands.world.transition('fade', durationMs);
+            const message = `转场遮罩“${rule.rule}”未加载，已使用淡入`;
+            this.#commands.dialogue.showBanner(message, 'tip'); console.warn(`[surdet] ${message}`);
+          } else console.warn(`[surdet] 未知转场：${name}`);
         }
         break;
       }
@@ -1283,7 +1387,7 @@ export class PresentationController {
         break;
       }
       case 'wipe': {
-        this.#commands.world.wipe(parseDur(args[0]));
+        this.#commands.world.wipe(args[0] === undefined ? 600 : parseDur(args[0]));
         break;
       }
       case 'mov': {
@@ -1312,6 +1416,12 @@ export class PresentationController {
         const kind = (args[0] ?? '').toLowerCase();
         if (kind === 'off') this.#commands.world.stopParticles();
         else if (kind) this.#commands.world.startParticles(kind);
+        break;
+      }
+      case 'filter': {
+        const filter = parseStoryFilter(args);
+        if (!this.#commands.world.setStoryFilter) throw new Error('当前宿主未接入作者滤镜');
+        this.#commands.world.setStoryFilter(filter.name, filter.durationMs);
         break;
       }
       case 'title':
@@ -1362,9 +1472,9 @@ export class PresentationController {
     if (c) this.#commands.dialogue.showText(c.speaker, c.value);
   }
 
-  #beginText(speaker: string | null): void {
-    if (this.#commands.dialogue.beginText) this.#commands.dialogue.beginText(speaker);
-    else this.#commands.dialogue.showText(speaker, '');
+  #beginText(speaker: string | null, value = '', visibleUnits?: number): void {
+    if (this.#commands.dialogue.beginText) this.#commands.dialogue.beginText(speaker, value, visibleUnits);
+    else this.#commands.dialogue.showText(speaker, value, visibleUnits);
   }
 
   #clearText(): void {

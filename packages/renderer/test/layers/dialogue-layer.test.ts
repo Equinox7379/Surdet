@@ -158,11 +158,83 @@ function boundsOverlap(
 }
 
 describe('DialogueLayer visual layout contracts', () => {
+  it('animates only live effect glyphs and freezes them for reduced motion/skip, while history and NVL retain static styles', () => {
+    const runtime = makeRuntime(), texts = (node: Container): PText[] => [...(node instanceof PText ? [node] : []), ...node.children.flatMap(texts)];
+    try {
+      runtime.layer.mountTextDisplays(); runtime.layer.showText(null, '<wave>甲乙</wave><em>丙</em>');
+      const first = texts(runtime.root).find(text => text.visible && text.text === '甲')!;
+      const origin = first.y; runtime.layer.update(100); expect(first.y).not.toBe(origin); expect(runtime.layer.needsUpdate()).toBe(true);
+      expect(texts(runtime.root).some(text => text.visible && text.text === '·')).toBe(true);
+      runtime.layer.setPresentationPreferences({ reducedMotion: true }); expect(first.y).toBe(origin); runtime.layer.update(200); expect(first.y).toBe(origin);
+      runtime.layer.setPresentationPreferences({ reducedMotion: false }); runtime.layer.setTextSkipping(true); runtime.layer.update(200); expect(first.y).toBe(origin);
+      const markup = '<color=#ff0000><ruby=うみ>海</ruby></color>';
+      runtime.layer.setNvlMode(true); runtime.layer.appendNvlText(null, '海', markup);
+      expect(runtime.layer.nvlPresentationEntries).toEqual([{ speaker: null, text: '海', markup }]);
+      expect(texts(runtime.root).some(text => text.visible && text.text === 'うみ')).toBe(true);
+      runtime.layer.showBacklog([{ speaker: '旁白', text: '海', markup }]);
+      expect(texts(backlogRoot(runtime.root)).some(text => text.text === '海' && text.style.fill === '#ff0000')).toBe(true);
+    } finally { disposeRuntime(runtime); }
+  });
+  it('scales dialogue/ruby and choices relative to the work theme without compounding or changing UI text size', () => {
+    const runtime = makeRuntime(), texts = (node: Container): PText[] => [...(node instanceof PText ? [node] : []), ...node.children.flatMap(texts)];
+    try {
+      runtime.layer.mountTextDisplays(); runtime.layer.setTheme(createRendererTheme({ typography: { bodySize: 30 } }));
+      runtime.layer.showText('名字', '<size=2>正文</size><ruby=よみ>字</ruby>');
+      runtime.layer.showChoices([{ index: 0, label: '<b>选项</b>' }]);
+      runtime.layer.setReadingPreferences({ textScale: 1.4, dialogueOpacity: 0 });
+      const visible = texts(runtime.root).filter(text => text.visible);
+      expect(visible.find(text => text.text === '正文')?.style.fontSize).toBe(84);
+      expect(visible.find(text => text.text === '选项')?.style.fontSize).toBe(42);
+      expect(visible.find(text => text.text === '名字')?.style.fontSize).toBe(DEFAULT_RENDERER_THEME.typography.uiSize);
+      runtime.layer.setReadingPreferences({ textScale: 1.4 });
+      expect(texts(runtime.root).find(text => text.visible && text.text === '正文')?.style.fontSize).toBe(84);
+      runtime.layer.setReadingPreferences({ textScale: 1 });
+      expect(texts(runtime.root).find(text => text.visible && text.text === '正文')?.style.fontSize).toBe(60);
+    } finally { disposeRuntime(runtime); }
+  });
+  it('reduced motion makes choices/tips immediately visible and freezes the continue indicator', () => {
+    const runtime = makeRuntime();
+    try {
+      runtime.layer.setPresentationPreferences({ reducedMotion: true });
+      runtime.layer.showChoices([{ index: 0, label: '继续' }]);
+      expect(runtime.layer.debugSnapshot().visibleChoiceCount).toBe(1);
+      runtime.layer.setAwaiting(true); runtime.layer.hideChoices();
+      expect(runtime.layer.needsUpdate()).toBe(false);
+      runtime.layer.showBanner('提示', 'tip');
+      const texts = (node: Container): PText[] => [...(node instanceof PText ? [node] : []), ...node.children.flatMap(texts)];
+      const tip = texts(runtime.root).find(text => text.text === '提示')!;
+      expect(tip.parent!.alpha).toBe(1); runtime.layer.update(1500); expect(tip.parent!.alpha).toBe(1);
+    } finally { disposeRuntime(runtime); }
+  });
+  it('renders style runs and explicit ruby, keeps reveal positions fixed, and exposes plain dialogue/choice labels', () => {
+    const runtime = makeRuntime();
+    const texts = (node: Container): PText[] => [...(node instanceof PText ? [node] : []), ...node.children.flatMap(texts)];
+    try {
+      runtime.layer.mountTextDisplays();
+      const source = '甲<color=#ff0000><size=2>乙丙</size></color><ruby=うみ>海</ruby>《书》';
+      runtime.layer.showText(null, source, 2);
+      const styled = texts(runtime.root).find(text => text.visible && text.text === '乙')!;
+      expect(styled.style.fontSize).toBe(56); expect(styled.style.fill).toBe('#ff0000');
+      const position = { x: styled.x, y: styled.y };
+      expect(runtime.layer.debugSnapshot().dialogText).toBe('甲乙');
+      runtime.layer.showText(null, source);
+      const complete = texts(runtime.root).find(text => text.visible && text.text === '乙丙')!;
+      expect({ x: complete.x, y: complete.y }).toEqual(position);
+      expect(runtime.layer.debugSnapshot().dialogText).toBe('甲乙丙海《书》');
+      expect(runtime.layer.debugSnapshot().rubyTextCount).toBe(1);
+      runtime.layer.showChoices([{ index: 4, label: '<b><size=2>选择</size></b>' }]);
+      expect(runtime.layer.debugSnapshot().choiceLabels).toEqual(['选择']);
+      const choiceText = texts(runtime.root).find(text => text.visible && text.text === '选择')!;
+      expect(choiceText.style.fontWeight).toBe('700'); expect(choiceText.style.fontSize).toBe(56);
+      runtime.layer.reset(); expect(runtime.layer.debugSnapshot().dialogText).toBe('');
+    } finally { disposeRuntime(runtime); }
+  });
+
   it('reports unreadable overflow separately from scrollable long text, and suppresses native issues under work UI', () => {
     const runtime = makeRuntime();
     try {
       runtime.layer.mountTextDisplays(); runtime.layer.beginText('凛');
-      runtime.layer.showText('凛', '海'.repeat(200) + '《うみ》');
+      runtime.layer.showText('凛', '<ruby=うみ>' + '海'.repeat(200) + '</ruby>');
       expect(runtime.layer.readingDiagnostics()).toContainEqual(expect.objectContaining({ code: 'TEXT_OVERFLOW', target: 'dialogue' }));
       runtime.layer.showText('凛', '海'.repeat(1500));
       expect(runtime.layer.readingDiagnostics()).toContainEqual(expect.objectContaining({ code: 'TEXT_SCROLL', target: 'dialogue', severity: 'info' }));
@@ -175,7 +247,7 @@ describe('DialogueLayer visual layout contracts', () => {
     const runtime = makeRuntime();
     try {
       runtime.layer.mountTextDisplays();
-      runtime.layer.showText('凛', '海《うみ》の向こう。');
+      runtime.layer.showText('凛', '<ruby=うみ>海</ruby>の向こう。');
       const texts = (node: Container): PText[] => [...(node instanceof PText ? [node] : []), ...node.children.flatMap(texts)];
       const ruby = texts(runtime.root).find(text => text.text === 'うみ')!;
       const mask = ruby.parent!.mask as Graphics;

@@ -65,6 +65,31 @@ async function insertJump(session: AgentPortSession, operationId: string, sceneI
 }
 
 describe('Wave 8 candidate readiness through Agent Port', () => {
+  it('seals rule asset dependencies and rejects missing masks without persisting candidate changes', async () => {
+    const { root } = fixture(); const mask = path.join(root, 'content/assets/rule/遮罩 @左.png');
+    fs.mkdirSync(path.dirname(mask), { recursive: true }); fs.writeFileSync(mask, 'metadata fixture, real decode tested by Player');
+    const original = fs.readFileSync(path.join(root, 'content/scenario/start.gal'), 'utf8');
+    const session = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
+    try {
+      const catalog = result<ProjectAssetCatalog>(await session.invoke('project.assets', { view: 'project' }));
+      expect(catalog.rules).toContainEqual(expect.objectContaining({ key: '遮罩 @左', resolved: true }));
+      expect((await standardSchemaFromJson(getCapabilityDefinition('project.assets').outputSchema)['~standard'].validate(catalog)).issues).toBeUndefined();
+      result(await session.invoke('change.begin', { compositionMode: 'candidate' }));
+      const before = (await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record;
+      expect(await session.invoke('scene.create', { operationId: 'absent-rule', sceneId: 'bad', blocks: [
+        { kind: 'instruction', name: 'transition', args: ['rule', '800'], modifiers: { rule: 'absent' } },
+      ] })).toMatchObject({ ok: false, error: { code: 'CANDIDATE_DEPENDENCY_NOT_READY' } });
+      expect((await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record).toEqual(before);
+      result(await session.invoke('scene.create', { operationId: 'valid-rule', sceneId: 'rule_scene', blocks: [
+        catalog.intelligence.items.find(item => item.kind === 'rule')!.usage!.scene,
+      ] }));
+      const capsule = await generateDeliveryCapsule(session);
+      const operation = (capsule.composition.manifest as CompositionManifest).operations.find(item => item.primaryObject === 'scene:rule_scene')!;
+      expect(operation.requiredObjects).toContainEqual({ objectRef: 'asset:rule:遮罩 @左', source: 'base' });
+      expect(capsule.composition.eligibility).toBe('ready');
+      expect(fs.readFileSync(path.join(root, 'content/scenario/start.gal'), 'utf8')).toBe(original);
+    } finally { await session.close(); }
+  });
   it('binds and imports translations through public tools, guards pagination and commits only the reviewed catalog', async () => {
     const { root } = fixture(), configPath = path.join(root, 'game.config.json');
     const original = fs.readFileSync(configPath, 'utf8');
@@ -497,8 +522,12 @@ describe('Wave 8 candidate readiness through Agent Port', () => {
     await session.close();
   });
 
-  it('validates strict mode/status and nested readiness fields under contract 2.26', async () => {
-    expect(AUTHORING_CONTRACT_VERSION).toBe('2.30.0');
+  it('validates strict mode/status and nested readiness fields under the published authoring contract', async () => {
+    const { root } = fixture();
+    const session = await openAgentPortSession({ projectRoot: root, policy: 'stage' });
+    try {
+      expect((await session.describe()).contractVersion).toBe(AUTHORING_CONTRACT_VERSION);
+    } finally { await session.close(); }
     const schema = standardSchemaFromJson(CANDIDATE_COMPOSITION_READINESS_SCHEMA);
     const readiness = { mode: 'candidate', status: 'ready', operationFactsVersion: '1.0.0', operationCount: 0, issueCount: 0, issues: [], truncated: false };
     expect((await schema['~standard'].validate(readiness)).issues).toBeUndefined();

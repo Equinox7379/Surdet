@@ -3,6 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { buildMatcher, searchScenes, replaceInSceneText, previewSceneReplacement } from '../src/search.js';
+import { compileScene } from '@surdet/core';
 import type { SceneText } from '../src/search.js';
 
 const scenes: SceneText[] = [
@@ -101,5 +102,70 @@ describe('replaceInSceneText', () => {
   it('无匹配 count=0；非法正则返回 null', () => {
     expect(replaceInSceneText('abc', 'xyz', 'q', false)!.count).toBe(0);
     expect(replaceInSceneText('abc', '[bad', 'q', true)).toBeNull();
+  });
+});
+
+describe('带行内标签的查找替换', () => {
+  const text = '@scene s\n凛：<color=accent>危</color>险，真的危险。\n  <b>危险</b>的路 -> @goto a\n@label a';
+  it('台词按玩家看到的文字查找，跨样式标签也能找到', () => {
+    const [result] = searchScenes([{ key: 's', id: 's', text }], '色险', false).concat(searchScenes([{ key: 's', id: 's', text }], '危险，', false));
+    expect(result).toEqual({ sceneKey: 's', sceneId: 's', line: 1, text: '凛：<color=accent>危</color>险，真的危险。', visible: { text: '危险，真的危险。', start: 0, end: 3 } });
+  });
+  it('替换只写回不跨标签的位置，其余计入跳过且不改动', () => {
+    const preview = previewSceneReplacement(text, '危险', '安全', false)!;
+    expect(preview.changes).toEqual([
+      { line: 1, before: '凛：<color=accent>危</color>险，真的危险。', after: '凛：<color=accent>危</color>险，真的安全。', count: 1 },
+      { line: 2, before: '  <b>危险</b>的路 -> @goto a', after: '  <b>安全</b>的路 -> @goto a', count: 1 },
+    ]);
+    // The match crossing </color> is left alone; text inside a span is replaced without touching its tags.
+    expect(preview.skipped).toBe(1);
+  });
+  it('不替换标签取值', () => {
+    expect(previewSceneReplacement(text, 'accent', 'danger', false)!.changes).toEqual([]);
+  });
+  it('普通台词仍按整行匹配，写进台词的标签文字被转义', () => {
+    const preview = previewSceneReplacement('凛：你好', '你好', '<b>好', false)!;
+    expect(preview.text).toBe('凛：\\<b>好');
+    expect(previewSceneReplacement('凛：你好', '凛', '<b>林', false)!.text).toBe('<b>林：你好');
+  });
+});
+
+describe('选项文字按 Core 读出的选项文本查找替换（16-REV-01/02）', () => {
+  const scene = (body: string) => `@scene s\n凛：<b>夜</b>\n@choice\n${body}\n@label a\n@end`;
+  const compiles = (text: string) => compileScene(text, 's.gal', 's');
+  it('替换文字里的标签写成普通文字，对白与选项一致', () => {
+    const text = scene('  <b>夜</b>来了 -> @goto a\n  夜里 -> @goto a');
+    const preview = previewSceneReplacement(text, '夜', '<i>晚</i>', false)!;
+    expect(preview.changes.map(change => change.after)).toEqual(['凛：<b>\\<i>晚\\</i></b>', '  <b>\\<i>晚\\</i></b>来了 -> @goto a', '  \\<i>晚\\</i>里 -> @goto a']);
+    expect(() => compiles(preview.text)).not.toThrow();
+  });
+  it('注音组整组跳过并计数，不制造编译错误', () => {
+    const text = scene('  <ruby=よる>夜</ruby>深 -> @goto a');
+    for (const replacement of ['<i>晚</i>', '早晨']) {
+      const preview = previewSceneReplacement(text, '夜', replacement, false)!;
+      expect(preview.changes.map(change => change.line)).toEqual([1]);
+      expect(preview.skipped).toBe(1);
+      expect(() => compiles(preview.text)).not.toThrow();
+    }
+  });
+  it('含反斜杠的替换在选项文字里转义', () => {
+    const preview = previewSceneReplacement(scene('  <b>夜</b> -> @goto a'), '夜', 'a\\b', false)!;
+    expect(preview.changes[1]!.after).toBe('  <b>a\\\\b</b> -> @goto a');
+  });
+  it('条件与箭头后的指令按原文替换，不当作选项文字', () => {
+    const text = '@scene s\n@choice\n  <b>危</b>险 [if:danger] -> @goto done\n@label done\n@end';
+    expect(previewSceneReplacement(text, 'done', 'end', false)!.changes).toEqual([
+      { line: 2, before: '  <b>危</b>险 [if:danger] -> @goto done', after: '  <b>危</b>险 [if:danger] -> @goto end', count: 1 },
+      { line: 3, before: '@label done', after: '@label end', count: 1 },
+    ]);
+    expect(previewSceneReplacement(text, 'danger', '<i>x</i>', false)!.changes[0]!.after).toBe('  <b>危</b>险 [if:<i>x</i>] -> @goto done');
+  });
+  it('跨标签找到选项文字，并保留原稿行定位；箭头后的内容不算显示文字', () => {
+    const text = '@scene s\n@choice\n  <b>危</b>险 -> @goto done\n@label done\n@end';
+    expect(searchScenes([{ key: 's', id: 's', text }], '危险', false)).toEqual([
+      { sceneKey: 's', sceneId: 's', line: 2, text: '  <b>危</b>险 -> @goto done', visible: { text: '危险', start: 0, end: 2 } },
+    ]);
+    expect(searchScenes([{ key: 's', id: 's', text }], '危险 ->', false)).toEqual([]);
+    expect(searchScenes([{ key: 's', id: 's', text }], 'goto done', false).map(result => result.line)).toEqual([2]);
   });
 });

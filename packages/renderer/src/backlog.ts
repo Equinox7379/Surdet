@@ -1,3 +1,4 @@
+import { inlinePlainText, inlineStaticText } from '@surdet/core';
 /**
  * Backlog（文字记录）：已播放文本的环形缓冲，供历史回看界面展示。
  * 由 AdvRenderer 在收到 text 事件时记录（可选注入）；宿主可另记选项/分支。
@@ -6,10 +7,12 @@
 
 /** 一条历史记录 */
 export interface BacklogEntry {
-  speaker: string | null;
-  text: string;
+  readonly speaker: string | null;
+  readonly text: string;
   /** 该行伴随的语音 key（@voice 紧跟的文本行；回看点击可重播） */
-  voice?: string;
+  readonly voice?: string;
+  /** Static inline source, when display formatting differs from plain text. */
+  readonly markup?: string;
 }
 
 /** 默认容量：ADV 常规体量下足够回看，内存占用可忽略 */
@@ -24,8 +27,8 @@ export class Backlog {
   }
 
   /** 追加一条记录（超容量淘汰最旧） */
-  add(speaker: string | null, text: string, voice?: string): void {
-    this.#entries.push({ speaker, text, ...(voice !== undefined ? { voice } : {}) });
+  add(speaker: string | null, text: string, voice?: string, markup?: string): void {
+    this.#entries.push(Object.freeze({ speaker, text, ...(voice !== undefined ? { voice } : {}), ...(markup === undefined ? {} : { markup }) }));
     if (this.#entries.length > this.#capacity) this.#entries.shift();
   }
 
@@ -46,4 +49,17 @@ export class Backlog {
   clear(): void {
     this.#entries = [];
   }
+  restore(entries: readonly BacklogEntry[]): void { this.#entries = entries.slice(-this.#capacity).map(entry => Object.freeze({ ...entry })); }
+}
+
+/** Read-only save preflight. Omitted history means there was no recorded history in this snapshot. */
+export function prepareBacklog(value: unknown): readonly BacklogEntry[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > DEFAULT_BACKLOG_CAPACITY) throw new Error('文字记录必须是最多200条的数组');
+  return value.map(entry => {
+    if (!entry || typeof entry !== 'object' || (entry.speaker !== null && typeof entry.speaker !== 'string') || typeof entry.text !== 'string'
+      || entry.voice !== undefined && typeof entry.voice !== 'string' || entry.markup !== undefined && typeof entry.markup !== 'string'
+      || entry.markup !== undefined && (inlinePlainText(entry.markup) !== entry.text || inlineStaticText(entry.markup) !== entry.markup)) throw new Error('文字记录条目或标记正文不合法');
+    return Object.freeze({ speaker: entry.speaker, text: entry.text, ...(entry.voice === undefined ? {} : { voice: entry.voice }), ...(entry.markup === undefined ? {} : { markup: entry.markup }) });
+  });
 }

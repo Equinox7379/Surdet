@@ -1,5 +1,6 @@
 import type { ProjectSnapshot } from './project-snapshot.js';
 import type { RuntimeTraceEvent } from './runtime-trace.js';
+import { readProjectPlugins } from '@surdet/core';
 
 export interface StoryLocation {
   sceneId: string; file: string; index: number; line: number; col: number; sourceVersion: string;
@@ -16,7 +17,7 @@ export interface StoryCoverage {
   scenes: { sceneId: string; file: string; sourceVersion: string; visited: boolean; executedInstructions: number; totalInstructions: number }[];
   branches: StoryBranch[];
   conditions: StoryCondition[];
-  stops: { kind: 'runtime-error' | 'path-budget' | 'step-budget'; location: StoryLocation | null; message: string }[];
+  stops: { kind: 'runtime-error' | 'path-budget' | 'step-budget' | 'requires-extension'; location: StoryLocation | null; message: string }[];
   hostInstructions: StoryLocation[];
 }
 
@@ -29,6 +30,7 @@ export function createStoryCoverage(snapshot: ProjectSnapshot) {
   const stops: StoryCoverage['stops'] = [];
   const hostInstructions = new Map<string, StoryLocation>();
   const custom = Array.isArray(snapshot.config.customInstructions) ? snapshot.config.customInstructions.filter((value): value is string => typeof value === 'string') : [];
+  custom.push(...readProjectPlugins({ plugins: snapshot.config.plugins }).flatMap(plugin => plugin.instructions.map(i => i.name)));
   let current: StoryLocation | null = null;
   const key = (sceneId: string, index: number, optionIndex?: number) => `${sceneId}\0${index}\0${optionIndex ?? ''}`;
   const locate = (sceneId: string, index: number): StoryLocation | null => {

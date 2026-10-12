@@ -1,9 +1,11 @@
+import { filterSummary, transitionSummary } from './presentation-effects.js';
+
 /** Display names only. Script tokens and tool-facing identifiers are unchanged. */
 const INSTRUCTION_NAMES: Record<string, string> = {
   scene: '场景', label: '段落标记', bg: '背景', show: '人物出场', hide: '人物退场',
   bgm: '背景音乐', ambience: '环境音', se: '音效', voice: '语音', video: '视频',
   wait: '等待', fadein: '淡入', fadeout: '淡出', flash: '闪白', shake: '画面震动',
-  wipe: '擦除转场', zoom: '镜头缩放', transition: '转场', mov: '人物移动', tint: '画面染色',
+  wipe: '擦除转场', zoom: '镜头缩放', transition: '转场', filter: '画面滤镜', mov: '人物移动', tint: '画面染色',
   particle: '粒子特效', title: '标题提示', chapter: '章节提示', center: '居中文字',
   tip: '提示', note: '注记', nvl: '全屏阅读', timeline: '演出', stage: '舞台',
   set: '变量赋值', mod: '变量增量', inc: '变量加一', dec: '变量减一',
@@ -24,6 +26,8 @@ export const PARTICLE_NAMES: Readonly<Record<string, string>> = {
 };
 
 export function instructionArgumentSummary(name: string, args: string[]): string {
+  if (name === 'transition') return transitionSummary(args);
+  if (name === 'filter') return filterSummary(args);
   const values = [...args];
   if (name === 'particle' && values[0]) values[0] = values[0] === 'off' ? '关闭特效' : PARTICLE_NAMES[values[0]] ?? values[0];
   if (name === 'nvl' && values[0]) values[0] = ({ on: '开启', off: '关闭', clear: '清空本页' } as Record<string, string>)[values[0]] ?? values[0];

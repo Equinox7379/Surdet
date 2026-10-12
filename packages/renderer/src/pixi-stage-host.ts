@@ -2,6 +2,7 @@ import { createStageGeometryPolicy } from './stage-geometry.js';
 import {
   Application,
   Container,
+  Rectangle,
   Text as PText,
   TextStyle,
   type TextStyleOptions,
@@ -130,6 +131,7 @@ export class RendererStageHost {
   }
 
   #uiLayer: Container;
+  readonly #worldRoot = new Container();
   readonly #assetRegistry: RenderAssetRegistry;
   readonly #dialogue: DialogueLayer;
   /** M5 extracted gallery projection; all gallery state lives here. */
@@ -166,6 +168,9 @@ export class RendererStageHost {
       createBackgroundTexture: (key, width, height) => makeWorldBackgroundTexture(key, width, height),
       requestFrame: () => this.#requestFrame(),
       captureThumbnail: () => this.captureThumbnail(),
+      captureWorld: () => this.app && !this.#world.getPresentationPreferences().reducedMotion
+        ? this.app.renderer.generateTexture({ target: this.#worldRoot, frame: new Rectangle(0, 0, this.#w, this.#h), resolution: 1, clearColor: 0x000000 })
+        : null,
     });
     this.#dialogue = new DialogueLayer({
       uiLayer: this.#uiLayer,
@@ -249,7 +254,8 @@ export class RendererStageHost {
     // 鼠标移动/点击唤出操作带；监听器由 DialogueLayer 以 owner=dialogue 注册。
     this.#dialogue.attachPointerTarget(app.canvas);
 
-    app.stage.addChild(this.#world.worldContainer, this.#world.particleContainer, this.#world.screenContainer, this.#uiLayer);
+    this.#worldRoot.addChild(this.#world.worldContainer, this.#world.particleContainer, this.#world.screenContainer);
+    app.stage.addChild(this.#worldRoot, this.#uiLayer);
     this.#dialogue.bringTextDisplaysToFront();
     // flash 置最末：闪光覆盖全部 UI；黑场 fade 也保留在 HUD 之上用于整屏转场。
     // tint 位于 screenLayer，在世界与 HUD 之间，不应吞掉对白、选择肢或操作带。
@@ -292,6 +298,10 @@ export class RendererStageHost {
   setPresentationPreferences(preferences: Partial<PresentationPreferences>): void {
     this.#world.setPresentationPreferences(preferences);
     this.#dialogue.setPresentationPreferences(this.#world.getPresentationPreferences());
+  }
+
+  setReadingPreferences(preferences: Partial<import('./presentation.js').ReadingPreferences>): void {
+    this.#dialogue.setReadingPreferences(preferences);
   }
 
   getPresentationPreferences(): PresentationPreferences {
@@ -342,6 +352,7 @@ export class RendererStageHost {
     await this.#world.refreshBackgroundAsset(key);
     this.#requestFrame();
   }
+  async registerRule(key: string, src: RenderAssetSource, format?: string): Promise<void> { await this.#assetRegistry.registerRule(key, src, format); this.#requestFrame(); }
 
   /** 当前某个字体角色实际使用的字体族，供宿主诊断与测试使用。 */
   getFontFamily(role: FontRole): string {
@@ -441,12 +452,12 @@ export class RendererStageHost {
     this.#world.removePortrait(key);
   }
 
-  showText(speaker: string | null, value: string): void {
-    this.#dialogue.showText(speaker, value);
+  showText(speaker: string | null, value: string, visibleUnits?: number): void {
+    this.#dialogue.showText(speaker, value, visibleUnits);
   }
 
-  beginText(speaker: string | null): void {
-    this.#dialogue.beginText(speaker);
+  beginText(speaker: string | null, value?: string, visibleUnits?: number): void {
+    this.#dialogue.beginText(speaker, value, visibleUnits);
   }
 
   clearText(): void {
@@ -566,8 +577,13 @@ export class RendererStageHost {
   }
 
   /** 注册表驱动的场景转场；未知名称返回 false，交由宿主/校验层报告。 */
-  transition(name: TransitionName | string, durMs = 600): boolean {
-    return this.#world.transition(name, durMs);
+  markStageBoundary(): void { this.#world.markStageBoundary(); }
+  setStoryFilter(name: import('@surdet/core').StoryFilterName, durationMs = 0): void { this.#world.setStoryFilter(name, durationMs); }
+  registerTransition(transition: import('./transition-registry.js').StageTransition): () => void { return this.#world.registerTransition!(transition); }
+  registerFilter(id: string, filter: import('pixi.js').Filter): () => void { return this.#world.registerFilter!(id, filter); }
+  setFilterActive(id: string, active: boolean): void { this.#world.setFilterActive!(id, active); }
+  transition(name: TransitionName | string, durMs = 600, options?: import('@surdet/core').RuleTransitionOptions): boolean {
+    return this.#world.transition(name, durMs, options);
   }
 
   /** 白闪：全屏白色叠加 alpha 从 1 线性衰减到 0 */
@@ -643,14 +659,15 @@ export class RendererStageHost {
   }
 
   /** NVL 页条目列表（只读引用；测试断言与宿主持久化巡检用） */
-  get nvlLines(): readonly PText[] {
+  get nvlLines(): DialogueLayer['nvlLines'] {
     return this.#dialogue.nvlLines;
   }
 
   /** NVL 页追加一条（wrapCjk 预断行；按折行数累计排布；超出屏幕底边淘汰最旧） */
-  appendNvlText(speaker: string | null, text: string): void {
-    this.#dialogue.appendNvlText(speaker, text);
+  appendNvlText(speaker: string | null, text: string, markup?: string): void {
+    this.#dialogue.appendNvlText(speaker, text, markup);
   }
+  setTextSkipping(skipping: boolean): void { this.#dialogue.setTextSkipping(skipping); }
 
   /** NVL 页清空（@nvl clear） */
   clearNvlText(): void {

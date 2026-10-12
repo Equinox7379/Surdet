@@ -4,6 +4,14 @@
 
 ## 创作与开发
 
+行内文字、文字记录后端及Claude前端接入：[行内文字合同](inline-text-contract.md)。
+阅读辅助后端及Claude设置页接入：[阅读辅助合同](reading-accessibility-contract.md)。
+从源行试玩后端及Claude工作台接入：[目标路径合同](preview-target-path-contract.md)。
+流程图结构化操作后端及Claude连线接入：[流程编辑合同](flow-operations-contract.md)。
+旧画面溶解后端及Claude转场表单接入：[演出合同](presentation-effects-contract.md)。
+项目插件后端及Claude信任/预览接入：[项目插件合同](project-plugins-contract.md)。
+Windows免安装导出后端及Claude导出界面接入：[Windows导出合同](windows-game-export-contract.md)。
+
 | 需要做什么 | 阅读入口 |
 | --- | --- |
 | 安装、启动、创建或试玩项目 | [仓库 README](../README.md)、[Starter 指南](../examples/starter/README.md) |
@@ -22,7 +30,7 @@
 
 - [长期路线与决策台账](superpowers/plans/2026-08-13-project-roadmap-and-decision-ledger.md)：当前状态、长期决策、授权边界和下一阶段方向。
 - [完整创作引擎总规划](superpowers/plans/2026-09-25-complete-creation-engine-roadmap.md)：完整 Gal 制作终态、LetsGal 对照取舍、能力覆盖、阶段依赖、验收和压缩后续接入口；规划审核与施工状态在文内维护。
-- [引擎成熟化功能规划（草案）](superpowers/plans/2026-10-10-engine-maturity-feature-plan.md)：Owner 2026-10-10 选定的行内文字标签等九项功能的现状、方案、分工与待决问题；已按复审修订，仍是待实施授权的草案。
+- [引擎成熟化功能规划](superpowers/plans/2026-10-10-engine-maturity-feature-plan.md)：九项功能的现状、方案、分工与待决问题；Owner已授权不等前端继续可独立推进的后端，分阶段状态以原台账为准。
 - [历史资料索引](archive/README.md)：已结束的默认创作路径、9 月维护、旧阶段任务书、设计稿和完整施工流水，沿固定 Git 版本查阅，不在本地重复堆积。
 
 ## 必须保留的技术资料

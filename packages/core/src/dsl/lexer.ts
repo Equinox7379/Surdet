@@ -6,6 +6,7 @@ import type {
   TextToken,
 } from './token.js';
 import { SourceError, type SourcePos, type SourceRange } from './token.js';
+import { containsInlineTag } from '../inline-text.js';
 
 /** 由 lexer 抛出的语法错误（带行列定位） */
 export class LexError extends SourceError {
@@ -219,6 +220,7 @@ export function extractSpeaker(trimmed: string): string | null {
     && /^[A-Za-z][A-Za-z0-9+.-]*$/.test(trimmed.slice(0, idx))
   ) return null;
   const prefix = trimmed.slice(0, idx);
+  if (containsInlineTag(prefix)) return null;
   if (prefix.length > MAX_SPEAKER_LEN) return null;
   if (/\s/.test(prefix)) return null;
   if (/^\d+$/.test(prefix)) return null;

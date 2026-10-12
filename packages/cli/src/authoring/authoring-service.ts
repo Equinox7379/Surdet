@@ -1,4 +1,4 @@
-import { stagePinnedSourcePaths } from '@surdet/core';
+import { stagePinnedSourcePaths, INLINE_TEXT_TAGS } from '@surdet/core';
 import { inspectTextCatalog, exportTextCatalogCsv, exportVoiceCatalogCsv, previewTextCatalogImport, applyTextCatalogPatch, type TextCatalogPatchInput } from '@surdet/authoring';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
@@ -82,6 +82,8 @@ import {
   rollbackChange,
   runExplicitPath,
   simulateSnapshot,
+  findPreviewPath,
+  type PreviewPathOptions,
   inspectTransactionRecovery,
   timelineFingerprint,
   validateSnapshot,
@@ -145,6 +147,7 @@ export interface ServiceResult<T> extends ServiceMetadata {
 type SimulationInput = { sceneId?: string; seed?: number; maxPaths?: number; maxStepsPerPath?: number };
 
 function incompleteSimulation(input: SimulationInput | undefined, report: ReturnType<typeof simulateSnapshot>): AuthoringOperationError {
+  if (report.coverage.stops.some(stop => stop.kind === 'requires-extension')) return new AuthoringOperationError('SIMULATION_INCOMPLETE', '需要扩展，未运行；无头检查不执行项目代码，请明确启用后进行真实试玩。', { report });
   const maxPaths = input?.maxPaths ?? 500;
   const maxStepsPerPath = input?.maxStepsPerPath ?? 20_000;
   return new AuthoringOperationError('SIMULATION_INCOMPLETE', '项目模拟达到预算上限；调整有界预算或缩小场景/路径后重试', {
@@ -168,7 +171,7 @@ function hashText(text: string): string {
 function validateCurrentScenePatchReferences(snapshot: ProjectSnapshot, input: ScenePatchInput): void {
   const patch = input.patch;
   const index = buildObjectIndex(snapshot);
-  const ref = patch.kind === 'insertAfter' ? patch.anchor : patch.target;
+  const ref = patch.kind === 'insertAfter' || patch.kind === 'insertBefore' ? patch.anchor : patch.target;
   const target = index.byRef.get(ref);
   const sceneId = input.sceneId ?? (ref.startsWith('label:') ? /^label:([^.]+)\./.exec(ref)?.[1] : /^scene:([^/]+)\//.exec(ref)?.[1]);
   const scenes = snapshot.scenes.filter(scene => scene.id === sceneId);
@@ -587,6 +590,7 @@ export class AuthoringService {
 
   async describeCapabilities(options: { ids?: readonly string[]; detail?: 'summary' | 'full' } = {}): Promise<ServiceResult<{
     contractVersion: typeof AUTHORING_CONTRACT_VERSION;
+    inlineText: { tags: typeof INLINE_TEXT_TAGS; ruby: 'explicit-only'; escape: string };
     capabilities: Array<Pick<(typeof AUTHORING_CAPABILITY_REGISTRY)[number], 'id' | 'title' | 'purpose' | 'minimumPolicy' | 'composable' | 'sideEffects' | 'idempotency'> & { mcpTool: string }>;
   }>> {
     const unknownIds = options.ids?.filter((id) => !AUTHORING_CAPABILITY_REGISTRY.some((definition) => definition.id === id)) ?? [];
@@ -597,6 +601,7 @@ export class AuthoringService {
       projectRevision: 'unbound',
       result: {
         contractVersion: AUTHORING_CONTRACT_VERSION,
+        inlineText: { tags: INLINE_TEXT_TAGS, ruby: 'explicit-only', escape: '\\< for literal <; \\\\ for literal \\' },
         capabilities: definitions.map((definition) => {
           const { id, title, purpose, minimumPolicy, composable, sideEffects, idempotency } = definition;
           return {
@@ -762,6 +767,15 @@ export class AuthoringService {
       projectRevision: snapshot.revision,
       result: { view: 'project', ok: validation.ok, issues: validation.issues },
     };
+  }
+
+  async previewPath(projectRoot: string, input: PreviewPathOptions, changeId?: string): Promise<ServiceResult<ReturnType<typeof findPreviewPath> & { view: 'project' | 'working' }>> {
+    const { snapshot, metadata, view } = await this.readProjectView(projectRoot, changeId);
+    try { return { ...metadata, result: { ...findPreviewPath(snapshot, input), view } }; }
+    catch (error) {
+      if (error instanceof AuthoringOperationError) throw error;
+      throw new AuthoringOperationError('PROJECT_INVALID', error instanceof Error ? error.message : String(error));
+    }
   }
 
   async simulateProject(projectRoot: string, input?: SimulationInput): Promise<ServiceResult<{

@@ -73,13 +73,15 @@
 | `@title/@chapter/@center` | `@chapter 第一章 坠落` | ✅ | 居中大字横幅（参数连成文本，约 2.2 秒淡出） |
 | `@tip/@note` | `@tip 提示：右键打开菜单` | ✅ | 右上角小字提示横幅（约 1.8 秒淡出） |
 | `@nvl` | `@nvl` / `@nvl off` / `@nvl clear` | ✅ | NVL 全屏小说模式：开启后文本整行追加到全屏文本页（不走打字机）；`off` 回到 ADV 对话框；`clear` 清空页面 |
-| ruby 注音（文本标记） | `凛：这个世界《せかい》…` | ✅ | 非指令而是**台词内标记**：`基础字《注音》` 渲染为主字 + 上方小字（振假名）；未配对《按字面显示 |
+| ruby 注音（文本标记） | `凛：这个<ruby=せかい>世界</ruby>…` | ✅ | 只识别显式标签；裸《》为普通书名号，不兼容旧隐式注音。主文字不嵌套标签、不跨行 |
+| 行内样式与节奏 | `<em>重点</em><wave>轻声</wave><w=500><w><speed=0.5>慢慢说</speed><nw>` | ✅ | 固定标签b/i/color/size/speed/w/ruby/em/shake/wave/nw，不是HTML；nw仅句末，选项不支持节奏/动画，NVL/文字记录保留静态样式。见[行内文字合同](inline-text-contract.md) |
 | `@particle` | `@particle sakura` | ✅ | 粒子特效层（预设：snow/rain/sakura/sparkle/fireflies）；`@particle off` 清除 |
 | `@mov` | `@mov lynn left` / `@mov lynn 400 600` | ✅ | 立绘位置平移（角色 位置 [时长毫秒]；位置 = left/center/right 或裸数字 X 坐标；缺省 400ms） |
 | `@tint` | `@tint #ff6600 0.3` / `@tint #ff6600 0.3 800` | ✅ | 全屏调色叠加（颜色 hex + 透明度 [过渡毫秒]；`@tint off` 清除） |
 | `@timeline` | `@timeline intro_arrival @ blocking` | ✅ | 播放 `content/timelines/<id>.json` 中的多轨演出；默认非阻塞，追加 `@ blocking` 后等待演出完成 |
 | `@ambience` | `@ambience rain` / `@ambience off` | ✅ | 播放或停止独立环境音轨，与 BGM 分开 |
-| `@transition` | `@transition fade 600` | ✅ | 预设切景转场，支持 fade、slide-left、slide-right、circle |
+| `@transition` | `@bg harbor` 后 `@transition dissolve 800` | ✅ | 支持 fade、slide-left、slide-right、circle、dissolve；dissolve 混合上一停顿后首次修改之前的旧世界与新世界，不含对白/UI。未修改则不演出，中途读档/回退视为完成。见[演出合同](presentation-effects-contract.md) |
+| `@filter` | `@filter grayscale 600` / `@filter off 400` | ✅ | 作者世界滤镜blur/grayscale/sepia/vignette/off，缺省立即、时长0–600000ms；状态/剩余过渡随存档与回退，低画质不关闭剧情颜色，不影响对白和菜单。见[演出合同](presentation-effects-contract.md) |
 
 ### 时间轴演出
 

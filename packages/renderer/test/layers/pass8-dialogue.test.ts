@@ -169,7 +169,7 @@ describe('Pass 8 active dialogue presentation', () => {
       body.emit('wheel', { deltaY: 10000, stopPropagation: () => undefined } as never);
       expect(body.y + body.height).toBeLessThanOrEqual(650);
       expect(body.text).toBe(content);
-      r.layer.showText('读者', '读音《du yin》的正文。');
+      r.layer.showText('读者', '<ruby=duyin>读音</ruby>的正文。');
       const rubyBase = r.texts().find((text) => text.visible && text.text === '读音');
       expect(rubyBase).toBeDefined();
       expect(rubyBase!.style.fontSize).toBe(36);
@@ -199,7 +199,8 @@ describe('Pass 8 active dialogue presentation', () => {
       r.layer.setNvlMode(true);
       r.layer.appendNvlText('旁白', '真实的全屏文字，继续使用原 NVL 模式。');
       const nvl = r.layer.nvlLines[0]!;
-      expect(nvl.style.fontSize).toBe(32);
+      expect(nvl).toBeInstanceOf(PText);
+      expect((nvl as PText).style.fontSize).toBe(32);
       expect(nvl.x).toBeCloseTo(1280 * 0.16, 0);
       expect(r.layer.nvlPresentationEntries).toEqual([{ speaker: '旁白', text: '真实的全屏文字，继续使用原 NVL 模式。' }]);
       r.layer.setNvlMode(false);

@@ -1,4 +1,5 @@
 import type { CompiledScene, GenericInstr, TextInstr } from './dsl/ast.js';
+import { inlineTextLength } from './inline-text.js';
 
 export interface ProjectStats {
   sceneCount: number;
@@ -60,9 +61,10 @@ export function computeProjectStats(input: ProjectStatsInput): ProjectStats {
       if (instr.op === 'text') {
         const text = instr as TextInstr;
         sceneTextLines++;
-        sceneCharacters += text.value.length;
+        const characters = inlineTextLength(text.value);
+        sceneCharacters += characters;
         totalTextLines++;
-        totalCharacters += text.value.length;
+        totalCharacters += characters;
         if (text.speaker) {
           speakerLines.set(text.speaker, (speakerLines.get(text.speaker) ?? 0) + 1);
           sceneSpeakerLines.set(text.speaker, (sceneSpeakerLines.get(text.speaker) ?? 0) + 1);

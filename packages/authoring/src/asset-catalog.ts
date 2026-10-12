@@ -53,9 +53,19 @@ export function buildAssetCatalog(
   const backgrounds: AssetEntry[] = [];
   const portraits: AssetEntry[] = [];
   const avatars: AssetEntry[] = [];
+  const rules: AssetEntry[] = [];
   const seen = new Set<string>();
   for (const sourcePath of [...paths].sort((a, b) => a.localeCompare(b))) {
     if (sourcePath.includes('\\')) continue; // retained in intelligence as ASSET_NAME_INVALID
+    if (sourcePath.startsWith('content/assets/rule/')) {
+      const key = stemOf(sourcePath), format = extensionOf(sourcePath);
+      if (key.length === 0 || key.startsWith('.')) continue;
+      if (!seen.has(sourcePath)) {
+        seen.add(sourcePath);
+        rules.push({ kind: 'rule', key, sourcePath, format, resolved: isSupportedAssetFormat(format) });
+      }
+      continue;
+    }
     if (sourcePath.startsWith(BG_PREFIX)) {
       const key = stemOf(sourcePath);
       if (key.length === 0 || key.startsWith('.')) continue;
@@ -78,7 +88,7 @@ export function buildAssetCatalog(
       }
       continue;
     }
-    // fonts、public/ 与其它目录不进入三类资源合同。
+    // fonts、public/ 与其它目录不进入可投影图片资源合同。
   }
   const emptySnapshot: ProjectSnapshot = snapshot ?? {
     rootIdentity: 'asset-catalog:path-only',
@@ -91,6 +101,10 @@ export function buildAssetCatalog(
     timelines: [],
   };
   const intelligence = buildProjectAssetIntelligence(emptySnapshot, facts, options);
+  for (const entry of rules) {
+    const item = intelligence.items.find(item => item.sourcePath === entry.sourcePath);
+    entry.resolved = entry.resolved && !!item?.physical && item.issues.every(issue => issue === 'ASSET_UNUSED');
+  }
   const portraitBindings = resolveProjectPortraits(emptySnapshot.config, paths);
   const slotPaths = new Map<string, Set<string>>();
   const slotOf = (portrait: (typeof portraitBindings)[number]): string => JSON.stringify([portrait.role, portrait.outfit, portrait.expression]);
@@ -132,6 +146,7 @@ export function buildAssetCatalog(
     backgrounds,
     portraits,
     avatars,
+    rules,
     intelligence,
   };
 }

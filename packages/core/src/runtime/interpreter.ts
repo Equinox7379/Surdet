@@ -10,6 +10,7 @@ import type {
 } from '../dsl/ast.js';
 import type { SourcePos } from '../dsl/token.js';
 import { SourceError } from '../dsl/token.js';
+import { interpolateInlineText, substituteTextVariables } from '../inline-text.js';
 import { evalExprBoolean, evalExprString } from './expr-eval.js';
 import type { VariableStore } from '../state/variable-store.js';
 import { EventBus, type EventMap } from './event-bus.js';
@@ -24,6 +25,7 @@ import { ClearTracker } from '../systems/clear-tracker.js';
 import type { GrowthResult, GrowthSystem } from '../systems/growth.js';
 import type { TimelineCatalog, TimelineDefinition } from '../timeline.js';
 import type { VarValue } from '../state/types.js';
+import { assertPluginSnapshots, pluginInstructionValues, readProjectPlugins, type ProjectPluginDeclaration, type ProjectPluginHooks } from '../project-plugins.js';
 
 /**
  * 宿主提供的全家桶系统（日历/战斗/好感/周目）存档钩子。
@@ -218,6 +220,8 @@ export class Interpreter {
   #systemHooks: SystemHooks;
   #timelineCatalog: TimelineCatalog | null;
   #presentationHooks: PresentationSnapshotHooks | null;
+  #plugins: ProjectPluginDeclaration[] = [];
+  #pluginHooks: ProjectPluginHooks | null = null;
   #randomSource: RandomSource = { next: () => Math.random() };
   #debugEnabled = false;
   #debugPaused = false;
@@ -268,6 +272,21 @@ export class Interpreter {
     this.#presentationHooks = hooks;
   }
 
+  /** Host permission is separate from declarative project content. Install before starting. */
+  setProjectPlugins(declarations: readonly ProjectPluginDeclaration[], hooks: ProjectPluginHooks | null = null): void {
+    if (!['idle', 'ended', 'error'].includes(this.#status)) throw new RuntimeError('运行中不能替换项目插件');
+    this.#plugins = readProjectPlugins({ plugins: declarations });
+    this.#pluginHooks = hooks;
+  }
+
+  /** An asynchronous extension failure stops the run; ordinary resume/debug cannot skip it. */
+  failHost(): void {
+    this.#status = 'error';
+    this.#hostPaused = false;
+    this.#resumeRequested = false;
+    this.#resetDebugRun(true);
+  }
+
   setTextResolver(resolver: RuntimeTextResolver | null): void { this.#textResolver = resolver; }
   setVoiceResolver(resolver: RuntimeVoiceResolver | null): void { this.#voiceResolver = resolver; }
 
@@ -278,11 +297,11 @@ export class Interpreter {
     const speaker = instr.speaker === null ? null : interpolate(instr.speaker, this.#store);
     const displaySpeaker = speaker === null ? null : this.#displayText('speaker', speaker, instr.line);
     const voice = this.#voiceResolver?.({ sceneId: this.#scene!.sceneId, sceneVersion: this.#scene!.textSourceVersion, line: instr.line, kind: 'dialogue', text: instr.value });
-    return { speaker, value: interpolate(this.#displayText('dialogue', instr.value, instr.line), this.#store),
+    return { speaker, value: interpolateInlineText(this.#displayText('dialogue', instr.value, instr.line), name => this.#store.getRef(name), name => this.#store.has(name)),
       ...(displaySpeaker !== null && displaySpeaker !== speaker ? { displaySpeaker } : {}), ...(voice !== undefined ? { voice } : {}) };
   }
   #displayChoices(instr: ChoiceInstr, indices: readonly number[]): ChoiceEventPayload {
-    return { options: indices.map(index => ({ index, label: interpolate(this.#displayText('choice', instr.options[index]!.label, instr.options[index]!.pos.line), this.#store) })) };
+    return { options: indices.map(index => ({ index, label: interpolateInlineText(this.#displayText('choice', instr.options[index]!.label, instr.options[index]!.pos.line), name => this.#store.getRef(name), name => this.#store.has(name), 'choice') })) };
   }
   refreshDisplayedText(): void {
     if (this.#stepping || !this.#scene) return;
@@ -448,6 +467,8 @@ export class Interpreter {
     if (!position) return null;
     if (hash !== undefined) position.sceneHash = hash;
     const systems = this.#systemHooks.snapshot?.();
+    const plugins = this.#pluginHooks?.snapshot();
+    if (plugins !== undefined) assertPluginSnapshots(plugins);
     if (systems !== undefined && !isJsonSafeValue(systems)) {
       throw new RuntimeError('宿主系统快照必须是 JSON 安全值');
     }
@@ -485,6 +506,7 @@ export class Interpreter {
       clears: this.clearTracker.snapshot(),
       ...(this.#growth ? { growth: this.#growth.snapshot() } : {}),
       ...(systems ? { systems } : {}),
+      ...(plugins && Object.keys(plugins).length ? { plugins } : {}),
       ...(presentationPayload !== undefined ? { presentation: { version: 1 as const, payload: presentationPayload } } : {}),
       ...(random !== undefined ? { random } : {}),
     };
@@ -557,6 +579,10 @@ export class Interpreter {
         throw new RuntimeError(err instanceof Error ? err.message : String(err));
       }
     }
+    if (snap.plugins && Object.keys(snap.plugins).length && !this.#pluginHooks) {
+      throw new RuntimeError(`PLUGIN_REQUIRED：存档需要项目插件 ${Object.keys(snap.plugins).join('、')}，请先明确启用。`);
+    }
+    const commitPlugins = this.#pluginHooks?.prepareRestore(snap.plugins ?? {});
     if (snap.random !== undefined) {
       try {
         this.#randomSource.restore!(snap.random);
@@ -564,6 +590,7 @@ export class Interpreter {
         throw new RuntimeError(err instanceof Error ? err.message : String(err));
       }
     }
+    commitPlugins?.();
     if (version === undefined || version < SAVE_SCHEMA_VERSION) {
       this.#bus.emit('saveMigrated', { from: version ?? 1, to: SAVE_SCHEMA_VERSION });
     }
@@ -1036,6 +1063,7 @@ export class Interpreter {
           case 'instr': {
             this.#resumeRequested = false;
             this.#execGeneric(instr);
+            if (this.#status === 'error') throw new RuntimeError('PLUGIN_EXECUTION：项目插件执行失败，剧情已停止。', instr);
             this.#emitStateTrace(instr, variablesBefore);
             // hostJump 在事件回调内已重设 pc 时不再自增（否则跳过目标指令）
             if (this.#jumpOverride) {
@@ -1308,6 +1336,14 @@ export class Interpreter {
         return;
       }
       default:
+        for (const plugin of this.#plugins) {
+          const instruction = plugin.instructions.find(candidate => candidate.name === name);
+          if (!instruction) continue;
+          const values = pluginInstructionValues(instruction, instr.args, instr.modifiers);
+          if (!this.#pluginHooks) throw new RuntimeError(`PLUGIN_REQUIRED：指令 @${name} 需要插件 ${plugin.id}；未明确启用，剧情已停止。`, instr);
+          this.#pluginHooks.execute(plugin, instruction, values);
+          return;
+        }
         this.#bus.emit('instr', {
           name,
           args: instr.args,
@@ -1339,11 +1375,7 @@ export class Interpreter {
  *  随后可含数字/点/$（{2x}、{.var} 这类非法名不插值，保留原文）。
  *  走 getRef 免拷贝热路径：每行文本逐字展示都会触发插值，返回值仅做 String 转换，只读安全。 */
 export function interpolate(text: string, store: VariableStore): string {
-  return text.replace(/\{\{|\}\}|\{([\p{L}_][\p{L}0-9_$.]*)\}/gu, (match, name: string | undefined) => {
-    if (match === '{{') return '{';
-    if (match === '}}') return '}';
-    return store.has(name!) ? String(store.getRef(name!)) : `{${name}}`;
-  });
+  return substituteTextVariables(text, name => store.getRef(name), name => store.has(name));
 }
 
 /** 提取文本内 {var} 插值变量名（与 interpolate 同一规则：{{ 转义跳过；非法名不匹配）。

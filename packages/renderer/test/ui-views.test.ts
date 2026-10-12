@@ -3,8 +3,8 @@ import { parseRuby, stripRuby } from '../src/ruby.js';
 import { buildMapView, formatSlotTime } from '../src/ui-views.js';
 
 describe('parseRuby', () => {
-  it('解析 基础字《注音》 分段', () => {
-    expect(parseRuby('この世界《せかい》を救う')).toEqual([
+  it('解析显式ruby分段', () => {
+    expect(parseRuby('<ruby=せかい>この世界</ruby>を救う')).toEqual([
       { base: 'この世界', ruby: 'せかい' },
       { base: 'を救う' },
     ]);
@@ -19,8 +19,8 @@ describe('parseRuby', () => {
   });
 
   it('多段注音 + stripRuby 还原主字', () => {
-    const text = '第一《1》段 第二《2》段';
-    expect(parseRuby(text)).toHaveLength(3);
+    const text = '<ruby=1>第一</ruby>段 <ruby=2>第二</ruby>段';
+    expect(parseRuby(text)).toEqual([{ base: '第一', ruby: '1' }, { base: '段 ' }, { base: '第二', ruby: '2' }, { base: '段' }]);
     expect(stripRuby(text)).toBe('第一段 第二段');
   });
 });

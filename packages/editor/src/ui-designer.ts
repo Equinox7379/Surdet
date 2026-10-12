@@ -1,8 +1,8 @@
 import { PROJECT_UI_NODE_TYPES, PROJECT_UI_PAGES, PROJECT_UI_TAB_BAR_HEIGHT, projectUiChildrenRect, projectUiRect, type ProjectUiDocument, type ProjectUiNode, type ProjectUiNodeType, type ProjectUiPageId, type ProjectUiRect } from '@surdet/core';
 import { buildAssetCatalog, parseProjectConfigDocument, type UiPatch } from '@surdet/authoring';
-import { SETTING_STEPS } from '@surdet/renderer';
 import { state } from './state.js';
 import { ImageScope } from './v4/ui.js';
+import { SETTING_LABELS, bindableSettings, isSwitchSetting, steppableSettings } from './ui-settings.js';
 
 let activeImages: ImageScope | null = null;
 let dragCleanup: (() => void) | null = null;
@@ -37,10 +37,7 @@ const DATA_FIELDS: Record<string, string> = {
   id: '标识', label: '名称', description: '说明', value: '当前值', date: '日期',
   speaker: '说话人', dialogue: '台词', title: '标题', subtitle: '副标题', mode: '存读档模式', 'ending-progress': '结局收集进度', 'profile-progress': '人物资料收集进度', 'term-progress': '词条收集进度',
 };
-const SETTING_NAMES: Record<string, string> = {
-  ...Object.fromEntries(SETTING_STEPS.map(setting => [setting.key, setting.label])),
-  autoPerCharMs: '自动播放每字停留', keyPreset: '快捷键方案', locale: '作品语言',
-};
+const SETTING_NAMES: Record<string, string> = SETTING_LABELS;
 const SOURCE_NAMES: Record<NonNullable<ProjectUiNode['source']>, string> = {
   'save-slots': '存档列表', settings: '阅读设置', backlog: '文字记录', choices: '剧情选项',
   'gallery-cgs': '图片鉴赏', 'gallery-music': '音乐鉴赏', 'gallery-texts': '剧情回想', 'gallery-endings': '结局册', 'gallery-profiles': '人物档案', 'gallery-terms': '用语辞典',
@@ -365,13 +362,13 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       const label = element('label', 'ui-property-line', '项目图片'); label.appendChild(select); parent.appendChild(label);
     }
     if (node.binding) {
-      const bindingKind = element('select'); bindingKind.append(option('variable', '剧情变量'));
+      const bindingKind = element('select'); bindingKind.setAttribute('aria-label', '控件值来源'); bindingKind.append(option('variable', '剧情变量'));
       if (node.type !== 'input' && node.type !== 'progress') bindingKind.append(option('setting', '设置'));
       bindingKind.value = node.binding.kind;
-      const name = element('select');
+      const name = element('select'); name.setAttribute('aria-label', '控件绑定项');
       const renderNames = (): void => {
         name.replaceChildren();
-        const names = bindingKind.value === 'setting' ? (node.type === 'toggle' ? ['skipStrategy'] : SETTING_STEPS.map(setting => setting.key))
+        const names: string[] = bindingKind.value === 'setting' ? bindableSettings(node.type === 'toggle' ? 'toggle' : 'slider')
           : availableVariables(node.type === 'input' ? 'string' : node.type === 'slider' || node.type === 'progress' ? 'number' : 'flag', node.type === 'progress');
         names.forEach(value => name.appendChild(option(value, bindingKind.value === 'setting' ? SETTING_NAMES[value] ?? value : value)));
         name.value = names.includes(node.binding!.name) ? node.binding!.name : names[0] ?? '';
@@ -396,7 +393,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       if (arg instanceof HTMLSelectElement) {
         const names = node.action?.kind === 'variable-set' ? Object.fromEntries(availableVariables('scalar').map(name => [name, name])) : node.action?.kind === 'open'
           ? Object.fromEntries(['system-menu', 'save-load', 'settings', 'gallery', 'backlog'].map(page => [page, PAGE_NAMES[page as ProjectUiPageId]]))
-          : { ...Object.fromEntries(SETTING_STEPS.map(setting => [setting.key, setting.label])), locale: '作品语言' };
+          : Object.fromEntries(steppableSettings().map(name => [name, SETTING_NAMES[name]!]));
         Object.entries(names).forEach(([value, label]) => arg.appendChild(option(value, label)));
         const current = node.action?.kind === 'open' ? node.action.page : node.action?.kind === 'setting-step' || node.action?.kind === 'variable-set' ? node.action.name : '';
         if (!(current in names)) arg.appendChild(option(current, current));
@@ -419,7 +416,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       const direction = element('select'); direction.setAttribute('aria-label', '设置调整方向');
       direction.append(option('1', '增加'), option('-1', '减少'));
       direction.value = String(node.action?.kind === 'setting-step' ? node.action.direction : 1);
-      direction.hidden = node.action?.kind !== 'setting-step';
+      direction.hidden = node.action?.kind !== 'setting-step' || isSwitchSetting(node.action.name);
       const update = (value = arg.value, editAssignment = false): void => {
         const kind = select.value;
         const variables = parseProjectConfigDocument(state.gameConfigText || '{}').variables as Record<string, { type: string; initial: string | number | boolean }> | undefined;

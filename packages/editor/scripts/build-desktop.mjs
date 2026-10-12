@@ -4,15 +4,28 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { builtinModules } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { buildGameRuntime } from '../../shell/scripts/build-game-runtime.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const output = path.join(root, 'desktop-dist');
+const output = path.resolve(process.argv[2] ?? path.join(root, 'desktop-dist'));
 const ui = await build({ root, configFile: path.join(root, 'vite.config.ts') });
 const host = await build({
-  configFile: false, root, resolve: { conditions: ['node'] },
+  configFile: false, root, resolve: { conditions: ['node'], alias: [
+    // These packages' Node wrappers use createRequire('./index.js'), which cannot
+    // be relocated into a single bundle. Bundle their supplied ESM implementation.
+    { find: /^resedit$/, replacement: path.join(root, '../../node_modules/resedit/dist/_esm/index.js') },
+    { find: /^pe-library$/, replacement: path.join(root, '../../node_modules/pe-library/dist/_esm/index.js') },
+  ] },
   build: { target: 'node24', outDir: output, emptyOutDir: true, minify: false,
     lib: { entry: path.join(root, 'desktop/main.ts'), formats: ['es'], fileName: () => 'main.mjs' },
-    rollupOptions: { external: id => id === 'electron' || id.startsWith('node:') || builtinModules.includes(id) },
+    rollupOptions: { external: id => id === 'electron' || id.startsWith('node:') || builtinModules.includes(id),
+      // The bundled TypeScript compiler uses native CommonJS file/module facts.
+      output: { banner: `import { fileURLToPath as bundledFile } from 'node:url';
+import { dirname as bundledDirectory } from 'node:path';
+import { createRequire as bundledRequire } from 'node:module';
+const __filename = bundledFile(import.meta.url);
+const __dirname = bundledDirectory(__filename);
+const require = bundledRequire(import.meta.url);` } },
   },
 });
 // Keep the licenses of code actually bundled in the app, not the whole toolchain.
@@ -44,6 +57,7 @@ const preload = ts.transpileModule(await fs.readFile(path.join(root, 'desktop/pr
 await fs.writeFile(path.join(output, 'preload.cjs'), preload);
 await fs.cp(path.join(root, 'dist'), path.join(output, 'ui'), { recursive: true });
 await fs.cp(path.join(root, '../cli/templates'), path.join(output, 'templates'), { recursive: true });
+await buildGameRuntime(path.join(output, 'game-runtime'));
 await fs.copyFile(path.join(root, '../cli/NOTICE.md'), path.join(output, 'templates/NOTICE.md'));
 await fs.copyFile(path.join(root, '../../LICENSE'), path.join(output, 'LICENSE'));
 await fs.copyFile(path.join(root, '../../THIRD_PARTY_NOTICES.md'), path.join(output, 'THIRD_PARTY_NOTICES.md'));

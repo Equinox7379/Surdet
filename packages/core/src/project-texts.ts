@@ -2,6 +2,7 @@ import { Lexer } from './dsl/lexer.js';
 import { Parser } from './dsl/parser.js';
 import type { AstBlock } from './dsl/ast.js';
 import { collectInterpolatedVars } from './runtime/interpreter.js';
+import { parseInlineText, type InlineTextContext } from './inline-text.js';
 import { readProjectUi, type ProjectUiNode } from './project-ui.js';
 import { parseTerminology } from './terminology-audit.js';
 import { readGalleryDossiers } from './systems/gallery-dossiers.js';
@@ -63,20 +64,9 @@ export function textSourceMatches(current: CatalogSourceRow | undefined, source:
   return current !== undefined && current.kind === source.kind && current.text === source.text && current.speaker === source.speaker
     && (!isStoryTextSource(source) || (isStoryTextSource(current) && current.sceneVersion === source.sceneVersion));
 }
-export function textTranslationIssue(source: string, translated: string): string | undefined {
+export function textTranslationIssue(source: string, translated: string, context: InlineTextContext | 'plain' = 'dialogue'): string | undefined {
   if (JSON.stringify(collectInterpolatedVars(source).sort()) !== JSON.stringify(collectInterpolatedVars(translated).sort())) return '变量占位符必须与源文一致（含重复次数及转义）';
-  let open = -1, previousClose = -1;
-  for (let i = 0; i < translated.length; i++) {
-    if (translated[i] === '《') {
-      if (open >= 0 || i === previousClose + 1) return 'Ruby 注音缺少主文字或发生嵌套';
-      open = i;
-    } else if (translated[i] === '》') {
-      if (open < 0 || i === open + 1) return 'Ruby 注音未配对或为空';
-      open = -1; previousClose = i;
-    }
-  }
-  if (open >= 0) return 'Ruby 注音缺少闭合符号';
-  return undefined;
+  return context === 'plain' ? undefined : parseInlineText(translated, context).issues.find(issue => issue.severity === 'error')?.message;
 }
 export function readTextCatalog(config: Record<string, unknown>): TextCatalog | null {
   if (config.textCatalog === undefined) return null;
@@ -109,7 +99,7 @@ export function readTextCatalog(config: Record<string, unknown>): TextCatalog | 
       validateTextLocale(locale); if (locale === sourceLocale) invalid('译文语言不能等于源语言');
       const translation = object(raw, `${key}.${locale}`); fields(translation, ['value', 'sourceVersion'], `${key}.${locale}`);
       const result = { value: string(translation.value, `${key}.${locale}`, true), sourceVersion: version(translation.sourceVersion) };
-      const problem = result.value && result.sourceVersion === source.version ? textTranslationIssue(source.text, result.value) : undefined;
+      const problem = result.value && result.sourceVersion === source.version ? textTranslationIssue(source.text, result.value, isStoryTextSource(source) ? source.kind : 'plain') : undefined;
       if (problem) invalid(`${key}.${locale}：${problem}`);
       return [locale, result];
     }));

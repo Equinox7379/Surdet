@@ -19,10 +19,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@electron/asar": "3.4.1",
     "@modelcontextprotocol/core": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
     "@surdet/authoring": "0.1.0",
-    "@surdet/core": "0.1.0"
+    "@surdet/core": "0.1.0",
+    "resedit": "1.7.2",
+    "typescript": "^5.7.2"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.0.0"

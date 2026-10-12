@@ -12,6 +12,8 @@ import type { RendererCommands } from './renderer-commands.js';
 import type { RendererQueries } from './renderer-queries.js';
 
 export interface ResetSessionOptions {
+  /** Rollback keeps current history until the replacement snapshot has passed preflight. */
+  preserveReadingHistory?: boolean;
   preserveWorld?: boolean;
   clearAssets?: boolean;
 }
@@ -57,6 +59,7 @@ export interface PresentationController extends FrameLoopTarget {
   backlogSearchQuery(): string;
   setTextSpeed(charsPerSecond: number): void;
   setAutoWait(baseDelayMs: number, perCharMs: number): void;
+  setReadAloud(enabled: boolean, locale?: string, volume?: number): void;
   dispose(): void;
 }
 
@@ -82,6 +85,7 @@ export interface RendererRuntimeOptions {
   onSelect?: (index: number) => void;
   onWaitEnd?: () => void;
   typewriter?: Typewriter;
+  narrator?: Pick<import('../system-narrator.js').SystemNarrator, 'speak' | 'stop' | 'busy' | 'onError'>;
   backlog?: Backlog;
   pluginHost?: RendererPluginHost;
   onBacklogClose?: () => void;

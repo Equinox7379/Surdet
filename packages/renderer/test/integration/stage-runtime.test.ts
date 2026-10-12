@@ -30,7 +30,7 @@ const config = () => parseProjectStage({ version: 1, portraits: { 'rin:coat': { 
     keep: {}, empty: { layers: [], background: null, keepActors: false, resetCamera: true }, broken: { background: 'missing' } },
 });
 
-async function harness(stageConfig: ProjectStage | null = config()) {
+async function harness(stageConfig: ProjectStage | null = config(), captureWorld?: () => Texture | null) {
   const lifecycle = new RenderLifecycle();
   const assets = new RenderAssetRegistry({ lifecycle });
   const root = new Container();
@@ -41,7 +41,7 @@ async function harness(stageConfig: ProjectStage | null = config()) {
   await assets.registerBackground('dock', dock);
   await assets.registerBackground('rail', rail);
   const width = stageConfig?.design.width ?? 1280, height = stageConfig?.design.height ?? 720;
-  const world = new WorldLayer({ width, height, assets, lifecycle, stage: stageConfig, stageGeometry: createStageGeometryPolicy() });
+  const world = new WorldLayer({ width, height, assets, lifecycle, stage: stageConfig, stageGeometry: createStageGeometryPolicy(), captureWorld });
   const dialogue = new DialogueLayer({ uiLayer: root, width, height, assets, lifecycle });
   const text: string[] = [];
   const stage = {
@@ -80,6 +80,43 @@ async function harness(stageConfig: ProjectStage | null = config()) {
 }
 
 describe('Stage composition through Core, Controller and the real World projection', () => {
+  it.each([['dissolve', 1], ['rule', 1], ['dissolve', 2], ['rule', 2]] as const)('plays a screen-first %s cue in version %s, restores as completed and starts future cues', async (action, version) => {
+    const frames: Texture[] = [], captured: (string | null)[] = [];
+    const h = await harness(null, () => { captured.push(h.world.backgroundKey); const image = texture(1280, 720); frames.push(image); return image; });
+    const mask = texture(1280, 720);
+    try {
+      await h.assets.registerRule('mask', mask);
+      h.timelines.register({ version, id: 'reveal', durationMs: 2400, tracks: [
+        { kind: 'screen', cues: [0, 1400].map(atMs => ({ atMs, durationMs: 1000, easing: 'outCubic', action, ...(action === 'rule' ? { rule: 'mask' } : {}) })) },
+        { kind: 'background', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'set', key: 'rail' },
+          { atMs: 1400, durationMs: 0, easing: 'linear', action: 'set', key: 'dock' }] },
+      ] });
+      h.load('@bg dock\n旧画面。\n@timeline reveal @blocking\n新画面。\n@end');
+      h.controller.update(2000); h.interpreter.advance();
+      expect(captured.at(-1)).toBe('dock');
+      expect(h.world.backgroundKey).toBe('rail');
+      expect(h.world.screenContainer.children).toHaveLength(2);
+      h.controller.update(500);
+      const overlay = h.world.screenContainer.children.at(-1)!;
+      if (action === 'dissolve') expect(overlay.alpha).toBe(.125);
+      const saved = h.interpreter.saveSnapshot()!;
+      h.controller.setPresentationPaused(true); h.controller.update(800);
+      expect(h.world.screenContainer.children.at(-1)).toBe(overlay);
+      h.controller.setPresentationPaused(false);
+      h.interpreter.loadSnapshot(saved);
+      expect(h.world.backgroundKey).toBe('rail');
+      expect(h.world.screenContainer.children).toHaveLength(1);
+      h.controller.update(499);
+      expect(h.world.screenContainer.children).toHaveLength(1);
+      h.controller.update(401); // future cue is genuinely reached, not restored/replayed
+      expect(h.world.backgroundKey).toBe('dock');
+      expect(h.world.screenContainer.children).toHaveLength(2);
+      h.controller.update(1000);
+      expect(h.world.screenContainer.children).toHaveLength(1);
+      expect(mask.destroyed).toBe(false);
+      expect(frames.every(frame => frame.destroyed)).toBe(true);
+    } finally { h.dispose(); mask.destroy(true); }
+  });
   it('keeps per-instance frame clocks through timeline movement, restoration and removal', async () => {
     const h = await harness(null), a = texture(400, 700), b = texture(400, 700);
     const pathA = 'content/assets/portrait/rin_parts_a.png', pathB = 'content/assets/portrait/rin_parts_b.png';

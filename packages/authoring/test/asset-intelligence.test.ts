@@ -115,6 +115,19 @@ it('discovers companion licenses in fonts and licenses folders without calling t
   expect(result.summary).toMatchObject({ unusedCount: 0, duplicateCount: 0, unsupportedCount: 0, byKind: { license: { files: 4 } } });
 });
 
+it('locates a rule used only by a timeline and publishes a real-key screen cue', async () => {
+  const snapshot = await snapshotFor({ 'game.config.json': '{}', 'content/timelines/mask.json': JSON.stringify({
+    version: 2, id: 'mask', durationMs: 800, tracks: [{ kind: 'screen', cues: [
+      { atMs: 0, durationMs: 800, easing: 'linear', action: 'rule', rule: '遮罩 @左' },
+    ] }],
+  }) });
+  const result = buildProjectAssetIntelligence(snapshot, [{ path: 'content/assets/rule/遮罩 @左.png', bytes: 12 }]);
+  const item = asset(result, 'content/assets/rule/遮罩 @左.png');
+  expect(item.references).toEqual([expect.objectContaining({ sourceKind: 'timeline', objectRef: 'timeline:mask/track:0/cue:0' })]);
+  expect(item.issues).not.toContain('ASSET_UNUSED');
+  expect(item.usage?.timeline).toEqual({ kind: 'screen', cues: [{ atMs: 0, durationMs: 800, easing: 'linear', action: 'rule', rule: '遮罩 @左', soft: .15, reverse: false }] });
+});
+
 it('recognizes named companion PDF licenses without treating arbitrary PDFs as licenses or fonts as documents', async () => {
   const snapshot = await snapshotFor({ 'game.config.json': '{}' });
   const licenses = ['fonts/MiSans-LICENSE.pdf', 'fonts/vendor/OFL-font.PDF', 'licenses/NOTICE.pdf'];
