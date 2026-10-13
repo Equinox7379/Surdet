@@ -5,6 +5,8 @@ import { state, h, setStatus, type SceneEntry } from '../state.js';
 import { isSceneFilePathReserved, runProjectWriteOperation } from '../project-io.js';
 import { hideAssetPreview, renderAssetsPanel } from './assets.js';
 import { openScriptImport } from './script-import.js';
+import { openTextInputDialog } from './text-input-dialog.js';
+import { field } from '../v4/ui.js';
 import { workbenchIcon } from '../shell/icons.js';
 import { sceneTextCharacters } from '../stats.js';
 
@@ -59,7 +61,9 @@ export function renderSidebar(): void {
   newBtn.type = 'button';
   newBtn.className = 'outline-new-scene';
   newBtn.setAttribute('data-action', 'create-scene');
-  newBtn.onclick = () => { void newScene(); };
+  newBtn.onclick = () => {
+    try { newScene(); } catch (error) { setStatus(error instanceof Error ? error.message : String(error), false, 6000); }
+  };
   sidebar.appendChild(newBtn);
   const importBtn = h('button', 'outline-new-scene', '导入剧本'); importBtn.type = 'button'; importBtn.setAttribute('data-action', 'import-script');
   importBtn.onclick = () => openScriptImport(sidebar, onSelectSceneHook);
@@ -164,29 +168,18 @@ const SCENE_TEMPLATES: { name: string; body: string }[] = [
   },
 ];
 
-async function newSceneUnlocked(): Promise<void> {
-  if (state.pendingSceneCommit !== null) {
-    setStatus('上一次场景保存正在收束，请先重试“保存全部”', false, 6000);
-    return;
-  }
-  const name = window.prompt('新场景标识（文件名，不含 .gal）');
-  if (!name || name.trim().length === 0) return;
-  const id = name.trim();
-  if (!/^[^\s.<>:"/\\|?*\u0000-\u001f]+$/u.test(id)) {
-    setStatus('场景标识 不能包含空格、点号或文件名保留字符', false, 5000);
-    return;
-  }
-  if ([...state.scenes.values()].some((scene) => scene.id === id)) {
-    setStatus(`场景 '${id}' 已存在`, false);
-    return;
-  }
-  if (isSceneFilePathReserved(`${id}.gal`)) {
-    setStatus('该场景文件正等待删除，请先保存全部', false, 5000);
-    return;
-  }
-  const tplChoice = window.prompt('选择模板：0 空白 / 1 纯对话 / 2 选择分支 / 3 演出制作 / 4 结局（取消 = 空白）');
-  const idx = tplChoice === null ? 0 : Number(tplChoice.trim());
-  const tpl = Number.isInteger(idx) && idx >= 0 && idx < SCENE_TEMPLATES.length ? SCENE_TEMPLATES[idx]! : SCENE_TEMPLATES[0]!;
+function assertSceneCreatable(): void {
+  if (state.pendingSceneCommit !== null) throw new Error('上一次场景保存正在收束，请先重试“保存全部”');
+}
+
+async function createSceneUnlocked(input: string, template: number, project: FileSystemDirectoryHandle | null): Promise<void> {
+  assertSceneCreatable();
+  if (state.dirHandle !== project || state.projectLoading) throw new Error('项目已切换，请重新新建场景');
+  const id = input.trim();
+  if (!/^[^\s.<>:"/\\|?*\u0000-\u001f]+$/u.test(id)) throw new Error('场景标识不能为空，也不能包含空格、点号或文件名保留字符');
+  if ([...state.scenes.values()].some((scene) => scene.id === id)) throw new Error(`场景 '${id}' 已存在`);
+  if (isSceneFilePathReserved(`${id}.gal`)) throw new Error('该场景文件正等待删除，请先保存全部');
+  const tpl = SCENE_TEMPLATES[template] ?? SCENE_TEMPLATES[0]!;
   const pendingCreateOperationId = [...state.scenes.values()].find((scene) => (
     scene.handle === null && !scene.persistedSha256 && scene.pendingCreateOperationId
   ))?.pendingCreateOperationId ?? crypto.randomUUID();
@@ -202,6 +195,24 @@ async function newSceneUnlocked(): Promise<void> {
   onSelectSceneHook(id);
 }
 
-export async function newScene(): Promise<void> {
-  await runProjectWriteOperation(newSceneUnlocked);
+/** Add an unsaved scene from a template (index into the template list); 保存全部 writes it. Refusals throw. */
+export async function createScene(input: string, template = 0): Promise<void> {
+  const project = state.dirHandle;
+  await runProjectWriteOperation(() => createSceneUnlocked(input, template, project));
+}
+
+/** Ask for the scene id and template in the Editor; a refused id keeps the dialog open. */
+export function newScene(): void {
+  assertSceneCreatable();
+  const project = state.dirHandle;
+  const template = h('select');
+  SCENE_TEMPLATES.forEach((entry, index) => template.append(new Option(entry.name, String(index))));
+  openTextInputDialog({
+    title: '新建场景',
+    label: '场景标识',
+    hint: '场景标识就是文件名，不含 .gal，不能有空格、点号或文件名保留字符。保存全部后写入磁盘。',
+    confirm: '新建',
+    extra: [field('模板', template)],
+    submit: value => runProjectWriteOperation(() => createSceneUnlocked(value, Number(template.value), project)),
+  });
 }

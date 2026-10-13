@@ -29,6 +29,31 @@ afterEach(async () => {
 });
 
 describe('bound Editor write settlement', () => {
+  it('blocks a disconnected clean session only during its grace window and lets the new session retry afterwards', async () => {
+    const { project, dataRoot } = await fixture();
+    let now = Date.parse('2026-10-13T00:00:00.000Z');
+    const store = new HumanWorkspaceStore({ dataRoot, now: () => now });
+    const authority = new EditorWorkspaceAuthority(project, { leaseManager: new NodeLocalLeaseManager(dataRoot), workspaceStore: store, now: () => now });
+    authorities.push(authority);
+    await store.heartbeat(project, { ...identity, workspaceGeneration: 1, availability: 'clean' });
+    const state = { workspaceSessionId: 'c09f537a-aa25-4e5f-9d64-901cb62fd8c1', browserSessionId: 'new-editor', workspaceGeneration: 1,
+      availability: 'dirty' as const, dirtyScopes: ['config' as const] };
+    await authority.heartbeat(state);
+    const { diskBaseline } = await authority.snapshot();
+    const request = { ...state, purpose: 'save-all' as const, expectedProjectRevision: diskBaseline.projectRevision, expectedCoordinationRevision: diskBaseline.coordinationRevision };
+    now += 12_000;
+    await expect(authority.beginWrite(request)).rejects.toMatchObject({ code: 'HUMAN_WORKSPACE_BUSY', details: {
+      projectMutationOccurred: false, humanWorkspace: { blockedReasons: ['connection-grace'], retryAfterMs: 10_000 },
+    } });
+    expect(JSON.parse(await fs.readFile(path.join(project, 'game.config.json'), 'utf8'))).toEqual({ entryScene: 'start', variables: {} });
+    now += 11_000;
+    await authority.heartbeat({ ...state, workspaceGeneration: 2 });
+    const begun = await authority.beginWrite({ ...request, workspaceGeneration: 2 });
+    expect(begun.writeLeaseId).toBeTruthy();
+    await authority.finishWrite({ ...state, workspaceGeneration: 2, writeLeaseId: begun.writeLeaseId, availability: 'clean', dirtyScopes: [] });
+    expect(await store.readSession(project, identity.workspaceSessionId)).not.toBeNull();
+  });
+
   it('normal service shutdown releases only its own workspace sessions so reopening can save immediately', async () => {
     const { project, dataRoot } = await fixture();
     const manager = new NodeLocalLeaseManager(dataRoot);
