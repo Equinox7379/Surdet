@@ -13,6 +13,7 @@ import { NodeProjectStorage } from '../src/authoring/node-project-storage.js';
 import { ProjectMutationNoticeStore } from '../src/authoring/project-mutation-notice-store.js';
 import { createReviewApplyFixture } from './helpers/review-apply-fixture.js';
 import { HumanWorkspaceStore } from '../src/authoring/human-workspace-store.js';
+import { NodeLocalLeaseManager } from '../src/authoring/node-local-lease.js';
 import { createReviewAuthorityHttpHandler } from '../src/review-authority/http-handler.js';
 import { createReviewApplyClient } from '../../editor/src/review-apply-client.js';
 import { ReviewApplyController } from '../../editor/src/review-apply-controller.js';
@@ -39,6 +40,82 @@ async function fixture(approve = true) {
 }
 
 describe('approved result apply through real authoring storage', () => {
+  it.each(['writing', 'recovery-required'] as const)('%s 阶段不附加未写入宽限提示或自动检查承诺', async (phase) => {
+    const f = await fixture();
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const root = f.backend.scope.canonicalProjectRoot;
+    let restoreLeaseInspection: (() => void) | undefined;
+    try {
+      if (phase === 'writing') {
+        // Approval validation takes its own lease first; model a writer appearing
+        // at the later status-inspection boundary without bypassing that validation.
+        const original = NodeLocalLeaseManager.prototype.inspect;
+        const held = vi.spyOn(NodeLocalLeaseManager.prototype, 'inspect').mockImplementation(async function (this: NodeLocalLeaseManager, scope, resourceId) {
+          const inspected = await original.call(this, scope, resourceId);
+          return scope === 'project' && resourceId === root ? { ...inspected, state: 'owned' as const } : inspected;
+        });
+        restoreLeaseInspection = () => held.mockRestore();
+      } else {
+        const original = NodeChangeStore.prototype.writeJournal;
+        const interrupted = vi.spyOn(NodeChangeStore.prototype, 'writeJournal').mockImplementation(async function (this: NodeChangeStore, changeId, journal) {
+          if ((journal as { status: string }).status === 'REPLACING') throw new Error('interrupted after durable staging');
+          return original.call(this, changeId, journal);
+        });
+        try {
+          expect(await f.write()).toMatchObject({ phase: 'recovery-required' });
+        } finally { interrupted.mockRestore(); }
+      }
+      expect(await f.inspect()).toMatchObject({ phase, blockers: [] });
+      const store = new HumanWorkspaceStore({ dataRoot: f.dataRoot, now: () => now - 12_000 });
+      await store.heartbeat(root, { workspaceSessionId: randomUUID(), browserSessionId: 'disconnected-editor',
+        workspaceGeneration: 1, availability: 'clean' });
+      const commit = vi.spyOn(f.backend, 'commit');
+      const status = await f.inspect();
+      expect(status).toMatchObject({ phase, canWrite: false, blockers: [] });
+      expect(status).not.toHaveProperty('retryAfterMs');
+      expect(await f.write()).toMatchObject({ phase, canWrite: false, blockers: [] });
+      expect(commit).not.toHaveBeenCalled();
+      expect(await fs.readFile(path.join(f.projectRoot, 'content/scenario/start.gal'), 'utf8')).toBe(f.initial);
+    } finally { restoreLeaseInspection?.(); }
+  }, 30_000);
+
+  it('审阅写回将纯断联宽限归为忙碌，保留损坏分类且只在宽限结束后允许明确写回', async () => {
+    const f = await fixture();
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const store = new HumanWorkspaceStore({ dataRoot: f.dataRoot });
+    const root = f.backend.scope.canonicalProjectRoot;
+    const session = { workspaceSessionId: randomUUID(), browserSessionId: 'disconnected-review-editor',
+      workspaceGeneration: 1, availability: 'clean' as const };
+    await store.heartbeat(root, session);
+    const commit = vi.spyOn(f.backend, 'commit');
+    now += 12_000;
+    expect(await f.inspect()).toMatchObject({ phase: 'blocked', canWrite: false, retryAfterMs: 10_000,
+      blockers: [{ code: 'HUMAN_WORKSPACE_BUSY', message: expect.stringContaining('等待旧窗口连接确认') }] });
+    expect(await f.write()).toMatchObject({ phase: 'blocked', canWrite: false,
+      blockers: [{ code: 'HUMAN_WORKSPACE_BUSY', message: expect.any(String) }] });
+    expect(commit).not.toHaveBeenCalled();
+    const source = path.join(f.projectRoot, 'content/scenario/start.gal');
+    expect(await fs.readFile(source, 'utf8')).toBe(f.initial);
+
+    const past = new HumanWorkspaceStore({ dataRoot: f.dataRoot, now: () => now - 12_000 });
+    await past.heartbeat(root, { ...session, workspaceGeneration: 2,
+      availability: 'blocked', blockedReasons: ['autosave-recovery'] });
+    expect(await f.write()).toMatchObject({ phase: 'blocked', canWrite: false,
+      blockers: [{ code: 'HUMAN_WORKSPACE_STATE_CORRUPT', message: expect.any(String) }] });
+    expect(commit).not.toHaveBeenCalled();
+    expect(await fs.readFile(source, 'utf8')).toBe(f.initial);
+
+    await past.heartbeat(root, { ...session, workspaceGeneration: 3 });
+    now += 11_000;
+    expect(await f.inspect()).toMatchObject({ phase: 'ready', canWrite: true, blockers: [] });
+    expect(commit).not.toHaveBeenCalled();
+    expect(await f.write()).toMatchObject({ phase: 'written', canWrite: false });
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(await fs.readFile(source, 'utf8')).not.toBe(f.initial);
+  }, 30_000);
+
   it('批准与查询不写项目；明确写回只提交一次，并在另一默认 dataRoot 下正确回读历史', async () => {
     const f = await fixture();
     const unrelatedData = path.join(f.root, 'unrelated-data');
