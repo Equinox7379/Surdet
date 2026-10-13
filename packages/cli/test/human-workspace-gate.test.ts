@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'vitest';
+import { aggregateHumanWorkspaceObservations } from '@surdet/authoring';
 import { assertHumanWorkspaceAllowsAgentCommit } from '../src/authoring/human-workspace-gate.js';
 
 describe('Agent commit human workspace gate', () => {
+  it('keeps disconnected workspaces write-blocking without prescribing manual recovery', async () => {
+    const summary = aggregateHumanWorkspaceObservations([{
+      workspaceSessionId: 'disconnected-editor',
+      connection: 'grace', availability: 'clean', retryAfterMs: 10_000,
+      dirtyScopes: [], busyReasons: [], blockedReasons: [],
+    }]);
+    const failure = await assertHumanWorkspaceAllowsAgentCommit({
+      inspect: async () => ({ observations: [], summary }),
+    } as never, '/project').catch(error => error);
+    expect(failure).toMatchObject({ code: 'HUMAN_WORKSPACE_BUSY', details: {
+      retryAfterMs: 10_000, projectMutationOccurred: false, changeStatusAdvanced: false,
+    } });
+    expect(failure.details).not.toHaveProperty('manualRecoveryRequired');
+  });
+
   it('allows absent and clean workspaces', async () => {
     await expect(assertHumanWorkspaceAllowsAgentCommit({
       inspect: async () => ({
