@@ -61,14 +61,23 @@ describe('human workspace contract', () => {
     expect(humanWorkspaceCommitBlock(result)?.code).toBe('HUMAN_WORKSPACE_DIRTY');
   });
 
-  it('treats a grace connection as blocked even when its last report was clean', () => {
+  it('keeps a grace connection blocked but reports temporary unavailability rather than corruption', () => {
     const result = aggregateHumanWorkspaceObservations([
       observation({ connection: 'grace', retryAfterMs: 6_000 }),
     ]);
     expect(result.availability).toBe('blocked');
     expect(result.blockedReasons).toContain('connection-grace');
     expect(result.retryAfterMs).toBe(6_000);
+    expect(humanWorkspaceCommitBlock(result)?.code).toBe('HUMAN_WORKSPACE_BUSY');
+  });
+
+  it.each(['autosave-recovery', 'external-update-conflict', 'workspace-state-corrupt', 'write-settlement-failed'] as const)('does not hide %s behind a grace connection', reason => {
+    const result = aggregateHumanWorkspaceObservations([
+      observation({ connection: 'grace', retryAfterMs: 6_000 }),
+      observation({ availability: 'blocked', blockedReasons: [reason] }),
+    ]);
     expect(humanWorkspaceCommitBlock(result)?.code).toBe('HUMAN_WORKSPACE_STATE_CORRUPT');
+    expect(result.availability).toBe('blocked');
   });
 
   it('uses blocked > busy > dirty > clean aggregation', () => {

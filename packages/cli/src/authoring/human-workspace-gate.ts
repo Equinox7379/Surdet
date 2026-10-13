@@ -20,7 +20,7 @@ function dirtyError(summary: HumanWorkspaceSummary): AuthoringOperationError {
 function busyError(summary: HumanWorkspaceSummary): AuthoringOperationError {
   return new AuthoringOperationError(
     'HUMAN_WORKSPACE_BUSY',
-    '绑定同一项目的人类 Editor 正在保存、切换或执行受控写入，未执行项目提交',
+    '绑定同一项目的人类 Editor 正在操作或等待连接恢复，请稍后重试；未执行项目提交',
     {
       humanWorkspace: summary,
       retryAfterMs: summary.retryAfterMs,

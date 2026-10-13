@@ -1560,7 +1560,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     }, { 'game.config.json': fileHandle(null, log, 'game.config.json', config) });
     await openProjectFromHandle(root);
     expect(state.gameConfigText).toBe(config);
-    await expect(renameSceneAtKey('end_a')).rejects.toThrow(/game.config.json/);
+    await expect(renameSceneAtKey('end_a', 'final_a')).rejects.toThrow(/game.config.json/);
     await expect(deleteSceneAtKey('end_a')).rejects.toThrow(/game.config.json/);
     expect(state.scenes.has('end_a')).toBe(true);
     expect(state.pendingSceneDeletes).toEqual([]);
@@ -1577,7 +1577,7 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     }) }, { 'game.config.json': fileHandle(null, log, 'game.config.json', '{}') });
     await openProjectFromHandle(root);
     expect(state.handles.events).toBe(handle);
-    await expect(renameSceneAtKey('end_a')).rejects.toThrow(/events.json/);
+    await expect(renameSceneAtKey('end_a', 'final_a')).rejects.toThrow(/events.json/);
     await expect(deleteSceneAtKey('end_a')).rejects.toThrow(/events.json/);
     expect(state.scenes.has('end_a')).toBe(true);
     expect(state.pendingSceneDeletes).toEqual([]);

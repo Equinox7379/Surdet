@@ -551,13 +551,18 @@ export class DialogueLayer implements DialogueProjectionPort {
       view.label.style.letterSpacing = theme.typography.uiLetterSpacing;
     }
     this.layout();
+    // Entries are laid out with the theme's colours and sizes: refill an open backlog, keeping its scroll.
+    const backlog = this.#backlogLayer.visible ? this.#backlogContent : null, entriesLayer = this.#backlogEntriesLayer;
+    if (backlog && entriesLayer) {
+      entriesLayer.removeChildren().forEach(child => child.destroy({ children: true }));
+      this.#backlogContentH = this.#fillBacklogEntries(entriesLayer, backlog.entries, backlog.onReplayVoice);
+      this.scrollBacklog(0);
+    }
   }
 
   setReadingPreferences(preferences: Partial<ReadingPreferences>): void {
-    const backlog = this.#backlogLayer.visible ? this.#backlogContent : null, scroll = this.#backlogScroll;
     this.#reading = normalizeReadingPreferences({ ...this.#reading, ...preferences });
     this.setTheme(this.#workTheme);
-    if (backlog) { this.showBacklog(backlog.entries, backlog.onReplayVoice, backlog.query); this.scrollBacklog(-scroll); }
     this.#requestFrame();
   }
 
@@ -901,52 +906,30 @@ export class DialogueLayer implements DialogueProjectionPort {
     );
     entriesLayer.mask = mask;
     this.#backlogMask = mask;
-    const perLine = Math.max(10, Math.floor(this.#w * 0.68 / this.#theme.typography.bodySize));
-    let y = 0;
-    for (const entry of entries.slice(-120)) {
-      if (entry.markup !== undefined) {
-        const view = new InlineTextView(); view.setAnimationEnabled(false);
-        const name = entry.speaker ? `<color=accent>${escapeInlineText(`${entry.speaker}：`)}</color>` : '';
-        view.setContent(parseInlineText((entry.voice ? '▶ ' : '') + name + entry.markup), this.#w * .68, this.#theme, this.#assets.fontFamily('body'), Infinity, 'textMuted');
-        view.position.set(this.#w * .16, this.#backlogViewportTop + y);
-        if (entry.voice && onReplayVoice) { view.eventMode = 'static'; view.cursor = 'pointer'; view.on('pointerdown', event => {
-          this.#onPointerConsumed?.(); event.stopPropagation(); onReplayVoice(entry.voice!);
-        }); }
-        entriesLayer.addChild(view); y += view.contentHeight; continue;
-      }
-      const text = entry.text.length > 0 ? entry.text : '（无文本）';
-      let first = true;
-      for (const line of wrapCjk(text, perLine)) {
-        const lineText = (first && entry.speaker ? `${entry.speaker}：` : '') + line;
-        const textNode = bindThemeTextProjection(new PText({
-          text: first && entry.voice ? `▶ ${lineText}` : lineText,
-          style: {
-            fontSize: this.#theme.typography.bodySize,
-            fill: first && entry.speaker ? this.#theme.colors.accent : this.#theme.colors.textMuted,
-            fontWeight: first && entry.speaker ? 'bold' : 'normal',
-          } satisfies TextStyleOptions,
-        }), { fill: first && entry.speaker ? 'accent' : 'textMuted' });
-        textNode.position.set(this.#w * 0.16, this.#backlogViewportTop + y);
-        if (first && entry.voice && onReplayVoice) {
-          textNode.eventMode = 'static';
-          textNode.cursor = 'pointer';
-          textNode.on('pointerdown', (event) => {
-            this.#onPointerConsumed?.();
-            event.stopPropagation();
-            onReplayVoice(entry.voice!);
-          });
-        }
-        entriesLayer.addChild(textNode);
-        y += this.#theme.typography.bodySize * 1.6;
-        first = false;
-      }
-    }
+    const y = this.#fillBacklogEntries(entriesLayer, entries, onReplayVoice);
     this.#backlogContentH = y;
     this.#backlogScroll = 0;
     this.#applyBacklogScroll();
     layer.addChild(entriesLayer, mask);
     layer.visible = true;
     this.#requestFrame();
+  }
+
+  /** Plain and styled entries share one view, so their weight, colour and spacing match. Returns the content height. */
+  #fillBacklogEntries(entriesLayer: Container, entries: readonly BacklogEntry[], onReplayVoice?: (voice: string) => void): number {
+    let y = 0;
+    for (const entry of entries.slice(-120)) {
+      const body = entry.markup ?? (entry.text.length > 0 ? escapeInlineText(entry.text) : '（无文本）');
+      const view = new InlineTextView(); view.setAnimationEnabled(false);
+      const name = entry.speaker ? `<color=accent>${escapeInlineText(`${entry.speaker}：`)}</color>` : '';
+      view.setContent(parseInlineText((entry.voice ? '▶ ' : '') + name + body), this.#w * .68, this.#theme, this.#assets.fontFamily('body'), Infinity, 'textMuted');
+      view.position.set(this.#w * .16, this.#backlogViewportTop + y);
+      if (entry.voice && onReplayVoice) { view.eventMode = 'static'; view.cursor = 'pointer'; view.on('pointerdown', event => {
+        this.#onPointerConsumed?.(); event.stopPropagation(); onReplayVoice(entry.voice!);
+      }); }
+      entriesLayer.addChild(view); y += view.contentHeight;
+    }
+    return y;
   }
 
   hideBacklog(): void {

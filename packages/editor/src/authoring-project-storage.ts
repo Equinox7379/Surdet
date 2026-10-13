@@ -570,6 +570,48 @@ export async function commitThemeConfiguration(themeValue: Record<string, unknow
   return { text: actual, before: before.value, after: afterTheme };
 }
 
+/** Write player.endScenes alone through the shared player patch: other player fields stay as they are,
+ * and null (field absent) stays distinct from an empty list. */
+export async function commitEndScenes(value: string[] | null, expectedConfigText: string): Promise<{ text: string; before: string[] | null; after: string[] | null }> {
+  const root = state.dirHandle, handle = state.handles.gameConfig, name = state.dirName;
+  if (!root || !handle || state.reviewWorkspace !== null || state.reviewPreviewReadOnly || state.projectLoading)
+    throw new Error('结束场景只可保存到当前可写项目。');
+  if (state.gameConfigText !== expectedConfigText) throw new Error('项目配置已经改变，请重新读取结束场景。');
+  const editorStorage = createEditorProjectStorage();
+  const beforeConfig = parseProjectConfigDocument(expectedConfigText || '{}');
+  const before = await inspectPlayerConfig(beforeConfig, editorStorage);
+  if (stableStringify(before.values.endScenes) === stableStringify(value)) return { text: expectedConfigText, before: before.values.endScenes, after: value };
+  const snapshot = await loadProjectSnapshot(editorStorage, editorStorage);
+  const assetFiles = state.dirAssets.flatMap(asset => {
+    const sourcePath = asset.sourcePath ?? (asset.handle ? assetPathForHandle(asset.handle) : undefined);
+    return sourcePath ? [{ path: sourcePath, bytes: asset.bytes }] : [];
+  });
+  if (state.dirHandle !== root || state.handles.gameConfig !== handle || state.dirName !== name || state.gameConfigText !== expectedConfigText)
+    throw new Error('结束场景读取期间项目已变化。');
+  const catalog = buildAssetCatalog(assetFiles, snapshot, { gallery: state.configFiles.gallery });
+  const session = await beginChange(snapshot, new InMemoryChangeRepository());
+  session.record.composition = { ...session.record.composition!, mode: 'direct' };
+  const result = await applyPlayerConfigPatch(session, { operationId: crypto.randomUUID(), expectedFingerprint: before.fingerprint, patch: { endScenes: value } }, editorStorage, catalog);
+  const text = session.record.workingFiles['game.config.json']!;
+  const validationStorage: ProjectStorage = { ...editorStorage,
+    readText: async path => path === 'game.config.json'
+      ? { path, text, bytes: bytesOf(text), sha256: await editorStorage.sha256(text) }
+      : editorStorage.readText(path) };
+  const changedSnapshot = await loadProjectSnapshot(validationStorage, editorStorage);
+  const validation = validateSnapshot(changedSnapshot, buildObjectIndex(changedSnapshot), { assetCatalog: buildAssetCatalog(assetFiles, changedSnapshot, { gallery: state.configFiles.gallery }) });
+  if (!validation.ok) throw new Error(validation.issues.filter(issue => issue.severity === 'error').map(issue => issue.text).join('\n'));
+  await recordValidation(session, { evidenceId: `editor-end-scenes-${crypto.randomUUID()}`, errors: 0 });
+  const sceneHandles = new Map<string, FileSystemFileHandle>();
+  for (const scene of state.scenes.values()) if (scene.handle) sceneHandles.set(scenarioPath(scene), scene.handle);
+  const committed = await commitChange(session, new EditorWriteStorage(editorStorage, handle, sceneHandles));
+  const actual = committed.files.includes('game.config.json') ? session.record.workingFiles['game.config.json'] : undefined;
+  if (actual === undefined) throw new Error('结束场景事务未返回已写入正文。');
+  if (state.dirHandle !== root || state.handles.gameConfig !== handle || state.dirName !== name)
+    throw new Error('原项目结束场景已写入，但当前项目已切换；没有覆盖当前项目内存。');
+  state.gameConfigText = actual;
+  return { text: actual, before: before.values.endScenes, after: result.playerConfig.values.endScenes };
+}
+
 /** Save every changed UI page through the same direct authoring operation and one file transaction. */
 export async function commitUiConfiguration(value: ProjectUiDocument | null, expectedConfigText: string): Promise<{ text: string; before: ProjectUiDocument | null; after: ProjectUiDocument | null }> {
   const root = state.dirHandle, handle = state.handles.gameConfig, name = state.dirName;
