@@ -8,7 +8,7 @@ import { findRecentProject, parseRecentProjects, summarizeRecentProjects, withRe
 import { startEditorServer } from './server.js';
 import { DESKTOP_ORIGIN } from './contracts.js';
 import { createDesktopProject, selectProjectLocation, type SelectedProjectLocation } from './project-creation.js';
-import { exportDesktopGame, inspectWindowsExport } from './game-export.js';
+import { desktopExportError, exportDesktopGame, inspectWindowsExport } from './game-export.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 app.setName('Surdet Editor');
@@ -165,7 +165,8 @@ function exportRuntime() {
 ipcMain.handle('editor:export-inspect', async event => {
   const state = trusted(event);
   if (!state.project) throw new Error('请先打开游戏项目。');
-  return inspectWindowsExport(state.project.root, exportRuntime().templates);
+  try { return await inspectWindowsExport(state.project.root, exportRuntime().templates); }
+  catch (error) { throw desktopExportError(error, '点击“重新检查”'); }
 });
 ipcMain.handle('editor:export-location', async event => {
   const state = trusted(event);
@@ -187,6 +188,7 @@ ipcMain.handle('editor:export-game', async (event, request: unknown) => {
     progress => { if (!state.window.isDestroyed()) state.window.webContents.send('editor:export-progress', progress); });
   const cleanup = operation.then(() => {}, () => {}); closing.add(cleanup);
   try { const result = await operation; state.exported = result.executable; state.exportLocation = null; return result; }
+  catch (error) { throw desktopExportError(error, '重新导出'); }
   finally { state.exportController = null; closing.delete(cleanup); }
 });
 ipcMain.handle('editor:export-cancel', event => { trusted(event).exportController?.abort(new Error('导出已取消。')); });
