@@ -28,6 +28,15 @@ describe('行内文字完整排版与局部揭示', () => {
     expect(revealInlineRun(layout.runs[0]!, 0)).toBe('');
     expect(revealInlineRun(layout.runs[0]!, 1)).toBe('世界');
   });
+  it('注音或着重号行只在上方加高，下方仍留普通行距', () => {
+    const plain = layoutInlineText(parseInlineText('甲\n乙'), 100, 10, measure);
+    const marked = layoutInlineText(parseInlineText('<ruby=せかい>世界</ruby>\n乙'), 100, 10, measure);
+    const gapBelow = (layout: ReturnType<typeof layoutInlineText>): number => layout.runs.at(-1)!.y - (layout.runs[0]!.y + 10);
+    expect(gapBelow(marked)).toBeCloseTo(gapBelow(plain));
+    expect(gapBelow(plain)).toBeCloseTo(6);
+    const emphasis = layoutInlineText(parseInlineText('<em>甲</em>\n乙'), 100, 10, measure);
+    expect(gapBelow(emphasis)).toBeCloseTo(6);
+  });
   it('跨样式边界保持中文避头尾、显式空行与字素', () => {
     const doc = parseInlineText('甲乙<b>，</b>丙\n\n👩‍🚀');
     const layout = layoutInlineText(doc, 20, 10, measure);

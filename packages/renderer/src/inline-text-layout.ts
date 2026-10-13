@@ -35,7 +35,8 @@ export function layoutInlineText(document: InlineTextDocument, width: number, bo
       runs.push({ units: group, start: indices.get(unit)!, x, y: y + rubyInset + size - measureHeight(unit.style, false), width: runWidth, style: unit.style, ...(unit.ruby ? { ruby: unit.ruby } : {}) });
       x += runWidth;
     }
-    maxWidth = Math.max(maxWidth, x); y += Math.max(size * 1.6, size + rubyInset + 2);
+    // Ruby and emphasis marks take room above the text; the space below stays a normal line's.
+    maxWidth = Math.max(maxWidth, x); y += rubyInset + size * 1.6;
   }
   return { runs, width: maxWidth, height: document.units.length ? y : 0 };
 }
