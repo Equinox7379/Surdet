@@ -37,6 +37,134 @@ afterEach(() => {
 });
 
 describe('RenderAssetRegistry', () => {
+  it('shares only concurrent immutable font bytes, while keeping roles independent and later reads fresh', async () => {
+    const bytes = new Uint8Array([1, 2, 3]).buffer;
+    let finish!: (bytes: ArrayBuffer) => void;
+    const body = vi.fn(() => new Promise<ArrayBuffer>(resolve => { finish = resolve; }));
+    const fetcher = vi.fn(async () => ({ ok: true, arrayBuffer: body }));
+    vi.stubGlobal('fetch', fetcher);
+    vi.spyOn(coverageReader, 'readFontCoverage').mockResolvedValue({ characters: new Set([0x6d77]) });
+    const sources: ArrayBuffer[] = [];
+    class FakeFontFace {
+      constructor(readonly family: string, source: ArrayBuffer) { sources.push(source); }
+      async load(): Promise<this> { return this; }
+    }
+    const add = vi.fn(), remove = vi.fn();
+    vi.stubGlobal('FontFace', FakeFontFace);
+    vi.stubGlobal('document', { fonts: { add, delete: remove } });
+    const registry = new RenderAssetRegistry();
+    try {
+      const loads = (['body', 'title', 'ui'] as const).map(role => registry.registerFontRole(role, 'blob:shared', role));
+      await vi.waitFor(() => expect(body).toHaveBeenCalled());
+      expect(fetcher).toHaveBeenCalledTimes(1); expect(body).toHaveBeenCalledTimes(1);
+      finish(bytes); expect(await Promise.all(loads)).toEqual([true, true, true]);
+      expect(sources).toHaveLength(3); sources.forEach(source => expect(source).toBe(bytes));
+      expect(add).toHaveBeenCalledTimes(3);
+      expect(registry.fontFamily('body')).toBe('body'); expect(registry.fontFamily('title')).toBe('title');
+      expect(registry.fontDiagnostics('ui', '海', 'title')).toEqual([]);
+      body.mockResolvedValue(bytes);
+      expect(await registry.registerFontRole('body', 'blob:shared', 'Later')).toBe(true);
+      expect(fetcher).toHaveBeenCalledTimes(2); expect(remove).toHaveBeenCalledTimes(1);
+    } finally { registry.dispose(); }
+  });
+
+  it('keeps a shared font transfer alive for the longer deadline and aborts when its last reader times out', async () => {
+    vi.useFakeTimers();
+    let signal!: AbortSignal;
+    let finish!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn((_url, options: RequestInit) => {
+      signal = options.signal!;
+      return new Promise<Response>((resolve, reject) => {
+        finish = resolve; signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      });
+    }));
+    vi.spyOn(coverageReader, 'readFontCoverage').mockResolvedValue({ characters: new Set() });
+    vi.stubGlobal('FontFace', class { async load() { return this; } });
+    vi.stubGlobal('document', { fonts: { add: vi.fn(), delete: vi.fn() } });
+    const registry = new RenderAssetRegistry();
+    try {
+      const short = registry.registerFontRole('body', 'blob:shared', 'Short', 20);
+      const long = registry.registerFontRole('title', 'blob:shared', 'Long', 100);
+      await vi.advanceTimersByTimeAsync(20);
+      expect(await short).toBe(false); expect(signal.aborted).toBe(false);
+      finish(new Response(new Uint8Array([1, 2, 3])));
+      expect(await long).toBe(true); expect(registry.fontFamily('title')).toBe('Long');
+      const last = registry.registerFontRole('ui', 'blob:stalled', 'Stalled', 20);
+      await vi.advanceTimersByTimeAsync(20);
+      expect(await last).toBe(false); expect(signal.aborted).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { registry.dispose(); vi.useRealTimers(); }
+  });
+
+  it('does not retain failed font bytes or reuse them across later registrations', async () => {
+    let fail!: (error: Error) => void;
+    const fetcher = vi.fn().mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }))
+      .mockImplementation(async () => new Response(new Uint8Array([1, 2, 3])));
+    vi.stubGlobal('fetch', fetcher);
+    vi.spyOn(coverageReader, 'readFontCoverage').mockResolvedValue({ characters: new Set() });
+    vi.stubGlobal('FontFace', class { async load() { return this; } });
+    vi.stubGlobal('document', { fonts: { add: vi.fn(), delete: vi.fn() } });
+    const registry = new RenderAssetRegistry();
+    try {
+      const first = registry.registerFontRole('body', 'blob:retry');
+      const second = registry.registerFontRole('title', 'blob:retry');
+      fail(new Error('read failed'));
+      expect(await Promise.all([first, second])).toEqual([false, false]);
+      expect(await registry.registerFontRole('body', 'blob:retry')).toBe(true);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    } finally { registry.dispose(); }
+  });
+
+  it('reads mutable font URLs separately even while registrations overlap', async () => {
+    const fetcher = vi.fn(async () => new Response(new Uint8Array([1, 2, 3])));
+    vi.stubGlobal('fetch', fetcher);
+    vi.spyOn(coverageReader, 'readFontCoverage').mockResolvedValue({ characters: new Set() });
+    vi.stubGlobal('FontFace', class { async load() { return this; } });
+    vi.stubGlobal('document', { fonts: { add: vi.fn(), delete: vi.fn() } });
+    const registry = new RenderAssetRegistry();
+    try {
+      expect(await Promise.all([registry.registerFontRole('body', '/font.ttf'), registry.registerFontRole('ui', '/font.ttf')])).toEqual([true, true]);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    } finally { registry.dispose(); }
+  });
+
+  it('keeps a failed font role separate from other roles sharing its bytes', async () => {
+    const fetcher = vi.fn(async () => new Response(new Uint8Array([1, 2, 3])));
+    vi.stubGlobal('fetch', fetcher);
+    vi.spyOn(coverageReader, 'readFontCoverage').mockResolvedValue({ characters: new Set() });
+    class FakeFontFace {
+      constructor(readonly family: string) {}
+      async load() { if (this.family === 'Bad') throw new Error('decode failed'); return this; }
+    }
+    vi.stubGlobal('FontFace', FakeFontFace);
+    vi.stubGlobal('document', { fonts: { add: vi.fn(), delete: vi.fn() } });
+    const registry = new RenderAssetRegistry();
+    try {
+      await registry.registerFontRole('body', 'blob:old', 'Old');
+      const result = await Promise.all([registry.registerFontRole('body', 'blob:new', 'Bad'), registry.registerFontRole('ui', 'blob:new', 'Good')]);
+      expect(result).toEqual([false, true]); expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(registry.fontFamily('body')).toBe('Old'); expect(registry.fontFamily('ui')).toBe('Good');
+    } finally { registry.dispose(); }
+  });
+
+  it('does not apply a shared read after reset or keep its bytes for the next registration', async () => {
+    let finish!: (response: Response) => void;
+    const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }))
+      .mockImplementation(async () => new Response(new Uint8Array([1, 2, 3])));
+    vi.stubGlobal('fetch', fetcher);
+    vi.spyOn(coverageReader, 'readFontCoverage').mockResolvedValue({ characters: new Set() });
+    vi.stubGlobal('FontFace', class { async load() { return this; } });
+    const add = vi.fn(); vi.stubGlobal('document', { fonts: { add, delete: vi.fn() } });
+    const registry = new RenderAssetRegistry();
+    try {
+      const loads = [registry.registerFontRole('body', 'blob:shared'), registry.registerFontRole('title', 'blob:shared')];
+      registry.resetFonts(); finish(new Response(new Uint8Array([1, 2, 3])));
+      expect(await Promise.all(loads)).toEqual([false, false]); expect(add).not.toHaveBeenCalled();
+      expect(await registry.registerFontRole('body', 'blob:shared')).toBe(true);
+      expect(fetcher).toHaveBeenCalledTimes(2); expect(add).toHaveBeenCalledTimes(1);
+    } finally { registry.dispose(); }
+  });
+
   it('keeps rule ownership separate, preserves a failed replacement and unloads only loaded sources', async () => {
     const { registry, unload } = registryHarness();
     const caller = fakeTexture('caller-rule');
