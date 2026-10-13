@@ -256,7 +256,11 @@ export function humanWorkspaceCommitBlock(
   if (summary.availability === 'dirty') {
     return { code: 'HUMAN_WORKSPACE_DIRTY', summary };
   }
-  if (summary.availability === 'busy') {
+  // A bounded disconnect grace period still blocks every write, but is not a corrupt record.
+  const waitingForConnection = summary.availability === 'blocked' && summary.graceSessions > 0
+    && summary.retryAfterMs !== undefined && summary.blockedReasons.length === 1
+    && summary.blockedReasons[0] === 'connection-grace';
+  if (summary.availability === 'busy' || waitingForConnection) {
     return { code: 'HUMAN_WORKSPACE_BUSY', summary };
   }
   return { code: 'HUMAN_WORKSPACE_STATE_CORRUPT', summary };
