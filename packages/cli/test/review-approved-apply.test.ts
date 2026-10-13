@@ -39,6 +39,42 @@ async function fixture(approve = true) {
 }
 
 describe('approved result apply through real authoring storage', () => {
+  it('审阅写回将纯断联宽限归为忙碌，保留损坏分类且只在宽限结束后允许明确写回', async () => {
+    const f = await fixture();
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const store = new HumanWorkspaceStore({ dataRoot: f.dataRoot });
+    const root = f.backend.scope.canonicalProjectRoot;
+    const session = { workspaceSessionId: randomUUID(), browserSessionId: 'disconnected-review-editor',
+      workspaceGeneration: 1, availability: 'clean' as const };
+    await store.heartbeat(root, session);
+    const commit = vi.spyOn(f.backend, 'commit');
+    now += 12_000;
+    expect(await f.inspect()).toMatchObject({ phase: 'blocked', canWrite: false, retryAfterMs: 10_000,
+      blockers: [{ code: 'HUMAN_WORKSPACE_BUSY', message: expect.stringContaining('等待旧窗口连接确认') }] });
+    expect(await f.write()).toMatchObject({ phase: 'blocked', canWrite: false,
+      blockers: [{ code: 'HUMAN_WORKSPACE_BUSY', message: expect.any(String) }] });
+    expect(commit).not.toHaveBeenCalled();
+    const source = path.join(f.projectRoot, 'content/scenario/start.gal');
+    expect(await fs.readFile(source, 'utf8')).toBe(f.initial);
+
+    const past = new HumanWorkspaceStore({ dataRoot: f.dataRoot, now: () => now - 12_000 });
+    await past.heartbeat(root, { ...session, workspaceGeneration: 2,
+      availability: 'blocked', blockedReasons: ['autosave-recovery'] });
+    expect(await f.write()).toMatchObject({ phase: 'blocked', canWrite: false,
+      blockers: [{ code: 'HUMAN_WORKSPACE_STATE_CORRUPT', message: expect.any(String) }] });
+    expect(commit).not.toHaveBeenCalled();
+    expect(await fs.readFile(source, 'utf8')).toBe(f.initial);
+
+    await past.heartbeat(root, { ...session, workspaceGeneration: 3 });
+    now += 11_000;
+    expect(await f.inspect()).toMatchObject({ phase: 'ready', canWrite: true, blockers: [] });
+    expect(commit).not.toHaveBeenCalled();
+    expect(await f.write()).toMatchObject({ phase: 'written', canWrite: false });
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(await fs.readFile(source, 'utf8')).not.toBe(f.initial);
+  }, 30_000);
+
   it('批准与查询不写项目；明确写回只提交一次，并在另一默认 dataRoot 下正确回读历史', async () => {
     const f = await fixture();
     const unrelatedData = path.join(f.root, 'unrelated-data');

@@ -2,7 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {
-  inspectTransactionRecovery, loadProjectSnapshot, ReviewApplyError,
+  humanWorkspaceCommitBlock, inspectTransactionRecovery, loadProjectSnapshot, ReviewApplyError,
   type ApprovedApplyInspection, type ApprovedResultBinding, type BoundProjectScope,
   type ChangeRecord, type CommitJournal, type DurableCommitFact, type ReviewApprovalReference,
 } from '@surdet/authoring';
@@ -93,6 +93,8 @@ export class NodeReviewApprovedApplyBackend implements ReviewApprovedApplyBacken
         currentProject: snapshot.revision === committed.revision ? 'matches-commit' : 'changed-after-commit' };
     }
     const workspace = (await new HumanWorkspaceStore({ dataRoot: this.scope.canonicalDataRoot }).inspect(storage.rootIdentity)).summary;
+    const waitingForConnection = workspace.availability === 'blocked'
+      && humanWorkspaceCommitBlock(workspace)?.code === 'HUMAN_WORKSPACE_BUSY';
     const changeLease = await this.leases.inspect('change', record.changeId);
     const projectLease = await this.leases.inspect('project', storage.rootIdentity);
     const lockState = changeLease.state !== 'free' ? changeLease.state : projectLease.state;
@@ -102,13 +104,16 @@ export class NodeReviewApprovedApplyBackend implements ReviewApprovedApplyBacken
     // RECOVERED already proves rollback. A new explicit write may retry at the
     // verified base; unfinished staging/replacement still needs explicit recovery.
     const recovered = journal?.status === 'RECOVERED' && recovery.projectState === 'base' && !recovery.manualRecoveryRequired;
+    const blockers = record.status === 'OPEN' ? [] : [{ code: 'CHANGE_NOT_OPEN', message: '事务已关闭或失去原基线，需要重新核对结果。' }];
+    if (waitingForConnection) blockers.push({ code: 'HUMAN_WORKSPACE_BUSY',
+      message: '正在等待旧窗口连接确认，稍后会自动检查；尚未写回。' });
     return { ...common,
       writeState: locked ? 'committing'
         : journal !== null && !recovered ? 'recovery-required' : 'unwritten',
-      workspace: workspace.availability === 'blocked' ? 'lost' : workspace.availability,
+      workspace: waitingForConnection ? 'busy' : workspace.availability === 'blocked' ? 'lost' : workspace.availability,
       ...(workspace.retryAfterMs === undefined ? {} : { retryAfterMs: workspace.retryAfterMs }),
       currentProject: snapshot.revision === record.baseRevision ? 'matches-approved-base' : 'unknown',
-      blockers: record.status === 'OPEN' ? [] : [{ code: 'CHANGE_NOT_OPEN', message: '事务已关闭或失去原基线，需要重新核对结果。' }],
+      blockers,
     };
   }
 
