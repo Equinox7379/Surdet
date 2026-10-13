@@ -11,7 +11,7 @@
  *    右键场景节点 → 重命名（引用同步改写）/ 删除（引用检查警告）
  *  - 渲染：真实节点常驻 SVG，避免平移到远端场景时出现“只剩空框”的错觉；规模目标 100 场景 / 800 标签
  */
-import { state, h, setStatus } from '../state.js';
+import { state, h, setStatus, type SceneEntry } from '../state.js';
 import { assertConfigSourcesReadable } from '../config-source.js';
 import {
   assertProjectWriteUnlocked,
@@ -30,6 +30,7 @@ import type { FlowGraph, FlowNode, FlowEdge } from '../graph/build.js';
 import { histories, setSceneText } from '../history.js';
 import { planFlowEdit, type FlowEdit, type FlowEditPlan } from '../flow-operations.js';
 import { endpointOf, openFlowEditDialog } from './flow-edit-dialog.js';
+import { openTextInputDialog } from './text-input-dialog.js';
 import { renderSidebar } from './sidebar.js';
 import {
   flowEdgeKindLabel,
@@ -55,9 +56,8 @@ let openSceneHook: (sceneKey: string, line?: number) => void = () => {};
 let requestValidateHook: () => void = () => {};
 let prepareConfigRenameHook: (from: string, to: string, fallbackEntry: string) => () => void = () => () => {};
 let renameSceneHook: (sceneId: string) => void = (sceneId) => {
-  void renameScene(sceneId).then(() => refreshFlowIfVisible()).catch((error: unknown) => {
-    setStatus(error instanceof Error ? error.message : '当前无法重命名场景', false, 5000);
-  });
+  try { renameScene(sceneId, async (operation) => { await operation(); refreshFlowIfVisible(); }); }
+  catch (error) { setStatus(error instanceof Error ? error.message : '当前无法重命名场景', false, 5000); }
 };
 let deleteSceneHook: (sceneId: string) => void = (sceneId) => {
   void deleteScene(sceneId).then(() => refreshFlowIfVisible()).catch((error: unknown) => {
@@ -241,47 +241,37 @@ function blockConfiguredSceneOperation(sceneId: string): boolean {
   return true;
 }
 
-/** 只更新内存与引用；旧磁盘文件由“保存全部”在新文件写成后清理。 */
-async function renameSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
+/** Runs a scene write; the app wraps it to mark the project busy and re-render afterwards. */
+export type SceneWrite = (operation: () => Promise<void>) => Promise<void>;
+const runDirectly: SceneWrite = operation => operation();
+
+/** Checked before asking for a name and again inside the write; a refusal throws its reason. */
+function assertSceneRenamable(sceneKey: string): SceneEntry {
   assertProjectWriteUnlocked();
   if (state.pendingSceneConfigRenames.some(rename => rename.labelScene !== undefined)) throw new Error('请先保存标签改名，再改变场景身份');
-  if (state.pendingSceneCommit !== null) {
-    setStatus('上一次场景保存正在收束，请先重试“保存全部”', false, 6000);
-    return;
-  }
+  if (state.pendingSceneCommit !== null) throw new Error('上一次场景保存正在收束，请先重试“保存全部”');
   const current = state.scenes.get(sceneKey);
-  if (!current) return;
-  if (pendingRenameFor(sceneKey)) {
-    setStatus('该场景已有尚未保存的改名或移动，请先保存全部', false, 5000);
-    return;
+  if (!current) throw new Error('场景已不存在，请重新选择');
+  if (pendingRenameFor(sceneKey)) throw new Error('该场景已有尚未保存的改名或移动，请先保存全部');
+  sceneConfigReferences(current.id); // Validate known config shapes without blocking valid references.
+  if ([...state.scenes.values()].filter((scene) => scene.id === current.id).length !== 1) {
+    throw new Error(`场景标识“${current.id}”对应多个文件，请先删除重复场景再重命名`);
   }
+  return current;
+}
+
+/** 只更新内存与引用；旧磁盘文件由“保存全部”在新文件写成后清理。 */
+async function renameSceneAtKeyUnlocked(sceneKey: string, input: string, expected?: SceneEntry): Promise<void> {
+  const current = assertSceneRenamable(sceneKey);
+  if (expected !== undefined && current !== expected) throw new Error('场景已变化，请关闭后重新打开重命名');
   const sceneId = current.id;
-  sceneConfigReferences(sceneId); // Validate known config shapes without blocking valid references.
-  if ([...state.scenes.values()].filter((scene) => scene.id === sceneId).length !== 1) {
-    setStatus(`场景标识“${sceneId}”对应多个文件，请先删除重复场景再重命名`, false, 6000);
-    return;
-  }
-  const input = window.prompt(`重命名场景 '${sceneId}'（文件名，不含 .gal）`, sceneId);
-  if (!input) return;
   const newId = input.trim();
-  if (!validSceneId(newId)) {
-    setStatus('场景标识 不能包含空格、点号或文件名保留字符', false, 5000);
-    return;
-  }
   if (newId === sceneId) return;
-  if ([...state.scenes.values()].some((scene) => scene.id === newId)) {
-    setStatus(`场景 '${newId}' 已存在`, false, 4000);
-    return;
-  }
+  if (!validSceneId(newId)) throw new Error('场景标识不能为空，也不能包含空格、点号或文件名保留字符');
+  if ([...state.scenes.values()].some((scene) => scene.id === newId)) throw new Error(`场景 '${newId}' 已存在`);
   const targetFile = renamedSceneFile(current.file, newId);
-  if (sceneFileIdentity(targetFile) === sceneFileIdentity(current.file)) {
-    setStatus('Windows 下不能只改变场景文件名的大小写，请使用不同名称', false, 6000);
-    return;
-  }
-  if (isSceneFilePathReserved(targetFile, sceneKey)) {
-    setStatus('目标场景路径已存在或正等待删除，请先保存全部', false, 6000);
-    return;
-  }
+  if (sceneFileIdentity(targetFile) === sceneFileIdentity(current.file)) throw new Error('Windows 下不能只改变场景文件名的大小写，请使用不同名称');
+  if (isSceneFilePathReserved(targetFile, sceneKey)) throw new Error('目标场景路径已存在或正等待删除，请先保存全部');
 
   const authorityPlan = current.handle && state.dirHandle
     ? await prepareSceneMutation({
@@ -366,29 +356,49 @@ async function renameSceneAtKeyUnlocked(sceneKey: string): Promise<void> {
   requestValidateHook();
 }
 
-export async function renameSceneAtKey(sceneKey: string): Promise<void> {
-  await runProjectWriteOperation(() => renameSceneAtKeyUnlocked(sceneKey));
+/** Rename to `input`; refusals throw and leave every scene, reference and history untouched. */
+export async function renameSceneAtKey(sceneKey: string, input: string, expected?: SceneEntry): Promise<void> {
+  await runProjectWriteOperation(() => renameSceneAtKeyUnlocked(sceneKey, input, expected));
+}
+
+/** Ask for the new id in the Editor; the write re-checks everything and keeps the dialog open on refusal. */
+export function openRenameSceneDialog(sceneKey: string, run: SceneWrite = runDirectly): void {
+  const scene = assertSceneRenamable(sceneKey);
+  openTextInputDialog({
+    title: `重命名场景「${scene.id}」`,
+    label: '新场景标识',
+    value: scene.id,
+    hint: '场景标识就是文件名，不含 .gal。剧情里的跳转会一并改写；保存全部后写入磁盘。',
+    confirm: '重命名',
+    submit: value => run(() => renameSceneAtKey(sceneKey, value, scene)),
+  });
+}
+
+function assertSceneMovable(sceneKey: string): SceneEntry {
+  assertProjectWriteUnlocked();
+  if (state.pendingSceneConfigRenames.some(rename => rename.labelScene !== undefined)) throw new Error('请先保存标签改名，再移动场景');
+  if (state.pendingSceneCommit || pendingRenameFor(sceneKey)) throw new Error('该场景有尚未完成的改名、移动或保存，请先保存全部');
+  const current = state.scenes.get(sceneKey);
+  if (!current) throw new Error('场景已不存在，请重新选择');
+  if ([...state.scenes.values()].filter(scene => scene.id === current.id).length !== 1) {
+    throw new Error(`场景标识“${current.id}”对应多个文件，请先处理重复场景`);
+  }
+  return current;
+}
+
+/** The chapter folder of a scene, relative to content/scenario ('' at the root). */
+export function sceneChapterDirectory(scene: SceneEntry): string {
+  return sceneProjectPath(scene.file).slice('content/scenario/'.length).split('/').slice(0, -1).join('/');
 }
 
 /** Chapter organization changes the path only; existing physical relocation
  * plans/receipts and autosave retain the move until Save All succeeds. */
-export async function moveSceneAtKey(sceneKey: string): Promise<void> {
+export async function moveSceneAtKey(sceneKey: string, input: string, expected?: SceneEntry): Promise<void> {
   await runProjectWriteOperation(async () => {
-    assertProjectWriteUnlocked();
-    if (state.pendingSceneConfigRenames.some(rename => rename.labelScene !== undefined)) throw new Error('请先保存标签改名，再移动场景');
-    if (state.pendingSceneCommit || pendingRenameFor(sceneKey)) {
-      setStatus('该场景有尚未完成的改名、移动或保存，请先保存全部', false, 6000);
-      return;
-    }
-    const current = state.scenes.get(sceneKey);
-    if (!current) return;
-    if ([...state.scenes.values()].filter(scene => scene.id === current.id).length !== 1) {
-      throw new Error(`场景标识“${current.id}”对应多个文件，请先处理重复场景`);
-    }
+    const current = assertSceneMovable(sceneKey);
+    if (expected !== undefined && current !== expected) throw new Error('场景已变化，请关闭后重新打开移动');
     const previousPath = sceneProjectPath(current.file);
-    const directory = previousPath.slice('content/scenario/'.length).split('/').slice(0, -1).join('/');
-    const input = window.prompt('移动到章节目录（可用 / 分级，留空返回项目场景；不改剧情跳转）', directory);
-    if (input === null || input === directory) return;
+    if (input === sceneChapterDirectory(current)) return;
     const target = sceneMoveTargetPath(previousPath, input.normalize('NFC'), [
       ...[...state.scenes.values()].map(scene => sceneProjectPath(scene.file)),
       ...state.pendingSceneDeletes.map(pending => sceneProjectPath(pending.file)),
@@ -424,13 +434,26 @@ export async function moveSceneAtKey(sceneKey: string): Promise<void> {
   });
 }
 
-export async function renameScene(sceneId: string): Promise<void> {
+/** Ask for the chapter folder in the Editor; empty moves the scene back to the scenario root. */
+export function openMoveSceneDialog(sceneKey: string, run: SceneWrite = runDirectly): void {
+  const scene = assertSceneMovable(sceneKey);
+  openTextInputDialog({
+    title: `移动场景「${scene.id}」`,
+    label: '章节目录',
+    value: sceneChapterDirectory(scene),
+    hint: '可用 / 分级，留空表示放回项目场景。只改文件位置，不改剧情跳转；保存全部后写入磁盘。',
+    confirm: '移动',
+    submit: value => run(() => moveSceneAtKey(sceneKey, value, scene)),
+  });
+}
+
+export function renameScene(sceneId: string, run: SceneWrite = runDirectly): void {
   const sceneKey = resolveSceneKeyForOperation(sceneId);
   if (!sceneKey) {
     setStatus(`无法从流程图唯一确定场景 '${sceneId}'，请在左侧场景目录选择精确文件`, false, 6000);
     return;
   }
-  await renameSceneAtKey(sceneKey);
+  openRenameSceneDialog(sceneKey, run);
 }
 
 /** 精确路径进入待保存清理；不在点击按钮时直接改磁盘。 */

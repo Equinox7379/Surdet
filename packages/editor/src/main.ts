@@ -76,9 +76,10 @@ import {
   deleteSceneAtKey,
   renderFlow,
   renameScene,
-  renameSceneAtKey,
-  moveSceneAtKey,
+  openRenameSceneDialog,
+  openMoveSceneDialog,
 } from './panels/flow.js';
+import { closeTextInputDialog } from './panels/text-input-dialog.js';
 import { renderConfig, bindConfigHooks, configUndo, configRedo, configHistoryDepth, addTerminologyVariant, resetConfigSession,
   inspectConfigDraftState, prepareConfigSceneRename, prepareConfigLabelRename, saveDirtyConfigSections } from './panels/config.js';
 import { bindLabelEditingHooks } from './label-editing.js';
@@ -320,6 +321,7 @@ function invalidateAuthoringForProjectChange(): void {
 }
 
 function closeCurrentProjectRuntime(): void {
+  closeTextInputDialog();
   disposeScriptV4();
   disposePreviewPanel();
   disposeV4SurfaceViews();
@@ -1595,18 +1597,31 @@ function loadDemoProjectSafely(): void {
   }
 }
 
-async function runSceneLifecycleAction(operation: () => Promise<void>): Promise<void> {
+/** A scene write marks the project busy and re-renders afterwards; a refusal reaches the caller. */
+async function runSceneLifecycleWrite(operation: () => Promise<void>): Promise<void> {
   sceneLifecycleActionRunning = true;
   refreshProjectBarProjection();
   try {
     await operation();
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : '当前无法修改场景', false, 5000);
   } finally {
     sceneLifecycleActionRunning = false;
     renderMainArea();
     refreshProjectBarProjection();
   }
+}
+
+async function runSceneLifecycleAction(operation: () => Promise<void>): Promise<void> {
+  try {
+    await runSceneLifecycleWrite(operation);
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : '当前无法修改场景', false, 5000);
+  }
+}
+
+/** Open a scene name dialog; a scene that cannot change now reports why instead. */
+function openSceneDialog(open: (run: typeof runSceneLifecycleWrite) => void): void {
+  try { open(runSceneLifecycleWrite); }
+  catch (error) { setStatus(error instanceof Error ? error.message : '当前无法修改场景', false, 5000); }
 }
 
 function scheduleAuthoringIndexRebuild(): void {
@@ -1840,8 +1855,8 @@ bindProjectIoHooks({
 });
 bindSidebarHooks({
   onSelectScene: (sceneKey) => jumpToScene(sceneKey),
-  onRenameScene: (sceneKey) => { void runSceneLifecycleAction(() => renameSceneAtKey(sceneKey)); },
-  onMoveScene: (sceneKey) => { void runSceneLifecycleAction(() => moveSceneAtKey(sceneKey)); },
+  onRenameScene: (sceneKey) => openSceneDialog(run => openRenameSceneDialog(sceneKey, run)),
+  onMoveScene: (sceneKey) => openSceneDialog(run => openMoveSceneDialog(sceneKey, run)),
   onDeleteScene: (sceneKey) => { void runSceneLifecycleAction(() => deleteSceneAtKey(sceneKey)); },
 });
 bindAssetsPanelHooks({
@@ -1864,7 +1879,7 @@ bindFlowHooks({
     scheduleValidate();
     scheduleAuthoringIndexRebuild();
   },
-  onRenameScene: (sceneId) => { void runSceneLifecycleAction(() => renameScene(sceneId)); },
+  onRenameScene: (sceneId) => openSceneDialog(run => renameScene(sceneId, run)),
   onDeleteScene: (sceneId) => { void runSceneLifecycleAction(() => deleteScene(sceneId)); },
 });
 bindConfigHooks({

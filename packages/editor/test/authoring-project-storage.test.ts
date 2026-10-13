@@ -1,6 +1,6 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import { buildObjectIndex, inspectTextCatalog, exportTextCatalogCsv, previewTextCatalogImport } from '@surdet/authoring';
-import { commitTextCatalogPatch, commitThemeConfiguration, commitUiConfiguration, createEditorProjectStorage, loadEditorProjectSnapshot, parseThemeEditorDraft, projectThemeEditorDraft } from '../src/authoring-project-storage.js';
+import { commitEndScenes, commitTextCatalogPatch, commitThemeConfiguration, commitUiConfiguration, createEditorProjectStorage, loadEditorProjectSnapshot, parseThemeEditorDraft, projectThemeEditorDraft } from '../src/authoring-project-storage.js';
 import type { ProjectUiDocument } from '@surdet/core';
 import { state } from '../src/state.js';
 
@@ -283,5 +283,41 @@ describe('editor authoring project storage', () => {
     await commitThemeConfiguration(null, null, diskText, { fonts: null, titleBackground: null });
     expect(JSON.parse(diskText)).not.toHaveProperty('fonts');
     expect(JSON.parse(diskText).player).toEqual({ subtitle: 'untouched' });
+  });
+  it('writes only player.endScenes, keeps an empty list distinct from unset and refuses unknown scenes', async () => {
+    let diskText = JSON.stringify({ entryScene: 'intro', variables: {}, player: { subtitle: 'untouched', future: { keep: true } } });
+    const handle = {
+      getFile: async () => new File([diskText], 'game.config.json'),
+      createWritable: async () => ({ write: async (value: unknown) => { diskText = String(value); }, close: async () => {} }),
+    } as unknown as FileSystemFileHandle;
+    state.dirName = 'endings-project';
+    state.dirHandle = { name: 'endings-project' } as FileSystemDirectoryHandle;
+    state.handles = { ...state.handles, gameConfig: handle };
+    state.gameConfigText = diskText;
+    state.scenes = new Map([
+      ['intro', { id: 'intro', file: 'intro.gal', text: '@scene intro\n@jump end_a\n', eol: '\n', dirty: false, handle: null }],
+      ['chapter/end_a', { id: 'end_a', file: 'chapter/end_a.gal', text: '@scene end_a\n结束。\n', eol: '\n', dirty: false, handle: null }],
+    ]);
+    state.timelines = [];
+    state.configFiles = { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null };
+    state.configReadErrors = {};
+    state.dirAssets = [];
+    state.reviewWorkspace = null;
+    state.reviewPreviewReadOnly = false;
+    state.projectLoading = false;
+
+    const set = await commitEndScenes(['end_a'], diskText);
+    expect(set).toMatchObject({ before: null, after: ['end_a'], text: diskText });
+    expect(JSON.parse(diskText).player).toEqual({ subtitle: 'untouched', future: { keep: true }, endScenes: ['end_a'] });
+    await commitEndScenes([], diskText);
+    expect(JSON.parse(diskText).player).toEqual({ subtitle: 'untouched', future: { keep: true }, endScenes: [] });
+    const empty = diskText;
+    await expect(commitEndScenes(['missing'], diskText)).rejects.toThrow('结束场景不存在：missing');
+    await expect(commitEndScenes(['end_a'], '{}')).rejects.toThrow('项目配置已经改变');
+    expect(diskText).toBe(empty);
+    await commitEndScenes(null, diskText);
+    expect(JSON.parse(diskText)).toEqual({ entryScene: 'intro', variables: {}, player: { subtitle: 'untouched', future: { keep: true } } });
+    const unchanged = await commitEndScenes(null, diskText);
+    expect(unchanged.text).toBe(diskText);
   });
 });
