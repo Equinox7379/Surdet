@@ -20,6 +20,7 @@ vi.mock('../src/authoring-project-storage.js', async (importOriginal) => ({
   commitCharacterTable: vi.fn(),
   commitStageConfiguration: vi.fn(),
   commitThemeConfiguration: vi.fn(),
+  commitEndScenes: vi.fn(),
   commitTextCatalogPatch: vi.fn(),
   parseCharacterVisualsDraft: (_id: string, text: string) => JSON.parse(text),
 }));
@@ -171,11 +172,12 @@ const {
   saveDirtyConfigSections,
   readStageConfigDraft, editStageConfigDraft, saveStageConfigDraftUnlocked, previewStageConfigText,
   readThemeConfigDraft, editThemeConfigDraft, saveThemeConfigDraftUnlocked, previewThemeConfigText,
+  readEndingsDraft, editEndingsDraft, saveEndingsDraftUnlocked, endingsSourceError,
   editTextCsvDraft, readTextCsvDraft,
   restoreConfigSourceDraft,
   addTerminologyVariant,
 } = await import('../src/panels/config.js');
-const { commitStageConfiguration, commitThemeConfiguration } = await import('../src/authoring-project-storage.js');
+const { commitStageConfiguration, commitThemeConfiguration, commitEndScenes } = await import('../src/authoring-project-storage.js');
 const { commitTextCatalogPatch, loadEditorProjectSnapshot, createEditorProjectStorage } = await import('../src/authoring-project-storage.js');
 const { runProjectWriteOperation } = await import('../src/project-io.js');
 
@@ -235,6 +237,44 @@ describe('configuration draft state', () => {
     });
     await saveThemeConfigDraftUnlocked();
     expect(inspectConfigDraftState().dirty).toBe(false);
+  });
+
+  it('edits end scenes as an undoable draft, keeps an empty list distinct from unset and follows scene renames', async () => {
+    vi.mocked(commitEndScenes).mockReset();
+    await renderFixture(JSON.stringify({ ...JSON.parse(INITIAL_GAME_CONFIG), player: { subtitle: '保留', endScenes: [] } }));
+    expect(readEndingsDraft()).toEqual([]);
+    expect(inspectConfigDraftState().dirty).toBe(false);
+    editEndingsDraft(['start']);
+    expect(inspectConfigDraftState().dirtySections).toContain('endings');
+    configUndo(); expect(readEndingsDraft()).toEqual([]);
+    expect(inspectConfigDraftState().dirty).toBe(false);
+    configRedo(); expect(readEndingsDraft()).toEqual(['start']);
+    editEndingsDraft(null); expect(readEndingsDraft()).toBeNull();
+    expect(inspectConfigDraftState().dirtySections).toContain('endings');
+    configUndo(); expect(readEndingsDraft()).toEqual(['start']);
+    prepareConfigSceneRename('start', 'opening', 'opening')();
+    expect(readEndingsDraft()).toEqual(['opening']);
+    configUndo(); expect(readEndingsDraft()).toEqual([]);
+    configRedo(); expect(readEndingsDraft()).toEqual(['opening']);
+    vi.mocked(commitEndScenes).mockImplementationOnce(async (value, expected) => {
+      const config = JSON.parse(expected);
+      expect(config.player).toEqual({ subtitle: '保留', endScenes: [] });
+      state.gameConfigText = JSON.stringify({ ...config, player: { ...config.player, endScenes: value } });
+      return { text: state.gameConfigText, before: [], after: value };
+    });
+    await saveDirtyConfigSections();
+    expect(vi.mocked(commitEndScenes).mock.calls.map(call => call[0])).toEqual([['opening']]);
+    expect(inspectConfigDraftState().dirty).toBe(false);
+  });
+
+  it('never treats a malformed end scene source as unset and refuses to edit or save it', async () => {
+    vi.mocked(commitEndScenes).mockReset();
+    await renderFixture(JSON.stringify({ ...JSON.parse(INITIAL_GAME_CONFIG), player: { endScenes: 'start' } }));
+    expect(endingsSourceError()).toMatch(/场景标识列表/);
+    expect(() => editEndingsDraft(['start'])).toThrow(/场景标识列表/);
+    expect(inspectConfigDraftState().dirtySections).not.toContain('endings');
+    await expect(saveEndingsDraftUnlocked()).rejects.toThrow(/场景标识列表/);
+    expect(commitEndScenes).not.toHaveBeenCalled();
   });
 
   it('writes a picked swatch colour through the same theme field and draft', async () => {
