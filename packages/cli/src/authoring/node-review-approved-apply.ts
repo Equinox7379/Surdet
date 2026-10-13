@@ -104,12 +104,13 @@ export class NodeReviewApprovedApplyBackend implements ReviewApprovedApplyBacken
     // RECOVERED already proves rollback. A new explicit write may retry at the
     // verified base; unfinished staging/replacement still needs explicit recovery.
     const recovered = journal?.status === 'RECOVERED' && recovery.projectState === 'base' && !recovery.manualRecoveryRequired;
+    const writeState = locked ? 'committing'
+      : journal !== null && !recovered ? 'recovery-required' : 'unwritten';
     const blockers = record.status === 'OPEN' ? [] : [{ code: 'CHANGE_NOT_OPEN', message: '事务已关闭或失去原基线，需要重新核对结果。' }];
-    if (waitingForConnection) blockers.push({ code: 'HUMAN_WORKSPACE_BUSY',
+    if (writeState === 'unwritten' && waitingForConnection) blockers.push({ code: 'HUMAN_WORKSPACE_BUSY',
       message: '正在等待旧窗口连接确认，稍后会自动检查；尚未写回。' });
     return { ...common,
-      writeState: locked ? 'committing'
-        : journal !== null && !recovered ? 'recovery-required' : 'unwritten',
+      writeState,
       workspace: waitingForConnection ? 'busy' : workspace.availability === 'blocked' ? 'lost' : workspace.availability,
       ...(workspace.retryAfterMs === undefined ? {} : { retryAfterMs: workspace.retryAfterMs }),
       currentProject: snapshot.revision === record.baseRevision ? 'matches-approved-base' : 'unknown',
