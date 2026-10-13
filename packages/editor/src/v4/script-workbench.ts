@@ -5,6 +5,7 @@ import { decodeInstructionArgument, parseProjectConfigDocument } from '@surdet/a
 import { inlinePlainText, type SourceRange } from '@surdet/core';
 import { dialogueRangeOffsets, sourceRangeOffsets } from './source-range.js';
 import { attachInlineField } from './inline-field.js';
+import { attachSourceMarkup } from './source-markup.js';
 import { portraitDisplayName, projectPortraitAssets } from '../assets.js';
 import { disposePreviewPanel, renderPreviewPanel, refreshPreviewSourceState } from '../panels/preview-panel.js';
 import { allowedToEdit, button, disclosure, field, ImageScope, navigateMode } from './ui.js';
@@ -284,7 +285,7 @@ export class ScriptWorkbench {
       }
     } catch { /* Invalid config remains visible to the shared validator, not replaced with invented roles. */ }
     this.root.append(speakers);
-    this.editor.querySelector('.v4-source-editor')?.remove();
+    this.editor.querySelector('.v4-source-field')?.remove();
     if (this.view.view === 'source') this.createSourceEditor();
     for (const block of this.editor.querySelectorAll<HTMLElement>('.block')) this.decorateBlock(block, lines[Number(block.dataset.line)]);
     this.decorateHeading(lines);
@@ -762,16 +763,17 @@ export class ScriptWorkbench {
       const draft = simpleChoice(line.raw);
       if (draft) {
         let expected = line.raw;
-        for (const [key, label] of [['text', '选项文字'], ['condition', '显示条件（可空）'], ['target', '目标段落']] as const) {
+        const write = (key: 'text' | 'condition' | 'target', value: string): void => {
+          const next = { ...draft, [key]: value };
+          try {
+            const raw = writeSimpleChoice(next);
+            if (this.writeRaw(raw, expected, index)) { Object.assign(draft, next); expected = raw; }
+          } catch (error) { setStatus(error instanceof Error ? error.message : String(error), false, 5000); }
+        };
+        this.inspector.append(this.choiceTextField(draft.text, (value) => write('text', value)));
+        for (const [key, label] of [['condition', '显示条件（可空）'], ['target', '目标段落']] as const) {
           const input = h('input'); input.value = draft[key];
-          input.oninput = () => {
-            if (!input.isConnected) return;
-            const next = { ...draft, [key]: input.value };
-            try {
-              const raw = writeSimpleChoice(next);
-              if (this.writeRaw(raw, expected, index)) { Object.assign(draft, next); expected = raw; }
-            } catch (error) { setStatus(error instanceof Error ? error.message : String(error), false, 5000); }
-          };
+          input.oninput = () => { if (input.isConnected) write(key, input.value); };
           this.inspector.append(field(label, input));
         }
       } else this.inspector.append(h('p', 'v4-muted', '这条选项包含完整语法；显示条件、选中后效果和目标均保留在原始行中，可直接编辑并撤销。'));
@@ -792,6 +794,37 @@ export class ScriptWorkbench {
       const details = block.querySelector<HTMLDetailsElement>('.technical-details');
       if (details) { details.open = true; block.scrollIntoView({ block: 'center' }); block.querySelector<HTMLInputElement>('.raw input')?.focus(); }
     }));
+  }
+
+  /** An option's shown text with the dialogue's markup help, offering and accepting only what Core allows in an option. */
+  private choiceTextField(value: string, write: (value: string) => void): HTMLElement {
+    const textarea = h('textarea', 'v4-choice-text-input');
+    textarea.rows = 1; textarea.value = value;
+    textarea.setAttribute('aria-label', '选项文字');
+    // One source row: Enter adds no line, and a pasted line break is dropped as a text input drops it.
+    textarea.addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.isComposing) event.preventDefault(); }, { signal: this.abort.signal });
+    textarea.oninput = () => {
+      if (!textarea.isConnected) return;
+      if (/[\r\n]/.test(textarea.value)) {
+        const before = textarea.value.slice(0, textarea.selectionStart).replace(/[\r\n]/g, '');
+        textarea.value = before + textarea.value.slice(textarea.selectionStart).replace(/[\r\n]/g, '');
+        textarea.setSelectionRange(before.length, before.length);
+      }
+      write(textarea.value);
+      this.fitTextarea(textarea);
+    };
+    const issues = h('p', 'v4-inline-issues');
+    issues.setAttribute('role', 'status');
+    const inline = attachInlineField(textarea, { editable: () => this.editable(), signal: this.abort.signal, context: 'choice', onIssues: (found) => {
+      const text = found.map((issue) => issue.message).join('；');
+      if (issues.textContent !== text) issues.textContent = text;
+      issues.hidden = text === '';
+      issues.classList.toggle('has-error', found.some((issue) => issue.severity === 'error'));
+    } });
+    const result = h('div', 'v4-field');
+    result.append(h('span', undefined, '选项文字'), inline, issues);
+    queueMicrotask(() => this.fitTextarea(textarea));
+    return result;
   }
 
   /** Effect, length and, for a mask, the mask asset with its edge and direction; each control writes one source edit. */
@@ -907,7 +940,7 @@ export class ScriptWorkbench {
       if (next !== expected) { setCurrentText(next, { coalesce: true }); expected = next; }
       this.updateStatus();
     };
-    this.editor.querySelector('.manuscript-sheet')?.append(textarea);
+    this.editor.querySelector('.manuscript-sheet')?.append(attachSourceMarkup(textarea, { editable: () => this.editable(), signal: this.abort.signal }));
   }
 
   private structural(change: (text: string) => SourceEdit, focusDialogue = false): boolean {

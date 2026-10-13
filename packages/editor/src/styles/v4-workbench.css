@@ -208,6 +208,27 @@
 .v4-authoring[data-script-view=source] #editor :is(.manuscript-lines,.manuscript-footer) { display: none; }
 .v4-authoring[data-script-view=source] .v4-script-inspector { opacity: .75; pointer-events: none; }
 .v4-source-editor { width: 100%; min-height: 65vh; margin-top: 8px; border: 1px solid var(--surdet-border-default); border-radius: var(--surdet-radius-control); padding: 16px 18px; resize: vertical; background: var(--surdet-surface-panel); color: var(--surdet-text-primary); font: 13px/1.9 var(--surdet-font-mono); tab-size: 2; }
+/* Source view markup: behind the textarea, a transparent copy of the source marks dialogue and option tags.
+   Its extra end padding lets it scroll as far as the textarea when scrollbars take room from the textarea. */
+.v4-source-field { margin-top: 8px; }
+.v4-source-box { position: relative; border-radius: var(--surdet-radius-control); background: var(--surdet-surface-panel); }
+.v4-source-box > .v4-source-editor { position: relative; z-index: 1; display: block; margin-top: 0; background: transparent; }
+.v4-source-mirror { position: absolute; inset: 0; overflow: hidden; margin: 0; border: 1px solid transparent; padding: 16px 38px 36px 18px; color: transparent; font: 13px/1.9 var(--surdet-font-mono); tab-size: 2; white-space: pre; pointer-events: none; }
+.v4-source-markup-status { margin: 6px 2px 0; color: var(--surdet-state-warning); font: 12px/1.6 var(--surdet-font-ui); }
+.v4-source-markup-status.has-error { color: var(--surdet-state-danger); }
+.v4-source-markup-status[hidden] { display: none; }
+/* An option's shown text in the inspector: the dialogue markup field at the inspector's size, one row. */
+.v4-field .v4-inline-field.is-choice { position: relative; display: grid; min-width: 0; border-radius: 3px; background: var(--surdet-surface-panel); }
+.v4-field .v4-inline-field.is-choice > :is(.v4-inline-mirror, .v4-inline-view, textarea) { grid-area: 1 / 1; min-width: 0; margin: 0; border: 1px solid transparent; padding: 7px 9px; font: 13px/1.7 var(--surdet-font-ui); white-space: pre-wrap; overflow-wrap: break-word; }
+.v4-field .v4-inline-field.is-choice > textarea { min-height: 0; resize: none; overflow: hidden; border-color: var(--v4-line); background: transparent; }
+.v4-field .v4-inline-field.is-choice > .v4-inline-mirror { color: transparent; pointer-events: none; }
+.v4-field .v4-inline-field.is-choice > .v4-inline-view { display: none; color: var(--surdet-text-primary); }
+.v4-field .v4-inline-field.is-choice.is-projected > .v4-inline-view { display: block; }
+.v4-field .v4-inline-field.is-choice.is-projected > .v4-inline-mirror { visibility: hidden; }
+.v4-field .v4-inline-field.is-choice.is-projected > textarea { color: transparent; caret-color: transparent; }
+.v4-inline-issues { margin: 0; color: var(--surdet-state-warning); font: 12px/1.6 var(--surdet-font-ui); }
+.v4-inline-issues.has-error { color: var(--surdet-state-danger); }
+.v4-inline-issues[hidden] { display: none; }
 .v4-authoring #editor .technical-details { margin: 4px 0 0; border: 0; padding: 0; background: transparent; font-size: 11px; }
 .v4-authoring #editor .technical-details:not([open]) { display:none; }
 .v4-authoring #editor .block:not(.v4-current):not(:focus-within) > .technical-details:not([open]) { display: none; }
