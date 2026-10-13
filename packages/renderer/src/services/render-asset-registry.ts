@@ -94,6 +94,7 @@ export class RenderAssetRegistry {
   #generatedRefs = new Map<Texture, number>();
   #fontFaces = new Map<RendererFontRole, { face: FontFace; family: string; coverage: FontCoverage }>();
   #fontRequests = new Map<RendererFontRole, object>();
+  #fontSourceReads = new Map<string, { bytes: Promise<ArrayBuffer>; abort: AbortController; readers: number }>();
   #fontFamilies: Record<RendererFontRole, string> = { ...DEFAULT_RENDERER_FONT_FAMILIES };
   #disposed = false;
   #verifiedBlobUrls = new Set<string>();
@@ -236,9 +237,7 @@ export class RenderAssetRegistry {
     try {
       const { loaded, bytes } = await Promise.race([
         (async () => {
-          const response = await fetch(url, { signal: abort.signal });
-          if (!response.ok) throw new Error(`字体读取失败：${response.status}`);
-          const bytes = await response.arrayBuffer();
+          const bytes = await this.#readFontBytes(url, abort.signal);
           const loaded = await new FontFace(family, bytes, { weight: '400' }).load();
           return { loaded, bytes };
         })(),
@@ -273,6 +272,42 @@ export class RenderAssetRegistry {
       return false;
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
+    }
+  }
+
+  async #readFontBytes(url: string, signal: AbortSignal): Promise<ArrayBuffer> {
+    const read = async (signal: AbortSignal): Promise<ArrayBuffer> => {
+      const response = await fetch(url, { signal });
+      if (!response.ok) throw new Error(`字体读取失败：${response.status}`);
+      return response.arrayBuffer();
+    };
+    // A blob URL identifies immutable bytes. Mutable file/HTTP URLs still read independently.
+    // Keep only in-flight transfers, never a successful/failed result for a later registration.
+    if (!url.startsWith('blob:')) return read(signal);
+    let source = this.#fontSourceReads.get(url);
+    if (!source) {
+      const abort = new AbortController();
+      source = { bytes: read(abort.signal), abort, readers: 0 };
+      this.#fontSourceReads.set(url, source);
+      const pending = source;
+      const forget = () => { if (this.#fontSourceReads.get(url) === pending) this.#fontSourceReads.delete(url); };
+      void source.bytes.then(forget, forget);
+    }
+    source.readers++;
+    let onAbort!: () => void;
+    try {
+      return await new Promise<ArrayBuffer>((resolve, reject) => {
+        onAbort = () => reject(signal.reason);
+        signal.addEventListener('abort', onAbort, { once: true });
+        source.bytes.then(resolve, reject);
+      });
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+      source.readers--;
+      if (source.readers === 0 && this.#fontSourceReads.get(url) === source) {
+        this.#fontSourceReads.delete(url);
+        source.abort.abort();
+      }
     }
   }
 
