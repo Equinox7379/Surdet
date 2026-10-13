@@ -1203,6 +1203,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         }));
         if (source === 'backlog') return queries.dialogue.backlogEntries().map((entry, index) => ({
           id: String(index), label: entry.speaker ? `${entry.speaker}：${entry.text}` : entry.text,
+          backlog: entry,
           description: entry.voice ? '点击重播语音' : undefined, disabled: !entry.voice,
         }));
         if (source === 'choices') return renderer.status === 'choice' ? currentChoiceOptions.map(option => ({ id: String(option.index), label: inlinePlainText(option.label, 'choice') })) : [];

@@ -2,11 +2,14 @@ import { GAME_SETTING_DEFINITIONS, PROJECT_UI_TAB_BAR_HEIGHT, evalExprBoolean, p
 import type { RendererTheme } from './theme.js';
 import { SETTING_STEPS } from './settings-store.js';
 import { fontTextDiagnostics, isUiTextClipped, type ReadingDiagnostic } from './reading-diagnostics.js';
+import type { BacklogEntry } from './backlog.js';
 
 export interface ProjectUiItem {
   id: string;
   source?: ProjectUiContentSource;
   label: string;
+  /** Backlog items only: recorded plain speaker/text and optional static inline source. Not HTML. */
+  backlog?: BacklogEntry;
   description?: string;
   value?: string | number | boolean;
   date?: string;
