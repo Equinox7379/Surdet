@@ -17,6 +17,11 @@ const UNPAIRED = new Set<string>(INLINE_TEXT_TAGS.filter((tag) => !tag.paired).m
 
 const hasErrors = (document: InlineTextDocument): boolean => document.issues.some((issue) => issue.severity === 'error');
 
+/** Whether Core accepts the tag in this context at all (a choice refuses pauses, speed, nw and motion); asked of the parser itself. */
+export function inlineTagAllowed(name: InlineTagName, context: InlineTextContext = 'dialogue'): boolean {
+  return !parseInlineText(`<${name}>`, context).issues.some((issue) => issue.code === 'M005');
+}
+
 /** Open/close pairs in source order. Invalid lines have no tags, so they yield no pairs. */
 export function pairedSpans(document: InlineTextDocument): PairedSpan[] {
   const stack: InlineTagSpan[] = [], pairs: PairedSpan[] = [];
@@ -46,11 +51,13 @@ function invalidLine(source: string, document: InlineTextDocument): string | nul
 }
 
 /** Wrap the selected source range in one tag; refuses selections that would cross existing tag boundaries. */
-export function wrapInlineSelection(source: string, start: number, end: number, name: InlineTagName, value?: string): InlineEdit {
+export function wrapInlineSelection(source: string, start: number, end: number, name: InlineTagName, value?: string, context: InlineTextContext = 'dialogue'): InlineEdit {
   if (!(Number.isInteger(start) && Number.isInteger(end) && 0 <= start && start < end && end <= source.length)) return { ok: false, reason: '先选中要加标签的文字' };
   if (name === 'w') return { ok: false, reason: '停顿标签不包裹文字，请在光标处插入' };
   if (UNPAIRED.has(name)) return { ok: false, reason: `<${name}> 不包裹文字，请放在句末` };
-  const document = parseInlineText(source);
+  const refused = parseInlineText(`<${name}>`, context).issues.find((issue) => issue.code === 'M005');
+  if (refused) return { ok: false, reason: refused.message };
+  const document = parseInlineText(source, context);
   const invalid = invalidLine(source, document);
   if (invalid) return { ok: false, reason: invalid };
   const pairs = pairedSpans(document);
@@ -66,7 +73,7 @@ export function wrapInlineSelection(source: string, start: number, end: number, 
   if (name === 'ruby' && document.tags.some((tag) => tag.start >= start && tag.end <= end)) return { ok: false, reason: '注音的主文字里不能再有其他标签' };
   const open = `<${name}${value === undefined ? '' : `=${value}`}>`, close = `</${name}>`;
   const text = source.slice(0, start) + open + source.slice(start, end) + close + source.slice(end);
-  const next = parseInlineText(text);
+  const next = parseInlineText(text, context);
   const error = next.issues.find((issue) => issue.severity === 'error');
   if (error) return { ok: false, reason: error.message };
   return { ok: true, text, selectionStart: start + open.length, selectionEnd: end + open.length };
@@ -180,11 +187,12 @@ export function choiceLabelSpan(raw: string): { start: number; end: number } | n
   return label.length > 0 ? { start, end: start + label.length } : null;
 }
 
-/** Tag table entries offered while typing `<`. `w` appears twice: click wait and timed pause. */
+/** Tag table entries offered while typing `<`, only those the context accepts. `w` appears twice: click wait and timed pause. */
 export interface InlineCompletion { key: string; name: InlineTagName; label: string; detail: string; snippet: string; select: [number, number] }
-export function inlineCompletions(prefix: string): InlineCompletion[] {
+export function inlineCompletions(prefix: string, context: InlineTextContext = 'dialogue'): InlineCompletion[] {
   const entries: InlineCompletion[] = [];
   for (const tag of INLINE_TEXT_TAGS) {
+    if (!inlineTagAllowed(tag.name, context)) continue;
     if (tag.name === 'w') {
       entries.push({ key: 'w', name: 'w', label: '<w>', detail: '等待点击后继续本句', snippet: '<w>', select: [3, 3] });
       entries.push({ key: 'w=', name: 'w', label: '<w=毫秒>', detail: '停顿，1–10000 毫秒', snippet: '<w=500>', select: [3, 6] });

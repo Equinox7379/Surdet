@@ -55,6 +55,15 @@ Authoring合同2.34.0，能力仍为73项。`capabilities.describe.result.inline
 
 ## Claude前端范围
 
+### 自定义文字记录的数据接入（2026-10-12）
+
+共享Player的`ProjectUiContext.content('backlog')`现在为每项提供`backlog?: BacklogEntry`，仅文字记录项设置该字段。`backlog.speaker`是当时的明文显示名（旁白为null），`backlog.text`是当时的明文正文，`backlog.markup?`是与该正文对应的静态标记源文，`backlog.voice?`是当时的语音键。直接读取当前运行内核的记录副本（字段类型只读，修改副本不会污染历史）；存读档、回退与新游戏改变记录后，下次读取反映实际记录，不另存一套历史或重新插值/翻译。
+
+- `label`仍是含说话人前缀的完整明文，供无障碍名称和纯文字展示；`id`仍是当前列表索引，点击仍走原`select`语音重播，不把索引当跨版本永久身份。
+- 渲染正文时仅在`backlog.markup !== undefined`时用Core的`parseInlineText`解析该静态源文；否则直接显示`backlog.text`，不能把明文重新当标签解析。说话人始终是普通文字，不拼入markup，不因名字含`<b>`或变量内容而生成样式。
+- `markup`已去掉等待、速度、自动继续和逐字动画，回看不重新执行这些行为；使用受控DOM与样式，不能innerHTML。缺少markup是该条记录本来没有额外格式，不是旧格式迁移。
+- 本后端交付只增加现有记录的展示投影与类型，不改变DOM显示、存档结构/容量、回退、语音重播和设置。Claude后续接静态显示；该字段不扩展作品UI配置的绑定语法。
+
 在本后端PR分支上开独立前端分支/PR，不直接修改后端分支，不合并其他PR。仅处理Editor交互与必要的展示接线，不改Core/Renderer/Authoring语法或状态机，也不重新美化Player：
 
 1. 用Core标签表做正文标签补全、高亮和选中包裹；源稿、原生输入法/选区与撤销仍为事实源，未聚焦展示可用解析后的单元，文字必须用textContent/受控样式，不把原文当innerHTML。
