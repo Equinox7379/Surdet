@@ -2,8 +2,37 @@ import { inspectTextCatalog, exportTextCatalogCsv, exportVoiceCatalogCsv, previe
 import { createEditorProjectStorage, loadEditorProjectSnapshot, commitTextCatalogPatch } from '../authoring-project-storage.js';
 import { runProjectWriteOperation } from '../project-io.js';
 import { state, h } from '../state.js';
-import { isStoryTextSource } from '@surdet/core';
+import { isStoryTextSource, parseInlineText, textTranslationIssue, type InlineTextContext } from '@surdet/core';
 import { openUiPlayerPreview } from '../ui-player-preview.js';
+
+/**
+ * A text as written, its inline tags (as Core reads them in a dialogue or option) shown as small
+ * marks; texts that render no markup stay plain. Built from elements and textContent only.
+ */
+function taggedText(text: string, context: InlineTextContext | 'plain'): HTMLElement {
+  const result = h('span', 'text-catalog-text');
+  const tags = context === 'plain' ? [] : [...parseInlineText(text, context).tags].sort((a, b) => a.start - b.start);
+  let at = 0;
+  for (const tag of tags) {
+    if (tag.start > at) result.append(h('span', undefined, text.slice(at, tag.start)));
+    result.append(h('code', 'text-catalog-tag', text.slice(tag.start, tag.end)));
+    at = tag.end;
+  }
+  if (at < text.length || !tags.length) result.append(h('span', undefined, text.slice(at)));
+  return result;
+}
+
+/** What Core says about a translation: the catalog's own check (variables, markup errors), then markup warnings. */
+function translationNotes(source: string, translated: string, context: InlineTextContext | 'plain'): string[] {
+  if (!translated) return [];
+  const notes: string[] = [];
+  const issue = textTranslationIssue(source, translated, context);
+  if (issue) notes.push(issue);
+  if (context !== 'plain') {
+    for (const warning of parseInlineText(translated, context).issues) if (!notes.includes(warning.message)) notes.push(warning.message);
+  }
+  return notes;
+}
 
 export interface TextBindingDraft {
   key: string; sourceId: string; sourceText: string;
@@ -63,10 +92,17 @@ export function renderTextCatalogSection(options: {
     table.replaceChildren();
     const labels = { 'needs-rebind': '来源变化，需重新绑定', 'needs-translation': '原文变化，待重译', untranslated: '未翻译', translated: '已翻译' };
     for (const entry of inspection.entries) {
-      const row = h('p');
+      const row = h('p', 'text-catalog-entry');
       const voiceLabels: Record<string, string> = { unassigned: '未关联', 'needs-rebind': '来源待确认', 'needs-recording': '台词已改，配音待确认', ready: '已确认', 'asset-unavailable': '素材不可用' };
-      row.textContent = `${entry.key} · ${labels[entry.status]} · ${entry.source.speaker ? entry.source.speaker + '：' : ''}${entry.source.text} → ${entry.translations[inspection.locale]?.value ?? ''}`
-        + (entry.source.kind === 'dialogue' ? ` · 配音：${voiceLabels[entry.voiceStatus]}${entry.voices?.[inspection.locale] ? `（${entry.voices[inspection.locale]!.asset}）` : ''}` : '');
+      const context = isStoryTextSource(entry.source) ? entry.source.kind : 'plain';
+      const translated = entry.translations[inspection.locale]?.value ?? '';
+      row.append(h('span', undefined, `${entry.key} · ${labels[entry.status]} · ${entry.source.speaker ? entry.source.speaker + '：' : ''}`),
+        taggedText(entry.source.text, context), h('span', undefined, ' → '), taggedText(translated, context));
+      if (entry.source.kind === 'dialogue') {
+        row.append(h('span', undefined, ` · 配音：${voiceLabels[entry.voiceStatus]}${entry.voices?.[inspection.locale] ? `（${entry.voices[inspection.locale]!.asset}）` : ''}`));
+      }
+      // Core's own word on the translation; the tags need not match the source one for one.
+      for (const note of translationNotes(entry.source.text, translated, context)) row.append(h('span', 'text-catalog-note', `译文：${note}`));
       table.append(row);
     }
     if (!inspection.entries.length) table.append(h('p', undefined, '尚未登记文本。选择真实来源并填写固定文本键后保存。'));
@@ -175,7 +211,19 @@ export function renderTextCatalogSection(options: {
     inspection = nextInspection;
     preview = next; differences.replaceChildren(); render(); renderBindings();
     for (const issue of next.issues) differences.append(h('p', 'error', `第 ${issue.line} 行 ${issue.key ?? ''}：${issue.message}`));
-    for (const row of next.rows.filter(row => row.changed)) differences.append(h('p', undefined, `${row.key}${row.voiceAction ? ' · 配音' : ''}：${row.before || '（无）'} → ${row.after || '（解除）'}`));
+    for (const row of next.rows.filter(row => row.changed)) {
+      const source = row.voiceAction ? undefined : nextInspection.entries.find(entry => entry.key === row.key)?.source;
+      const context = source && isStoryTextSource(source) ? source.kind : 'plain';
+      const line = h('p', 'text-catalog-entry');
+      line.append(h('span', undefined, `${row.key}${row.voiceAction ? ' · 配音' : ''}：`),
+        row.before ? taggedText(row.before, context) : h('span', undefined, '（无）'), h('span', undefined, ' → '),
+        row.after ? taggedText(row.after, context) : h('span', undefined, '（解除）'));
+      // Errors are listed above as the import's own issues; warnings (an unknown tag shown as text) are noted here.
+      if (context !== 'plain' && row.after) {
+        for (const warning of parseInlineText(row.after, context).issues.filter(issue => issue.severity === 'warning')) line.append(h('span', 'text-catalog-note', `译文：${warning.message}`));
+      }
+      differences.append(line);
+    }
     say(next.ready ? '差异预览通过，确认后才能写入项目。' : '导入未通过，项目未修改。');
   });
   button(importStep, '确认导入并保存', async () => {

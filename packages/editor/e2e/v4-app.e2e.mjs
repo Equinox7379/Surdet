@@ -299,6 +299,8 @@ try {
   assert.equal(await page.locator('.v4-source-editor').inputValue(), sourceAfterInsert, 'search navigation changed source');
   assert.equal(await page.locator('#search-input').inputValue(), '源码插入定位用例。', 'navigation discarded the search query');
   assert(await page.locator('.search-item').first().isVisible(), 'navigation closed the matching results');
+  // Instruction rows are not shown text: navigating them is a search of the source as written.
+  await page.getByRole('combobox', { name: '查找方式', exact: true }).selectOption('source');
   await page.locator('#search-input').fill('@');
   await page.locator('#search-input').press('Enter');
   assert.equal(await page.locator('.search-count').innerText(), '1 / 7 行');
