@@ -1,8 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { AuthoringOperationError } from '@surdet/authoring';
 import { exportWindowsGame, inspectWindowsExport, type WindowsExportOptions } from '../../cli/dist/windows-export.js';
 import type { SelectedProjectLocation } from './project-creation.js';
 import type { ExportGameRequest } from './contracts.js';
+
+export function desktopExportError(error: unknown, retry: string): unknown {
+  if (error instanceof AuthoringOperationError && error.code === 'PROJECT_BUSY'
+    && error.details?.manualRecoveryRequired !== true) {
+    return new Error(`项目正在被其他操作使用，请稍后${retry}。`, { cause: error });
+  }
+  return error;
+}
 
 /** The renderer supplies a selection id; it cannot select a physical output path. */
 export async function exportDesktopGame(projectRoot: string, selected: SelectedProjectLocation | null, raw: unknown,
