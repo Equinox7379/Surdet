@@ -4,14 +4,18 @@
  * behind it, a styled reading view while it is not focused, `<` completion and a selection
  * toolbar. Every node is built with textContent; source text is never parsed as HTML.
  */
-import { parseInlineText, type InlineStyle, type InlineTextDocument } from '@surdet/core';
+import { parseInlineText, type InlineStyle, type InlineTextContext, type InlineTextDocument, type InlineTextIssue } from '@surdet/core';
 import { h, setStatus } from '../state.js';
-import { completionPrefix, inlineCompletions, wrapInlineSelection, type InlineCompletion, type InlineTagName } from './inline-markup.js';
+import { completionPrefix, inlineCompletions, inlineTagAllowed, wrapInlineSelection, type InlineCompletion, type InlineTagName } from './inline-markup.js';
 
 export interface InlineFieldOptions {
   editable(): boolean;
   /** False while the row is not dialogue (e.g. an empty row typed into an instruction); markup help is then off. */
   active?(): boolean;
+  /** Core's text context. An option ('choice') is offered and accepts only the tags Core allows there. */
+  context?: InlineTextContext;
+  /** Core's issues for the current text after each refresh; empty while markup help is off. */
+  onIssues?(issues: readonly InlineTextIssue[]): void;
   signal: AbortSignal;
 }
 
@@ -38,7 +42,7 @@ const WRAPS: readonly { name: InlineTagName; value?: string; label: string; titl
 ];
 
 /** Replace [start, end) through the browser's editing path so Ctrl+Z restores it. */
-function insertText(textarea: HTMLTextAreaElement, start: number, end: number, text: string): void {
+export function insertText(textarea: HTMLTextAreaElement, start: number, end: number, text: string): void {
   textarea.focus({ preventScroll: true });
   textarea.setSelectionRange(start, end);
   const accepted = typeof document.execCommand === 'function' && document.execCommand('insertText', false, text);
@@ -89,14 +93,20 @@ function renderReading(view: HTMLElement, parsed: InlineTextDocument): void {
   for (const mark of marks.get(parsed.units.length) ?? []) view.append(mark);
 }
 
+export interface SourceMark { start: number; end: number; kind: 'is-tag' | 'is-error' | 'is-warning' }
+
+/** Tag tokens and problems of one parsed text, moved by `offset` when the text sits inside a larger source. */
+export function documentMarks(parsed: InlineTextDocument, offset = 0): SourceMark[] {
+  return [
+    ...parsed.tags.map((tag): SourceMark => ({ start: offset + tag.start, end: offset + tag.end, kind: 'is-tag' })),
+    ...parsed.issues.map((issue): SourceMark => ({ start: offset + issue.start, end: offset + Math.max(issue.end, issue.start + 1), kind: issue.severity === 'error' ? 'is-error' : 'is-warning' })),
+  ];
+}
+
 /** The source again, transparent, with tag tokens and problems marked; it sits exactly under the textarea text. */
-function renderHighlight(mirror: HTMLElement, source: string, parsed: InlineTextDocument, caret: number | null): HTMLElement | null {
+export function renderMarks(mirror: HTMLElement, source: string, marks: readonly SourceMark[], caret: number | null): HTMLElement | null {
   mirror.replaceChildren();
   const cuts = new Set([0, source.length]);
-  const marks: { start: number; end: number; kind: string }[] = [
-    ...parsed.tags.map((tag) => ({ start: tag.start, end: tag.end, kind: 'is-tag' })),
-    ...parsed.issues.map((issue) => ({ start: issue.start, end: Math.max(issue.end, issue.start + 1), kind: issue.severity === 'error' ? 'is-error' : 'is-warning' })),
-  ];
   for (const mark of marks) { cuts.add(Math.min(mark.start, source.length)); cuts.add(Math.min(mark.end, source.length)); }
   if (caret !== null) cuts.add(caret);
   const points = [...cuts].sort((a, b) => a - b);
@@ -113,8 +123,26 @@ function renderHighlight(mirror: HTMLElement, source: string, parsed: InlineText
   return caretNode;
 }
 
+/** The `<` completion list: each entry is a fixed tag name and its Core label, never author text as markup. */
+export function renderCompletionList(list: HTMLElement, entries: readonly InlineCompletion[], active: number, accept: (entry: InlineCompletion) => void): void {
+  list.setAttribute('role', 'listbox');
+  list.setAttribute('aria-label', '行内标签');
+  list.replaceChildren();
+  entries.forEach((entry, index) => {
+    const option = h('div', 'v4-inline-completion-option');
+    option.id = `v4-inline-option-${index}`;
+    option.setAttribute('role', 'option');
+    option.setAttribute('aria-selected', String(index === active));
+    option.append(h('code', undefined, entry.label), h('span', undefined, entry.detail));
+    option.onpointerdown = (event) => { event.preventDefault(); accept(entry); };
+    list.append(option);
+  });
+}
+
 export function attachInlineField(textarea: HTMLTextAreaElement, options: InlineFieldOptions): HTMLElement {
+  const context = options.context ?? 'dialogue';
   const field = h('div', 'v4-inline-field');
+  field.classList.toggle('is-choice', context === 'choice');
   const mirror = h('div', 'v4-inline-mirror');
   const view = h('div', 'v4-inline-view');
   mirror.setAttribute('aria-hidden', 'true');
@@ -122,12 +150,13 @@ export function attachInlineField(textarea: HTMLTextAreaElement, options: Inline
   field.append(mirror, view, textarea);
   const signal = options.signal;
 
-  let completion: { list: HTMLElement; entries: InlineCompletion[]; active: number; start: number } | null = null;
+  /** An open list: the `<` it was offered at and the text it was offered in. */
+  let completion: { list: HTMLElement; entries: InlineCompletion[]; active: number; start: number; value: string } | null = null;
   let toolbar: HTMLElement | null = null;
   let pendingCaret: number | null = null;
   let composing = false;
 
-  const parse = (): InlineTextDocument => parseInlineText(textarea.value);
+  const parse = (): InlineTextDocument => parseInlineText(textarea.value, context);
   const focused = (): boolean => document.activeElement === textarea;
   const markupActive = (): boolean => options.active?.() ?? true;
 
@@ -136,6 +165,7 @@ export function attachInlineField(textarea: HTMLTextAreaElement, options: Inline
       field.classList.remove('is-projected', 'has-markup');
       view.replaceChildren();
       mirror.replaceChildren(textarea.value, '\u200b');
+      options.onIssues?.([]);
       return;
     }
     const parsed = parse();
@@ -144,7 +174,8 @@ export function attachInlineField(textarea: HTMLTextAreaElement, options: Inline
     field.classList.toggle('has-markup', parsed.hasMarkup);
     if (projected) renderReading(view, parsed);
     else view.replaceChildren();
-    renderHighlight(mirror, textarea.value, parsed, null);
+    renderMarks(mirror, textarea.value, documentMarks(parsed), null);
+    options.onIssues?.(parsed.issues);
   };
 
   const closeCompletion = (): void => {
@@ -153,43 +184,47 @@ export function attachInlineField(textarea: HTMLTextAreaElement, options: Inline
     textarea.removeAttribute('aria-activedescendant');
   };
 
-  const acceptCompletion = (entry: InlineCompletion): void => {
-    if (!completion || !options.editable()) return;
+  /** The `<prefix` at the caret right now, with the tags this field's context accepts. */
+  const completionAtCaret = (): { start: number; entries: InlineCompletion[] } | null => {
+    if (composing || !markupActive() || !options.editable() || textarea.selectionStart !== textarea.selectionEnd) return null;
+    const found = completionPrefix(textarea.value, textarea.selectionEnd);
+    const entries = found ? inlineCompletions(found.prefix, context) : [];
+    return found && entries.length ? { start: found.start, entries } : null;
+  };
+  /** Whether the open list still belongs to the caret: same `<`, same text. A moved caret or changed text does not. */
+  const offeredHere = (): boolean => {
+    const current = completionAtCaret();
+    return completion !== null && current !== null && current.start === completion.start && completion.value === textarea.value;
+  };
+
+  /** Writes an entry only at the `<` the list was offered for; otherwise closes the list and writes nothing. */
+  const acceptCompletion = (entry: InlineCompletion): boolean => {
+    if (!completion || !offeredHere() || !completionAtCaret()!.entries.some((candidate) => candidate.key === entry.key)) { closeCompletion(); return false; }
     const caret = textarea.selectionEnd, start = completion.start;
     closeCompletion();
     insertText(textarea, start, caret, entry.snippet);
     textarea.setSelectionRange(start + entry.select[0], start + entry.select[1]);
     refresh();
+    return true;
   };
 
   const showCompletion = (): void => {
-    if (composing || !markupActive() || !options.editable() || textarea.selectionStart !== textarea.selectionEnd) { closeCompletion(); return; }
-    const found = completionPrefix(textarea.value, textarea.selectionEnd);
-    const entries = found ? inlineCompletions(found.prefix) : [];
-    if (!found || entries.length === 0) { closeCompletion(); return; }
-    const caretNode = renderHighlight(mirror, textarea.value, parse(), textarea.selectionEnd);
+    const current = completionAtCaret();
+    if (!current) { closeCompletion(); return; }
+    const caretNode = renderMarks(mirror, textarea.value, documentMarks(parse()), textarea.selectionEnd);
     const list = completion?.list ?? h('div', 'v4-inline-completion');
-    list.setAttribute('role', 'listbox');
-    list.setAttribute('aria-label', '行内标签');
-    list.replaceChildren();
-    const active = Math.min(completion?.active ?? 0, entries.length - 1);
-    entries.forEach((entry, index) => {
-      const option = h('div', 'v4-inline-completion-option');
-      option.id = `v4-inline-option-${index}`;
-      option.setAttribute('role', 'option');
-      option.setAttribute('aria-selected', String(index === active));
-      option.append(h('code', undefined, entry.label), h('span', undefined, entry.detail));
-      option.onpointerdown = (event) => { event.preventDefault(); acceptCompletion(entry); };
-      list.append(option);
-    });
+    const active = completion?.start === current.start ? Math.min(completion.active, current.entries.length - 1) : 0;
+    renderCompletionList(list, current.entries, active, acceptCompletion);
     textarea.setAttribute('aria-activedescendant', `v4-inline-option-${active}`);
     if (caretNode) {
       list.style.left = `${Math.max(0, Math.min(caretNode.offsetLeft, field.clientWidth - 240))}px`;
       list.style.top = `${caretNode.offsetTop + caretNode.offsetHeight + 4}px`;
     }
     if (!list.isConnected) field.append(list);
-    completion = { list, entries, active, start: found.start };
+    completion = { list, entries: current.entries, active, start: current.start, value: textarea.value };
   };
+  /** After the caret moves (keys, clicks, selection), the list follows it or closes. */
+  const followCaret = (): void => { if (completion) showCompletion(); };
 
   const moveCompletion = (step: number): void => {
     if (!completion) return;
@@ -200,7 +235,7 @@ export function attachInlineField(textarea: HTMLTextAreaElement, options: Inline
   const wrap = (name: InlineTagName, value?: string, range = { start: textarea.selectionStart, end: textarea.selectionEnd, source: textarea.value }): void => {
     if (!options.editable()) return;
     if (textarea.value !== range.source) { setStatus('台词已变化，请重新选择文字', false, 4000); return; }
-    const result = wrapInlineSelection(range.source, range.start, range.end, name, value);
+    const result = wrapInlineSelection(range.source, range.start, range.end, name, value, context);
     if (!result.ok) { setStatus(result.reason, false, 5000); return; }
     const inserted = result.text.slice(range.start, result.text.length - (range.source.length - range.end));
     insertText(textarea, range.start, range.end, inserted);
@@ -217,7 +252,7 @@ export function attachInlineField(textarea: HTMLTextAreaElement, options: Inline
     toolbar = h('div', 'v4-inline-toolbar');
     toolbar.setAttribute('role', 'toolbar');
     toolbar.setAttribute('aria-label', '给选中文字加标签');
-    for (const entry of WRAPS) {
+    for (const entry of WRAPS.filter((wrap) => inlineTagAllowed(wrap.name, context))) {
       const button = h('button', 'v4-inline-tool', entry.label);
       button.type = 'button'; button.title = entry.title; button.setAttribute('aria-label', entry.title);
       if (entry.name === 'b') button.style.fontWeight = '700';
@@ -248,15 +283,20 @@ export function attachInlineField(textarea: HTMLTextAreaElement, options: Inline
       rubyButton.replaceWith(reading);
       reading.focus();
     };
-    toolbar.append(rubyButton);
+    if (inlineTagAllowed('ruby', context)) toolbar.append(rubyButton);
     field.append(toolbar);
   };
 
   textarea.addEventListener('keydown', (event) => {
     if (event.isComposing) return;
+    // A list left behind by a caret moved without a key or click is closed; the key then does its usual work.
+    if (completion && !offeredHere()) closeCompletion();
     if (completion) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); event.stopImmediatePropagation(); moveCompletion(event.key === 'ArrowDown' ? 1 : -1); return; }
-      if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); event.stopImmediatePropagation(); acceptCompletion(completion.entries[completion.active]!); return; }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        if (acceptCompletion(completion.entries[completion.active]!)) { event.preventDefault(); event.stopImmediatePropagation(); }
+        return;
+      }
       if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); closeCompletion(); return; }
     }
     if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && (event.key === 'b' || event.key === 'i')
@@ -273,10 +313,11 @@ export function attachInlineField(textarea: HTMLTextAreaElement, options: Inline
     closeCompletion();
     queueMicrotask(() => { if (!field.contains(document.activeElement)) closeToolbar(); refresh(); });
   }, { signal });
-  for (const type of ['select', 'keyup', 'mouseup'] as const) textarea.addEventListener(type, updateToolbar, { signal });
+  for (const type of ['select', 'keyup', 'mouseup'] as const) textarea.addEventListener(type, () => { followCaret(); updateToolbar(); }, { signal });
   textarea.addEventListener('click', () => {
     if (pendingCaret !== null && textarea.selectionStart === textarea.selectionEnd) textarea.setSelectionRange(pendingCaret, pendingCaret);
     pendingCaret = null;
+    followCaret();
     updateToolbar();
   }, { signal });
   // In the reading view, put the caret at the unit that was clicked rather than where the hidden source happens to be.
