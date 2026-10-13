@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ExportGameInspection, ExportGameProgress, ExportGameRequest, ExportGameResult } from '../desktop/contracts.js';
-import { createGameExport, gameExportBlocker, issueMessage, projectRelativeFile, type GameExportBridge, type GameExportHooks } from '../src/panels/game-export.js';
+import { createGameExport, gameExportBlocker, issueMessage, projectRelativeFile, suggestedExportFolder, type GameExportBridge, type GameExportHooks } from '../src/panels/game-export.js';
 
 const inspection = (patch: Partial<ExportGameInspection> = {}): ExportGameInspection => ({
   id: 'harbor-letters', title: '雾港来信', version: '1.0.0', issues: [], plugins: [], ...patch,
@@ -99,10 +99,18 @@ describe('the form', () => {
     expect(gameExportBlocker({ ...base, folderName: 'a/b' })).toMatch(/不能包含路径/);
     expect(gameExportBlocker({ ...base, folderName: 'a\\b' })).toMatch(/不能包含路径/);
   });
+  it('suggests a folder named after the title, cleaned to what the exporter accepts', () => {
+    expect(suggestedExportFolder('雨夜车站', 'game-1f3a')).toBe('雨夜车站-windows');
+    expect(suggestedExportFolder(' 第一章: 雨夜/车站? ', 'game-1f3a')).toBe('第一章 雨夜 车站-windows');
+    expect(suggestedExportFolder('Ending...', 'game-1f3a')).toBe('Ending...-windows');
+    expect(suggestedExportFolder('CON', 'game-1f3a')).toBe('CON-windows');
+    expect(suggestedExportFolder('<>|', 'game-1f3a')).toBe('game-1f3a-windows');
+    expect(suggestedExportFolder('长'.repeat(150), 'game-1f3a')).toBe(`${'长'.repeat(100)}-windows`);
+  });
   it('starts from the inspected title and version, and allows no plugin until the person checks it', async () => {
     const f = fixture({ inspect: async () => inspection({ version: '', plugins: [{ id: 'letters', entry: 'plugins/letters.js' }] }) });
     await f.exporter.start();
-    expect(f.exporter.state).toMatchObject({ title: '雾港来信', version: '', folderName: 'harbor-letters-windows' });
+    expect(f.exporter.state).toMatchObject({ title: '雾港来信', version: '', folderName: '雾港来信-windows' });
     expect([...f.exporter.state.allowed]).toEqual([]);
     expect(f.exporter.state.message?.text).toMatch(/版本号/);
     f.exporter.setAllowed('letters', true);
@@ -148,7 +156,7 @@ describe('the export', () => {
     const f = fixture();
     const exporter = await ready(f);
     void exporter.exportGame();
-    expect(f.bridge.exportGame.mock.calls[0]![0]).toEqual({ locationId: 'loc-1', folderName: 'harbor-letters-windows', title: '雾港来信', version: '1.0.0', trustedPlugins: [] });
+    expect(f.bridge.exportGame.mock.calls[0]![0]).toEqual({ locationId: 'loc-1', folderName: '雾港来信-windows', title: '雾港来信', version: '1.0.0', trustedPlugins: [] });
   });
   it('reports cancellation only after the export promise settled, and keeps the lock until then', async () => {
     const f = fixture();

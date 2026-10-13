@@ -1171,7 +1171,7 @@ const WORKSPACE_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   PREVIEW_OBSERVATION_LIMIT: '本次预览记录已达上限，请从较近的段落标记重新播放。',
   EDITOR_PROJECT_BASELINE_CHANGED: '项目已被外部更新，未覆盖你的草稿。请先查看变化范围。',
   HUMAN_WORKSPACE_DIRTY: '另一个编辑窗口有未保存内容，请先完成接力。',
-  HUMAN_WORKSPACE_BUSY: '另一个编辑窗口正在操作，请稍后保存。',
+  HUMAN_WORKSPACE_BUSY: '工作区正在操作或等待连接恢复，请稍后保存。',
   HUMAN_WORKSPACE_STATE_CORRUPT: '工作区连接或保存状态已失效，编辑内容已保留。',
   PROJECT_BUSY: '项目正在写入，请稍后保存。',
   AUTHORITY_TOKEN_REJECTED: '项目绑定已失效，编辑内容已保留。',
