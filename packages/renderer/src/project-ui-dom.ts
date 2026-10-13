@@ -1,12 +1,15 @@
-import { GAME_SETTING_DEFINITIONS, PROJECT_UI_TAB_BAR_HEIGHT, evalExprBoolean, projectUiChildrenRect, projectUiRect, type VarValue, type ProjectUiAction, type ProjectUiBinding, type ProjectUiContentSource, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId, type ProjectUiRect, type ProjectUiText } from '@surdet/core';
+import { GAME_SETTING_DEFINITIONS, PROJECT_UI_TAB_BAR_HEIGHT, evalExprBoolean, parseInlineText, projectUiChildrenRect, projectUiRect, type InlineStyle, type VarValue, type ProjectUiAction, type ProjectUiBinding, type ProjectUiContentSource, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId, type ProjectUiRect, type ProjectUiText } from '@surdet/core';
 import type { RendererTheme } from './theme.js';
 import { SETTING_STEPS } from './settings-store.js';
 import { fontTextDiagnostics, isUiTextClipped, type ReadingDiagnostic } from './reading-diagnostics.js';
+import type { BacklogEntry } from './backlog.js';
 
 export interface ProjectUiItem {
   id: string;
   source?: ProjectUiContentSource;
   label: string;
+  /** Backlog items only: recorded plain speaker/text and optional static inline source. Not HTML. */
+  backlog?: BacklogEntry;
   description?: string;
   value?: string | number | boolean;
   date?: string;
@@ -106,6 +109,59 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     if (errorStatus.textContent !== message) { errorStatus.textContent = message; options.onError(error); } };
   const color = (value: number | undefined, fallback: number): string => hex(value ?? fallback);
   const wrap = (promise: void | Promise<void>): void => { void Promise.resolve(promise).catch(report); };
+  // Static formatting only, as in the built-in backlog: speed and shake/wave are never drawn.
+  const styled = (style: InlineStyle, content: Node): Node => {
+    if (!style.bold && !style.italic && style.color === undefined && style.size === undefined) return content;
+    const span = document.createElement('span');
+    if (style.bold) span.style.fontWeight = '700';
+    if (style.italic) span.style.fontStyle = 'italic';
+    if (style.color !== undefined) span.style.color = style.color.startsWith('#') ? style.color
+      : color(theme.colors[style.color as keyof RendererTheme['colors']], theme.colors.text);
+    if (style.size !== undefined) span.style.fontSize = `${style.size}em`;
+    span.appendChild(content);
+    return span;
+  };
+  /**
+   * The recorded plain label stays the row's accessible name; the styled copy is visual only.
+   * Only `entry.markup` is parsed: the speaker and plain text are never read as tags.
+   */
+  const appendBacklogText = (title: HTMLElement, label: string, entry: BacklogEntry): void => {
+    const name = document.createElement('span');
+    name.textContent = label;
+    name.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap';
+    const shown = document.createElement('span');
+    shown.dataset.uiBacklogText = 'true';
+    shown.setAttribute('aria-hidden', 'true');
+    // The built-in backlog's body weight, so <b> stays distinguishable from ordinary text.
+    title.style.fontWeight = '500';
+    if (entry.speaker) shown.append(`${entry.speaker}：`);
+    if (entry.markup === undefined) shown.append(entry.text);
+    else {
+      let run: { style: InlineStyle; text: Text } | null = null;
+      for (const unit of parseInlineText(entry.markup).units) {
+        if (unit.ruby === undefined && run?.style === unit.style) { run.text.appendData(unit.text); continue; }
+        const text = document.createTextNode(unit.text);
+        let content: Node = text;
+        if (unit.style.emphasis) {
+          // Chromium paints no emphasis dots on the same side as a ruby reading, so those go below.
+          const marks = document.createElement('span');
+          marks.style.setProperty('text-emphasis', 'filled dot');
+          marks.style.setProperty('text-emphasis-position', unit.ruby === undefined ? 'over right' : 'under right');
+          marks.appendChild(text);
+          content = marks;
+        }
+        if (unit.ruby === undefined) run = { style: unit.style, text };
+        else {
+          const ruby = document.createElement('ruby'), reading = document.createElement('rt');
+          reading.textContent = unit.ruby;
+          ruby.append(content, reading);
+          content = ruby; run = null;
+        }
+        shown.appendChild(styled(unit.style, content));
+      }
+    }
+    title.append(name, shown);
+  };
   root.addEventListener('keydown', event => {
     refresh();
     const active = [...pages].filter(([, display]) => !display.element.hidden).sort(([a], [b]) => PAGE_LEVEL[b] - PAGE_LEVEL[a])[0];
@@ -424,8 +480,9 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
         content.template.forEach(node => renderNode(display, node, row, rowRect, item, content.bindings));
       } else {
         const title = document.createElement('span');
-        title.textContent = item.label;
         title.style.cssText = 'display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+        if (item.backlog) appendBacklogText(title, item.label, item.backlog);
+        else title.textContent = item.label;
         row.appendChild(title);
         if (item.description) {
           const description = document.createElement('small');

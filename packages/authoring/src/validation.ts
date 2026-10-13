@@ -250,7 +250,7 @@ export function validateSnapshot(
   }
 
   const entryScene = snapshot.config['entryScene'];
-  if (typeof entryScene === 'string' && entryScene.trim().length > 0 && !scenes.has(entryScene.trim())) {
+  if (typeof entryScene === 'string' && entryScene.trim().length > 0 && !scenes.has(entryScene.trim()) && !failedScenes.has(entryScene.trim())) {
     rawIssues.push({
       severity: 'error',
       code: 'ENTRY_SCENE_MISSING',

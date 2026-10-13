@@ -17,6 +17,22 @@ function makeProject(files: Record<string, string>): string {
 }
 
 describe('lintProject', () => {
+  it('does not call a malformed entry scene missing, while a genuinely absent entry remains an error', () => {
+    const dir = makeProject({
+      'game.config.json': JSON.stringify({ entryScene: 'start' }),
+      'content/scenario/start.gal': '@scene start\n<b>尚未闭合。\n@end',
+      'content/scenario/other.gal': '@scene other\n正常场景。\n@end',
+    });
+    const failed = lintProject(dir);
+    expect(failed.ok).toBe(false);
+    expect(failed.issues.filter(issue => issue.severity === 'error').map(issue => issue.code)).toEqual(['M002']);
+    fs.writeFileSync(path.join(dir, 'game.config.json'), JSON.stringify({ entryScene: 'missing' }));
+    expect(lintProject(dir).issues.map(issue => issue.code)).toEqual(expect.arrayContaining(['M002', 'ENTRY_SCENE_MISSING']));
+    fs.writeFileSync(path.join(dir, 'game.config.json'), JSON.stringify({ entryScene: 'start' }));
+    fs.writeFileSync(path.join(dir, 'content/scenario/start.gal'), '@scene start\n<b>已闭合。</b>\n@end');
+    expect(lintProject(dir).ok).toBe(true);
+  });
+
   it.each(['', '\uFEFF'])('validates confirmed dialogue/voice and terminology sources with exact source digests (%j BOM)', async bom => {
     const text = `${bom}@scene start\r\n旁白：雾港。\r\n@end\r\n`;
     const terminology = { terms: [{ canonical: '雾港', variants: [] }] };
