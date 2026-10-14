@@ -19,8 +19,10 @@ export interface ReleaseCheckResult {
 }
 
 function parseVersion(value: string): number[] | null {
-  const match = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-+].*)?$/.exec(value.trim());
-  return match ? [Number(match[1]), Number(match[2] ?? 0), Number(match[3] ?? 0)] : null;
+  const match = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:\.(\d+))?(?:[-+].*)?$/.exec(value.trim());
+  if (!match) return null;
+  const parts = [match[1], match[2] ?? '0', match[3] ?? '0', match[4] ?? '0'].map(Number);
+  return parts.every(Number.isSafeInteger) ? parts : null;
 }
 
 export function isNewerVersion(candidate: string, current: string): boolean {
@@ -55,6 +57,9 @@ export async function checkReleaseManifest(
 ): Promise<ReleaseCheckResult> {
   const manifest = readReleaseManifest(manifestPath);
   if (!manifest) return { status: 'invalid', currentVersion, message: '版本清单无效或不存在' };
+  if (!parseVersion(manifest.version) || !parseVersion(currentVersion)) {
+    return { status: 'invalid', currentVersion, manifest, message: '版本号无效，无法比较更新' };
+  }
   return isNewerVersion(manifest.version, currentVersion)
     ? { status: 'update-available', currentVersion, manifest }
     : { status: 'up-to-date', currentVersion, manifest };

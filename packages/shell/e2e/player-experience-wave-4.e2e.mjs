@@ -461,7 +461,7 @@ function caseEvidence(session, caseId, ok, assertions, error = null) {
     && assetLoading.failed === 0;
   const evidence = {
     id: caseId,
-    ok,
+    ok: ok && assetComplete,
     title: identity.title ?? null,
     sourceRoot: gameSourceRoot,
     distRoot: path.resolve(gameDist),
@@ -482,17 +482,28 @@ function caseEvidence(session, caseId, ok, assertions, error = null) {
   return evidence;
 }
 
+async function finalizeCase(session, evidence) {
+  if (!session) return;
+  try { await session.close(); }
+  catch (error) { session.events.consoleErrors.push(`close: ${errorText(error)}`); }
+  if (!evidence) return;
+  evidence.events = cloneJson(session.events);
+  const eventsClear = Object.entries(evidence.events).every(([key, value]) => key === 'unexpectedWindowClosed' ? value === false : value.length === 0);
+  evidence.ok = evidence.ok && eventsClear;
+}
+
 async function runSmokeCase() {
   let session;
+  let evidence;
   try {
     session = await launchSession('smoke');
     await prepareSession(session);
     await session.waitTitle();
-    return caseEvidence(session, 'A', true, { smoke: true, formalGame: true });
+    return evidence = caseEvidence(session, 'A', true, { smoke: true, formalGame: true });
   } catch (error) {
-    return caseEvidence(session, 'A', false, { smoke: true, formalGame: true }, error);
+    return evidence = caseEvidence(session, 'A', false, { smoke: true, formalGame: true }, error);
   } finally {
-    if (session) await session.close();
+    await finalizeCase(session, evidence);
   }
 }
 
@@ -1146,6 +1157,7 @@ async function runFullscreenCase(session) {
 
 async function runCase(caseId) {
   let session;
+  let evidence;
   const assertions = {
     source: 'title',
     path: ['title:gallery', 'gallery:music', 'gallery:text', 'gallery:cg', 'gallery:close'],
@@ -1153,7 +1165,7 @@ async function runCase(caseId) {
   try {
     session = await launchSession(caseId);
     await prepareSession(session);
-    const finish = (assertionSnapshot) => caseEvidence(session, caseId, true, assertionSnapshot);
+    const finish = (assertionSnapshot) => evidence = caseEvidence(session, caseId, true, assertionSnapshot);
     if (caseId === 'C') {
       return finish(await runBacklogCase(session));
     }
@@ -1232,9 +1244,9 @@ async function runCase(caseId) {
     }
     return finish({ ...assertions, returnBase: finalSnapshot.uiSession.base });
   } catch (error) {
-    return caseEvidence(session, caseId, false, assertions, error);
+    return evidence = caseEvidence(session, caseId, false, assertions, error);
   } finally {
-    if (session) await session.close();
+    await finalizeCase(session, evidence);
   }
 }
 

@@ -2,7 +2,10 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it } from 'vitest';
+import * as asar from '@electron/asar';
+import { NtExecutable } from 'resedit';
 import { inspectWindowsExport, exportWindowsGame, type WindowsExportOptions } from '../src/windows-export.js';
+import { checkReleaseManifest } from '../../shell/src/release-service.js';
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true }); });
 async function project(source = '第一句。\n@end') {
@@ -63,4 +66,29 @@ it('rejects a file used as the output parent and preserves that file', async () 
 });
 it.each(['CON', '../逃逸', '尾部.', 'x/y'])('rejects unsafe Windows output child %s', async name => {
   const { options } = await project(); await expect(exportWindowsGame({ ...options, folderName: name })).rejects.toThrow('Windows保留名称');
+});
+
+it.each(['1.2.3', '1.2.3.4'])('exports a %s update manifest the real release reader accepts', async version => {
+  const { root, options } = await project();
+  // Minimal PE/runtime fixtures exercise packaging and the real consumer, not game launch.
+  const runtime = path.join(root, 'runtime');
+  const gameRuntime = path.join(root, 'game-runtime');
+  await fs.mkdir(runtime);
+  await fs.writeFile(path.join(runtime, 'electron.exe'), Buffer.from(NtExecutable.createEmpty(false).generate()));
+  await fs.mkdir(path.join(gameRuntime, 'game'), { recursive: true });
+  for (const file of ['main.mjs', 'preload.cjs', 'game/index.html']) await fs.writeFile(path.join(gameRuntime, file), '');
+  const before = Date.now();
+  const result = await exportWindowsGame({ ...options, version, encrypted: false,
+    runtime: { ...options.runtime, directory: runtime, gameRuntime } });
+  const archive = path.join(result.directory, 'resources/app.asar');
+  const bytes = asar.extractFile(archive, path.normalize('game/release/update-manifest.json'));
+  const manifestFile = path.join(root, 'exported-update-manifest.json');
+  await fs.writeFile(manifestFile, bytes);
+  const check = await checkReleaseManifest(manifestFile, version);
+  expect(check.status).toBe('up-to-date');
+  expect(check.manifest).toMatchObject({ engine: 'surdet', game: result.id, version });
+  const generatedAt = Date.parse(check.manifest!.generatedAt);
+  expect(generatedAt).toBeGreaterThanOrEqual(before);
+  expect(generatedAt).toBeLessThanOrEqual(Date.now());
+  expect((await checkReleaseManifest(manifestFile, version === '1.2.3' ? '1.2.2.9' : '1.2.3.3')).status).toBe('update-available');
 });
