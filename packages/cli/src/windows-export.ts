@@ -259,7 +259,8 @@ export async function exportWindowsGame(options: WindowsExportOptions): Promise<
     await fs.writeFile(path.join(game, 'content-manifest.json'), JSON.stringify(manifest));
     await fs.writeFile(path.join(game, 'game.config.json'), JSON.stringify(config));
     await fs.mkdir(path.join(game, 'release'), { recursive: true });
-    await fs.writeFile(path.join(game, 'release/update-manifest.json'), JSON.stringify({ engine: 'surdet', game: project.pkg.name, version, channel: 'stable', notes: '' }));
+    await fs.writeFile(path.join(game, 'release/update-manifest.json'), JSON.stringify({ engine: 'surdet', game: project.pkg.name,
+      version, generatedAt: new Date().toISOString(), channel: 'stable', notes: '' }));
     await fs.writeFile(path.join(game, 'release/pack-metadata.json'), JSON.stringify({ engine: 'surdet', game: project.pkg.name,
       version, title, entryScene: config.entryScene, sourceDirName: path.basename(root), assetFiles: [...assets].sort(), mode: encrypted ? 'release' : 'development', encrypted }));
     await fs.writeFile(path.join(bundle, 'package.json'), JSON.stringify({ name: project.pkg.name, version, productName: title, main: 'main.mjs', type: 'module', license: 'MIT' }));

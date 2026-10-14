@@ -187,11 +187,13 @@ async function collectLaunch(workspaceRoot, role, pair, sequenceIndex) {
     page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
     page.on('pageerror', (error) => pageErrors.push(error instanceof Error ? error.stack ?? error.message : String(error)));
     page.on('requestfailed', (request) => failedRequests.push(`${request.url()} ${request.failure()?.errorText ?? ''}`.trim()));
-    await waitForReady(page);
+    await waitForDiagnostic(page);
     const debugObserved = stamp();
+    await page.waitForFunction(() => window.__surdetDebug?.assetLoading?.done === true, undefined, { timeout: readyTimeout });
+    const assetDoneObserved = stamp();
+    await page.waitForTimeout(50);
     const diagnostic = await page.evaluate(() => window.__surdetRendererStartupDiagnostic.getSnapshot());
     validateRendererStartupDiagnosticSnapshot(diagnostic);
-    const assetDoneObserved = stamp();
     const assetLoading = await page.evaluate(() => ({ ...window.__surdetDebug.assetLoading }));
 
     // 首次菜单操作仅用于预热 UI 投影，不进入正式样本；随后每次动作使用 reload 后的独立页面状态。
@@ -227,7 +229,8 @@ async function collectLaunch(workspaceRoot, role, pair, sequenceIndex) {
       },
       page: diagnostic,
       observer: {
-        lagMs: diagnostic.derived.debugToAssetDoneMs === null ? 0 : Math.max(0, hostDurations.hostDebugToAssetDoneMs - diagnostic.derived.debugToAssetDoneMs),
+        // Either observation can arrive late; retain the discrepancy in both directions.
+        lagMs: diagnostic.derived.debugToAssetDoneMs === null ? 0 : Math.abs(hostDurations.hostDebugToAssetDoneMs - diagnostic.derived.debugToAssetDoneMs),
       },
       interactionDiagnostics: { menu, scene },
       assetLoading,
@@ -405,6 +408,7 @@ async function main() {
     };
     const result = await collectGroup(group, roleRoots, instrumentation, { baseline: baselineManifest, current: currentManifest, sameCommitEquivalent: true }, environment);
     writeJson(path.join(artifactDir, group.artifact.replace(/^docs\\baselines[\\/]/, '').replace(/^docs[\\/]baselines[\\/]/, '')), result.artifact);
+    if (result.failed || result.artifact.qualification.status !== 'candidate-qualified') process.exitCode = 1;
     cleanup.stage = 'samples-written';
     cleanup.worktrees = cleanup.worktrees.map((entry) => entry.group === group.id ? { ...entry, stage: 'samples-written', artifact: group.artifact, createdAt: byRoot.get(entry.path)?.createdAt ?? entry.createdAt } : entry);
     writeJson(cleanupManifestPath, cleanup);
