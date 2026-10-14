@@ -151,14 +151,14 @@ function makeMenuProjection(onPointerConsumed?: () => void) {
   return { root, lifecycle, assets, layer };
 }
 
-function makeRealMenuRuntime(onPointerConsumed?: () => void): RealMenuRuntime {
+function makeRealMenuRuntime(onPointerConsumed?: () => void, width = 1280, height = 720): RealMenuRuntime {
   const root = new Container();
   const lifecycle = new RenderLifecycle();
   const assets = new RenderAssetRegistry({ lifecycle });
   const layer = new MenuLayer({
     uiLayer: root,
-    width: 1280,
-    height: 720,
+    width,
+    height,
     assets,
     lifecycle,
     ...(onPointerConsumed ? { onPointerConsumed } : {}),
@@ -517,6 +517,36 @@ describe('Menu backup restore projection contract', () => {
 });
 
 describe('MenuLayer projection and lifecycle contract', () => {
+  it.each([[320, 240], [640, 360], [1280, 720], [1600, 900], [720, 1280]])('A010 keeps settings, save/load and confirmation controls inside %ix%i', (width, height) => {
+    const runtime = makeRealMenuRuntime(undefined, width, height);
+    const controls = (node: Container): Container[] => node.visible ? [node, ...node.children.flatMap(controls)] : [];
+    const withinStage = () => {
+      const active = controls(runtime.root).filter(node => node.accessible && node.hitArea instanceof Rectangle);
+      expect(active.length).toBeGreaterThan(0);
+      for (const node of active) {
+        const area = node.hitArea as Rectangle;
+        const top = node.toGlobal({ x: area.x, y: area.y });
+        const bottom = node.toGlobal({ x: area.x + area.width, y: area.y + area.height });
+        expect(top.x, node.accessibleTitle ?? undefined).toBeGreaterThanOrEqual(0);
+        expect(top.y, node.accessibleTitle ?? undefined).toBeGreaterThanOrEqual(0);
+        expect(bottom.x, node.accessibleTitle ?? undefined).toBeLessThanOrEqual(width + .01);
+        expect(bottom.y, node.accessibleTitle ?? undefined).toBeLessThanOrEqual(height + .01);
+      }
+    };
+    try {
+      runtime.layer.showSettings(Array.from({ length: 8 }, (_, i) => ({ id: `custom${i}`, label: `设置${i}`, display: '50%' })), vi.fn(), vi.fn());
+      withinStage();
+      controls(runtime.root).find(node => node.accessibleTitle === '下一页设置')!.emit('pointerdown', pointerEvent);
+      withinStage();
+      runtime.layer.hideSettings();
+      runtime.layer.showSaveLoad({ mode: 'save', slots: Array.from({ length: 6 }, (_, i) => ({ id: String(i + 1), empty: false, label: '雨夜车站' })) }, vi.fn(), vi.fn());
+      withinStage();
+      const slot = controls(runtime.root).find(node => node.accessibleTitle?.startsWith('保存到槽位 1：'));
+      expect(slot).toBeDefined(); slot!.emit('pointerdown', pointerEvent);
+      withinStage();
+      expect(controls(runtime.root).some(node => node.accessibleTitle === '覆盖存档')).toBe(true);
+    } finally { disposeRealMenuRuntime(runtime); }
+  });
   it('repaints explicit theme roles without rebinding controls or retaining old scrim opacity', () => {
     const runtime = makeRealMenuRuntime();
     const onSelect = vi.fn();

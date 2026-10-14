@@ -24,6 +24,16 @@ async function snapshot(config: object, scenes: Record<string, string>, timeline
 }
 
 describe('preview asset loading', () => {
+  it('A020 transfers AAC and Opus with their media type and original bytes', async () => {
+    const assets: DirAsset[] = [['bgm', '音乐.aac'], ['voice', '语音.OPUS']].map(([kind, name]) => ({
+      kind: kind as 'bgm' | 'voice', key: name!.split('.')[0]!, sourcePath: path(`${kind}/${name}`), isImage: false,
+      handle: { getFile: async () => new File([new Uint8Array([11, 22, 33])], name!) } as unknown as FileSystemFileHandle,
+    }));
+    const loaded = await readProjectImages('{}', new AbortController().signal, new Set(assets.map(asset => asset.sourcePath!)), assets);
+    expect(loaded.audio.map(entry => [entry.kind, entry.key, entry.file.mime, [...new Uint8Array(entry.file.buffer)]])).toEqual([
+      ['bgm', '音乐', 'audio/aac', [11, 22, 33]], ['voice', '语音', 'audio/ogg', [11, 22, 33]],
+    ]);
+  });
   it('captures one content version and keeps its files and handles across a pending read and project switch', async () => {
     let release!: (file: File) => void;
     const font = new File([new Uint8Array([1, 2, 3])], 'body.woff2');

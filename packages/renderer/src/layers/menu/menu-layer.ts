@@ -129,8 +129,11 @@ export class MenuLayer implements MenuProjectionPort {
 
   constructor(options: MenuLayerOptions) {
     this.#root = options.uiLayer;
-    this.#w = options.width;
-    this.#h = options.height;
+    // Keep the existing 1280×720 menu proportions on smaller legal stages.
+    // Scale the display objects and their hit areas together, not just the canvas CSS.
+    const uiScale = Math.min(1, options.width / 1280, options.height / 720);
+    this.#w = options.width / uiScale;
+    this.#h = options.height / uiScale;
     this.#assets = options.assets;
     this.#lifecycle = options.lifecycle ?? new RenderLifecycle();
     this.#ownsLifecycle = options.lifecycle === undefined;
@@ -146,6 +149,7 @@ export class MenuLayer implements MenuProjectionPort {
     this.#saveLoadLayer = new Container();
     for (const layer of [this.#titleLayer, this.#endingLayer, this.#menuLayer, this.#settingsLayer, this.#saveLoadLayer]) {
       layer.visible = false;
+      layer.scale.set(uiScale);
     }
     this.#root.addChild(
       this.#titleLayer,
@@ -184,11 +188,15 @@ export class MenuLayer implements MenuProjectionPort {
     return {
       overlay: this.menu(),
       titleItemCount: this.#titleItemCount,
-      titleTargets: this.#titleLayer.visible ? this.#titleTargets.map((target) => ({ ...target })) : [],
+      titleTargets: this.#titleLayer.visible ? this.#titleTargets.map((target) => ({ ...target,
+        x: target.x * this.#titleLayer.scale.x, y: target.y * this.#titleLayer.scale.y,
+        width: target.width * this.#titleLayer.scale.x, height: target.height * this.#titleLayer.scale.y })) : [],
       systemMenuItemCount: this.#systemMenuItemCount,
       settingsRowCount: this.#settingsRows.length,
       saveLoadSlotCount: this.#saveLoadSlotCount,
-      saveLoadTargets: this.#saveLoadLayer.visible && !this.#confirmation ? this.#saveLoadTargets.map((target) => ({ ...target })) : [],
+      saveLoadTargets: this.#saveLoadLayer.visible && !this.#confirmation ? this.#saveLoadTargets.map((target) => ({ ...target,
+        x: target.x * this.#saveLoadLayer.scale.x, y: target.y * this.#saveLoadLayer.scale.y,
+        width: target.width * this.#saveLoadLayer.scale.x, height: target.height * this.#saveLoadLayer.scale.y })) : [],
     };
   }
 

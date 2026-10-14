@@ -39,6 +39,7 @@ describe('desktop read-only project grants', () => {
   it('adapts existing files without a writable escape and separates project identities', async () => {
     const root = await temporary(); await fs.writeFile(path.join(root, 'story.gal'), '你好');
     await fs.writeFile(path.join(root, 'background.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    for (const name of ['音乐.aac', '语音.OPUS', '音效.flac']) await fs.writeFile(path.join(root, name), 'media metadata fixture');
     const opened = await openDirectory(root);
     vi.stubGlobal('window', { surdetDesktop: { read: (_token: string, name: string) => opened.read(name) } });
     const first = desktopDirectory(opened.grant);
@@ -48,6 +49,9 @@ describe('desktop read-only project grants', () => {
     expect(await first.resolve(file)).toEqual(['story.gal']);
     expect(await (await file.getFile()).text()).toBe('你好');
     expect((await (await first.getFileHandle('background.svg')).getFile()).type).toBe('image/svg+xml');
+    for (const [name, mime] of [['音乐.aac', 'audio/aac'], ['语音.OPUS', 'audio/ogg'], ['音效.flac', 'audio/flac']]) {
+      expect((await (await first.getFileHandle(name!)).getFile()).type).toBe(mime);
+    }
     expect(() => file.createWritable()).toThrow('正常保存');
     await expect(first.getFileHandle('new.gal', { create: true })).rejects.toThrow('正常保存');
     expect(desktopProjectIdentity(first)).toBe(`desktop:${opened.grant.identity}`);

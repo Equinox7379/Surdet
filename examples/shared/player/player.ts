@@ -686,12 +686,12 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       }
     }
     const IMG = /\.(png|jpe?g|webp|gif|avif|svg)$/i;
-    const AUD = /\.(mp3|ogg|wav|m4a|flac)$/i;
+    const AUD = /\.(aac|flac|m4a|mp3|ogg|opus|wav)$/i;
     const VID = /\.(mp4|webm|ogv)$/i;
     const MIME: Record<string, string> = {
       png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
       gif: 'image/gif', avif: 'image/avif', svg: 'image/svg+xml',
-      mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4', flac: 'audio/flac',
+      mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4', flac: 'audio/flac', aac: 'audio/aac', opus: 'audio/ogg',
       mp4: 'video/mp4', webm: 'video/webm', ogv: 'video/ogg',
     };
     const blobAssetUrl = (rel: string, bytes: Uint8Array): string => {
@@ -1807,6 +1807,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   const gamepad = new GamepadPoller((actions) => {
     if (isTitleScreen()) return;
     for (const a of actions) {
+      if (a !== 'cancel' && a !== 'menu' && !playerShell!.queries.canAdvance()) continue;
       switch (a) {
         case 'advance': {
           const st = interp.status;
@@ -1916,6 +1917,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   ownerTeardown.trackListener(() => window.removeEventListener('blur', ctrlBlur));
 
   function routeGameAction(action: GameAction): void {
+    if (['advance', 'auto', 'skip'].includes(action) && !playerShell!.queries.canAdvance()) return;
     if (action === 'backlog') { openBacklog(); refreshCommandRail(); return; }
     if (action === 'advance') {
       const st = interp.status;
@@ -1973,6 +1975,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       if (e.code === 'PageUp' || e.code === 'PageDown') {
         e.preventDefault(); renderer.dispatchInput({ type: 'backlog.scroll', delta: e.code === 'PageUp' ? -240 : 240 }); return;
       }
+      return;
     }
     if (renderer.status === 'choice' && (e.code === 'ArrowUp' || e.code === 'ArrowDown')) {
       e.preventDefault();
