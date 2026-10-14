@@ -1244,10 +1244,10 @@ export class AuthoringService {
       }
       const result = await applyScenePatch(context.session, input);
       const current = await loadSnapshot(new ChangeRecordProjectStorage(context.session.record));
-      const scene = current.scenes.find((item) => item.path === result.path)!;
-      return { ...metadataForChange(context.session), result: { ...result, continuation: {
+      const scene = current.scenes.find((item) => item.path === result.path);
+      return { ...metadataForChange(context.session), result: { ...result, ...(scene ? { continuation: {
         sceneRef: `scene:${scene.id}`, revision: current.revision, workingRevision: context.session.record.workingRevision,
-      } } };
+      } } : {}) } };
     });
   }
 

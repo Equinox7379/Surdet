@@ -6,7 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AuthoringOperationError, type ChangeRecord } from '@surdet/authoring';
+import { AuthoringOperationError, normalizeAuthoringError, type ChangeRecord } from '@surdet/authoring';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
 import {
   NodeLocalLeaseManager,
@@ -730,6 +730,45 @@ describe('NodeLocalLeaseManager', () => {
 });
 
 describe('NodeChangeStore lease binding', () => {
+  it('keeps primary recovery across nested change and project lease failures', async () => {
+    const manager = new NodeLocalLeaseManager('unused-for-injected-nested-lease');
+    const operation = new AuthoringOperationError('COMMIT_RECOVERY_FAILED', 'commit recovery failed', { journal: 'pending' });
+    const released: string[] = [];
+    const acquire = vi.spyOn(manager, 'acquire').mockImplementation(async ({ scope }) => ({
+      release: async () => { released.push(scope); throw new AuthoringOperationError('LEASE_CORRUPT', `${scope} release failed`); },
+    } as unknown as LeaseHandle));
+    try {
+      const error = await manager.withLease({ scope: 'project', resourceId: 'project' }, () =>
+        manager.withLease({ scope: 'change', resourceId: 'change' }, async () => { throw operation; }))
+        .then(() => { throw new Error('expected failure'); }, error => error);
+      expect(released).toEqual(['change', 'project']);
+      expect(normalizeAuthoringError(error)).toMatchObject({
+        code: 'COMMIT_RECOVERY_FAILED', retryDisposition: 'manual-recovery', details: { journal: 'pending', causes: [
+          expect.objectContaining({ code: 'COMMIT_RECOVERY_FAILED' }),
+          expect.objectContaining({ message: 'change release failed' }), expect.objectContaining({ message: 'project release failed' }),
+        ] },
+      });
+    } finally { acquire.mockRestore(); }
+  });
+
+  it('keeps manual recovery classification when withLease operation and release both fail', async () => {
+    const manager = new NodeLocalLeaseManager('unused-for-injected-lease');
+    const operation = new AuthoringOperationError('COMMIT_RECOVERY_FAILED', 'commit recovery failed');
+    const releaseError = new AuthoringOperationError('LEASE_CORRUPT', 'lease release failed');
+    const release = vi.fn(async () => { throw releaseError; });
+    const acquire = vi.spyOn(manager, 'acquire').mockResolvedValue({ release } as unknown as LeaseHandle);
+    try {
+      const error = await manager.withLease({ scope: 'change', resourceId: 'case' }, async () => { throw operation; })
+        .then(() => { throw new Error('expected failure'); }, error => error);
+      expect(release).toHaveBeenCalledOnce();
+      expect(normalizeAuthoringError(error)).toMatchObject({
+        code: 'COMMIT_RECOVERY_FAILED', retryDisposition: 'manual-recovery', details: { causes: [
+          expect.objectContaining({ code: 'COMMIT_RECOVERY_FAILED' }), expect.objectContaining({ code: 'LEASE_CORRUPT' }),
+        ] },
+      });
+    } finally { acquire.mockRestore(); }
+  });
+
   it('keeps reads available, rejects unbound mutation, and reuses one lease in the callback', async () => {
     const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-node-change-lease-store-'));
     temporaryRoots.push(dataRoot);

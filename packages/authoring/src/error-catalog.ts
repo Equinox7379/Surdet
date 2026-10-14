@@ -234,6 +234,29 @@ export interface NormalizedAuthoringError extends EnvelopeErrorShape {
 }
 
 export function normalizeAuthoringError(error: unknown): NormalizedAuthoringError {
+  if (error instanceof AggregateError) {
+    const pending: unknown[] = [error];
+    const seen = new Set<unknown>();
+    const causes: NormalizedAuthoringError[] = [];
+    while (pending.length > 0) {
+      const item = pending.pop();
+      if (seen.has(item)) continue;
+      seen.add(item);
+      if (item instanceof AggregateError) {
+        if (item.cause !== undefined) pending.push(item.cause);
+        // Depth-first, preserving operation-before-cleanup order through nested leases.
+        pending.push(...[...item.errors].reverse());
+      } else causes.push(normalizeAuthoringError(item));
+    }
+    const primary = causes.find(cause => cause.retryDisposition === 'manual-recovery')
+      ?? causes.find(cause => cause.retryDisposition === 'never')
+      ?? causes.find(cause => cause.code !== 'INVALID_REQUEST') ?? causes[0];
+    if (primary) return {
+      ...primary,
+      message: `${error.message}：${causes.map(cause => cause.message).join('；')}`,
+      details: { ...primary.details, causes },
+    };
+  }
   const sourceCode = error instanceof AuthoringOperationError
     ? error.code
     : typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
