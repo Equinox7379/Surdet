@@ -32,6 +32,22 @@ function fixtureSnapshotStorage(contents: Record<string, string> = {
 }
 
 describe('revision-scoped object index', () => {
+  it('indexes variable reads and writes of random, inventory, check and switch', async () => {
+    const snapshot = await loadProjectSnapshot(fixtureSnapshotStorage({
+      'game.config.json': JSON.stringify({ entryScene: 'entry', variables: {
+        dice: { type: 'number', initial: 0 }, bag: { type: 'string[]', initial: [] },
+        has: { type: 'boolean', initial: false }, chapter: { type: 'number', initial: 1 },
+      } }),
+      'content/scenario/entry.gal': '@random dice 1 6\n@add_item bag apple\n@remove_item bag apple\n@has_item bag apple has\n@check has && dice > 0\n@switch chapter 1:one\n@label one\n@end',
+    }), hasher);
+    const index = buildObjectIndex(snapshot);
+    expect(index.byRef.get('variable:dice')?.referencedBy).toHaveLength(2);
+    expect(index.byRef.get('variable:bag')?.referencedBy).toHaveLength(3);
+    expect(index.byRef.get('variable:has')?.referencedBy).toHaveLength(2);
+    expect(index.byRef.get('variable:chapter')?.referencedBy).toHaveLength(1);
+    expect(index.byRef.get('variable:apple')).toBeUndefined();
+  });
+
   it('pages nested scene source losslessly with finite bounds and a pinned snapshot', async () => {
     const source = ['@scene prologue', '// 注释保留', '@if true', '  凛：一样', '  凛：一样', '@endif', '', ...Array.from({ length: 202 }, (_, i) => `第${i}行。`), '@end'].join('\r\n');
     const contents = { 'game.config.json': '{"entryScene":"prologue","variables":{}}', 'content/scenario/chapter/prologue.gal': source };

@@ -34,6 +34,40 @@ afterEach(() => {
 });
 
 describe('public direct scene removal', () => {
+  it.each(['unchanged', 'move', 'rename', 'remove'] as const)('returns the recorded scene patch after %s without rewriting the draft', async next => {
+    const projectRoot = fixture();
+    const session = await openAgentPortSession({ projectRoot, policy: 'stage' });
+    const invoke = async (id: Parameters<typeof session.invoke>[0], input: Record<string, unknown>) => {
+      const response = await session.invoke(id, input);
+      expect(response).toMatchObject({ ok: true });
+      if (!response.ok) throw new Error('fixture operation failed');
+      return response.result as any;
+    };
+    try {
+      await invoke('change.begin', { compositionMode: 'direct' });
+      const scene = await invoke('object.inspect', { view: 'working', objectRef: 'scene:unused' });
+      const children = await Promise.all(scene.childRefs.map((objectRef: string) => invoke('object.inspect', { view: 'working', objectRef })));
+      const text = children.find(item => item.kind === 'text');
+      const input = { operationId: 'patch-before-change', sceneId: 'unused', patch: {
+        kind: 'replaceText', target: text.objectRef, expectedFingerprint: text.fingerprint, value: '已修改的正文。',
+      } };
+      const first = await invoke('scene.patch', input);
+      const latest = await invoke('object.inspect', { view: 'working', objectRef: 'scene:unused' });
+      if (next === 'move') await invoke('scene.move', { operationId: 'later-move', sceneId: 'unused',
+        directory: 'after', expectedPath: latest.source.path, expectedFingerprint: latest.fingerprint });
+      if (next === 'rename') await invoke('scene.rename', { operationId: 'later-rename', sceneId: 'unused',
+        newSceneId: 'renamed', expectedFingerprint: latest.fingerprint });
+      if (next === 'remove') await invoke('scene.remove', { operationId: 'later-remove', sceneId: 'unused', expectedFingerprint: latest.fingerprint });
+      const before = (await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record;
+      const replay = await invoke('scene.patch', input);
+      const { continuation, ...recorded } = first;
+      expect(recorded).toEqual(expect.objectContaining({ path: unusedPath }));
+      expect(replay).toEqual(next === 'unchanged' ? first : recorded);
+      expect((await NodeChangeStore.openByChangeId(session.activeChangeId!))!.record).toEqual(before);
+      expect(fs.readFileSync(path.join(projectRoot, unusedPath), 'utf8')).toBe(unusedText);
+    } finally { await session.close(); }
+  });
+
   it('reads the fingerprint via MCP, stages a deletion, seals it and writes it back only in apply', async () => {
     const projectRoot = fixture();
     fs.writeFileSync(path.join(projectRoot, 'game.config.json'), '{"entryScene":"unused","player":{"endScenes":["unused"]},"variables":{}}');

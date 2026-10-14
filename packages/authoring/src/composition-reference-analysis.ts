@@ -10,7 +10,7 @@ import {
 import type { RawCompositionReference } from './composition-contracts.js';
 import { decodeInstructionArgument, parseSceneDocument, splitInstruction } from './scene-document.js';
 
-const VARIABLE_INSTRUCTIONS = new Set(['set', 'mod', 'inc', 'dec', 'toggle', 'flag', 'unflag']);
+const VARIABLE_INSTRUCTIONS = new Set(['set', 'mod', 'inc', 'dec', 'toggle', 'flag', 'unflag', 'random', 'add_item', 'remove_item']);
 
 type ReferenceSource = RawCompositionReference['source'];
 
@@ -166,7 +166,24 @@ function addSceneInstructionReferences(
     return;
   }
 
-  if (name === 'if' || name === 'elif') {
+  if (name === 'has_item') {
+    addVariableReference(references, args[0] ?? '', source);
+    addVariableReference(references, args[2] ?? '', source);
+    return;
+  }
+
+  if (name === 'switch') {
+    addVariableReference(references, args[0] ?? '', source);
+    for (const item of args.slice(1)) {
+      const separator = item.indexOf(':');
+      if (separator < 0) continue;
+      const target = item.slice(separator + 1);
+      addReference(references, 'label', 'primary-local', target, source, `label:${sceneId}.${target}`);
+    }
+    return;
+  }
+
+  if (name === 'if' || name === 'elif' || name === 'check') {
     const expression = args.join(' ');
     if (expression.trim().length > 0) addExpressionVariables(references, expression, source);
     return;
