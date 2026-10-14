@@ -846,6 +846,44 @@ function configRewrite(
           reference: reference('config', file.path, `界面 ${page} 图片 ${String(node.id)}`, 'ui', `ui:${String(node.id)}:asset`) });
       }
     }
+    if (isRecord(node.style)) {
+      const stylePath: JsonPath = [...nodePath, 'style'];
+      for (const key of ['color', 'background', 'opacity', 'backgroundOpacity', 'fontSize', 'align', 'fontRole', 'fontWeight', 'lineHeight',
+        'letterSpacing', 'textShadows', 'backgroundGradient', 'backgroundImage', 'border', 'borderRadius', 'padding', 'shadows']) {
+        if (key in node.style) knownPaths.add(`key:${pathKey([...stylePath, key])}`);
+      }
+      for (const [field, fields] of [
+        ['padding', ['top', 'right', 'bottom', 'left']], ['border', ['width', 'color', 'opacity']], ['backgroundGradient', ['from', 'to', 'angle']],
+      ] as const) {
+        const value = node.style[field];
+        if (isRecord(value)) for (const key of fields) if (key in value) knownPaths.add(`key:${pathKey([...stylePath, field, key])}`);
+      }
+      for (const field of ['textShadows', 'shadows']) {
+        const values = node.style[field];
+        if (Array.isArray(values)) values.forEach((value, index) => {
+          if (isRecord(value)) for (const key of ['x', 'y', 'blur', 'color', 'opacity']) {
+            if (key in value) knownPaths.add(`key:${pathKey([...stylePath, field, index, key])}`);
+          }
+        });
+      }
+    }
+    const backgroundPath: JsonPath = [...nodePath, 'style', 'backgroundImage'];
+    const backgroundImage = isRecord(node.style) && isRecord(node.style.backgroundImage) ? node.style.backgroundImage : null;
+    if (backgroundImage) {
+      for (const key of ['asset', 'fit', 'slice']) if (key in backgroundImage) knownPaths.add(`key:${pathKey([...backgroundPath, key])}`);
+      if (isRecord(backgroundImage.slice)) for (const key of ['top', 'right', 'bottom', 'left', 'fillCenter']) {
+        if (key in backgroundImage.slice) knownPaths.add(`key:${pathKey([...backgroundPath, 'slice', key])}`);
+      }
+      if (typeof backgroundImage.fit === 'string') knownPaths.add(pathKey([...backgroundPath, 'fit']));
+      if (typeof backgroundImage.asset === 'string') {
+        const path: JsonPath = [...backgroundPath, 'asset'];
+        knownPaths.add(pathKey(path));
+        if (source.kind === 'background' && backgroundImage.asset === source.key && target.key !== source.key) {
+          replacements.push({ path, before: source.key, after: target.key,
+            reference: reference('config', file.path, `界面 ${page} 背景 ${String(node.id)}`, 'ui.style.backgroundImage', `ui:${String(node.id)}:style:backgroundImage:asset`) });
+        }
+      }
+    }
     if (Array.isArray(node.children)) node.children.forEach((child, index) => visitUiNode(child, [...nodePath, 'children', index], page));
   };
   for (const [page, node] of Object.entries(uiPages)) visitUiNode(node, ['ui', 'pages', page], page);

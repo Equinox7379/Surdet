@@ -2,6 +2,7 @@
 import { collectVars, parseExpr } from './dsl/expr-parser.js';
 import { checkExprOperands } from './scene-lint.js';
 import { GAME_SETTING_DEFINITIONS } from './game-settings.js';
+import { projectUiContentRect, validateProjectUiStyle, type ProjectUiStyle } from './project-ui-style.js';
 
 export const PROJECT_UI_PAGES = [
   'title', 'system-menu', 'save-load', 'settings', 'gallery', 'backlog',
@@ -47,10 +48,7 @@ export interface ProjectUiNode {
   asset?: string;
   source?: ProjectUiContentSource;
   tab?: string;
-  style?: {
-    color?: number; background?: number; opacity?: number;
-    fontSize?: number; align?: 'left' | 'center' | 'right'; fontRole?: 'body' | 'title' | 'ui';
-  };
+  style?: ProjectUiStyle;
   children?: ProjectUiNode[];
 }
 
@@ -62,8 +60,9 @@ export interface ProjectUiDocument {
 
 export interface ProjectUiRect { x: number; y: number; width: number; height: number }
 export const PROJECT_UI_TAB_BAR_HEIGHT = 38;
-export function projectUiChildrenRect(rect: ProjectUiRect, type: ProjectUiNodeType): ProjectUiRect {
-  return type === 'tabs' ? { ...rect, y: rect.y + PROJECT_UI_TAB_BAR_HEIGHT, height: rect.height - PROJECT_UI_TAB_BAR_HEIGHT } : rect;
+export function projectUiChildrenRect(rect: ProjectUiRect, type: ProjectUiNodeType, style?: ProjectUiStyle): ProjectUiRect {
+  const content = projectUiContentRect(rect, style);
+  return type === 'tabs' ? { ...content, y: content.y + PROJECT_UI_TAB_BAR_HEIGHT, height: content.height - PROJECT_UI_TAB_BAR_HEIGHT } : content;
 }
 
 /**
@@ -241,14 +240,9 @@ function validateNode(value: unknown, config: Record<string, unknown>, ids: Set<
   }
   if (item.tab !== undefined && (typeof item.tab !== 'string' || item.tab.trim().length === 0)) throw new Error(`${location}.tab 非法`);
   if (item.style !== undefined) {
-    const style = record(item.style, `${location}.style`);
-    onlyKeys(style, ['color', 'background', 'opacity', 'fontSize', 'align', 'fontRole'], `${location}.style`);
-    for (const key of ['color', 'background', 'opacity', 'fontSize'] as const) if (style[key] !== undefined) finite(style[key], `${location}.style.${key}`);
-    for (const key of ['color', 'background'] as const) if (style[key] !== undefined && (!Number.isInteger(style[key]) || (style[key] as number) < 0 || (style[key] as number) > 0xffffff)) throw new Error(`${location}.style.${key} 必须是 RGB 颜色`);
-    if (style.opacity !== undefined && ((style.opacity as number) < 0 || (style.opacity as number) > 1)) throw new Error(`${location}.style.opacity 必须在 0..1`);
-    if (style.fontSize !== undefined && (style.fontSize as number) <= 0) throw new Error(`${location}.style.fontSize 必须为正`);
-    if (style.align !== undefined && !['left', 'center', 'right'].includes(String(style.align))) throw new Error(`${location}.style.align 不受支持`);
-    if (style.fontRole !== undefined && !['body', 'title', 'ui'].includes(String(style.fontRole))) throw new Error(`${location}.style.fontRole 不受支持`);
+    validateProjectUiStyle(item.style, `${location}.style`);
+    const content = projectUiChildrenRect(frame as unknown as ProjectUiRect, type, item.style as ProjectUiStyle);
+    if (content.height <= 0) throw new Error(`${location}.style 必须为页签栏和内容留出空间`);
   }
   if (item.children !== undefined) {
     if (!CHILD_TYPES.has(type) || !Array.isArray(item.children)) throw new Error(`${location}.children 不适用于 ${type}`);
@@ -276,6 +270,7 @@ export function projectUiAssetKeys(ui: ProjectUiDocument | null): string[] {
   const keys = new Set<string>();
   const visit = (node: ProjectUiNode): void => {
     if (node.asset) keys.add(node.asset);
+    if (node.style?.backgroundImage) keys.add(node.style.backgroundImage.asset);
     node.children?.forEach(visit);
   };
   if (ui) Object.values(ui.pages).forEach(root => { if (root) visit(root); });

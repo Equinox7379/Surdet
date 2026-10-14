@@ -19,6 +19,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@surdet/core": "0.1.0"
+    "@surdet/core": "0.1.0",
+    "image-size": "2.0.4"
   }
 }

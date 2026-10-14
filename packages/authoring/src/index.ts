@@ -57,5 +57,6 @@ export * from './review-preparation.js';
 export { inspectStageConfig, applyStageConfigPatch, validateStageAssetBindings, type StageConfigPatchInput } from './stage-operations.js';
 export { inspectThemeConfig, applyThemeConfigPatch, validateThemeAssetBindings, type ThemeConfigPatchInput, type ThemeConfigInspection } from './theme-operations.js';
 export { inspectUi, applyUiPatch, applyUiDocument, patchUiDocument, validateUiAssets, type UiPatchInput, type UiDocumentInput, type UiInspection, type UiPatch } from './ui-operations.js';
+export { uiSliceAssets, readUiImageFiles, validateUiImageBytes, type UiAssetReader } from './ui-image-assets.js';
 export { readTextCatalog, inspectTextCatalog, collectTextSources, staleTextCatalogKeys, assertTextCatalogTargetRemovable, exportTextCatalogCsv, exportVoiceCatalogCsv, previewTextCatalogImport, applyTextCatalogPatch, validateTextLocale, TEXT_CSV_COLUMNS, VOICE_CSV_COLUMNS,
   type TextCatalog, type TextCatalogEntry, type TextSource, type CatalogSource, type TextCatalogPatch, type TextCatalogPatchInput } from './text-catalog.js';

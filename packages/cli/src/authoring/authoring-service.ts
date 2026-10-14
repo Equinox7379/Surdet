@@ -1,4 +1,4 @@
-import { stagePinnedSourcePaths, INLINE_TEXT_TAGS } from '@surdet/core';
+import { stagePinnedSourcePaths, INLINE_TEXT_TAGS, readProjectUi } from '@surdet/core';
 import { inspectTextCatalog, exportTextCatalogCsv, exportVoiceCatalogCsv, previewTextCatalogImport, applyTextCatalogPatch, type TextCatalogPatchInput } from '@surdet/authoring';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
@@ -21,7 +21,7 @@ import {
   inspectPlayerConfig,
   inspectStageConfig, applyStageConfigPatch, type StageConfigPatchInput,
   inspectThemeConfig, applyThemeConfigPatch, type ThemeConfigPatchInput,
-  inspectUi, applyUiPatch, type UiPatchInput,
+  inspectUi, applyUiPatch, readUiImageFiles, type UiPatchInput,
   applyPlayerConfigPatch,
   type PlayerConfigPatchInput,
   GALLERY_PATH,
@@ -969,7 +969,8 @@ export class AuthoringService {
     return this.withOpenChange(changeId, async context => {
       const assets = await withProjectLeaseRetry(this.leaseManager, context.storage.rootIdentity,
         async () => buildAssetCatalog(assetPathsFromFiles(await context.storage.listFiles())));
-      const result = await applyUiPatch(context.session, input, { sha256: async text => hashText(text) }, assets);
+      const result = await applyUiPatch(context.session, input, { sha256: async text => hashText(text) }, assets,
+        path => context.storage.readAssetBytes(path));
       return { ...metadataForChange(context.session), result };
     });
   }
@@ -1284,7 +1285,11 @@ export class AuthoringService {
       const assetPaths = assetPathsFromFiles(await context.storage.listFiles());
       const assetFacts = await context.storage.inspectFileFacts(assetPaths, stagePinnedSourcePaths(context.snapshot.config));
       const assetCatalog = buildAssetCatalog(assetFacts, context.snapshot);
-      const validation = validateSnapshot(context.snapshot, index, { assetCatalog, timelineReferenceScope: 'complete' });
+      let imageFiles = new Map<string, Uint8Array>(), imageError: unknown;
+      try { imageFiles = await readUiImageFiles(readProjectUi(context.snapshot.config), assetCatalog, path => context.storage.readAssetBytes(path)); }
+      catch (error) { imageError = error; }
+      const validation = validateSnapshot(context.snapshot, index, { assetCatalog, timelineReferenceScope: 'complete',
+        uiImageBytes: path => { if (imageError) throw imageError; return imageFiles.get(path)!; } });
       const evidence = validationEvidence(context.session.record.baseRevision, changeId, context.session.record.workingRevision, validation);
       await context.store.writeEvidence(changeId, evidence.evidenceId, evidence);
       await recordValidation(context.session, {

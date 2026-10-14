@@ -24,8 +24,10 @@ export const compositionTextHasher: TextHasher = {
   },
 };
 
-function themeAssetReferences(config: unknown) {
-  const keys = [...projectThemeAssetKeys(resolveProjectTheme(config)), resolveProjectTitleLogo(config)].filter((key): key is string => Boolean(key));
+function themeAssetReferences(config: Record<string, unknown>) {
+  const titleLogo = resolveProjectTitleLogo(config);
+  const titleBackground = (config.player as { titleBackground?: string } | undefined)?.titleBackground;
+  const keys = [...projectThemeAssetKeys(resolveProjectTheme(config)), titleLogo, titleBackground].filter((key): key is string => typeof key === 'string' && key.length > 0);
   return [...new Set(keys)].map(key => ({ kind: 'background-asset' as const, scope: 'candidate-external' as const,
     token: key, objectRef: `asset:bg:${key}`, source: { path: 'game.config.json' } }));
 }
@@ -61,13 +63,14 @@ export async function buildSceneOperationCompositionDraft(input: {
   galleryText?: string;
   variables?: Record<string, unknown>;
   titleLogo?: string | null;
+  titleBackground?: string | null;
   hasher: TextHasher;
 }): Promise<OperationCompositionDraft> {
   const primaryObject = `scene:${input.sceneId}`;
   const objectFingerprintAfter = await input.hasher.sha256(input.afterText);
   return {
     capabilityId: input.capabilityId, primaryObject,
-    rawReferences: [...textVoiceReferences({ textCatalog: input.textCatalog }), ...themeAssetReferences({ theme: input.themeConfig, player: { titleLogo: input.titleLogo ?? undefined } }), ...uiReferences({ ui: input.uiConfig, variables: input.variables ?? {} }), ...analyzeSceneCompositionReferences({
+    rawReferences: [...textVoiceReferences({ textCatalog: input.textCatalog }), ...themeAssetReferences({ theme: input.themeConfig, player: { titleLogo: input.titleLogo ?? undefined, titleBackground: input.titleBackground ?? undefined } }), ...uiReferences({ ui: input.uiConfig, variables: input.variables ?? {} }), ...analyzeSceneCompositionReferences({
       sceneId: input.sceneId, path: input.path,
       text: input.afterText, characters: input.characters,
     }), ...[...new Set(Object.values(input.fontPaths))].map(path => ({

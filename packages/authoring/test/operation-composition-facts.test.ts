@@ -12,19 +12,20 @@ import { stableStringify } from '../src/change-session.js';
 import { buildCompositionManifest } from '../src/composition-manifest.js';
 import type { SceneBlockInput } from '../src/contracts.js';
 import { buildReplayStateBaseObjects } from '../src/composition-object-facts.js';
+import { buildSceneOperationCompositionDraft } from '../src/operation-composition-facts.js';
 
 const hasher = { sha256: async (text: string) => createHash('sha256').update(text).digest('hex') };
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 const config = (change: ChangeSession) => JSON.parse(change.record.workingFiles['game.config.json']!);
 const facts = (change: ChangeSession, id: string) => change.record.operations[id]!.compositionFacts!;
 
-async function seal(change: ChangeSession) {
+async function seal(change: ChangeSession, objectFacts?: Parameters<typeof buildCompositionManifest>[0]['objectFacts']) {
   return buildCompositionManifest({
     record: change.record, projectIdentity: 'wave8-fixture', semanticDiff: [],
     invocationFacts: Object.entries(change.record.operations).map(([operationId, operation]) => ({
       operationId, capabilityId: operation.compositionFacts!.capabilityId, inputSha256: sha(operation.requestHash), ok: true,
     })),
-    objectFacts: {
+    objectFacts: objectFacts ?? {
       baseObjects: [{ objectRef: 'scene:A', references: [], fingerprint: change.record.baseFiles['content/scenario/A.gal']!.sha256 }, { objectRef: 'config:entryScene', references: ['scene:A'] }],
       baseReplayStates: [
         { objectRef: 'config:characters', expectedFingerprint: sha('{}') },
@@ -75,6 +76,82 @@ async function insert(change: ChangeSession, operationId: string, sceneId: strin
 }
 
 describe('candidate operation-time facts', () => {
+  it('includes the existing title background in U1 scene drafts and guards actual timeline persistence', async () => {
+    const draft = await buildSceneOperationCompositionDraft({ capabilityId: 'scene.create', sceneId: 'B', path: 'content/scenario/B.gal',
+      afterText: '@scene B\n@end\n', characters: {}, fontPaths: {}, titleBackground: 'title-art', hasher,
+    });
+    expect(draft.rawReferences).toContainEqual({ kind: 'background-asset', scope: 'candidate-external', token: 'title-art',
+      objectRef: 'asset:bg:title-art', source: { path: 'game.config.json' },
+    });
+    expect(resolveOperationRequirementsAtSequence({ sequence: 0, baseObjects: [], baseAssetRefs: [], priorOperations: [], rawReferences: draft.rawReferences }))
+      .toMatchObject({ ok: false, issues: [expect.objectContaining({ code: 'ASSET_NOT_RESOLVED', objectRef: 'asset:bg:title-art' })] });
+    const extra = { player: { titleBackground: 'title-art' } };
+    const sceneInput = { operationId: 'u1-title-scene', sceneId: 'B', blocks: [{ kind: 'text' as const, value: '正文。' }] };
+    const sceneMissing = await candidate([], extra), sceneBefore = structuredClone(sceneMissing.record);
+    await expect(applySceneCreate(sceneMissing, sceneInput, hasher)).rejects.toMatchObject({ code: 'CANDIDATE_DEPENDENCY_NOT_READY' });
+    expect(sceneMissing.record).toEqual(sceneBefore);
+    const sceneReady = await candidate(['asset:bg:title-art'], extra);
+    await applySceneCreate(sceneReady, sceneInput, hasher);
+    expect(facts(sceneReady, sceneInput.operationId).requiredObjects).toContainEqual({ objectRef: 'asset:bg:title-art', source: 'base' });
+    const request = { operationId: 'u1-title-timeline', timelineId: 'intro', definition: { version: 1 as const, id: 'intro', durationMs: 100,
+      tracks: [{ kind: 'screen', cues: [{ atMs: 0, durationMs: 0, easing: 'linear', action: 'fade', alpha: 1 }] }],
+    } };
+    const missing = await candidate([], extra), before = structuredClone(missing.record);
+    await expect(applyTimelineCreate(missing, request, hasher)).rejects.toMatchObject({ code: 'CANDIDATE_DEPENDENCY_NOT_READY' });
+    expect(missing.record).toEqual(before);
+    const ready = await candidate(['asset:bg:title-art'], extra);
+    await applyTimelineCreate(ready, request, hasher);
+    expect(facts(ready, request.operationId).requiredObjects).toEqual([{ objectRef: 'asset:bg:title-art', source: 'base' }]);
+  });
+
+  it('guards and seals U1 scene create and patch dependencies from existing config and nested UI', async () => {
+    const frame = { x: 0, y: 0, width: 200, height: 100 };
+    const extra = {
+      fonts: { body: 'content/assets/fonts/body.woff2', ui: 'content/assets/fonts/ui.woff2' },
+      theme: { dialogSkin: 'dialog', buttonSkin: 'button' }, player: { titleLogo: 'logo' },
+      stage: { version: 1, compositions: { room: { background: 'room', layers: [{ id: 'sky', key: 'sky' }] } } },
+      variables: { score: { type: 'number', initial: 0 } },
+      ui: { version: 1, pages: { hud: { id: 'panel', type: 'container', frame,
+        style: { backgroundImage: { asset: 'paper', fit: 'stretch', slice: { top: 1, right: 1, bottom: 1, left: 1, fillCenter: true } } }, children: [
+          { id: 'picture', type: 'image', frame, asset: 'art', style: { backgroundImage: { asset: 'paper', fit: 'cover' } } },
+          { id: 'score', type: 'text', frame, text: { kind: 'variable', name: 'score' } },
+          { id: 'clear', type: 'container', frame, style: { backgroundImage: null } },
+        ],
+      } } },
+    };
+    const refs = ['asset:bg:dialog', 'asset:bg:button', 'asset:bg:logo', 'asset:bg:room', 'asset:bg:sky',
+      'asset:bg:paper', 'asset:bg:art', 'asset:font:content/assets/fonts/body.woff2', 'asset:font:content/assets/fonts/ui.woff2'];
+    const input = { operationId: 'u1-create', sceneId: 'B', blocks: [{ kind: 'text' as const, value: '新章节。' }] };
+    const missing = await candidate(refs.filter(ref => ref !== 'asset:bg:paper'), extra);
+    const beforeMissing = structuredClone(missing.record);
+    await expect(applySceneCreate(missing, input, hasher)).rejects.toMatchObject({ code: 'CANDIDATE_DEPENDENCY_NOT_READY', details: {
+      issues: expect.arrayContaining([expect.objectContaining({ code: 'ASSET_NOT_RESOLVED', objectRef: 'asset:bg:paper' })]),
+    } });
+    expect(missing.record).toEqual(beforeMissing);
+    await expect(insert(missing, 'u1-patch-missing', 'A', [{ kind: 'text', value: '补充。' }])).rejects.toMatchObject({ code: 'CANDIDATE_DEPENDENCY_NOT_READY' });
+    expect(missing.record).toEqual(beforeMissing);
+
+    const ready = await candidate(refs, extra);
+    const baseFiles = { ...ready.record.workingFiles };
+    const baseSnapshot = await loadProjectSnapshot({ rootIdentity: 'wave8-fixture', listFiles: async () => Object.keys(baseFiles),
+      exists: async path => path in baseFiles, readText: async path => ({ ...ready.record.baseFiles[path]!, path, text: baseFiles[path]!, bytes: baseFiles[path]!.length }) }, hasher);
+    await applySceneCreate(ready, input, hasher);
+    await insert(ready, 'u1-patch', 'B', [{ kind: 'text', value: '补充。' }]);
+    for (const id of ['u1-create', 'u1-patch']) {
+      expect(facts(ready, id).requiredObjects).toEqual(expect.arrayContaining(refs.map(objectRef => ({ objectRef, source: 'base' }))));
+      expect(facts(ready, id).requiredObjects).toContainEqual(expect.objectContaining({ objectRef: 'variable:score', source: 'base' }));
+      expect(facts(ready, id).rawReferences.filter(ref => ref.objectRef === 'asset:bg:paper')).toEqual([
+        expect.objectContaining({ source: { path: 'game.config.json' } }),
+      ]);
+      expect(facts(ready, id).replayStateRequirements).toContainEqual(expect.objectContaining({ objectRef: 'config:ui', source: 'base' }));
+    }
+    const manifest = await seal(ready, { baseObjects: buildObjectIndex(baseSnapshot).objects,
+      baseReplayStates: await buildReplayStateBaseObjects(baseSnapshot, hasher), workingObjects: [], baseAssetRefs: refs, workingAssetRefs: refs,
+    });
+    expect(manifest.eligibility, JSON.stringify(manifest)).toBe('ready');
+    expect(config(ready)).toEqual({ entryScene: 'A', characters: {}, ...extra });
+  });
+
   it('guards timeline rule dependencies before persistence and seals create/patch facts', async () => {
     const definition = { version: 2, id: 'reveal', durationMs: 800, tracks: [{ kind: 'screen', cues: [
       { atMs: 0, durationMs: 800, easing: 'linear', action: 'rule', rule: '遮罩 @左' },
