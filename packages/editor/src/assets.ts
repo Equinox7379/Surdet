@@ -129,14 +129,14 @@ export function projectPortraitAssets(assets: readonly DirAsset[], configText: s
 /** 素材条目 → 点击插入的指令行（无法生成插入行的类型返回 null） */
 export function insertLineForAsset(e: AssetEntry): string | null {
   switch (e.kind) {
-    case 'bg': return `@bg ${e.key}`;
+    case 'bg': return `@bg ${quoteAssetArgument(e.key)}`;
     case 'rule': return `@transition rule 800 @rule=${quoteAssetArgument(e.key)}`;
-    case 'bgm': return `@bgm ${e.key}`;
-    case 'ambience': return `@ambience ${e.key}`;
-    case 'se': return `@se ${e.key}`;
-    case 'voice': return `@voice ${e.key}`;
-    case 'video': return `@video ${e.key}`;
-    case 'portrait': return `@show ${e.key} ${e.exprs?.[0] ?? 'normal'}`;
+    case 'bgm': return `@bgm ${quoteAssetArgument(e.key)}`;
+    case 'ambience': return `@ambience ${quoteAssetArgument(e.key)}`;
+    case 'se': return `@se ${quoteAssetArgument(e.key)}`;
+    case 'voice': return `@voice ${quoteAssetArgument(e.key)}`;
+    case 'video': return `@video ${quoteAssetArgument(e.key)}`;
+    case 'portrait': return `@show ${quoteAssetArgument(e.key)} ${quoteAssetArgument(e.exprs?.[0] ?? 'normal')}`;
     case 'cg': return `@unlock_cg ${e.key}`;
     case 'music': return `@unlock_music ${e.key}`;
     case 'text': return `@unlock_text ${e.key}`;

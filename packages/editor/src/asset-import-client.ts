@@ -508,7 +508,7 @@ const RELOCATION_OPERATION_STATUSES = new Set<AssetRelocationOperationStatus>([
   'COMMITTED', 'UNDOING', 'UNDONE', 'CANCELLED',
 ]);
 const ASSET_KINDS = new Set([
-  'background', 'portrait', 'avatar', 'music', 'ambience',
+  'background', 'portrait', 'avatar', 'rule', 'music', 'ambience',
   'sound-effect', 'voice', 'video', 'font', 'license', 'other',
 ]);
 const PLAN_ISSUES = new Set([

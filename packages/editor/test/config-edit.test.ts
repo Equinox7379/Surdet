@@ -170,6 +170,21 @@ describe('collectReferencedVars（删除保护）', () => {
     const refs = collectReferencedVars(scenes);
     expect(refs.size).toBe(0);
   });
+
+  it.each([
+    ['@random score 1 5', ['score']],
+    ['@set score = source + 1', ['score', 'source']],
+    ['@dec score\n@toggle flag\n@flag enabled\n@unflag disabled', ['score', 'flag', 'enabled', 'disabled']],
+    ['@add_item bag apple\n@remove_item bag pear\n@has_item bag apple ownsApple', ['bag', 'ownsApple']],
+    ['@check score > minimum', ['score', 'minimum']],
+    ['@choice\n  Change -> @set score = source + 1 @goto done\n@label done\n@end', ['score', 'source']],
+    ['@choice\n  Take -> @add_item bag apple @goto done\n@label done\n@end', ['bag']],
+    ['@choice\n  Roll -> @random score 1 5 @goto done\n@label done\n@end', ['score']],
+  ])('collects actual compiled variable reads/writes in %s', (source, expected) => {
+    const refs = collectReferencedVars(scenesOf([['delete_refs', source]]));
+    expect([...refs.keys()].sort()).toEqual([...expected].sort());
+    for (const name of expected) expect(refs.get(name)).toEqual(new Set(['delete_refs']));
+  });
 });
 
 /* ============================ E3 剩余：日历/事件/成长/鉴赏 ============================ */
@@ -208,8 +223,9 @@ describe('calendar ⇄ JSON', () => {
 
   it('未编辑往返保留数字样式文本，并保留科学计数法数字', () => {
     const raw = {
+      maxAp: 3, maxTurns: 30,
       nodes: [{ id: '007', name: '123', x: 1e-8, y: 2e-8, apCost: 1e-8, eventId: '123' }],
-      baseCommands: [{ id: '001', name: '123', apCost: 1e-8, perTurn: 1e-8, when: 'true', effects: {} }],
+      baseCommands: [{ id: '001', name: '123', apCost: 1e-8, perTurn: 1e3, when: 'true', effects: {} }],
     };
     const { json, errors } = rowsToCalendar(raw, parseCalendarRows(raw));
     expect(errors).toEqual([]);
@@ -245,13 +261,14 @@ describe('calendar ⇄ JSON', () => {
     expect(delNodes[0]!.custom).toBeUndefined(); // keep-me 属于 map_01，不得泄漏
     // 中间插入方向：新行不得拿走他行 custom，原行各自保留
     const insRaw = {
+      maxAp: 3, maxTurns: 30,
       nodes: [
-        { id: 'a', name: 'A', custom: 'A私有' },
-        { id: 'b', name: 'B', custom: 'B私有' },
+        { id: 'a', name: 'A', apCost: 0, custom: 'A私有' },
+        { id: 'b', name: 'B', apCost: 0, custom: 'B私有' },
       ],
     };
     const insRows = parseCalendarRows(insRaw);
-    insRows.nodes.splice(1, 0, { id: 'new', name: '', x: '', y: '', isBase: false, apCost: '', requires: '', visibleWhen: '', eventId: '' });
+    insRows.nodes.splice(1, 0, { id: 'new', name: '', x: '', y: '', isBase: false, apCost: '0', requires: '', visibleWhen: '', eventId: '' });
     const insJson = rowsToCalendar(insRaw, insRows);
     const insNodes = insJson.json.nodes as Record<string, unknown>[];
     expect(insNodes.map((n) => n.id)).toEqual(['a', 'new', 'b']);
@@ -262,6 +279,7 @@ describe('calendar ⇄ JSON', () => {
 
   it('据点指令改名仍保留 eventId/未知字段，且插入行不串用原条目', () => {
     const raw = {
+      maxAp: 3, maxTurns: 30, nodes: [],
       baseCommands: [
         { id: 'rest', name: '休息', apCost: 1, eventId: 'rest_scene', future: 'rest-only' },
         { id: 'patrol', name: '巡逻', apCost: 2, eventId: 'patrol_scene', future: 'patrol-only' },
@@ -269,15 +287,57 @@ describe('calendar ⇄ JSON', () => {
     };
     const rows = parseCalendarRows(raw);
     rows.baseCommands[0]!.id = 'rest_evening';
-    rows.baseCommands.splice(1, 0, { id: 'new', name: '', apCost: '', when: '', effects: '', perTurn: '' });
+    rows.baseCommands.splice(1, 0, { id: 'new', name: '', apCost: '0', when: '', effects: '', perTurn: '' });
 
     const { json, errors } = rowsToCalendar(raw, rows);
     expect(errors).toEqual([]);
     expect(json.baseCommands).toEqual([
       { id: 'rest_evening', name: '休息', apCost: 1, eventId: 'rest_scene', future: 'rest-only' },
-      { id: 'new' },
+      { id: 'new', apCost: 0 },
       { id: 'patrol', name: '巡逻', apCost: 2, eventId: 'patrol_scene', future: 'patrol-only' },
     ]);
+  });
+
+  it.each([
+    ['maxAp', '-1'], ['maxAp', 'Infinity'], ['maxAp', ''],
+    ['maxTurns', '-2'], ['maxTurns', '1.5'], ['maxTurns', '9007199254740992'], ['maxTurns', ''],
+    ['weeksPerMonth', '0'], ['weeksPerMonth', '-1'], ['weeksPerMonth', '1.5'], ['weeksPerMonth', '9007199254740992'],
+  ])('blocks %s=%s before saving, matching CalendarRunner', (field, text) => {
+    const rows = parseCalendarRows(calendarRaw);
+    rows.scalars[field] = text;
+    const { errors } = rowsToCalendar(calendarRaw, rows);
+    expect(errors.some(error => error.includes(field))).toBe(true);
+    expect(() => new CalendarRunner({ ...calendarRaw, [field]: text === '' ? undefined : Number(text) } as never, { getVariable: () => undefined })).toThrow();
+  });
+
+  it.each([
+    ['nodes', 'apCost', '-1'], ['nodes', 'apCost', 'Infinity'], ['nodes', 'apCost', ''],
+    ['baseCommands', 'apCost', '-1'], ['baseCommands', 'apCost', 'Infinity'], ['baseCommands', 'apCost', ''],
+    ['baseCommands', 'perTurn', '-1'], ['baseCommands', 'perTurn', '1.5'],
+    ['baseCommands', 'perTurn', '9007199254740992'], ['baseCommands', 'perTurn', 'Infinity'],
+  ] as const)('blocks %s.%s=%s before saving, matching CalendarRunner', (list, field, text) => {
+    const rows = parseCalendarRows(calendarRaw);
+    rows[list][0]![field] = text;
+    const { errors } = rowsToCalendar(calendarRaw, rows);
+    expect(errors.some(error => error.includes(field))).toBe(true);
+    const runtimeConfig = structuredClone(calendarRaw);
+    (runtimeConfig[list][0] as Record<string, unknown>)[field] = text === '' ? undefined : Number(text);
+    expect(() => new CalendarRunner(runtimeConfig, { getVariable: () => undefined })).toThrow();
+  });
+
+  it.each([-1, 0, 10])('preserves legal maxTurns=%s, fractional AP and optional limits', maxTurns => {
+    const rows = parseCalendarRows(calendarRaw);
+    rows.scalars.maxAp = '0.5'; rows.scalars.maxTurns = String(maxTurns);
+    rows.scalars.weeksPerMonth = '';
+    rows.nodes[0]!.apCost = '0.25';
+    rows.baseCommands[0]!.apCost = '0.125'; rows.baseCommands[0]!.perTurn = '';
+    rows.baseCommands[1]!.perTurn = '0';
+    const { json, errors } = rowsToCalendar(calendarRaw, rows);
+    expect(errors).toEqual([]);
+    const runner = new CalendarRunner(json as never, { getVariable: () => undefined });
+    expect(runner.maxTurns).toBe(maxTurns); expect(runner.maxAp).toBe(0.5);
+    expect(json.weeksPerMonth).toBeUndefined();
+    expect((json.baseCommands as Record<string, unknown>[])[0]!.perTurn).toBeUndefined();
   });
 });
 
