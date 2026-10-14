@@ -408,7 +408,8 @@ async function main() {
     };
     const result = await collectGroup(group, roleRoots, instrumentation, { baseline: baselineManifest, current: currentManifest, sameCommitEquivalent: true }, environment);
     writeJson(path.join(artifactDir, group.artifact.replace(/^docs\\baselines[\\/]/, '').replace(/^docs[\\/]baselines[\\/]/, '')), result.artifact);
-    if (result.failed || result.artifact.qualification.status !== 'candidate-qualified') process.exitCode = 1;
+    if (result.failed) process.exitCode = 1;
+    else if (result.artifact.qualification.status !== 'candidate-qualified' && process.exitCode !== 1) process.exitCode = 2;
     cleanup.stage = 'samples-written';
     cleanup.worktrees = cleanup.worktrees.map((entry) => entry.group === group.id ? { ...entry, stage: 'samples-written', artifact: group.artifact, createdAt: byRoot.get(entry.path)?.createdAt ?? entry.createdAt } : entry);
     writeJson(cleanupManifestPath, cleanup);
