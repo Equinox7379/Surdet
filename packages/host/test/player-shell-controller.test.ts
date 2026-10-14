@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { runInNewContext } from 'node:vm';
 import {
   PLAYER_SHELL_SLOT_IDS,
   PlayerShellSlotError,
@@ -7,6 +8,7 @@ import {
   type PlayerShellSlotContext,
   type PlayerShellSlotId,
   type PlayerShellSlotProvider,
+  type PlayerShellSlotRegistry,
 } from '../src/player-shell-slots.js';
 import { createPlayerUiSession, type PlayerUiSessionInitialState } from '../src/player-ui.js';
 import { createPlayerShellController } from '../src/player-shell-controller.js';
@@ -54,6 +56,37 @@ function makeHarness(
 }
 
 describe('PlayerShellController', () => {
+  it.each([
+    ['settings', 'plain'], ['title', 'plain'], ['settings', 'other-realm'], ['title', 'other-realm'],
+  ] as const)('restores custom registries after %s throws a %s error', (slot, errorKind) => {
+    const failure = errorKind === 'plain' ? new Error('custom open failed') : runInNewContext('new Error("custom open failed")');
+    let visible: PlayerShellSlotId | null = null;
+    let fail = true;
+    const close = vi.fn((closing: PlayerShellSlotId) => { if (visible === closing) visible = null; });
+    const slots: PlayerShellSlotRegistry = {
+      open(request) {
+        visible = request.slot;
+        if (fail && request.slot === slot) throw failure;
+      },
+      close,
+      snapshot: () => ({ bindings: [] }),
+    };
+    const controller = createPlayerShellController({ slots, session: createPlayerUiSession({ base: 'game' }) });
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    const before = controller.queries.snapshot();
+    const request: PlayerShellOpenRequest = slot === 'title'
+      ? { slot, source: 'game' } : { slot, source: 'system-menu' };
+    let caught: unknown;
+    try { controller.commands.open(request); } catch (error) { caught = error; }
+    expect(caught).toBe(failure);
+    expect(controller.queries.snapshot()).toEqual(before);
+    expect(visible).toBe('system-menu');
+    expect(close).toHaveBeenCalledWith(slot);
+    fail = false;
+    controller.commands.open(request);
+    expect(visible).toBe(slot);
+  });
+
   it('saving with a retained nested overlay keeps providers and their return stack', () => {
     const { controller, events } = makeHarness({ base: 'game' });
     controller.commands.open({ slot: 'system-menu', source: 'game' });
