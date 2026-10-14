@@ -291,7 +291,7 @@ export class CombatSolver {
     const formula = this.#config.damage;
     const raw = formula
       ? evalDamage(formula, attacker, target, power)
-      : Math.max(1, attacker.atk - target.def);
+      : Math.max(1, attacker.atk * power - target.def);
 
     const chain = this.#config.elementChain[attacker.kind]?.[target.kind] ?? 1;
     let final = Math.max(1, Math.round(raw * chain));
@@ -441,6 +441,17 @@ export class CombatSolver {
       }
     }
 
+    // survive_turns：守方全灭立即失败，即使本次行动也推进到了超时回合。
+    if (this.#config.winCondition === 'survive_turns') {
+      const defender = this.#config.teams[0];
+      if (!this.#units.some((u) => u.team === defender && u.alive)) {
+        this.#finished = true;
+        this.#winner = this.#config.teams.find((team) => team !== defender
+          && this.#units.some((u) => u.team === team && u.alive)) ?? null;
+        return;
+      }
+    }
+
     // 超时：survive_turns 判守方（teams[0]）胜，否则平局
     if (this.#config.maxTurns && this.#turn > this.#config.maxTurns) {
       this.#finished = true;
@@ -536,11 +547,20 @@ export class CombatSolver {
         }
       }
     }
+    const defender = this.#config.teams[0];
+    const defenderEliminated = this.#config.winCondition === 'survive_turns' && units.length > 0
+      && !units.some((unit) => unit.team === defender && unit.alive);
     if (snap.finished === false && (snap.winner !== null
       || (snap.units.length > 0 && this.#config.winCondition === 'all_down'
         && this.#config.teams.some((team) => !units.some((unit) => unit.team === team && unit.alive)))
+      || defenderEliminated
       || (this.#config.maxTurns !== undefined && this.#config.maxTurns > 0 && snap.turn > this.#config.maxTurns))) {
       throw new Error('战斗快照的结束状态与胜者、存活单位或回合数不一致');
+    }
+    if (defenderEliminated) {
+      const winner = this.#config.teams.find((team) => team !== defender
+        && units.some((unit) => unit.team === team && unit.alive)) ?? null;
+      if (snap.winner !== winner) throw new Error('战斗快照的结束状态与守方全灭结果不一致');
     }
     if (snap.moved !== undefined) {
       if (!Array.isArray(snap.moved) || snap.moved.some((uid) => typeof uid !== 'string' || !seen.has(uid))) {

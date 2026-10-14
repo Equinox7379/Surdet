@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { runInNewContext } from 'node:vm';
 import {
   PLAYER_SHELL_SLOT_IDS,
   PlayerShellSlotError,
@@ -7,6 +8,7 @@ import {
   type PlayerShellSlotContext,
   type PlayerShellSlotId,
   type PlayerShellSlotProvider,
+  type PlayerShellSlotRegistry,
 } from '../src/player-shell-slots.js';
 import { createPlayerUiSession, type PlayerUiSessionInitialState } from '../src/player-ui.js';
 import { createPlayerShellController } from '../src/player-shell-controller.js';
@@ -54,6 +56,37 @@ function makeHarness(
 }
 
 describe('PlayerShellController', () => {
+  it.each([
+    ['settings', 'plain'], ['title', 'plain'], ['settings', 'other-realm'], ['title', 'other-realm'],
+  ] as const)('restores custom registries after %s throws a %s error', (slot, errorKind) => {
+    const failure = errorKind === 'plain' ? new Error('custom open failed') : runInNewContext('new Error("custom open failed")');
+    let visible: PlayerShellSlotId | null = null;
+    let fail = true;
+    const close = vi.fn((closing: PlayerShellSlotId) => { if (visible === closing) visible = null; });
+    const slots: PlayerShellSlotRegistry = {
+      open(request) {
+        visible = request.slot;
+        if (fail && request.slot === slot) throw failure;
+      },
+      close,
+      snapshot: () => ({ bindings: [] }),
+    };
+    const controller = createPlayerShellController({ slots, session: createPlayerUiSession({ base: 'game' }) });
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    const before = controller.queries.snapshot();
+    const request: PlayerShellOpenRequest = slot === 'title'
+      ? { slot, source: 'game' } : { slot, source: 'system-menu' };
+    let caught: unknown;
+    try { controller.commands.open(request); } catch (error) { caught = error; }
+    expect(caught).toBe(failure);
+    expect(controller.queries.snapshot()).toEqual(before);
+    expect(visible).toBe('system-menu');
+    expect(close).toHaveBeenCalledWith(slot);
+    fail = false;
+    controller.commands.open(request);
+    expect(visible).toBe(slot);
+  });
+
   it('saving with a retained nested overlay keeps providers and their return stack', () => {
     const { controller, events } = makeHarness({ base: 'game' });
     controller.commands.open({ slot: 'system-menu', source: 'game' });
@@ -148,7 +181,7 @@ describe('PlayerShellController', () => {
     expect(() => controller.commands.open({ slot: 'settings', source: 'game' }))
       .toThrow(/PLAYER_SHELL_SLOT_FAILED/);
     expect(controller.queries.snapshot()).toEqual(before);
-    expect(events.map(({ kind, slot }) => `${kind}:${slot}`)).toEqual(['open:settings']);
+    expect(events.map(({ kind, slot }) => `${kind}:${slot}`)).toEqual(['open:settings', 'close:settings']);
   });
 
   it('rolls back the session when a provider close fails', () => {
@@ -321,6 +354,54 @@ function thrownError(action: () => void): unknown {
 }
 
 describe('PlayerShellController provider projection atomicity', () => {
+  it.each([false, true])('cleans a failed child open and restores its parent (side effect: %s)', afterSideEffect => {
+    const cause = new Error('settings open failed');
+    const { controller, state } = makeProjectionHarness({
+      openFailure: { slot: 'settings', call: 1, cause, afterSideEffect },
+    });
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    const origin = controller.queries.snapshot();
+    expect(() => controller.commands.open({ slot: 'settings', source: 'system-menu' })).toThrow(/PLAYER_SHELL_SLOT_FAILED/);
+    expect(controller.queries.snapshot()).toEqual(origin);
+    expect(state.visibleSlot).toBe('system-menu');
+    expect([...state.visibleSlots]).toEqual(['system-menu']);
+    expect(state.closeCalls.get('settings')).toBe(1);
+    controller.commands.open({ slot: 'settings', source: 'system-menu' });
+    controller.commands.close();
+    controller.commands.close();
+    expect(state.visibleSlots.size).toBe(0);
+    expect(controller.queries.canAdvance()).toBe(true);
+  });
+
+  it('cleans a failed title projection before restoring the previous window stack', () => {
+    const { controller, state } = makeProjectionHarness({
+      openFailure: { slot: 'title', call: 1, cause: new Error('title failed'), afterSideEffect: true },
+    });
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    controller.commands.open({ slot: 'settings', source: 'system-menu' });
+    const origin = controller.queries.snapshot();
+    expect(() => controller.commands.open({ slot: 'title', source: 'game' })).toThrow(/PLAYER_SHELL_SLOT_FAILED/);
+    expect(controller.queries.snapshot()).toEqual(origin);
+    expect(state.visibleSlot).toBe('settings');
+    expect([...state.visibleSlots]).toEqual(['system-menu', 'settings']);
+    expect(state.closeCalls.get('title')).toBe(1);
+  });
+
+  it('retains the open and cleanup errors while still restoring the previous projection', () => {
+    const openCause = new Error('settings open failed'), closeCause = new Error('settings cleanup failed');
+    const { controller, state } = makeProjectionHarness({
+      openFailure: { slot: 'settings', call: 1, cause: openCause, afterSideEffect: true },
+      closeFailure: { slot: 'settings', call: 1, cause: closeCause, afterSideEffect: true },
+    });
+    controller.commands.open({ slot: 'system-menu', source: 'game' });
+    const origin = controller.queries.snapshot();
+    const error = thrownError(() => controller.commands.open({ slot: 'settings', source: 'system-menu' })) as PlayerShellSlotError;
+    expect(error.cause).toBeInstanceOf(AggregateError);
+    expect((error.cause as AggregateError).errors.map(value => value.cause)).toEqual([openCause, closeCause]);
+    expect(controller.queries.snapshot()).toEqual(origin);
+    expect(state.visibleSlot).toBe('system-menu');
+  });
+
   it('keeps the child projection when child close itself fails', () => {
     const cause = new Error('settings close failed');
     const { controller, state } = makeProjectionHarness({
