@@ -212,7 +212,7 @@ async function projectState(page, state) {
     const noop = () => undefined;
     if (name === 'dialogue') {
       d.commands.dialogue.setSpeakerProfiles([{ id: 'lynn', name: '凛' }]);
-      d.commands.dialogue.showText('凛', '这座城的夜色《よるいろ》还没有散去。');
+      d.commands.dialogue.showText('凛', '这座城的<ruby=よるいろ>夜色</ruby>还没有散去。');
     } else if (name === 'narration') {
       d.commands.dialogue.showText(null, '旁白：风从旧车站的方向吹来。');
     } else if (name === 'choice') {
@@ -387,7 +387,7 @@ async function main() {
     await page.evaluate(() => {
       const d = window.surdetDebug;
       d.commands.dialogue.setSpeakerProfiles([{ id: 'lynn', name: '凛' }]);
-      d.commands.dialogue.showText('凛', '这座城的夜色《よるいろ》还没有散去。');
+      d.commands.dialogue.showText('凛', '这座城的<ruby=よるいろ>夜色</ruby>还没有散去。');
     });
     await page.waitForTimeout(80);
     await captureState(page, reviewRoot, 'adv-ruby', 'none', visualResults, approvedManifest);
