@@ -344,7 +344,7 @@ const IMAGE_MIME: Record<string, string> = {
   gif: 'image/gif', avif: 'image/avif',
 };
 const AUDIO_MIME: Record<string, string> = {
-  mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4', flac: 'audio/flac',
+  mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4', flac: 'audio/flac', aac: 'audio/aac', opus: 'audio/ogg',
 };
 
 /** Include all supplied scenes, timeline cues and configuration, not only the opening scene.
