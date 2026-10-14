@@ -36,6 +36,21 @@ describe('authoring error catalog and envelopes', () => {
     expect(result.error.details?.causes).toHaveLength(1);
   });
 
+  it('keeps the primary operation recovery ahead of inner and outer lease cleanup errors', () => {
+    const operation = new AuthoringOperationError('COMMIT_RECOVERY_FAILED', '需要恢复写回', { journal: 'pending' });
+    const innerRelease = new AuthoringOperationError('LEASE_CORRUPT', '内部释放失败');
+    const outerRelease = new AuthoringOperationError('LEASE_CORRUPT', '外部释放失败');
+    const inner = new AggregateError([operation, innerRelease], '内部操作失败', { cause: operation });
+    const outer = new AggregateError([inner, outerRelease], '外部操作失败', { cause: inner });
+    const result = createFailureEnvelope({ sessionId: 's', capability: 'change.commit', projectIdentity: 'p' }, outer);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error).toMatchObject({ code: 'COMMIT_RECOVERY_FAILED', retryDisposition: 'manual-recovery',
+      repairActions: errorDefinition('COMMIT_RECOVERY_FAILED').repairActions, details: { journal: 'pending', causes: [
+        expect.objectContaining({ code: 'COMMIT_RECOVERY_FAILED', message: '需要恢复写回' }),
+        expect.objectContaining({ message: '内部释放失败' }), expect.objectContaining({ message: '外部释放失败' }),
+      ] } });
+  });
+
   it('preserves the advertised UI validation error in public envelopes', () => {
     const envelope = createFailureEnvelope({ sessionId: 's1', capability: 'project.ui.patch', projectIdentity: 'p1' }, new AuthoringOperationError('UI_INVALID', '条件引用未声明变量'));
     if (envelope.ok) throw new Error('expected failure');

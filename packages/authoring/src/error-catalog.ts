@@ -238,12 +238,14 @@ export function normalizeAuthoringError(error: unknown): NormalizedAuthoringErro
     const pending: unknown[] = [error];
     const seen = new Set<unknown>();
     const causes: NormalizedAuthoringError[] = [];
-    for (const item of pending) {
+    while (pending.length > 0) {
+      const item = pending.pop();
       if (seen.has(item)) continue;
       seen.add(item);
       if (item instanceof AggregateError) {
-        pending.push(...item.errors);
         if (item.cause !== undefined) pending.push(item.cause);
+        // Depth-first, preserving operation-before-cleanup order through nested leases.
+        pending.push(...[...item.errors].reverse());
       } else causes.push(normalizeAuthoringError(item));
     }
     const primary = causes.find(cause => cause.retryDisposition === 'manual-recovery')

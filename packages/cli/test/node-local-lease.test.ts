@@ -730,6 +730,27 @@ describe('NodeLocalLeaseManager', () => {
 });
 
 describe('NodeChangeStore lease binding', () => {
+  it('keeps primary recovery across nested change and project lease failures', async () => {
+    const manager = new NodeLocalLeaseManager('unused-for-injected-nested-lease');
+    const operation = new AuthoringOperationError('COMMIT_RECOVERY_FAILED', 'commit recovery failed', { journal: 'pending' });
+    const released: string[] = [];
+    const acquire = vi.spyOn(manager, 'acquire').mockImplementation(async ({ scope }) => ({
+      release: async () => { released.push(scope); throw new AuthoringOperationError('LEASE_CORRUPT', `${scope} release failed`); },
+    } as unknown as LeaseHandle));
+    try {
+      const error = await manager.withLease({ scope: 'project', resourceId: 'project' }, () =>
+        manager.withLease({ scope: 'change', resourceId: 'change' }, async () => { throw operation; }))
+        .then(() => { throw new Error('expected failure'); }, error => error);
+      expect(released).toEqual(['change', 'project']);
+      expect(normalizeAuthoringError(error)).toMatchObject({
+        code: 'COMMIT_RECOVERY_FAILED', retryDisposition: 'manual-recovery', details: { journal: 'pending', causes: [
+          expect.objectContaining({ code: 'COMMIT_RECOVERY_FAILED' }),
+          expect.objectContaining({ message: 'change release failed' }), expect.objectContaining({ message: 'project release failed' }),
+        ] },
+      });
+    } finally { acquire.mockRestore(); }
+  });
+
   it('keeps manual recovery classification when withLease operation and release both fail', async () => {
     const manager = new NodeLocalLeaseManager('unused-for-injected-lease');
     const operation = new AuthoringOperationError('COMMIT_RECOVERY_FAILED', 'commit recovery failed');

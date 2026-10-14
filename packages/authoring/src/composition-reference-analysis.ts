@@ -80,9 +80,8 @@ function addVariableReference(
   token: string,
   source: ReferenceSource,
 ): void {
-  const value = cleanToken(token);
-  if (value.length === 0) return;
-  addReference(references, 'variable', 'candidate-external', value, source, `variable:${value}`);
+  // Core uses the literal identifier, including quote characters in instruction arguments.
+  addReference(references, 'variable', 'candidate-external', token, source, `variable:${token}`);
 }
 
 function addExpressionVariables(
