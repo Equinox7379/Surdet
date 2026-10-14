@@ -419,19 +419,17 @@ async function clickMusic(session, targetId) {
 
 async function runCase(caseConfig) {
   let session = null;
+  let result;
   try {
     session = await launchSession(caseConfig.id, caseConfig.source);
     await prepareCase(session);
     const attempts = [];
     for (const targetId of protocol.musicIds) attempts.push(await clickMusic(session, targetId));
-    const eventsClear = Object.entries(session.events).every(([key, value]) => key === 'unexpectedWindowClosed' ? value === false : value.length === 0);
-    const ok = attempts.every((attempt) => attempt.actualPlayback)
-      && eventsClear;
-    return {
+    result = {
       id: caseConfig.id,
       source: caseConfig.source,
       description: caseConfig.description,
-      ok,
+      ok: attempts.every((attempt) => attempt.actualPlayback),
       userData: session.tempUserData,
       attempts,
       events: session.events,
@@ -440,7 +438,7 @@ async function runCase(caseConfig) {
       failureStack: null,
     };
   } catch (error) {
-    return {
+    result = {
       id: caseConfig.id,
       source: caseConfig.source,
       description: caseConfig.description,
@@ -461,6 +459,9 @@ async function runCase(caseConfig) {
       }
     }
   }
+  const eventsClear = Object.entries(result.events).every(([key, value]) => key === 'unexpectedWindowClosed' ? value === false : value.length === 0);
+  result.ok = result.ok && eventsClear;
+  return result;
 }
 
 function aggregateEvents(cases) {
