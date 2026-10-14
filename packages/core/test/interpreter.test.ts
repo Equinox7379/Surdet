@@ -250,6 +250,48 @@ describe('Interpreter', () => {
     expect(store.getBoolean('hasKey')).toBe(true);
   });
 
+  it.each<VarDeclaration>([
+    { name: 'bag', type: 'string', initial: 'apple' },
+    { name: 'bag', type: 'number[]', initial: [1] },
+    { name: 'bag', type: 'number[]', initial: [] },
+    { name: 'bag', type: 'object', initial: { apple: true } },
+  ])('A001 has_item 拒绝非 string[] 来源 $type ($initial)，保留结果变量', (source) => {
+    const { store, registry, interp } = makeRuntime([
+      source,
+      { name: 'has', type: 'boolean', initial: true },
+    ]);
+    registry.register(compileScene('@has_item bag app has', 'inventory.gal', 'inventory'));
+    expect(() => interp.start('inventory')).toThrow(/@has_item 来源变量必须是 string\[\]/);
+    expect(store.getBoolean('has')).toBe(true);
+  });
+
+  it.each(['boolean', 'flag'] as const)('A001 has_item 精确匹配并支持 %s 结果及只读背包', (type) => {
+    const { store, bus, registry, interp } = makeRuntime([
+      { name: 'bag', type: 'string[]', initial: ['apple'], readonly: true },
+      { name: 'has', type, initial: false },
+    ]);
+    registry.register(compileScene('@has_item bag apple has\n持有：{has}\n@has_item bag app has\n持有：{has}', 'inventory.gal', 'inventory'));
+    const texts = valueCollector(bus);
+    interp.start('inventory');
+    expect(store.getBoolean('has')).toBe(true);
+    interp.advance();
+    expect(store.getBoolean('has')).toBe(false);
+    expect(texts).toEqual(['true', 'false']);
+    expect(store.get<string[]>('bag')).toEqual(['apple']);
+  });
+
+  it.each([
+    { name: 'has', type: 'boolean', initial: false, readonly: true },
+    { name: 'has', type: 'number', initial: 0 },
+  ] satisfies VarDeclaration[])('A001 has_item 拒绝 readonly 或错误类型结果 ($type, $readonly)', (result) => {
+    const { store, registry, interp } = makeRuntime([
+      { name: 'bag', type: 'string[]', initial: ['apple'] }, result,
+    ]);
+    registry.register(compileScene('@has_item bag apple has', 'inventory.gal', 'inventory'));
+    expect(() => interp.start('inventory')).toThrow(/readonly|expected finite number/);
+    expect(store.get('has')).toEqual(result.initial);
+  });
+
   it('R3 道具指令：大数组使用只读内部引用，提交时不原地修改引用', () => {
     const initial = Array.from({ length: 2048 }, (_, i) => `item-${i}`);
     const { store, registry, interp } = makeRuntime([

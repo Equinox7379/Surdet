@@ -24,6 +24,21 @@ function makeInterp(variableDecls: VarDeclaration[] = decls) {
 }
 
 describe('Interpreter 存档', () => {
+  it('A002 合法范围初值经过正文存读档与 reset 保持一致', () => {
+    const { store, registry, interp } = makeInterp([{ name: 'score', type: 'number', initial: 5, min: 0, max: 10 }]);
+    registry.register(compileScene('当前：{score}', 'bounded.gal', 'bounded'));
+    interp.start('bounded');
+    const snapshot = interp.saveSnapshot()!;
+    expect(snapshot.variables.score).toBe(5);
+    store.set('score', 9);
+    interp.loadSnapshot(snapshot);
+    expect(store.getNumber('score')).toBe(5);
+    store.set('score', 9);
+    store.reset();
+    interp.start('bounded');
+    expect(store.getNumber('score')).toBe(5);
+  });
+
   it('旧档缺少成长状态时恢复配置初值，不继承当前等级和经验', () => {
     const { store, registry, interp } = makeInterp();
     const growth = new GrowthSystem({ curve: { base: 10 }, profiles: [{ characterId: 'rin', initialLevel: 2 }] }, store);
