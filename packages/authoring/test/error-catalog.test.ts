@@ -6,6 +6,51 @@ import {
 } from '../src/index.js';
 
 describe('authoring error catalog and envelopes', () => {
+  it.each([false, true])('preserves both lease failures and requires manual recovery (operation recovery: %s)', operationRecovery => {
+    const operation = new AuthoringOperationError(operationRecovery ? 'COMMIT_RECOVERY_FAILED' : 'INVALID_REQUEST', '原操作失败', { phase: 'commit' });
+    const release = new AuthoringOperationError('LEASE_CORRUPT', '释放失败', { phase: 'release' });
+    const error = new AggregateError([operation, release], '操作及释放失败', { cause: operation });
+    const result = createFailureEnvelope({ sessionId: 's', capability: 'change.commit', projectIdentity: 'p' }, error);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error).toMatchObject({
+      code: operationRecovery ? 'COMMIT_RECOVERY_FAILED' : 'LEASE_CORRUPT', retryDisposition: 'manual-recovery',
+      details: { causes: [
+        expect.objectContaining({ code: operation.code, message: '原操作失败', details: { phase: 'commit' } }),
+        expect.objectContaining({ code: 'LEASE_CORRUPT', message: '释放失败', details: { phase: 'release' } }),
+      ] },
+    });
+    expect(result.error.repairActions.every(action => action.terminal)).toBe(true);
+    expect(result.error.message).toContain('原操作失败');
+    expect(result.error.message).toContain('释放失败');
+    expect(() => JSON.stringify(result)).not.toThrow();
+  });
+
+  it('keeps nested aggregate recovery causes without looping on repeated aggregate objects', () => {
+    const recovery = new AuthoringOperationError('RECOVERY_EXECUTION_FAILED', '恢复失败');
+    const nested = new AggregateError([recovery], '内部失败');
+    const outer = new AggregateError([nested], '外层失败');
+    outer.errors.push(outer, nested);
+    const result = createFailureEnvelope({ sessionId: 's', capability: 'change.commit', projectIdentity: 'p' }, outer);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error).toMatchObject({ code: 'RECOVERY_EXECUTION_FAILED', retryDisposition: 'manual-recovery' });
+    expect(result.error.details?.causes).toHaveLength(1);
+  });
+
+  it('keeps the primary operation recovery ahead of inner and outer lease cleanup errors', () => {
+    const operation = new AuthoringOperationError('COMMIT_RECOVERY_FAILED', '需要恢复写回', { journal: 'pending' });
+    const innerRelease = new AuthoringOperationError('LEASE_CORRUPT', '内部释放失败');
+    const outerRelease = new AuthoringOperationError('LEASE_CORRUPT', '外部释放失败');
+    const inner = new AggregateError([operation, innerRelease], '内部操作失败', { cause: operation });
+    const outer = new AggregateError([inner, outerRelease], '外部操作失败', { cause: inner });
+    const result = createFailureEnvelope({ sessionId: 's', capability: 'change.commit', projectIdentity: 'p' }, outer);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error).toMatchObject({ code: 'COMMIT_RECOVERY_FAILED', retryDisposition: 'manual-recovery',
+      repairActions: errorDefinition('COMMIT_RECOVERY_FAILED').repairActions, details: { journal: 'pending', causes: [
+        expect.objectContaining({ code: 'COMMIT_RECOVERY_FAILED', message: '需要恢复写回' }),
+        expect.objectContaining({ message: '内部释放失败' }), expect.objectContaining({ message: '外部释放失败' }),
+      ] } });
+  });
+
   it('preserves the advertised UI validation error in public envelopes', () => {
     const envelope = createFailureEnvelope({ sessionId: 's1', capability: 'project.ui.patch', projectIdentity: 'p1' }, new AuthoringOperationError('UI_INVALID', '条件引用未声明变量'));
     if (envelope.ok) throw new Error('expected failure');
