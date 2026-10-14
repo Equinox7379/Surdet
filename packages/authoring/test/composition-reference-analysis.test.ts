@@ -5,8 +5,39 @@ import {
   analyzeSceneCompositionReferences,
   analyzeTimelineCompositionReferences,
 } from '../src/composition-reference-analysis.js';
+import { resolveOperationRequirementsAtSequence } from '../src/candidate-composition-guard.js';
+import type { RecordedOperationCompositionFacts } from '../src/composition-contracts.js';
 
 describe('raw composition reference analysis', () => {
+  it('accepts an established random target from an earlier operation, but not a future one', () => {
+    const rawReferences = analyzeSceneCompositionReferences({ sceneId: 'entry', path: 'content/scenario/entry.gal', characters: {}, text: '@random dice 1 6' });
+    const facts: RecordedOperationCompositionFacts = { factsVersion: '1.0.0', capabilityId: 'variable.ensure',
+      primaryObject: 'variable:dice', rawReferences: [], producedObjects: [{ objectRef: 'variable:dice', disposition: 'create' }], requiredObjects: [] };
+    const input = { rawReferences, sequence: 2, baseObjects: [], baseAssetRefs: [], priorOperations: [{ operationId: 'create', sequence: 1, facts }] };
+    expect(resolveOperationRequirementsAtSequence(input)).toEqual({ ok: true,
+      requiredObjects: [{ objectRef: 'variable:dice', source: 'candidate', candidateOperationSequence: 1 }] });
+    expect(resolveOperationRequirementsAtSequence({ ...input, sequence: 1 })).toMatchObject({ ok: false });
+  });
+
+  it.each([
+    ['@random dice 1 6', ['dice']],
+    ['@add_item bag apple', ['bag']],
+    ['@remove_item bag apple', ['bag']],
+    ['@has_item bag apple has', ['bag', 'has']],
+    ['@check flag && score > 0 && "literal" == "literal"', ['flag', 'score']],
+    ['@switch chapter 1:one\n@label one', ['chapter']],
+    ['@choice\n  试试 -> @random dice 1 6 @has_item bag apple has', ['bag', 'dice', 'has']],
+  ])('guards the actual variable dependencies in %s', (text, names) => {
+    const refs = analyzeSceneCompositionReferences({ sceneId: 'entry', path: 'content/scenario/entry.gal', text, characters: {} });
+    expect(refs.filter(ref => ref.kind === 'variable').map(ref => ref.objectRef).sort())
+      .toEqual(names.map(name => `variable:${name}`).sort());
+    const input = { rawReferences: refs, sequence: 2, baseObjects: [], baseAssetRefs: [], priorOperations: [] };
+    const missing = resolveOperationRequirementsAtSequence(input);
+    expect(missing).toMatchObject({ ok: false, issues: names.map(() => expect.objectContaining({ code: 'OBJECT_NOT_ESTABLISHED' })) });
+    const present = resolveOperationRequirementsAtSequence({ ...input, baseObjects: names.map(name => ({ objectRef: `variable:${name}`, references: [] })) });
+    expect(present).toMatchObject({ ok: true, requiredObjects: names.map(() => expect.objectContaining({ source: 'base' })) });
+  });
+
   it('tracks rule dependencies through timeline clips without claiming background or prose fields', () => {
     const child = { version: 2, id: 'mask_child', durationMs: 800, tracks: [
       { kind: 'screen', cues: [{ atMs: 0, durationMs: 800, easing: 'linear', action: 'rule', rule: '遮罩 @左' }] },
