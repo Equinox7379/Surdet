@@ -32,6 +32,26 @@ function fixtureSnapshotStorage(contents: Record<string, string> = {
 }
 
 describe('revision-scoped object index', () => {
+  it('indexes U1 background assets on nested nodes and config with unique reverse references', async () => {
+    const frame = { x: 0, y: 0, width: 200, height: 100 };
+    const snapshot = await loadProjectSnapshot(fixtureSnapshotStorage({
+      'game.config.json': JSON.stringify({ ui: { version: 1, pages: { title: {
+        id: 'panel', type: 'container', frame, style: { backgroundImage: { asset: 'paper', fit: 'contain' } }, children: [
+          { id: 'picture', type: 'image', frame, asset: 'paper', style: { backgroundImage: { asset: 'paper', fit: 'cover' } } },
+          { id: 'clear', type: 'container', frame, style: { backgroundImage: null } },
+          { id: 'label', type: 'text', frame, text: { kind: 'literal', value: 'paper' } },
+        ],
+      } } } }),
+    }), hasher);
+    const index = buildObjectIndex(snapshot);
+    expect(index.byRef.get('ui:panel')?.references).toEqual(['asset:bg:paper']);
+    expect(index.byRef.get('ui:picture')?.references).toEqual(['asset:bg:paper']);
+    expect(index.byRef.get('config:ui')?.references).toEqual(['asset:bg:paper']);
+    expect(index.byRef.get('asset:bg:paper')?.referencedBy).toEqual(['config:ui', 'ui:panel', 'ui:picture']);
+    expect(index.byRef.get('ui:clear')?.references).toEqual([]);
+    expect(index.byRef.get('ui:label')?.references).toEqual([]);
+  });
+
   it('indexes variable reads and writes of random, inventory, check and switch', async () => {
     const snapshot = await loadProjectSnapshot(fixtureSnapshotStorage({
       'game.config.json': JSON.stringify({ entryScene: 'entry', variables: {

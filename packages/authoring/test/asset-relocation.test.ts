@@ -55,6 +55,60 @@ it('renames nested UI image references without treating same-named node IDs or l
   expect(updated.ui.pages.title.children[1].text.value).toBe('paper');
 });
 
+it.each(['rename', 'move'] as const)('preserves U1 nested style data and updates only asset references during single and batch %s', async mode => {
+  const sourcePath = 'content/assets/bg/paper.png';
+  const targetPath = mode === 'rename' ? 'content/assets/bg/new-paper.png' : 'content/assets/bg/chapter-one/paper.png';
+  const frame = { x: 0, y: 0, width: 200, height: 100 };
+  const slice = { top: 8, right: 6, bottom: 4, left: 2, fillCenter: false };
+  const config = { ui: { version: 1, pages: { title: { id: 'paper', type: 'container', frame,
+    style: { backgroundImage: { asset: 'paper', fit: 'stretch', slice }, padding: { top: 1, right: 2, bottom: 3, left: 4 } }, children: [
+      { id: 'image', type: 'image', frame, asset: 'paper', style: { backgroundImage: { asset: 'paper', fit: 'cover' } } },
+      { id: 'clear', type: 'container', frame, style: { backgroundImage: null } },
+      { id: 'label', type: 'text', frame, text: { kind: 'literal', value: 'paper' } },
+    ],
+  } } } };
+  const beforeText = '\uFEFF' + JSON.stringify(config, null, 2).replaceAll('\n', '\r\n') + '\r\n';
+  const options = { files: { 'game.config.json': beforeText }, assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath };
+  const single = await planProjectAssetRelocation(await makeInput(options), hasher);
+  const batch = await planProjectAssetRelocationBatch(await makeBatchInput({ ...options, items: [{ itemId: 'paper', sourcePath, targetPath }] }), hasher);
+  for (const result of [single, batch]) {
+    expect(result.plan.blockers).toEqual([]);
+    const expectedText = mode === 'rename' ? beforeText.replaceAll('"asset": "paper"', '"asset": "new-paper"') : beforeText;
+    expect(result.textChanges).toEqual(mode === 'rename' ? [expect.objectContaining({ path: 'game.config.json', beforeText, afterText: expectedText })] : []);
+  }
+});
+
+it.each(['cover', 'backgroundImage', 'asset', 'slice', 'fillCenter', 'padding', 'border', 'color', 'textShadows', 'blur'])('recognizes U1 nested JSON known paths when the asset key is %s', async key => {
+  const sourcePath = `content/assets/bg/${key}.png`, targetPath = `content/assets/bg/new-${key}.png`;
+  const frame = { x: 0, y: 0, width: 200, height: 100 };
+  const config = { ui: { version: 1, pages: { hud: { id: key, type: 'container', frame, children: [
+    { id: 'panel', type: 'container', frame, style: { backgroundImage: { asset: key, fit: 'stretch', slice: { top: 1, right: 1, bottom: 1, left: 1, fillCenter: true } },
+      padding: { top: 1, right: 1, bottom: 1, left: 1 }, border: { width: 1, color: 0, opacity: 1 }, textShadows: [{ x: 0, y: 1, blur: 2, color: 0, opacity: 1 }] } },
+    { id: 'cover', type: 'container', frame, style: { backgroundImage: { asset: key, fit: 'cover' } } },
+  ] } } } };
+  const options = { files: { 'game.config.json': JSON.stringify(config) }, assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath };
+  const single = await planProjectAssetRelocation(await makeInput(options), hasher);
+  const batch = await planProjectAssetRelocationBatch(await makeBatchInput({ ...options, items: [{ itemId: key, sourcePath, targetPath }] }), hasher);
+  for (const result of [single, batch]) {
+    expect(result.plan.blockers).toEqual([]);
+    const updated = JSON.parse(result.textChanges[0]!.afterText);
+    expect(updated.ui.pages.hud.id).toBe(key);
+    expect(updated.ui.pages.hud.children[0].style.backgroundImage).toEqual({ ...config.ui.pages.hud.children[0]!.style.backgroundImage, asset: `new-${key}` });
+    expect(updated.ui.pages.hud.children[1].style.backgroundImage).toEqual({ asset: `new-${key}`, fit: 'cover' });
+  }
+});
+
+it('keeps unknown U1 nested style strings visible to the opaque-reference blocker', async () => {
+  const sourcePath = 'content/assets/bg/paper.png', targetPath = 'content/assets/bg/new-paper.png';
+  const frame = { x: 0, y: 0, width: 200, height: 100 };
+  const config = { ui: { version: 1, pages: { title: { id: 'panel', type: 'container', frame,
+    style: { backgroundImage: { asset: 'paper', fit: 'cover', customSource: 'paper' } },
+  } } } };
+  const result = await planProjectAssetRelocation(await makeInput({ files: { 'game.config.json': JSON.stringify(config) }, assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath }), hasher);
+  expect(result.plan.blockers).toContainEqual(expect.objectContaining({ code: 'ASSET_RELOCATION_OPAQUE_REFERENCE', sourcePath: 'game.config.json' }));
+  expect(result.textChanges).toEqual([]);
+});
+
 it('does not rename text catalog prose or identities that happen to equal an asset key', async () => {
   const sourcePath = 'content/assets/bg/paper.png', targetPath = 'content/assets/bg/new-paper.png';
   const textCatalog = { version: 1, sourceLocale: 'zh-CN', entries: [{ key: 'paper', source: {

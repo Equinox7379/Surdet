@@ -213,6 +213,12 @@ export class NodeProjectStorage implements ProjectWriteStorage {
     return { path: relativePath, text, bytes: bytes.byteLength, sha256: sha256(bytes) };
   }
 
+  /** Binary UI metadata uses the same root/link boundary as other project reads. */
+  async readAssetBytes(relativePath: string): Promise<Uint8Array> {
+    const absolute = await this.assertSafeTarget(relativePath);
+    return fs.readFile(absolute);
+  }
+
   /** Fingerprint the bytes actually supplied to a bound preview, with the normal path checks. */
   async readFileFingerprint(relativePath: string): Promise<{ path: string; sha256: string }> {
     const absolute = await this.assertSafeTarget(relativePath);

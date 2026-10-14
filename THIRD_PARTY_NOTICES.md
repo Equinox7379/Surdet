@@ -16,6 +16,7 @@ MIT covers Surdet-authored engine code and technical documentation. Third-party 
 | `@modelcontextprotocol/core`、`server`、`client` | MIT | CLI 的 MCP 服务与测试 |
 | Electron | MIT；所附 Chromium 等组件仍各有声明 | Windows 桌面壳 |
 | Vite、Vitest | MIT | 构建和验证工具 |
+| image-size | MIT | Authoring 的 UI 九宫格图片尺寸读取；不执行图片中的代码，也不代替运行时解码 |
 | TypeScript | Apache-2.0 | 类型检查与编译 |
 
 打包时仍须保留实际分发依赖要求的 LICENSE/NOTICE；不能用这张表替换原文。特别是 Electron 应用与源码仓库的分发内容不同，不能仅凭顶层 MIT 元数据宣布整包授权完毕。

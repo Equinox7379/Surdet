@@ -35,6 +35,27 @@ afterEach(() => {
 });
 
 describe('editor authoring project storage', () => {
+  it('U1 UI save reads the real file and rejects invalid slices without writing config', async () => {
+    let disk = JSON.stringify({ entryScene: 'intro', variables: {}, future: 'keep' }), writes = 0;
+    let image = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"/>';
+    const handle = { getFile: async () => new File([disk], 'game.config.json'), createWritable: async () => ({
+      write: async (text: unknown) => { disk = String(text); writes++; }, close: async () => {},
+    }) } as unknown as FileSystemFileHandle;
+    const imageHandle = { getFile: async () => new File([image], 'paper.svg') } as FileSystemFileHandle;
+    Object.assign(state, { dirName: 'ui-style', dirHandle: { name: 'ui-style' }, handles: { ...state.handles, gameConfig: handle }, gameConfigText: disk,
+      scenes: new Map([['intro', { id: 'intro', file: 'intro.gal', text: '@scene intro\n@end\n', eol: '\n', dirty: false, handle: null }]]), timelines: [],
+      configFiles: { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null }, configReadErrors: {},
+      dirAssets: [{ sourcePath: 'content/assets/bg/paper.svg', handle: imageHandle }], reviewWorkspace: null, reviewPreviewReadOnly: false, projectLoading: false });
+    const ui: ProjectUiDocument = { version: 1, pages: { title: { id: 'panel', type: 'container', frame: { x: 0, y: 0, width: 200, height: 100 },
+      style: { fontWeight: 700, backgroundImage: { asset: 'paper', fit: 'stretch', slice: { top: 10, right: 10, bottom: 10, left: 10, fillCenter: true } } } } } };
+    const initial = disk;
+    image = '<svg width="10" height="10"/>';
+    await expect(commitUiConfiguration(ui, initial)).rejects.toThrow('九宫格'); expect(writes).toBe(0); expect(disk).toBe(initial);
+    image = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"/>';
+    await commitUiConfiguration(ui, initial);
+    expect(writes).toBe(1); expect(JSON.parse(disk)).toMatchObject({ future: 'keep', ui });
+    expect((await loadEditorProjectSnapshot()).config.ui).toEqual(ui);
+  });
   it('distinguishes a missing in-memory config from an existing empty config', async () => {
     state.gameConfigText = '';
     state.handles = { ...state.handles, gameConfig: null };

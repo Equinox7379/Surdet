@@ -218,7 +218,7 @@ export function lintProject(root: string, scenarioDir = 'content/scenario'): Lin
       snapshot,
       undefined,
       // lint 是完整项目静态检查：timeline 引用完整性用 complete（Phase 2C）。
-      { failedScenes, timelineReferenceScope: 'complete', assetCatalog },
+      { failedScenes, timelineReferenceScope: 'complete', assetCatalog, uiImageBytes: relative => fs.readFileSync(path.join(root, relative)) },
     );
     // 原生 Gallery 适配在下方完整检查 G001–G008（含音乐/头像素材），不重复收集共享诊断。
     // 快照仍包含真实配置，供对象引用和文本目录校验使用。

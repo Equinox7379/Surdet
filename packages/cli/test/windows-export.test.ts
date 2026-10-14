@@ -24,6 +24,30 @@ it('returns real saved content errors, including audio not just images', async (
   expect(inspection.issues.some(issue => issue.code === 'ASSET_UNRESOLVED')).toBe(true);
   expect(inspection.issues.some(issue => issue.code === 'ASSET_REFERENCE_MISSING')).toBe(true);
 });
+it('U1 export preserves style resources and refuses out-of-bounds slices before output', async () => {
+  const { root, game, options } = await project();
+  const configFile = path.join(game, 'game.config.json');
+  const config = JSON.parse(await fs.readFile(configFile, 'utf8'));
+  config.ui = { version: 1, pages: { title: { id: 'panel', type: 'container', frame: { x: 0, y: 0, width: 300, height: 200 },
+    style: { backgroundImage: { asset: 'paper', fit: 'stretch', slice: { top: 10, right: 10, bottom: 10, left: 10, fillCenter: false } }, fontRole: 'body', fontWeight: 700, shadows: [] } } } };
+  await fs.writeFile(configFile, JSON.stringify(config));
+  await fs.mkdir(path.join(game, 'content/assets/bg'), { recursive: true });
+  const image = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"/>';
+  const imageFile = path.join(game, 'content/assets/bg/paper.svg');
+  await fs.writeFile(imageFile, '<svg width="10" height="10"/>');
+  expect((await inspectWindowsExport(game, '')).issues.some(issue => issue.code === 'UI_INVALID')).toBe(true);
+  await expect(exportWindowsGame(options)).rejects.toThrow('导出检查未通过');
+  expect(await fs.readdir(root)).toEqual(['project']);
+  await fs.writeFile(imageFile, image);
+  const runtime = path.join(root, 'runtime'), gameRuntime = path.join(root, 'game-runtime');
+  await fs.mkdir(runtime); await fs.mkdir(path.join(gameRuntime, 'game'), { recursive: true });
+  await fs.writeFile(path.join(runtime, 'electron.exe'), Buffer.from(NtExecutable.createEmpty(false).generate()));
+  for (const file of ['main.mjs', 'preload.cjs', 'game/index.html']) await fs.writeFile(path.join(gameRuntime, file), '');
+  const result = await exportWindowsGame({ ...options, encrypted: false, runtime: { ...options.runtime, directory: runtime, gameRuntime } });
+  const archive = path.join(result.directory, 'resources/app.asar');
+  expect(JSON.parse(asar.extractFile(archive, path.normalize('game/game.config.json')).toString('utf8')).ui).toEqual(config.ui);
+  expect(asar.extractFile(archive, path.normalize('game/content/assets/bg/paper.svg')).toString('utf8')).toBe(image);
+});
 it('rejects an existing output without touching its content', async () => {
   const { root, options } = await project();
   await fs.mkdir(path.join(root, '成品')); await fs.writeFile(path.join(root, '成品/保留.txt'), '我的文件');
