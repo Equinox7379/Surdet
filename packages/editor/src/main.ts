@@ -359,7 +359,7 @@ async function bindCurrentProjectAssetImport(preservedBaseline?: ProjectDiskBase
       if (detail.plan.moves.length > 1) {
         assetRelocationWorkspace.beginBatch();
         for (const move of detail.plan.moves) {
-          if (!['background', 'portrait', 'avatar'].includes(move.source.kind)) continue;
+          if (!PROJECT_ASSET_RELOCATION_KINDS.includes(move.source.kind)) continue;
           assetRelocationWorkspace.select({
             assetId: `file:${move.source.path}`,
             sourcePath: move.source.path,
@@ -375,11 +375,11 @@ async function bindCurrentProjectAssetImport(preservedBaseline?: ProjectDiskBase
         refreshProjectBarProjection();
       } else {
         const source = detail.plan.source;
-        if (source === null || !['background', 'portrait', 'avatar'].includes(source.kind)) return;
+        if (source === null || !PROJECT_ASSET_RELOCATION_KINDS.includes(source.kind)) return;
         assetRelocationWorkspace.begin({
           assetId: `file:${source.path}`,
           sourcePath: source.path,
-          kind: source.kind as 'background' | 'portrait' | 'avatar',
+          kind: source.kind as AssetRelocationSource['kind'],
           targetDirectory: detail.plan.target?.directory ?? source.directory,
           fileName: detail.plan.target?.fileName ?? source.fileName,
         });

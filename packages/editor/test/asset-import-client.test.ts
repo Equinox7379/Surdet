@@ -560,6 +560,37 @@ afterEach(() => {
 });
 
 describe('Editor 素材导入 authority client', () => {
+  it.each(['background', 'rule', 'unknown-kind'])('A016 parses import plan kind %s through the bound client', async kind => {
+    const { fetcher, root } = makeBindingFetcher();
+    const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);
+    await bindClient(client, root);
+    await client.createOperation({ operationId: OPERATION_ID, items: [{ itemId: ITEM_ID, sourceName: '风景.png', declaredBytes: 5 }] });
+    const directory = kind === 'rule' ? 'rule' : 'bg';
+    const responsePlan = plan();
+    responsePlan.items[0]!.kind = kind;
+    responsePlan.items[0]!.targetPath = `content/assets/${directory}/风景.png`;
+    fetcher.mockResolvedValueOnce(success({ operationId: OPERATION_ID, status: 'READY', plan: responsePlan }));
+    const result = client.plan(OPERATION_ID, { targets: [{ itemId: ITEM_ID, kind: kind === 'rule' ? 'rule' : 'background', fileName: '风景.png' }] });
+    if (kind === 'unknown-kind') await expect(result).rejects.toMatchObject({ code: 'AUTHORITY_INVALID_RESPONSE' });
+    else await expect(result).resolves.toMatchObject({ plan: { items: [{ kind, targetPath: responsePlan.items[0]!.targetPath }] } });
+  });
+
+  it.each(['background', 'rule', 'unknown-kind'])('A016 parses relocation plan kind %s through the bound client', async kind => {
+    const { fetcher, root } = makeBindingFetcher();
+    const client = createAssetImportAuthorityClient(clientOptions(fetcher) as never);
+    await bindClient(client, root);
+    const detail = relocationDetail();
+    const directory = kind === 'rule' ? 'content/assets/rule' : 'content/assets/bg';
+    detail.plan.source = { ...detail.plan.source, kind, directory, path: `${directory}/old.webp` };
+    detail.plan.target = { ...detail.plan.target, kind, directory, path: `${directory}/new.webp` };
+    detail.request.sourcePath = detail.operation.sourcePath = detail.plan.source.path;
+    detail.request.targetPath = detail.operation.targetPath = detail.plan.target.path;
+    fetcher.mockResolvedValueOnce(success({ operationToken: RELOCATION_OPERATION_TOKEN, expiresAt: '2026-09-01T00:15:00.000Z', detail }));
+    const result = client.relocationPlan({ operationId: RELOCATION_OPERATION_ID, sourcePath: detail.request.sourcePath, targetDirectory: detail.plan.target.directory, fileName: detail.plan.target.fileName });
+    if (kind === 'unknown-kind') await expect(result).rejects.toMatchObject({ code: 'AUTHORITY_INVALID_RESPONSE' });
+    else await expect(result).resolves.toMatchObject({ detail: { plan: { source: detail.plan.source, target: detail.plan.target } } });
+  });
+
   it('retains a valid blocked native plan for a target name with a control character', async () => {
     const fileName = '\tbad.png';
     const { fetcher, root } = makeBindingFetcher();

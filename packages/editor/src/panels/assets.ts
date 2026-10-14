@@ -75,7 +75,7 @@ function showPreview(entry: SidebarAssetEntry, x: number, y: number): void {
   previewEl = box;
 }
 
-/** 插入素材指令行到当前场景末尾（与流程图拖拽建链同一机制，走 history 可撤销） */
+/** 走既有 history；素材放在跳转/结束前，不追加到不可达的结尾。 */
 function insertAssetLine(entry: AssetEntry): void {
   const line = insertLineForAsset(entry);
   if (!line) {
@@ -88,9 +88,14 @@ function insertAssetLine(entry: AssetEntry): void {
   }
   const sc = state.scenes.get(state.current);
   if (!sc) return;
-  setSceneText(state.current, appendLineToScene(sc.text, sc.eol, line));
+  try {
+    setSceneText(state.current, appendLineToScene(sc.text, sc.eol, line));
+  } catch (error) {
+    setStatus(`暂时无法插入素材：${error instanceof Error ? error.message : String(error)}`, false, 5000);
+    return;
+  }
   onInsertedHook();
-  setStatus(`已在 '${state.current}' 末尾插入 ${line}（可撤销）`, true, 4000);
+  setStatus(`已在 '${state.current}' 插入 ${line}（位于跳转或结束之前，可撤销）`, true, 4000);
 }
 
 function sidebarEntry(item: ProjectAssetItem): SidebarAssetEntry | null {
@@ -182,7 +187,7 @@ export function renderAssetsPanel(container: HTMLElement): void {
       const insBtn = h('button', undefined, '插入');
       insBtn.type = 'button';
       insBtn.setAttribute('data-action', 'insert-asset');
-      insBtn.title = `在当前场景末尾插入 ${insertLineForAsset(entry) ?? ''}`;
+      insBtn.title = `在当前场景的跳转或结束前插入 ${insertLineForAsset(entry) ?? ''}`;
       insBtn.onclick = () => insertAssetLine(entry);
       const cpBtn = h('button', undefined, '复制');
       cpBtn.type = 'button';
