@@ -2,6 +2,8 @@
 import { describe, expect, it } from 'vitest';
 import { galleryUnlockEntries, insertLineForAsset, parsePortraitFileName, projectPortraitAssets, kindOfDir } from '../src/assets.js';
 import type { DirAsset } from '../src/assets.js';
+import { compileScene, decodeStageToken, EventBus, Interpreter, SceneRegistry, VariableStore, type CoreEventMap } from '@surdet/core';
+import { appendLineToScene } from '../src/scene-text.js';
 
 describe('insertLineForAsset（插入辅助）', () => {
   const mk = (key: string, kind: DirAsset['kind'], exprs?: string[]) => ({ key, kind, source: 'script' as const, usedBy: [], exprs });
@@ -18,6 +20,45 @@ describe('insertLineForAsset（插入辅助）', () => {
   it('立绘用已知情报表情，缺省 normal', () => {
     expect(insertLineForAsset(mk('lynn:armor', 'portrait', ['despair', 'normal']))).toBe('@show lynn:armor despair');
     expect(insertLineForAsset(mk('lynn:uniform', 'portrait'))).toBe('@show lynn:uniform normal');
+  });
+  it.each(['bg', 'bgm', 'ambience', 'se', 'voice', 'video', 'portrait'] as const)('A014 preserves the real %s argument, not lexer tokens', kind => {
+    const key = '雨夜 @主题';
+    const source = insertLineForAsset(mk(key, kind, ['微 笑']))!;
+    const registry = new SceneRegistry();
+    registry.register(compileScene(source, 'start.gal', 'start'));
+    const bus = new EventBus<CoreEventMap>();
+    const events: CoreEventMap['instr'][] = [];
+    const videos: string[] = [];
+    bus.on('instr', event => events.push(event));
+    bus.on('video', event => videos.push(decodeStageToken(event.src)));
+    const interpreter = new Interpreter(new VariableStore(), bus, registry);
+    interpreter.start('start');
+    if (kind === 'video') { expect(videos).toEqual([key]); return; }
+    const event = events[0]!;
+    expect(event.args.map(decodeStageToken)).toEqual(kind === 'portrait' ? [key, '微 笑'] : [key]);
+    expect(event.modifiers.size).toBe(0);
+  });
+  it.each(['\n', '\r\n', '\r'])('A015 inserts before the exit and preserves %j source and trailing comments', eol => {
+    const original = ['@scene start', '// 原有注释', '@end', '// 保留结尾', ''].join(eol);
+    const result = appendLineToScene(original, eol, '@bg harbor');
+    expect(result).toBe(original.replace('@end', `@bg harbor${eol}@end`));
+    const registry = new SceneRegistry();
+    registry.register(compileScene(result, 'start.gal', 'start'));
+    const bus = new EventBus<CoreEventMap>();
+    const names: string[] = [];
+    bus.on('instr', event => names.push(event.name));
+    new Interpreter(new VariableStore(), bus, registry).start('start');
+    expect(names).toContain('bg');
+  });
+  it('A015 does not split a conditional exit or choice group', () => {
+    const conditional = '@scene start\n@if true\n@end\n@else\n@end\n@endif\n';
+    expect(appendLineToScene(conditional, '\n', '@bg harbor')).toBe(conditional.replace('@if true', '@bg harbor\n@if true'));
+    const choice = '@choice\n  离开 -> @goto finish\n  留下 -> @goto finish\n@label finish\n@end';
+    expect(appendLineToScene(choice, '\n', '@bg harbor')).toBe('@bg harbor\n' + choice);
+    for (const instruction of ['@switch score 1:finish', '@loop 2 finish']) {
+      const source = `${instruction}\n@end\n@label finish\n到达。\n@end`;
+      expect(appendLineToScene(source, '\n', '@bg harbor')).toBe('@bg harbor\n' + source);
+    }
   });
 });
 
