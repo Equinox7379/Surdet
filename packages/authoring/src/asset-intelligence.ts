@@ -57,7 +57,7 @@ const DIRECTORY_KINDS: Readonly<Record<string, ProjectAssetKind>> = {
 };
 
 const IMAGE_FORMATS = new Set(['svg', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'avif']);
-const AUDIO_FORMATS = new Set(['mp3', 'ogg', 'wav', 'm4a', 'flac']);
+const AUDIO_FORMATS = new Set(['aac', 'flac', 'm4a', 'mp3', 'ogg', 'opus', 'wav']);
 const VIDEO_FORMATS = new Set(['mp4', 'webm', 'ogv']);
 const FONT_FORMATS = new Set(['woff2', 'woff', 'ttf', 'otf']);
 

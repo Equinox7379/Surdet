@@ -152,6 +152,13 @@ it('recognizes named companion PDF licenses without treating arbitrary PDFs as l
   expect(result.summary.byKind.font.files).toBe(5);
 });
 
+it('A020 recognizes AAC and Opus accepted by the public importer in every audio directory', async () => {
+  const snapshot = await snapshotFor({ 'game.config.json': '{}' });
+  const paths = ['bgm', 'music', 'ambience', 'se', 'voice'].flatMap(directory => ['aac', 'OPUS'].map(extension => `content/assets/${directory}/雨夜 主题.${extension}`));
+  const result = buildProjectAssetIntelligence(snapshot, paths.map(path => ({ path, bytes: 12 })));
+  for (const path of paths) expect(asset(result, path).issues).not.toContain('ASSET_FORMAT_UNSUPPORTED');
+});
+
 it('locates each audio timeline cue by its channel, without calling timeline-only media unused', async () => {
   const timeline = { version: 1, id: 'sound', durationMs: 20, tracks: [{ kind: 'audio', cues:
     ['bgm', 'se', 'voice'].map(action => ({ atMs: 0, durationMs: 0, easing: 'linear', action, key: '同名 声音' })) }] };
