@@ -54,24 +54,31 @@ describe('startup sampling boundaries', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  it.each(['candidate-qualified', 'not-qualified', 'sample-failed'])('propagates %s to the runner exit status', async outcome => {
+  it.each([
+    [['candidate-qualified'], 0], [['not-qualified'], 2], [['sample-failed'], 1],
+    [['not-qualified', 'sample-failed'], 1], [['sample-failed', 'not-qualified'], 1],
+    [['not-qualified', 'candidate-qualified'], 2], [['candidate-qualified', 'not-qualified'], 2],
+  ])('propagates %j to the runner exit status %s', async (outcomes, expectedExit) => {
     const process = { argv: ['node', 'runner'], exitCode: 0 };
-    const group = { id: 'group', artifact: 'group.json', baseline: { root: 'base', commit: 'fixture' }, current: { root: 'current', commit: 'fixture' } };
-    const artifact = { qualification: { status: outcome === 'candidate-qualified' ? outcome : 'not-qualified' } };
+    const groups = outcomes.map((outcome, index) => ({ id: `group-${index}`, artifact: `group-${index}.json`, outcome,
+      baseline: { root: 'base', commit: 'fixture' }, current: { root: 'current', commit: 'fixture' } }));
     const writes = [];
     await execute(section(qualification, 'async function main()', '\nmain().catch('), {
       path, process, defaultRepositoryRoot: 'fixture',
       parseRendererV4QualificationArgs: () => ({ repositoryRoot: 'fixture', artifactDir: 'artifacts', tempRoot: 'temp' }),
       validateRepositoryRoot() {}, assertUnder() {}, fs: { existsSync: () => false, mkdirSync() {} },
-      buildQualificationMatrix: () => [group], buildCleanupManifest: () => ({ worktrees: [] }),
+      buildQualificationMatrix: () => groups, buildCleanupManifest: () => ({ worktrees: [] }),
       writeJson: (file, value) => writes.push({ file, value: cloneJson(value) }),
-      createQualificationWorktrees: () => [], uniqueRootDescriptors: () => [group.baseline, group.current],
+      createQualificationWorktrees: () => [], uniqueRootDescriptors: group => [group.baseline, group.current],
       runNpm() {}, collectBuildManifest: () => ({}), buildEquivalenceRecord: () => ({ qualified: true }),
       writeBuildEvidence() {}, applyRendererStartupInstrumentation: () => ({}), environmentFor: () => ({}),
-      collectGroup: async () => ({ failed: outcome === 'sample-failed', artifact }), console: { log() {} }, isoNow: () => 'fixture',
+      collectGroup: async group => ({ failed: group.outcome === 'sample-failed',
+        artifact: { qualification: { status: group.outcome === 'candidate-qualified' ? group.outcome : 'not-qualified' } } }),
+      console: { log() {} }, isoNow: () => 'fixture',
     }, 'main()');
-    expect(writes.some(entry => entry.value.qualification?.status === artifact.qualification.status)).toBe(true);
-    expect(process.exitCode).toBe(outcome === 'candidate-qualified' ? 0 : 1);
+    expect(writes.filter(entry => entry.value.qualification).map(entry => entry.value.qualification.status))
+      .toEqual(outcomes.map(outcome => outcome === 'candidate-qualified' ? outcome : 'not-qualified'));
+    expect(process.exitCode).toBe(expectedExit);
   });
 });
 
