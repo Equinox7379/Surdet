@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Interpreter, SaveSnapshot } from '@surdet/core';
+import { compileScene, EventBus, Interpreter, SceneRegistry, VariableStore, type CoreEventMap, type SaveSnapshot } from '@surdet/core';
 import type { AudioHandle } from '@surdet/renderer';
 import type { RollbackRendererPort } from '../src/rollback-runtime.js';
 import { createRollbackRuntime } from '../src/rollback-runtime.js';
@@ -30,7 +30,8 @@ function createRollbackFixture(options: {
   const interpreter = {
     status: 'awaiting-advance',
     saveSnapshot: vi.fn(() => structuredClone(snapshotAt())),
-    loadSnapshot: vi.fn((snapshot: SaveSnapshot) => {
+    loadSnapshot: vi.fn((snapshot: SaveSnapshot, beforeCommit?: () => void) => {
+      beforeCommit?.();
       pc = snapshot.position?.pc ?? pc;
       if (snapshot.presentation) renderer.restorePresentation(snapshot.presentation.payload);
       runtime.captureText();
@@ -78,6 +79,117 @@ function createRollbackFixture(options: {
 }
 
 describe('rollback runtime — consecutive player rollback', () => {
+  function realFixture() {
+    const store = new VariableStore([{ name: 'score', type: 'number', initial: 0 }]);
+    const scenes = new SceneRegistry();
+    scenes.register(compileScene('第一句\n@inc score\n第二句', 'rollback.gal', 'rollback'));
+    const bus = new EventBus<CoreEventMap>();
+    const interpreter = new Interpreter(store, bus, scenes);
+    let presentation = { visible: true, text: '' };
+    const failures = { preflight: false, targetRestore: false, currentRestore: false, capture: false };
+    bus.on('text', event => { presentation = { visible: true, text: event.value }; });
+    interpreter.setPresentationHooks({
+      snapshot: () => {
+        if (failures.capture) throw new Error('snapshot unavailable');
+        return { ...presentation };
+      },
+      validate: () => { if (failures.preflight) throw new Error('preflight refused'); },
+      restore: payload => {
+        presentation = { ...(payload as typeof presentation) };
+        if (failures.targetRestore && presentation.text === '第一句') {
+          presentation.visible = false;
+          throw new Error('target restore failed');
+        }
+        if (failures.currentRestore && presentation.text === '第二句') throw new Error('current restore failed');
+      },
+    });
+    const renderer: RollbackRendererPort = {
+      status: 'awaiting', backlogOpen: false,
+      canCaptureRollbackCheckpoint: () => true,
+      resetSession: vi.fn(() => { presentation = { visible: false, text: '' }; runtime.clearForBoundary(); }),
+      snapshotPresentation: () => ({ ...presentation }),
+      restorePresentation: payload => { presentation = { ...(payload as typeof presentation) }; },
+    };
+    const runtime = createRollbackRuntime({ interpreter, renderer, audio: {} as AudioHandle,
+      isBlocked: () => false, label: 'real-rollback', onRefresh: () => undefined });
+    interpreter.start('rollback');
+    return { runtime, interpreter, store, renderer, failures, presentation: () => ({ ...presentation }) };
+  }
+
+  async function capturePair(fixture: ReturnType<typeof realFixture>) {
+    fixture.runtime.captureText(); await Promise.resolve();
+    fixture.interpreter.advance();
+    fixture.runtime.captureText(); await Promise.resolve();
+  }
+
+  it('preserves the visible scene when real Core preflight refuses rollback', async () => {
+    const fixture = realFixture();
+    await capturePair(fixture);
+    const before = fixture.presentation(), position = fixture.interpreter.position;
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      fixture.failures.preflight = true;
+      expect(fixture.runtime.perform()).toBe(false);
+      expect(fixture.renderer.resetSession).not.toHaveBeenCalled();
+      expect(fixture.presentation()).toEqual(before);
+      expect(fixture.interpreter.position).toEqual(position);
+      expect(fixture.store.getNumber('score')).toBe(1);
+      fixture.failures.preflight = false;
+      expect(fixture.runtime.perform()).toBe(true);
+      expect(fixture.presentation()).toEqual({ visible: true, text: '第一句' });
+      expect(fixture.store.getNumber('score')).toBe(0);
+    } finally { warning.mockRestore(); }
+  });
+
+  it('restores the current scene and variables after a target restore partially changes them', async () => {
+    const fixture = realFixture();
+    await capturePair(fixture);
+    const position = fixture.interpreter.position;
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      fixture.failures.targetRestore = true;
+      expect(fixture.runtime.perform()).toBe(false);
+      expect(fixture.presentation()).toEqual({ visible: true, text: '第二句' });
+      expect(fixture.store.getNumber('score')).toBe(1);
+      expect(fixture.interpreter.position).toEqual(position);
+      expect(warning).toHaveBeenCalledWith('[real-rollback] 回退失败：', expect.objectContaining({ message: 'target restore failed' }));
+      fixture.failures.targetRestore = false;
+      expect(fixture.runtime.perform()).toBe(true);
+      expect(fixture.presentation().text).toBe('第一句');
+    } finally { warning.mockRestore(); }
+  });
+
+  it('reports both a restore failure and a failed compensation without claiming success', async () => {
+    const fixture = realFixture();
+    await capturePair(fixture);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      fixture.failures.targetRestore = fixture.failures.currentRestore = true;
+      expect(fixture.runtime.perform()).toBe(false);
+      expect(warning).toHaveBeenCalledWith('[real-rollback] 回退失败：', expect.objectContaining({ message: 'target restore failed' }));
+      expect(warning).toHaveBeenCalledWith('[real-rollback] 回退后的当前状态恢复失败：', expect.objectContaining({ message: 'current restore failed' }));
+      expect(fixture.runtime.isRestoring()).toBe(false);
+    } finally { warning.mockRestore(); }
+  });
+
+  it('handles Core snapshot failure in a checkpoint microtask and allows a later capture', async () => {
+    const fixture = realFixture();
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      fixture.failures.capture = true;
+      fixture.runtime.captureText(); await Promise.resolve(); await Promise.resolve();
+      expect(fixture.runtime.canRollback()).toBe(false);
+      expect(warning).toHaveBeenCalledWith('[real-rollback] 回退检查点创建失败：', expect.objectContaining({ message: 'snapshot unavailable' }));
+      fixture.failures.capture = false;
+      await capturePair(fixture);
+      fixture.failures.capture = true;
+      expect(fixture.runtime.perform()).toBe(false);
+      expect(fixture.renderer.resetSession).not.toHaveBeenCalled();
+      fixture.failures.capture = false;
+      expect(fixture.runtime.perform()).toBe(true);
+    } finally { warning.mockRestore(); }
+  });
+
   it('restores presentation only once when Core already owns presentation hooks', async () => {
     const fixture = createRollbackFixture({ presentationHooks: true });
     for (const pc of [1, 2]) { fixture.setPosition(pc); fixture.runtime.captureText(); await Promise.resolve(); }

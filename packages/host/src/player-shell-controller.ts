@@ -154,6 +154,7 @@ function commitAndOpen(
   slots: PlayerShellSlotRegistry,
   request: PlayerShellOpenRequest,
   origin: PlayerUiSessionSnapshot,
+  beforeOpen: () => void,
 ): PlayerShellSlotContext {
   const context: PlayerShellSlotContext = {
     source: request.source,
@@ -179,6 +180,7 @@ function commitAndOpen(
           `unknown slot=${String((request as { slot?: unknown }).slot)}`,
         );
     }
+    beforeOpen();
     slots.open(request, context);
     return context;
   } catch (error) {
@@ -253,8 +255,16 @@ function rollbackProjectionMutation(
   restoreProjections: boolean,
   error: unknown,
   message: string,
+  failedOpen?: PlayerShellSlotId,
 ): never {
   const compensationErrors: unknown[] = [];
+  if (failedOpen !== undefined) {
+    try {
+      slots.close(failedOpen);
+    } catch (closeError) {
+      compensationErrors.push(closeError);
+    }
+  }
   if (restoreProjections) {
     try {
       restoreProjectionStack(slots, projections);
@@ -293,6 +303,8 @@ export function createPlayerShellController(
       const origin = session.snapshot();
       assertOpenRequest(request, origin);
       const previous = activeProjections;
+      let openAttempted = false;
+      const beforeOpen = () => { openAttempted = true; };
       if (request.slot === 'title') {
         if (origin.operation !== 'idle') {
           throw controllerError('PLAYER_UI_INVALID_TRANSITION', 'title open requires operation=idle');
@@ -301,7 +313,7 @@ export function createPlayerShellController(
         try {
           closeProjectionStack(slots, previous, 'title projection convergence failed');
           projectionsClosed = true;
-          const context = commitAndOpen(session, slots, request, origin);
+          const context = commitAndOpen(session, slots, request, origin, beforeOpen);
           activeProjections = [{ request, context }];
         } catch (error) {
           activeProjections = previous;
@@ -313,16 +325,18 @@ export function createPlayerShellController(
             projectionsClosed,
             error,
             'title projection convergence compensation failed',
+            openAttempted ? request.slot : undefined,
           );
         }
         return;
       }
       try {
-        const context = commitAndOpen(session, slots, request, origin);
+        const context = commitAndOpen(session, slots, request, origin, beforeOpen);
         activeProjections = [...activeProjections, { request, context }];
       } catch (error) {
         activeProjections = previous;
-        throw error;
+        rollbackProjectionMutation(slots, session, origin, previous, openAttempted, error,
+          'player shell open compensation failed', openAttempted ? request.slot : undefined);
       }
     },
     close() {

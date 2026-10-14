@@ -513,8 +513,9 @@ export class Interpreter {
   }
 
   /** 从快照恢复：变量/已读/解锁 + 全家桶系统状态 + 定位到挂起点并重新驱动到挂起状态。
+   *  beforeCommit 在全部预检通过后、状态写入前调用，供宿主清理旧表现；预检失败不调用。
    *  注意：须在 UI 线程（非事件回调）调用，事件回调内调用会撞 #stepping 重入守卫。 */
-  loadSnapshot(snap: SaveSnapshot): void {
+  loadSnapshot(snap: SaveSnapshot, beforeCommit?: () => void): void {
     if (this.#stepping) {
       throw new RuntimeError(
         '解释器重入：当前正处在事件回调执行中，不应直接触发 #step/' +
@@ -583,6 +584,8 @@ export class Interpreter {
       throw new RuntimeError(`PLUGIN_REQUIRED：存档需要项目插件 ${Object.keys(snap.plugins).join('、')}，请先明确启用。`);
     }
     const commitPlugins = this.#pluginHooks?.prepareRestore(snap.plugins ?? {});
+    // Host cleanup must not destroy the current presentation before preflight succeeds.
+    beforeCommit?.();
     if (snap.random !== undefined) {
       try {
         this.#randomSource.restore!(snap.random);
@@ -1226,6 +1229,9 @@ export class Interpreter {
         const [vn, item, resultVar] = instr.args;
         if (vn === undefined || item === undefined || resultVar === undefined) {
           throw new RuntimeError('@has_item 用法：@has_item 数组变量 道具ID 结果变量', instr);
+        }
+        if (this.#store.getType(vn) !== 'string[]') {
+          throw new RuntimeError('@has_item 来源变量必须是 string[]', instr);
         }
         this.#store.set(resultVar, this.#store.get<string[]>(vn).includes(item));
         return;

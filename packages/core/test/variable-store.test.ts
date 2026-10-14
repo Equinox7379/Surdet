@@ -38,6 +38,39 @@ describe('VariableStore', () => {
     expect(() => s.declare({ name: 'ok', type: 'number', initial: 0, min: 0, max: 100 })).not.toThrow();
   });
 
+  it.each([
+    { name: 'score', type: 'number', initial: -1, min: 0 },
+    { name: 'score', type: 'number', initial: 100, max: 10 },
+  ] satisfies VarDeclaration[])('A002 声明拒绝越界初值 ($initial) 且不注册变量', (decl) => {
+    const store = new VariableStore();
+    expect(() => store.declare(decl)).toThrow(/initial/);
+    expect(store.has(decl.name)).toBe(false);
+    expect(store.snapshot()).toEqual({});
+    expect(() => new VariableStore([decl])).toThrow(/initial/);
+  });
+
+  it.each([0, 5, 10])('A002 合法初值 %s 保留 reset 与 restore clamp 保护', (initial) => {
+    const store = new VariableStore([
+      { name: 'score', type: 'number', initial, min: 0, max: 10 },
+      { name: 'fixed', type: 'number', initial, min: 0, max: 10, readonly: true },
+    ]);
+    const snapshot = store.snapshot();
+    store.set('score', 8);
+    store.restore(snapshot);
+    expect(store.getNumber('score')).toBe(initial);
+    store.restore({ score: 100 });
+    expect(store.getNumber('score')).toBe(10);
+    store.restore({ score: -100 });
+    expect(store.getNumber('score')).toBe(0);
+    store.restore({ fixed: 100 });
+    expect(store.getNumber('fixed')).toBe(initial);
+    store.restore({ fixed: 100 }, { allowReadonly: true });
+    expect(store.getNumber('fixed')).toBe(10);
+    store.reset();
+    expect(store.getNumber('score')).toBe(initial);
+    expect(store.getNumber('fixed')).toBe(initial);
+  });
+
   it('set 类型不符抛错', () => {
     const s = new VariableStore(base);
     expect(() => s.set('heroName', 42)).toThrow(TypeError);

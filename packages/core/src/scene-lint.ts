@@ -348,10 +348,27 @@ export function validateSceneVariables(
         }
         if (g.name === 'has_item') {
           const [source, , result] = g.args;
-          if (source !== undefined) checkVarDeclared(source, at(g.file, g.line, g.col), variables, issues, 'V001', '@has_item 来源');
+          const pos = at(g.file, g.line, g.col);
+          if (source !== undefined) {
+            checkVarDeclared(source, pos, variables, issues, 'V001', '@has_item 来源');
+            const type = types.get(source);
+            if (type !== undefined && type !== 'string[]') {
+              issues.push({
+                severity: 'error', code: 'T001', ...pos,
+                text: `${g.file}:${g.line}:${g.col}: @has_item 来源变量 '${source}' 必须是 string[]，声明类型为 ${type}`,
+              });
+            }
+          }
           if (result !== undefined) {
-            checkVarDeclared(result, at(g.file, g.line, g.col), variables, issues, 'V001', '@has_item 结果');
-            checkNotReadonly(result, at(g.file, g.line, g.col), readonlyVars, issues);
+            checkVarDeclared(result, pos, variables, issues, 'V001', '@has_item 结果');
+            checkNotReadonly(result, pos, readonlyVars, issues);
+            const type = types.get(result);
+            if (type !== undefined && type !== 'boolean' && type !== 'flag') {
+              issues.push({
+                severity: 'error', code: 'T001', ...pos,
+                text: `${g.file}:${g.line}:${g.col}: @has_item 结果变量 '${result}' 必须是 boolean/flag，声明类型为 ${type}`,
+              });
+            }
           }
         }
         break;
