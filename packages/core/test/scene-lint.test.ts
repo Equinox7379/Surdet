@@ -46,6 +46,33 @@ describe('scene-lint 变量声明校验', () => {
     expect(issues.filter(issue => issue.code === 'V001')).toHaveLength(3);
     expect(issues.some(issue => issue.text.includes('fixed') && issue.text.includes('readonly'))).toBe(true);
   });
+
+  it.each(['string', 'number[]', 'object'])('A001 has_item lint 拒绝 %s 来源', (type) => {
+    const scene = compileScene('@has_item bag app has', 'inventory.gal', 'inventory');
+    const issues: LintIssue[] = [];
+    validateSceneVariables(scene, new Set(['bag', 'has']), new Map([['bag', type], ['has', 'boolean']]), new Set(), issues, true);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ code: 'T001', file: 'inventory.gal', line: 1 });
+    expect(issues[0]!.text).toContain('来源');
+    expect(issues[0]!.text).toContain('string[]');
+  });
+
+  it.each(['boolean', 'flag'])('A001 has_item lint 接受 string[] 来源和 %s 结果', (type) => {
+    const scene = compileScene('@has_item bag apple has', 'inventory.gal', 'inventory');
+    const issues: LintIssue[] = [];
+    validateSceneVariables(scene, new Set(['bag', 'has']), new Map([['bag', 'string[]'], ['has', type]]), new Set(['bag']), issues, true);
+    expect(issues).toEqual([]);
+  });
+
+  it('A001 has_item lint 拒绝错误类型结果并保留 readonly 和未声明诊断', () => {
+    const scene = compileScene('@has_item bag apple has\n@has_item missing apple absent', 'inventory.gal', 'inventory');
+    const issues: LintIssue[] = [];
+    validateSceneVariables(scene, new Set(['bag', 'has']), new Map([['bag', 'string[]'], ['has', 'number']]), new Set(['has']), issues, true);
+    expect(issues.filter(issue => issue.code === 'T001')).toHaveLength(1);
+    expect(issues.find(issue => issue.code === 'T001')!.text).toContain('结果');
+    expect(issues.filter(issue => issue.code === 'V003')).toHaveLength(1);
+    expect(issues.filter(issue => issue.code === 'V001')).toHaveLength(2);
+  });
   it('与 VariableStore 一致拒绝嵌套非法值，并接受合法嵌套数组对象', () => {
     const invalidValues = [
       Object.fromEntries([['nested', null]]) as unknown as VarValue,
@@ -77,7 +104,7 @@ describe('scene-lint 变量声明校验', () => {
     expect(() => new VariableStore([legalDecl])).not.toThrow();
   });
 
-  it('与 VariableStore 一致拒绝 number 的非有限 min/max，但保留初值越界行为', () => {
+  it('A002 与 VariableStore 一致拒绝 number 的非有限 min/max 和越界初值', () => {
     for (const bound of [
       { min: Infinity },
       { max: -Infinity },
@@ -90,10 +117,17 @@ describe('scene-lint 变量声明校验', () => {
       expect(() => new VariableStore([decl])).toThrow();
     }
 
-    const outOfRange = { name: 'score', type: 'number', initial: 999, max: 100 } as VarDeclaration;
-    expect(lintDeclaration(outOfRange.name, outOfRange).valid).toBe(true);
-    const store = new VariableStore([outOfRange]);
-    expect(store.getNumber('score')).toBe(999);
+    for (const decl of [
+      { name: 'score', type: 'number', initial: 999, max: 100 },
+      { name: 'score', type: 'number', initial: -1, min: 0 },
+    ] satisfies VarDeclaration[]) {
+      const lint = lintDeclaration(decl.name, decl);
+      expect(lint.valid).toBe(false);
+      expect(lint.issues).toHaveLength(1);
+      expect(lint.issues[0]).toMatchObject({ code: 'VAR_DECL' });
+      expect(lint.issues[0]!.text).toContain('initial');
+      expect(() => new VariableStore([decl])).toThrow(/initial/);
+    }
   });
 
   it('parseVariableConfig 保留合法的 __proto__ 变量名并保持问题定位', () => {

@@ -7,7 +7,7 @@ export type { VarDeclaration, VarPrimitive, VarValue, VarType } from './types.js
  *
  * - 变量必须先声明后使用；未声明访问/赋值抛错（带变量名）。
  * - set 时按声明类型做运行时校验，类型不符抛错。
- * - number 类型越界自动 clamp 到 [min, max]。
+ * - number 初值须在 [min, max] 内；后续赋值/恢复越界自动 clamp。
  * - readonly 变量禁止 set/modify。
  * - snapshot/restore 供存档系统做全量快照。
  */
@@ -36,6 +36,15 @@ export class VariableStore {
       }
     }
     assertType(decl.initial, decl, 'initial');
+    if (decl.type === 'number') {
+      const initial = decl.initial as number;
+      if (decl.min !== undefined && initial < decl.min) {
+        throw new Error(`Variable '${decl.name}': initial (${initial}) < min (${decl.min})`);
+      }
+      if (decl.max !== undefined && initial > decl.max) {
+        throw new Error(`Variable '${decl.name}': initial (${initial}) > max (${decl.max})`);
+      }
+    }
     this.#decls.set(decl.name, { ...decl, initial: cloneValue(decl.initial) });
     this.#values.set(decl.name, cloneValue(decl.initial));
   }
@@ -43,6 +52,12 @@ export class VariableStore {
   /** 变量是否已声明 */
   has(name: string): boolean {
     return this.#decls.has(name);
+  }
+
+  /** 读取声明类型，空数组等值无法区分的类型仍以声明为准。 */
+  getType(name: string): VarType {
+    this.#assertDeclared(name);
+    return this.#decls.get(name)!.type;
   }
 
   /** 读取变量（泛型，注意类型安全由声明保证）。

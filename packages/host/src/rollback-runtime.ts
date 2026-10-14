@@ -68,8 +68,19 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
 
   const perform = (): boolean => {
     if (restoring || !canRollback()) return false;
-    const current = options.interpreter.saveSnapshot();
-    const currentKey = current ? checkpointKey(current) : null;
+    let current: SaveSnapshot | null;
+    let currentPresentation: unknown;
+    let currentAudio: ReturnType<NonNullable<AudioHandle['snapshotPlayback']>> | undefined;
+    try {
+      current = options.interpreter.saveSnapshot();
+      if (!current) return false;
+      if (current.presentation === undefined) currentPresentation = options.renderer.snapshotPresentation();
+      currentAudio = options.audio.snapshotPlayback?.();
+    } catch (error) {
+      reportWarning(`[${options.label}] 回退失败：`, error);
+      return false;
+    }
+    const currentKey = checkpointKey(current);
     const first = rollback.pop();
     if (!first) return false;
     const frame = currentKey !== null && checkpointKey(first.snapshot) === currentKey
@@ -80,11 +91,14 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
       return false;
     }
     restoring = true;
+    let commitStarted = false;
     try {
       // Keep restoring=true across every callback that resetSession may trigger:
       // stateReset → host.reset → system-boundary cleanup must not clear history.
-      options.renderer.resetSession({ preserveWorld: false, preserveReadingHistory: true });
-      options.interpreter.loadSnapshot(frame.snapshot);
+      options.interpreter.loadSnapshot(frame.snapshot, () => {
+        commitStarted = true;
+        options.renderer.resetSession({ preserveWorld: false, preserveReadingHistory: true });
+      });
       // Hook-backed snapshots are restored by Core before it replays the text.
       if (frame.snapshot.presentation === undefined) options.renderer.restorePresentation(frame.presentation);
       options.audio.restorePlayback?.(frame.audio);
@@ -95,7 +109,19 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
       rollback.push(frame);
       return true;
     } catch (error) {
+      if (commitStarted) {
+        try {
+          options.interpreter.loadSnapshot(current, () => {
+            options.renderer.resetSession({ preserveWorld: false, preserveReadingHistory: true });
+          });
+          if (current.presentation === undefined) options.renderer.restorePresentation(currentPresentation);
+          if (currentAudio !== undefined) options.audio.restorePlayback?.(currentAudio);
+        } catch (recoveryError) {
+          reportWarning(`[${options.label}] 回退后的当前状态恢复失败：`, recoveryError);
+        }
+      }
       rollback.push(frame);
+      if (first !== frame) rollback.push(first);
       reportWarning(`[${options.label}] 回退失败：`, error);
       return false;
     } finally {
@@ -108,14 +134,14 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
     if (restoring) return;
     const generation = captureGeneration;
     Promise.resolve().then(() => {
-      if (restoring || generation !== captureGeneration) return;
-      if (!options.renderer.canCaptureRollbackCheckpoint()) return;
-      const snapshot = options.interpreter.saveSnapshot();
-      if (!snapshot || options.interpreter.status === 'running'
-        || options.interpreter.status === 'paused' || options.interpreter.status === 'awaiting-timer') return;
-      const key = checkpointKey(snapshot);
-      if (key === null || key === lastRollbackKey) return;
       try {
+        if (restoring || generation !== captureGeneration) return;
+        if (!options.renderer.canCaptureRollbackCheckpoint()) return;
+        const snapshot = options.interpreter.saveSnapshot();
+        if (!snapshot || options.interpreter.status === 'running'
+          || options.interpreter.status === 'paused' || options.interpreter.status === 'awaiting-timer') return;
+        const key = checkpointKey(snapshot);
+        if (key === null || key === lastRollbackKey) return;
         rollback.push({
           snapshot,
           presentation: options.renderer.snapshotPresentation(),

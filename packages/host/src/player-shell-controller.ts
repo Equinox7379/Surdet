@@ -253,8 +253,16 @@ function rollbackProjectionMutation(
   restoreProjections: boolean,
   error: unknown,
   message: string,
+  failedOpen?: PlayerShellSlotId,
 ): never {
   const compensationErrors: unknown[] = [];
+  if (failedOpen !== undefined) {
+    try {
+      slots.close(failedOpen);
+    } catch (closeError) {
+      compensationErrors.push(closeError);
+    }
+  }
   if (restoreProjections) {
     try {
       restoreProjectionStack(slots, projections);
@@ -313,6 +321,8 @@ export function createPlayerShellController(
             projectionsClosed,
             error,
             'title projection convergence compensation failed',
+            projectionsClosed && error instanceof PlayerShellSlotError && error.code === 'PLAYER_SHELL_SLOT_FAILED'
+              ? request.slot : undefined,
           );
         }
         return;
@@ -322,7 +332,9 @@ export function createPlayerShellController(
         activeProjections = [...activeProjections, { request, context }];
       } catch (error) {
         activeProjections = previous;
-        throw error;
+        const openFailed = error instanceof PlayerShellSlotError && error.code === 'PLAYER_SHELL_SLOT_FAILED';
+        rollbackProjectionMutation(slots, session, origin, previous, openFailed, error,
+          'player shell open compensation failed', openFailed ? request.slot : undefined);
       }
     },
     close() {

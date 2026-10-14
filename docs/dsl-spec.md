@@ -153,7 +153,7 @@ content/timelines/intro_arrival.json
 | `@check` | `@check trust >= 0` | ✅ | 剧本断言：条件为假立即抛运行时错误（尽早暴露剧本逻辑缺陷） |
 | `@random` | `@random dice 1 6` | ✅ | 写入 [min, max] 闭区间随机整数到变量 |
 | `@add_item/@remove_item` | `@add_item items key` | ✅ | string[] 变量去重追加 / 移除（道具系统基础） |
-| `@has_item` | `@has_item items key hasKey` | ✅ | 判断数组变量是否含道具，结果写入 boolean 变量 |
+| `@has_item` | `@has_item items key hasKey` | ✅ | 来源必须声明为 string[]，按完整道具ID匹配，结果写入可写的 boolean/flag 变量 |
 
 ### 系统（M4/M5）
 | 指令 | 状态 | 说明 |
@@ -223,7 +223,7 @@ content/timelines/intro_arrival.json
 }
 ```
 
-类型：`string` `number` `boolean` `flag` `string[]` `number[]` `object`。number 越界自动 clamp；`readonly: true` 禁止写入。
+类型：`string` `number` `boolean` `flag` `string[]` `number[]` `object`。number 的声明初值必须满足 `min <= initial <= max`（省略的边界不限制），越界声明明确拒绝；后续赋值和恢复仍对越界值自动 clamp。`readonly: true` 禁止普通写入。
 
 ### 自定义指令
 
@@ -299,7 +299,7 @@ node packages/cli/dist/index.js lint <projectDir>
 ### 静态类型（T，lint 推断）
 | 码 | 含义 |
 |---|---|
-| T001 | `@set` 值类型与目标变量声明类型不匹配（`+=/-=` 要求 number） |
+| T001 | `@set` 值类型与目标变量声明类型不匹配（`+=/-=` 要求 number），或 `@has_item` 来源/结果类型不符 |
 | T002 | 条件表达式（`@if`/`choice [if:]`）静态类型非 boolean |
 | T003 | 运算符操作数类型明显不符（如 `trust > "a"`、`trust && flag`） |
 | T010 | 未知转场名称 |

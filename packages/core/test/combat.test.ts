@@ -154,6 +154,110 @@ describe('CombatSolver', () => {
     expect(s.winner).toBe('allies');
   });
 
+  it.each([1, 2])('A003 survive_turns 守方在第 %s 回合全灭立即败，快照可恢复', (defeatTurn) => {
+    const c: CombatConfig = {
+      ...config, winCondition: 'survive_turns', maxTurns: 2, elementChain: {}, damage: undefined,
+      units: config.units.map(unit => unit.id === 'sword' ? { ...unit, hp: 1, def: 0 } : unit),
+    };
+    const solver = new CombatSolver(c, fixedRng);
+    solver.start({ allies: ['sword'], enemies: ['wolf'] });
+    if (defeatTurn === 2) { solver.pass(); solver.pass(); }
+    solver.pass();
+    const action = solver.act('enemies_0', 'allies_0');
+    expect(action.killed).toBe(true);
+    expect(solver.finished).toBe(true);
+    expect(solver.winner).toBe('enemies');
+    expect(() => solver.pass()).toThrow(/已结束/);
+    const snapshot = JSON.parse(JSON.stringify(solver.snapshot())) as CombatSnapshot;
+    const restored = new CombatSolver(c, fixedRng);
+    restored.restore(snapshot);
+    expect(restored.snapshot()).toEqual(snapshot);
+  });
+
+  it('A003 survive_turns 守方仅损失部分单位仍可存活到期胜利', () => {
+    const c: CombatConfig = {
+      ...config, winCondition: 'survive_turns', maxTurns: 1, elementChain: {}, damage: undefined,
+      units: config.units.map(unit => unit.id === 'sword' ? { ...unit, hp: 1, def: 0 } : { ...unit, range: 99 }),
+    };
+    const solver = new CombatSolver(c, fixedRng);
+    solver.start({ allies: ['sword', 'archer'], enemies: ['wolf'] });
+    solver.pass();
+    solver.act('enemies_0', 'allies_0');
+    expect(solver.units.filter(unit => unit.team === 'allies' && unit.alive)).toHaveLength(1);
+    expect(solver.finished).toBe(true);
+    expect(solver.winner).toBe('allies');
+    const restored = new CombatSolver(c, fixedRng);
+    restored.restore(solver.snapshot());
+    expect(restored.snapshot()).toEqual(solver.snapshot());
+  });
+
+  it('A003 survive_turns 敌方全灭仍按原规则等待到期，空闲快照可恢复', () => {
+    const c: CombatConfig = { ...config, winCondition: 'survive_turns', maxTurns: 1 };
+    const solver = new CombatSolver(c, fixedRng);
+    const restored = new CombatSolver(c, fixedRng);
+    restored.restore(solver.snapshot());
+    solver.start({ allies: ['sword'], enemies: ['goblin'] });
+    solver.act('allies_0', 'enemies_0');
+    expect(solver.finished).toBe(false);
+    expect(solver.winner).toBeNull();
+    restored.restore(solver.snapshot());
+    solver.pass();
+    expect(solver.finished).toBe(true);
+    expect(solver.winner).toBe('allies');
+    restored.restore(solver.snapshot());
+    expect(restored.snapshot()).toEqual(solver.snapshot());
+  });
+
+  it.each(['unfinished', 'defender-wins', 'draw'] as const)('A003 survive_turns 拒绝守方全灭的矛盾 %s 快照，不改当前战斗', (kind) => {
+    const c: CombatConfig = { ...config, winCondition: 'survive_turns', maxTurns: 2 };
+    const solver = new CombatSolver(c, fixedRng);
+    solver.start({ allies: ['sword'], enemies: ['wolf'] });
+    const before = solver.snapshot();
+    const bad = structuredClone(before);
+    bad.units[0]!.hp = 0;
+    bad.units[0]!.alive = false;
+    bad.finished = kind !== 'unfinished';
+    bad.winner = kind === 'defender-wins' ? 'allies' : null;
+    if (kind === 'defender-wins') bad.turn = 3;
+    expect(() => solver.restore(bad)).toThrow(/结束状态/);
+    expect(solver.snapshot()).toEqual(before);
+  });
+
+  it.each([undefined, 'power_shot', 'normal_shot'])('A004 缺省与显式默认公式均消费技能倍率 (%s)', (skillId) => {
+    const c: CombatConfig = {
+      ...config, elementChain: {}, damage: undefined,
+      units: config.units.map(unit => ({ ...unit, hp: 100, skills: [...(unit.skills ?? []), 'normal_shot'] })),
+      skills: [...config.skills, { id: 'normal_shot', name: '普通射击', power: 1, hit: 1, cooldown: 0 }],
+    };
+    const implicit = new CombatSolver(c, fixedRng);
+    const explicit = new CombatSolver({ ...c, damage: { base: 'atk - def', critChance: 0, critMultiplier: 1.5 } }, fixedRng);
+    for (const solver of [implicit, explicit]) solver.start({ allies: ['archer'], enemies: ['wolf'] });
+    const implicitAction = implicit.act('allies_0', 'enemies_0', skillId);
+    const explicitAction = explicit.act('allies_0', 'enemies_0', skillId);
+    expect(implicitAction).toEqual(explicitAction);
+    expect(implicitAction.rawDamage).toBe(skillId === 'power_shot' ? 7 : 3);
+    expect(implicitAction.finalDamage).toBe(skillId === 'power_shot' ? 7 : 3);
+    expect(implicitAction.crit).toBe(false);
+  });
+
+  it('A004 缺省公式保留最低伤害和无暴击，显式公式保留暴击倍率', () => {
+    const c: CombatConfig = { ...config, elementChain: {}, damage: undefined };
+    for (const damage of [undefined, { base: 'atk - def', critChance: 0, critMultiplier: 1.5 }]) {
+      const solver = new CombatSolver({ ...c, damage }, () => 0);
+      solver.start({ allies: ['archer'], enemies: ['wolf'] });
+      solver.units.find(unit => unit.uid === 'enemies_0')!.def = 99;
+      const action = solver.act('allies_0', 'enemies_0', 'power_shot');
+      expect(action.finalDamage).toBe(1);
+      expect(action.crit).toBe(false);
+    }
+    const critical = new CombatSolver({ ...c, damage: { base: 'atk - def', critChance: 1, critMultiplier: 2 } }, () => 0);
+    critical.start({ allies: ['archer'], enemies: ['wolf'] });
+    const action = critical.act('allies_0', 'enemies_0', 'power_shot');
+    expect(action.rawDamage).toBe(7);
+    expect(action.finalDamage).toBe(14);
+    expect(action.crit).toBe(true);
+  });
+
   it('M5-B flag：宿主 declareVictory 手动判胜', () => {
     const c: CombatConfig = { ...config, winCondition: 'flag', elementChain: {} };
     const s = new CombatSolver(c, fixedRng);
