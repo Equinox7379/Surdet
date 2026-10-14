@@ -109,8 +109,9 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
 
   constructor(options: SystemPanelLayerOptions) {
     this.#root = options.uiLayer;
-    this.#w = options.width;
-    this.#h = options.height;
+    const uiScale = Math.min(1, options.width / 1280, options.height / 720);
+    this.#w = options.width / uiScale;
+    this.#h = options.height / uiScale;
     this.#assets = options.assets;
     this.#lifecycle = options.lifecycle ?? new RenderLifecycle();
     this.#ownsLifecycle = options.lifecycle === undefined;
@@ -122,6 +123,7 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
     this.#baseLayer = new Container();
     for (const layer of [this.#battleLayer, this.#mapLayer, this.#shopLayer, this.#baseLayer]) {
       layer.visible = false;
+      layer.scale.set(uiScale);
       markPlayerModal(layer, {});
     }
     this.#root.addChild(this.#battleLayer, this.#mapLayer, this.#shopLayer, this.#baseLayer);
@@ -238,8 +240,9 @@ export class SystemPanelLayer implements SystemPanelProjectionPort {
         if (targetable) {
           row.cursor = 'pointer';
           this.#listen('battle', row, 'pointerdown', () => {
-            this.#battleHandlers?.onAttack(u.uid, this.#battleSelectedSkill);
+            const skill = this.#battleSelectedSkill;
             this.#battleSelectedSkill = null;
+            this.#battleHandlers?.onAttack(u.uid, skill);
           });
         }
         layer.addChild(row);

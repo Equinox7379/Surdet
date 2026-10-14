@@ -10,6 +10,9 @@ import { RenderLifecycle } from '../../src/lifecycle/render-lifecycle.js';
 import { RenderAssetRegistry } from '../../src/services/render-asset-registry.js';
 import { SystemPanelLayer } from '../../src/layers/system-panel/system-panel-layer.js';
 import type { BasePanelView, MapView } from '../../src/ui-views.js';
+import { CombatSolver, EventBus, Interpreter, SceneRegistry, VariableStore, type CombatConfig, type CoreEventMap, type SystemEventPayload } from '@surdet/core';
+import type { HostSystemContext } from '@surdet/host';
+import { createSystemAdapters } from '../../../../examples/shared/player/system-adapters.js';
 
 const pointerEvent = {} as FederatedPointerEvent;
 
@@ -38,14 +41,14 @@ interface SystemRuntime {
   readonly assets: RenderAssetRegistry;
 }
 
-function makeRuntime(): SystemRuntime {
+function makeRuntime(width = 1280, height = 720): SystemRuntime {
   const root = new Container();
   const lifecycle = new RenderLifecycle();
   const assets = new RenderAssetRegistry({ lifecycle });
   const layer = new SystemPanelLayer({
     uiLayer: root,
-    width: 1280,
-    height: 720,
+    width,
+    height,
     assets,
     lifecycle,
   });
@@ -182,6 +185,52 @@ function makeController(): RendererControllerPort {
 }
 
 describe('SystemPanelLayer direct contract', () => {
+  it.each([[320, 240], [640, 360], [720, 1280]])('A010 keeps system panel hit areas within a %ix%i stage', (width, height) => {
+    const runtime = makeRuntime(width, height);
+    const all = (node: Container): Container[] => node.visible ? [node, ...node.children.flatMap(all)] : [];
+    const within = () => {
+      const targets = all(runtime.root).filter(node => node.accessible && node.hitArea instanceof Rectangle);
+      expect(targets.length).toBeGreaterThan(0);
+      for (const target of targets) {
+        const area = target.hitArea as Rectangle;
+        const from = target.toGlobal({ x: area.x, y: area.y });
+        const to = target.toGlobal({ x: area.x + area.width, y: area.y + area.height });
+        expect(from.x).toBeGreaterThanOrEqual(0); expect(from.y).toBeGreaterThanOrEqual(0);
+        expect(to.x).toBeLessThanOrEqual(width + .01); expect(to.y).toBeLessThanOrEqual(height + .01);
+      }
+    };
+    try {
+      runtime.layer.showBattle(battleView(), { onAttack: vi.fn(), onPass: vi.fn() }); within(); runtime.layer.hideBattle();
+      runtime.layer.showMap(mapView(), vi.fn(), vi.fn()); within(); runtime.layer.hideMap();
+      runtime.layer.showBaseCommands(baseView(), vi.fn(), vi.fn()); within();
+    } finally { disposeRuntime(runtime); }
+  });
+  it('A009 keeps skill highlight and dispatched attack consistent after the real solver rejects a target', () => {
+    const runtime = makeRuntime();
+    const config: CombatConfig = { teams: ['allies', 'enemies'], elementChain: {}, winCondition: 'all_down', maxTurns: 50,
+      units: [{ id: 'hero', name: '守方', hp: 100, atk: 5, def: 0, range: 1, move: 0, kind: 'human', skills: ['fire'] },
+        { id: 'enemy', name: '敌人', hp: 100, atk: 5, def: 0, range: 1, move: 0, kind: 'human' }],
+      skills: [{ id: 'fire', name: '火球', power: 2, cooldown: 1, hit: 1 }], damage: { base: 'atk - def', critChance: 0, critMultiplier: 1.5 } };
+    const store = new VariableStore(), registry = new SceneRegistry();
+    const combat = new CombatSolver(config, () => .5);
+    const timers: Array<() => void> = [];
+    const adapter = createSystemAdapters({ store, registry, interpreter: new Interpreter(store, new EventBus<CoreEventMap>(), registry), renderer: runtime.layer,
+      combat, combatConfig: config, combatSetup: { allies: ['hero'], enemies: ['enemy', 'enemy', 'enemy'] }, timer: callback => { timers.push(callback); } }).find(value => value.id === 'battle')!;
+    const all = (node: Container): Container[] => [node, ...node.children.flatMap(all)];
+    const click = (label: string, index = 0) => all(runtime.root).filter(node => node.accessibleTitle === label)[index]!.emit('pointerdown', pointerEvent);
+    try {
+      adapter.open({} as SystemEventPayload, { resume: vi.fn() } as unknown as HostSystemContext);
+      const plainFill = findText(runtime.root, '火球').style.fill;
+      click('火球');
+      expect(findText(runtime.root, '火球').style.fill).not.toEqual(plainFill);
+      click('攻击 敌人', 2);
+      expect(all(runtime.root).some(node => node instanceof PText && node.text.includes('超出射程'))).toBe(true);
+      expect(findText(runtime.root, '火球').style.fill).toEqual(plainFill);
+      click('攻击 敌人');
+      expect(combat.units.find(unit => unit.uid === 'enemies_0')!.hp).toBe(95);
+      expect(timers.length).toBeGreaterThan(0);
+    } finally { disposeRuntime(runtime); }
+  });
   it('projects battle units, skills, targets, movement, pass, hide, and reset callbacks', () => {
     const runtime = makeRuntime();
     const onAttack = vi.fn();
