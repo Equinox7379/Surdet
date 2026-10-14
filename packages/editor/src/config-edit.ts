@@ -202,7 +202,7 @@ export function rowsToAchievements(rows: AchievementRow[]): { json: Record<strin
 const INTERP_RE = /\{([A-Za-z_][\w.]*)\}/g;
 
 /** 收集剧本编译产物中引用的变量：变量名 → 引用它的场景 ID 集合。
- *  覆盖：@set/@mod 目标、@inc/@dec/@toggle/@flag/@unflag/@add_item 等状态指令、
+ *  覆盖：@set/@mod 目标、@random/@inc/@dec/@toggle/@flag/@unflag/@add_item 等状态指令、
  *  @if/choice 条件表达式、@switch 变量、台词 {变量} 插值 */
 export function collectReferencedVars(scenes: Map<string, CompiledScene>): Map<string, Set<string>> {
   const refs = new Map<string, Set<string>>();
@@ -218,7 +218,7 @@ export function collectReferencedVars(scenes: Map<string, CompiledScene>): Map<s
       /* 表达式非法由校验报，此处跳过 */
     }
   };
-  const STATE_INSTRS = new Set(['inc', 'dec', 'toggle', 'flag', 'unflag', 'add_item', 'remove_item']);
+  const STATE_INSTRS = new Set(['inc', 'dec', 'toggle', 'flag', 'unflag', 'add_item', 'remove_item', 'random']);
   for (const [sceneId, scene] of scenes) {
     for (const instr of scene.instructions) {
       switch (instr.op) {
@@ -435,14 +435,30 @@ export function rowsToCalendar(raw: unknown, rows: CalendarRows): { json: Record
   const json: Record<string, unknown> = { ...obj };
   for (const k of CALENDAR_SCALAR_KEYS) {
     const t = (rows.scalars[k] ?? '').trim();
-    if (t === '') { delete json[k]; continue; }
+    if (t === '') {
+      delete json[k];
+      if (k === 'maxAp' || k === 'maxTurns') errors.push(`日历 ${k} 必须填写数字`);
+      continue;
+    }
     if (k === 'dateTemplate' || k === 'onTurnStartEventId' || k === 'onTurnEndEventId') { json[k] = t; continue; }
     const n = Number(t);
     if (!Number.isFinite(n)) errors.push(`日历 ${k} 不是数字：${t}`);
+    else if (k === 'maxAp' && n < 0) errors.push(`日历 maxAp 必须是非负数字：${t}`);
+    else if (k === 'maxTurns' && (!Number.isSafeInteger(n) || n < -1)) errors.push(`日历 maxTurns 必须是大于等于 -1 的安全整数：${t}`);
+    else if (k === 'weeksPerMonth' && (!Number.isSafeInteger(n) || n < 1)) errors.push(`日历 weeksPerMonth 必须是正安全整数：${t}`);
     else json[k] = n;
   }
-  json.nodes = applyRowsToList(normalizeCalendarSourceNodes(raw, errors), rows.nodes, CALENDAR_NODE_KEYS, ['requires'], errors, '地图节点', 'id', ['x', 'y', 'apCost']);
-  json.baseCommands = applyRowsToList(origList(raw, 'baseCommands'), rows.baseCommands, CALENDAR_CMD_KEYS, ['effects'], errors, '据点指令', 'id', ['apCost', 'perTurn']);
+  const nodes = applyRowsToList(normalizeCalendarSourceNodes(raw, errors), rows.nodes, CALENDAR_NODE_KEYS, ['requires'], errors, '地图节点', 'id', ['x', 'y', 'apCost']);
+  const baseCommands = applyRowsToList(origList(raw, 'baseCommands'), rows.baseCommands, CALENDAR_CMD_KEYS, ['effects'], errors, '据点指令', 'id', ['apCost', 'perTurn']);
+  json.nodes = nodes;
+  json.baseCommands = baseCommands;
+  for (const [i, node] of nodes.entries()) {
+    if (typeof node.apCost !== 'number' || !Number.isFinite(node.apCost) || node.apCost < 0) errors.push(`地图节点 第 ${i + 1} 行 apCost 必须是非负有限数字`);
+  }
+  for (const [i, command] of baseCommands.entries()) {
+    if (typeof command.apCost !== 'number' || !Number.isFinite(command.apCost) || command.apCost < 0) errors.push(`据点指令 第 ${i + 1} 行 apCost 必须是非负有限数字`);
+    if (command.perTurn !== undefined && (typeof command.perTurn !== 'number' || !Number.isSafeInteger(command.perTurn) || command.perTurn < 0)) errors.push(`据点指令 第 ${i + 1} 行 perTurn 必须是非负安全整数`);
+  }
   checkUniqueId(rows.nodes, 'id', '地图节点', errors);
   checkUniqueId(rows.baseCommands, 'id', '据点指令', errors);
   for (const r of rows.nodes) checkExprCell(r.visibleWhen, `地图节点 ${String(r.id ?? '')} 的 visibleWhen`, errors);

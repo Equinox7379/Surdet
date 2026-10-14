@@ -38,7 +38,10 @@ export function createStageCalibrationPanel(onSaved: () => void, isEditable: () 
   try { loadConfig(); } catch (error) { status.textContent = String(error); }
   const controls = node('div'); controls.className = 'config-scalars';
   const button = (label: string, action: () => void | Promise<void>) => {
-    const b = node('button', label); b.type = 'button'; b.onclick = () => { if (canUse() && !busy) void Promise.resolve(action()).catch(error => { status.textContent = error instanceof Error ? error.message : String(error); }); }; return b;
+    const b = node('button', label); b.type = 'button'; b.onclick = async () => {
+      if (!canUse() || busy) return;
+      try { await action(); } catch (error) { status.textContent = error instanceof Error ? error.message : String(error); }
+    }; return b;
   };
   form.oninput = () => { if (canUse() && !busy) editStageConfigDraft(form.value, true); };
   const setDraft = (value: Record<string, unknown> | null) => {
