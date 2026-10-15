@@ -21,6 +21,8 @@ export interface SceneHmrOptions {
   label: string;
   sceneFiles: Record<string, () => Promise<unknown>>;
   resolveSceneUrl: (path: string) => string;
+  /** 成功换稿后作废同次试玩中的旧回退点。 */
+  clearRollback: () => void;
 }
 
 export function installSceneHotReload(options: SceneHmrOptions): void {
@@ -78,6 +80,8 @@ export function installSceneHotReload(options: SceneHmrOptions): void {
             continue;
           }
           options.registry.replace(replacement, sceneId);
+          options.clearRollback();
+          console.info(`[${options.label}] 场景 ${sceneId} 已热重载，旧回退历史已清除`);
           if (active && position?.sceneId === sceneId) {
             options.interpreter.loadSnapshot({
               ...active,
