@@ -37,6 +37,13 @@ describe('Editor selected historical file draft', () => {
     (await prepareHistoryFileDraft(diff('content/timelines/foo.JSON', null, text)))();
     expect(state.timelines[0]).toMatchObject({ id: 'foo.JSON', file: 'foo.JSON', text });
   });
+  it('portable historical scene restore refuses a decomposed new filename before mutation', async () => {
+    await expect(prepareHistoryFileDraft(diff('content/scenario/e\u0301.gal', null, '@scene e\u0301\n@end'))).rejects.toThrow(/规范化/);
+    expect(state.scenes.size).toBe(0);
+    state.scenes.set('chapter/e\u0301', { id: 'e\u0301', file: 'chapter/e\u0301.gal', text: 'kept', eol: '\n', dirty: false, handle: null });
+    await expect(prepareHistoryFileDraft(diff('content/scenario/é.gal', null, '@scene é\n@end'))).rejects.toThrow(/同名/);
+    expect([...state.scenes.keys()]).toEqual(['chapter/e\u0301']);
+  });
   it('restores an existing nested scene exactly, preserves other scenes and records ordinary undo', async () => {
     const current = '@scene start\r\n旁白：现在\r\n@end\r\n', old = '@scene start\r\n旁白：以前\r\n@end\r\n';
     state.scenes.set('chapter/start', { id: 'start', file: 'chapter/start.gal', text: current, eol: '\r\n', dirty: false, handle: null });

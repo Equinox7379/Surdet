@@ -27,9 +27,10 @@ export async function prepareHistoryFileDraft(file: ContentHistoryFileDiff): Pro
     const entry = state.scenes.get(key);
     if ((entry?.text ?? null) !== file.currentText) throw new Error('剧本已经修改，请先处理当前草稿');
     if (!entry) {
+      if (relative !== relative.normalize('NFC')) throw new Error('历史场景文件名需要规范化，请新建场景后恢复正文');
       if (isReservedSceneFileId(id)) throw new Error('场景标识不能使用 Windows 设备名');
-      if ([...state.scenes.values(), ...state.pendingSceneDeletes].some(item => item.id.toLowerCase() === id.toLowerCase()
-        || item.file.replace(/^content\/scenario\//, '').toLowerCase() === relative.toLowerCase())) throw new Error('当前已有同名场景或待删除文件，请先处理冲突');
+      if ([...state.scenes.values(), ...state.pendingSceneDeletes].some(item => item.id.normalize('NFC').toLowerCase() === id.toLowerCase()
+        || item.file.replace(/^content\/scenario\//, '').normalize('NFC').toLowerCase() === relative.toLowerCase())) throw new Error('当前已有同名场景或待删除文件，请先处理冲突');
     }
     return () => {
       if (entry) setSceneText(key, text);
