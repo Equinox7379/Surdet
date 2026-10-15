@@ -782,6 +782,28 @@ describe('Interpreter 存档', () => {
     expect(order).toEqual(['validate', 'restore', 'saveMigrated']);
   });
 
+  it('saveMigrated observes the restored variables and location before normal playback resumes', () => {
+    const { bus, store, registry, interp } = makeInterp();
+    registry.register(compileScene('第一句\n第二句', 's.gal', 's1'));
+    interp.start('s1');
+    const snap = interp.saveSnapshot()!;
+    snap.meta = { ...snap.meta, schemaVersion: 1 };
+    const expectedVariables = snap.variables;
+    interp.advance();
+    store.set('trust', 9);
+    let observed: unknown;
+    let reentryError: unknown;
+    bus.on('saveMigrated', () => {
+      const position = interp.saveSnapshot()?.position;
+      observed = { variables: store.snapshot(), sceneId: position?.sceneId, pc: position?.pc };
+      try { interp.advance(); } catch (error) { reentryError = error; }
+    });
+    interp.loadSnapshot(snap);
+    expect(observed).toEqual({ variables: expectedVariables, sceneId: snap.position!.sceneId, pc: snap.position!.pc });
+    expect(String(reentryError)).toContain('读档');
+    expect(interp.status).toBe('awaiting-advance');
+  });
+
   it('自定义随机恢复失败时不提前发 saveMigrated', () => {
     const { bus, registry, interp } = makeInterp();
     const order: string[] = [];
