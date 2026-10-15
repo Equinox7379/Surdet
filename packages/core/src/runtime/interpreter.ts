@@ -203,6 +203,7 @@ export class Interpreter {
   #callStack: SavePosition[] = [];
   /** 主循环执行中标志：事件回调内重入推进时置 resume 而非递归 */
   #stepping = false;
+  #loadingSnapshot = false;
   #resumeRequested = false;
   /** 宿主暂停标志（交互式战斗等宿主接管期间冻结指令流） */
   #hostPaused = false;
@@ -340,6 +341,7 @@ export class Interpreter {
 
   /** Opt-in host debugging; never changes project variables or the save schema. */
   configureDebugger(options: { enabled: boolean; pauseOnStart?: boolean; breakpoints?: readonly RuntimeBreakpoint[] }): void {
+    this.#assertNotLoading();
     if (this.#stepping) throw new RuntimeError('调试控制不能在执行回调内重入');
     const breakpoints = options.breakpoints ?? [];
     for (const point of breakpoints) {
@@ -410,6 +412,7 @@ export class Interpreter {
   }
 
   #requireDebugger(): void {
+    this.#assertNotLoading();
     if (!this.#debugEnabled || this.#stepping) throw new RuntimeError('调试未启用或执行回调尚未结束');
   }
 
@@ -422,6 +425,7 @@ export class Interpreter {
   /** 启动场景（label 可选，默认场景开头）。
    *  支持在事件回调内调用（如 sceneEnd 回调里"结局→返回标题"）：延迟到当前迭代结束后重启。 */
   start(sceneId: string, label?: string): void {
+    this.#assertNotLoading();
     const { scene, pc } = label !== undefined
       ? this.#registry.resolve(`${sceneId}.${label}`)
       : this.#registry.resolve(sceneId);
@@ -516,12 +520,25 @@ export class Interpreter {
    *  beforeCommit 在全部预检通过后、状态写入前调用，供宿主清理旧表现；预检失败不调用。
    *  注意：须在 UI 线程（非事件回调）调用，事件回调内调用会撞 #stepping 重入守卫。 */
   loadSnapshot(snap: SaveSnapshot, beforeCommit?: () => void): void {
+    this.#assertNotLoading();
     if (this.#stepping) {
       throw new RuntimeError(
         '解释器重入：当前正处在事件回调执行中，不应直接触发 #step/' +
           'loadSnapshot 等操作，请改在 UI 线程（非事件回调）调用',
       );
     }
+    this.#loadingSnapshot = true;
+    let resume = false;
+    try { resume = this.#restoreSnapshot(snap, beforeCommit); }
+    finally { this.#loadingSnapshot = false; }
+    if (resume) this.#step();
+  }
+
+  #assertNotLoading(): void {
+    if (this.#loadingSnapshot) throw new RuntimeError('读档尚未完成，回调不能重入推进剧情或再次读档');
+  }
+
+  #restoreSnapshot(snap: SaveSnapshot, beforeCommit?: () => void): boolean {
     // 阶段 A：迁移前只做兼容校验，允许旧 schema 缺少后续版本新增字段。
     try {
       assertValidSnapshot(snap, 'legacy');
@@ -616,7 +633,7 @@ export class Interpreter {
       this.#scene = null;
       this.#pc = 0;
       this.#status = 'idle';
-      return;
+      return false;
     }
     // 场景哈希校验：存档后剧本被编辑 → pc 定位可能指向错误指令。
     // 仍按原定位加载（下方 clamp 到合法范围），但发 saveMismatch 供宿主提示玩家。
@@ -635,15 +652,16 @@ export class Interpreter {
     this.#pc = Math.min(Math.max(0, snap.position.pc), max);
     if (presentationRestore?.awaitingTimer) {
       this.#status = 'awaiting-timer';
-      return;
+      return false;
     }
     this.#status = 'running';
-    this.#step(); // 重新挂起到当前指令（text/choice/wait 会重新发出事件）
+    return true; // 事务结束后再重新驱动 text/choice/wait，允许正常事件内推进。
   }
 
   /** 文本暂停后推进到下一行。事件回调内调用时走迭代续跑，断开递归。
    *  wait 挂起时调用等价于跳过剩余等待（galgame 惯例：点击可跳过等待）。 */
   advance(): void {
+    this.#assertNotLoading();
     // 宿主暂停中（如战斗进行中）：点击无效但不报错——画布点击是全局的，不应打扰宿主 UI
     if (this.#status === 'paused' || this.#debugPaused) return;
     if (this.#status === 'awaiting-timer') {
@@ -661,6 +679,7 @@ export class Interpreter {
 
   /** @wait 计时结束（宿主定时器回调调用）：恢复指令流执行。事件回调内调用走迭代续跑。 */
   finishWait(): void {
+    this.#assertNotLoading();
     this.#requireStatus('awaiting-timer', 'finishWait()');
     this.#status = 'running';
     if (this.#stepping) {
@@ -674,6 +693,7 @@ export class Interpreter {
    *  通常在 system 事件回调内调用（解释器正在 stepping）：当前指令结束后主循环即停，
    *  状态置 paused；其间 advance()/choose() 等推进一律无效（见各自的状态守卫）。 */
   pauseHost(): void {
+    if (this.#loadingSnapshot) return;
     this.#hostPaused = true;
     if (!this.#stepping && this.#status === 'running') {
       this.#status = 'paused';
@@ -682,6 +702,7 @@ export class Interpreter {
 
   /** 宿主恢复：继续执行被暂停的指令流（战斗结束等时机调用） */
   resumeHost(): void {
+    if (this.#loadingSnapshot) return;
     if (!this.#hostPaused) return;
     this.#hostPaused = false;
     if (this.#status !== 'paused') return;
@@ -695,6 +716,7 @@ export class Interpreter {
 
   /** 选择肢：index 为 choice 事件载荷中的原始选项索引。事件回调内调用走迭代续跑。 */
   choose(index: number): void {
+    this.#assertNotLoading();
     if (this.#debugPaused) return;
     this.#requireStatus('awaiting-choice', 'choose()');
     const choice = this.#pendingChoice!;
@@ -1115,6 +1137,7 @@ export class Interpreter {
   /** 宿主跳转：宿主暂停期间（如地图节点事件）直接切换目标场景并恢复指令流。
    *  语义等同 start（清空调用栈），但可在 pauseHost 状态下调用。 */
   hostJump(sceneId: string, label?: string): void {
+    this.#assertNotLoading();
     const { scene, pc } = label !== undefined
       ? this.#registry.resolve(`${sceneId}.${label}`)
       : this.#registry.resolve(sceneId);
