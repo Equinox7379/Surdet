@@ -394,6 +394,12 @@ describe('SceneCompiler', () => {
     expect(scene.diagnostics.some((d) => d.code === 'W001')).toBe(true);
   });
 
+  it('reports unsupported @ruby while retaining explicit inline ruby and declared custom commands', () => {
+    expect(compile('@ruby test').diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'W001' })]));
+    expect(compile('凛：<ruby=せかい>世界</ruby>和《书名》').diagnostics).toEqual([]);
+    expect(compileScene('@ruby test', 'custom.gal', 'custom', ['ruby']).diagnostics).toEqual([]);
+  });
+
   it('原规划指令（particle/mov/tint/clear）全部已实现，不再产生 W002', () => {
     const scene = compile('@particle snow\n@mov lynn left\n@tint off\n@clear good_end');
     expect(scene.diagnostics).toHaveLength(0);
