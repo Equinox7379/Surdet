@@ -51,6 +51,7 @@ export async function prepareHistoryFileDraft(file: ContentHistoryFileDiff): Pro
     if (!entry) {
       sceneDirectorySegments(relative.includes('/') ? relative.slice(0, relative.lastIndexOf('/')) : '');
       timelinePathFor(id);
+      if (isReservedSceneFileId(id.split('.')[0]!)) throw new Error('时间轴 ID 不能使用 Windows 设备名');
       const reserved = [...state.timelines, ...state.pendingTimelineDeletes, ...[...state.pendingTimelineRestores.values()].map(restore => restore.entry)];
       if (reserved.some(item => item.id.toLowerCase() === id.toLowerCase()
         || item.file.replace(/^content\/timelines\//, '').toLowerCase() === relative.toLowerCase())) throw new Error('当前已有同名时间轴或待恢复文件，请先处理同名冲突');

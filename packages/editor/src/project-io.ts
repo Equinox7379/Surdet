@@ -4,6 +4,7 @@
  * UI 联动（renderAll/runValidate/renderSidebar）经钩子注入，保持模块无环。
  */
 import { state, setStatus } from './state.js';
+import { isReservedSceneFileId } from '@surdet/core';
 import { parseConfigSource, assertConfigSourcesReadable, type ConfigSourceName } from './config-source.js';
 import { beginEditorWorkspaceWrite, finishEditorWorkspaceWrite, publishEditorWorkspaceFile,
   editorWorkspaceStatus } from './editor-workspace.js';
@@ -17,7 +18,7 @@ import {
   type TimelineAutosaveDocument,
   type TimelineAutosaveIdentity,
 } from './timeline-autosave-identity.js';
-import { parseProjectConfigDocument, renameConfigReferences, applyConfigReferenceRename, sceneReferenceConfigPaths, serializeProjectConfigDocument, stableStringify, timelinePathFor } from '@surdet/authoring';
+import { parseProjectConfigDocument, renameConfigReferences, applyConfigReferenceRename, sceneDirectorySegments, sceneReferenceConfigPaths, serializeProjectConfigDocument, stableStringify, timelinePathFor } from '@surdet/authoring';
 import { kindOfDir, parsePortraitFileName } from './assets.js';
 import type { AssetKind, DirAsset } from './assets.js';
 
@@ -975,6 +976,14 @@ function classifyTimelineAutosaveEntry(
       ),
     };
   }
+  // Replacing an existing identity above is not a new filename. Only creation
+  // must satisfy the Windows directory/device-name rules.
+  try {
+    sceneDirectorySegments(recovered.file.includes('/') ? recovered.file.slice(0, recovered.file.lastIndexOf('/')) : '');
+    if (isReservedSceneFileId(recovered.id.split('.')[0]!)) throw new Error('时间轴 ID 不能使用 Windows 设备名');
+  } catch {
+    return { kind: 'conflict', conflict: timelineRestoreConflict(recovered, recoveredIdentity, 'recovered-id-mismatch', index) };
+  }
   return { kind: 'insert' };
 }
 
@@ -1074,6 +1083,7 @@ export function repairTimelineAutosaveConflict(
   let projectPath: string;
   try {
     projectPath = timelinePathFor(newId);
+    if (isReservedSceneFileId(newId.split('.')[0]!)) throw new Error('时间轴 ID 不能使用 Windows 设备名');
   } catch (error) {
     return repairFailure(error instanceof Error ? error.message : String(error));
   }

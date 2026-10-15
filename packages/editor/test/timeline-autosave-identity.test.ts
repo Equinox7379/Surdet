@@ -26,10 +26,10 @@ function entry(overrides: Partial<TimelineAutosaveDocument> = {}): TimelineAutos
 }
 
 describe('inspectTimelineAutosaveIdentity（时间轴三元身份投影）', () => {
-  it.each(['CON', 'LPT1', 'COM¹'])('portable timeline autosave rejects unusable parent directory %s', directory => {
+  it.each(['CON', 'LPT1', 'COM¹'])('timeline identity remains readable in an existing directory %s; creation is checked by the restore caller', directory => {
     const source = entry({ file: `${directory}/intro.json` });
-    expect(inspectTimelineAutosaveIdentity(source).canonical).toBe(false);
-    expect(normalizeTimelineAutosaveDocument(source, 'intro', source.file).ok).toBe(false);
+    expect(inspectTimelineAutosaveIdentity(source).canonical).toBe(true);
+    expect(normalizeTimelineAutosaveDocument(source, 'intro', source.file)).toMatchObject({ ok: true, entry: { file: source.file, id: source.id } });
   });
   it.each(['JSON', 'JsOn'])('保留已支持的 .%s 文件及其 Authoring canonical ID', (extension) => {
     // Authoring currently retains a non-lowercase extension in the ID.
