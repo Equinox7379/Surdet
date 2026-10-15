@@ -26,6 +26,7 @@ export interface RollbackRuntime {
   clearForBoundary(): void;
   canRollback(): boolean;
   perform(): boolean;
+  /** Capture synchronously at Core's textSettled boundary, before another line can run. */
   captureText(): void;
   isRestoring(): boolean;
 }
@@ -46,10 +47,8 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
   const rollback = new RollbackBuffer<SaveSnapshot>();
   let lastRollbackKey: string | null = null;
   let restoring = false;
-  let captureGeneration = 0;
 
   const clear = (): void => {
-    captureGeneration += 1;
     rollback.clear();
     lastRollbackKey = null;
   };
@@ -132,27 +131,23 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
 
   const captureText = (): void => {
     if (restoring) return;
-    const generation = captureGeneration;
-    Promise.resolve().then(() => {
-      try {
-        if (restoring || generation !== captureGeneration) return;
-        if (!options.renderer.canCaptureRollbackCheckpoint()) return;
-        const snapshot = options.interpreter.saveSnapshot();
-        if (!snapshot || options.interpreter.status === 'running'
-          || options.interpreter.status === 'paused' || options.interpreter.status === 'awaiting-timer') return;
-        const key = checkpointKey(snapshot);
-        if (key === null || key === lastRollbackKey) return;
-        rollback.push({
-          snapshot,
-          presentation: options.renderer.snapshotPresentation(),
-          audio: options.audio.snapshotPlayback?.() ?? { bgm: null, ambience: null },
-        });
-        lastRollbackKey = key;
-        options.onRefresh();
-      } catch (error) {
-        reportWarning(`[${options.label}] 回退检查点创建失败：`, error);
-      }
-    });
+    try {
+      if (!options.renderer.canCaptureRollbackCheckpoint()) return;
+      const snapshot = options.interpreter.saveSnapshot();
+      if (!snapshot || options.interpreter.status === 'running'
+        || options.interpreter.status === 'paused' || options.interpreter.status === 'awaiting-timer') return;
+      const key = checkpointKey(snapshot);
+      if (key === null || key === lastRollbackKey) return;
+      rollback.push({
+        snapshot,
+        presentation: options.renderer.snapshotPresentation(),
+        audio: options.audio.snapshotPlayback?.() ?? { bgm: null, ambience: null },
+      });
+      lastRollbackKey = key;
+      options.onRefresh();
+    } catch (error) {
+      reportWarning(`[${options.label}] 回退检查点创建失败：`, error);
+    }
   };
 
   return { clear, clearForBoundary, canRollback, perform, captureText, isRestoring: () => restoring };

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { compileScene, EventBus, Interpreter, SceneRegistry, VariableStore, type CoreEventMap, type SaveSnapshot } from '@surdet/core';
-import type { AudioHandle } from '@surdet/renderer';
+import { PresentationController, createPresentationPorts, type AudioHandle } from '@surdet/renderer';
 import type { RollbackRendererPort } from '../src/rollback-runtime.js';
 import { createRollbackRuntime } from '../src/rollback-runtime.js';
 
@@ -79,6 +79,45 @@ function createRollbackFixture(options: {
 }
 
 describe('rollback runtime — consecutive player rollback', () => {
+  it('retains every line of one skip frame after all text observers have settled', async () => {
+    const store = new VariableStore([{ name: 'score', type: 'number', initial: 0 }, { name: 'observer', type: 'string', initial: '' }]);
+    const scenes = new SceneRegistry();
+    scenes.register(compileScene('第一句\n@inc score\n第二句\n@inc score\n第三句\n@inc score\n第四句\n第五句', 'skip.gal', 'skip'));
+    const bus = new EventBus<CoreEventMap>(), interpreter = new Interpreter(store, bus, scenes);
+    const noop = () => {};
+    const ports = createPresentationPorts({ setBackground: noop, setPortrait: noop, removePortrait: noop,
+      setFade: noop, showText: noop, showChoices: noop, hideChoices: noop, setChoiceHighlight: noop,
+      hideBacklog: noop, setNvlMode: noop, clearNvlText: noop, hideInterface: noop,
+      showBanner: noop, clearPresentation: noop });
+    const controller = new PresentationController(ports.commands, ports.queries, undefined, { ...ports, onAdvance: () => interpreter.advance() });
+    controller.connect(bus);
+    const runtime = createRollbackRuntime({ interpreter,
+      renderer: { get status() { return controller.status; }, backlogOpen: false,
+        canCaptureRollbackCheckpoint: () => controller.canCaptureRollbackCheckpoint(),
+        resetSession: () => controller.resetSession(), snapshotPresentation: () => ({}), restorePresentation: noop },
+      audio: {} as AudioHandle, isBlocked: () => false, label: 'real-skip', onRefresh: noop });
+    let latest = '';
+    const restoredObservers: unknown[] = [];
+    bus.on('textSettled', () => runtime.captureText());
+    // A later-registered text subscriber must be included in the same checkpoint.
+    bus.on('text', event => { latest = event.value;
+      if (runtime.isRestoring()) restoredObservers.push(store.get('observer'));
+      store.set('observer', latest);
+      if (latest === '第四句' && controller.skipAll) controller.toggleSkipAll(); });
+    try {
+      interpreter.start('skip'); await Promise.resolve();
+      controller.toggleSkipAll(); controller.update(16);
+      expect(latest).toBe('第四句');
+      await Promise.resolve();
+      for (const [text, score] of [['第三句', 2], ['第二句', 1], ['第一句', 0]] as const) {
+        expect(runtime.perform()).toBe(true);
+        expect(latest).toBe(text); expect(store.getNumber('score')).toBe(score);
+        expect(store.get('observer')).toBe(text);
+      }
+      expect(restoredObservers).toEqual(['第三句', '第二句', '第一句']);
+    } finally { controller.dispose(); }
+  });
+
   function realFixture() {
     const store = new VariableStore([{ name: 'score', type: 'number', initial: 0 }]);
     const scenes = new SceneRegistry();
@@ -172,7 +211,7 @@ describe('rollback runtime — consecutive player rollback', () => {
     } finally { warning.mockRestore(); }
   });
 
-  it('handles Core snapshot failure in a checkpoint microtask and allows a later capture', async () => {
+  it('handles Core snapshot failure at a checkpoint and allows a later capture', async () => {
     const fixture = realFixture();
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {

@@ -139,6 +139,8 @@ export interface RuntimeTraceEventPayload {
 /** 解释器事件映射：EventBus 各事件的载荷类型，订阅/发射端自动推导，宿主接线无需断言 */
 export interface CoreEventMap extends EventMap {
   text: TextEventPayload;
+  /** 同步 text 订阅者完成且仍停在该句后发出，供宿主捕获本句回退点。 */
+  textSettled: Record<string, never>;
   choice: ChoiceEventPayload;
   /** Display-only refresh: no read marks, history insertion, variable changes or execution. */
   textRefresh: { text?: TextEventPayload; choices?: ChoiceEventPayload };
@@ -843,6 +845,9 @@ export class Interpreter {
               ...this.#textPayload(instr),
               wasRead,
             });
+            if (this.#status === 'awaiting-advance' && !this.#hostPaused && !this.#jumpOverride && !this.#resumeRequested) {
+              this.#bus.emit('textSettled', {});
+            }
             if (this.#jumpOverride) {
               // hostJump 在 text 事件回调内被调用（审计修复 M2）：场景/pc 已重置，不挂起，从新定位续跑
               this.#jumpOverride = false;
