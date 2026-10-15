@@ -1137,6 +1137,7 @@ async function main(): Promise<void> {
       label: 'zero',
       sceneFiles,
       resolveSceneUrl: (path) => new URL(path, import.meta.url).href,
+      clearRollback: () => { clearRollback(); refreshCommandRail(); },
     });
   }
 

@@ -1431,6 +1431,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       label: 'starter',
       sceneFiles,
       resolveSceneUrl: project.resolveSceneUrl,
+      clearRollback: () => { clearRollback(); refreshCommandRail(); },
     });
   }
 
