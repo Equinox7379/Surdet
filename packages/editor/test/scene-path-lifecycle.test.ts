@@ -247,6 +247,21 @@ describe('场景路径安全生命周期', () => {
     expect(histories.has('old')).toBe(false);
   });
 
+  it.each(['CON', 'nul', 'LPT1'])('portable scene creation and rename reject device name %s before editing', async id => {
+    state.scenes.set('old', scene('old', 'old.gal', null));
+    const before = [...state.scenes].map(([key, entry]) => [key, { ...entry }]);
+    await expect(createScene(id)).rejects.toThrow(/Windows 设备名/);
+    await expect(renameSceneAtKey('old', id)).rejects.toThrow(/Windows 设备名/);
+    expect([...state.scenes]).toEqual(before);
+    expect(state.pendingSceneDeletes).toEqual([]);
+  });
+
+  it('portable scene creation refuses a case alias of a nested scene', async () => {
+    state.scenes.set('chapter/old', scene('old', 'chapter/old.gal', null));
+    await expect(createScene('OLD')).rejects.toThrow(/已存在/);
+    expect([...state.scenes.keys()]).toEqual(['chapter/old']);
+  });
+
   it('嵌套场景重命名保持目录，改写引用并登记旧文件而不立即删除', async () => {
     state.scenes.set('chapter/old', scene('old', 'chapter/old.gal', diskHandle));
     state.scenes.set('reader', {

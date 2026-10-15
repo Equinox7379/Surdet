@@ -1,5 +1,5 @@
 import { patchStageSourceLine } from './stage-source-patch.js';
-import { collectConfigSceneRoots, compileScene, isValidSceneId, Lexer, Parser, findChoiceArrow, splitOutsideQuotes, parseInlineInstructions, resolveProjectFontPaths, resolveProjectTitleLogo, type AstBlock } from '@surdet/core';
+import { collectConfigSceneRoots, compileScene, isValidSceneId, isReservedSceneFileId, Lexer, Parser, findChoiceArrow, splitOutsideQuotes, parseInlineInstructions, resolveProjectFontPaths, resolveProjectTitleLogo, type AstBlock } from '@surdet/core';
 import {
   insertLinesAfter,
   parseSceneDocument,
@@ -65,7 +65,7 @@ function sceneCompositionConfig(files: Record<string, string>) {
 
 function scenePath(sceneId: string): string {
   if (!isValidSceneId(sceneId)) throw new AuthoringOperationError('PATH_OUTSIDE_PROJECT', `场景 ID 非法：${sceneId}`);
-  if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(sceneId)) {
+  if (isReservedSceneFileId(sceneId)) {
     throw new AuthoringOperationError('INVALID_REQUEST', '场景 ID 不能使用 Windows 设备名');
   }
   return normalizeProjectPath(`content/scenario/${sceneId}.gal`);

@@ -923,7 +923,7 @@ function classifyTimelineAutosaveEntry(
     };
   }
 
-  const sameFile = state.timelines.find((entry) => entry.file === recovered.file);
+  const sameFile = state.timelines.find((entry) => entry.file.toLowerCase() === recovered.file.toLowerCase());
   if (sameFile && sameFile.id !== recovered.id) {
     return {
       kind: 'conflict',
@@ -932,7 +932,7 @@ function classifyTimelineAutosaveEntry(
       ),
     };
   }
-  const sameId = state.timelines.find((entry) => entry.id === recovered.id);
+  const sameId = state.timelines.find((entry) => entry.id.toLowerCase() === recovered.id.toLowerCase());
   if (sameId && sameId.file !== recovered.file) {
     return {
       kind: 'conflict',
@@ -965,7 +965,7 @@ function classifyTimelineAutosaveEntry(
   }
 
   const definitionCollision = state.timelines.find((entry) => (
-    inspectTimelineAutosaveIdentity(entry).definitionId === recoveredIdentity.definitionId
+    inspectTimelineAutosaveIdentity(entry).definitionId?.toLowerCase() === recoveredIdentity.definitionId?.toLowerCase()
   ));
   if (definitionCollision) {
     return {
