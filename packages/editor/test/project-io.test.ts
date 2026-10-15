@@ -1375,6 +1375,27 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expectSaveAsNewRejected(conflict, 'bad/id');
   });
 
+  it.each(['CON', 'nul.scene', 'COM9', 'Lpt1.ext'])('Save As New rejects Windows device ID %s without changing drafts', newId => {
+    const { conflict } = definitionCollisionConflict();
+    expectSaveAsNewRejected(conflict, newId);
+  });
+
+  it.each(['current', 'deleted', 'restorable'] as const)('Save As New rejects case aliases of %s timelines without changing drafts', kind => {
+    const { conflict } = definitionCollisionConflict();
+    const existing = timeline('taken.JSON', fileHandle(null, log, 'taken.JSON'), false, 'taken.JSON', 'taken.JSON');
+    if (kind === 'current') state.timelines.push(existing);
+    else if (kind === 'deleted') state.pendingTimelineDeletes.push({ id: existing.id, file: existing.file });
+    else state.pendingTimelineRestores.set(existing.id, { entry: existing, index: 0, previousTimelineId: null, previousCue: null });
+    expectSaveAsNewRejected(conflict, 'TAKEN.JSON');
+    expectSaveAsNewRejected(conflict, 'taken');
+  });
+
+  it('Save As New keeps supported uppercase-extension IDs', () => {
+    const { conflict } = definitionCollisionConflict();
+    expect(repairTimelineAutosaveConflict(conflict, { kind: 'save-as-new', newId: 'new.JSON' })).toEqual({ ok: true, timelineId: 'new.JSON' });
+    expect(state.timelines.at(-1)).toMatchObject({ id: 'new.JSON', file: 'new.JSON.json' });
+  });
+
   it('Save As New 拒绝当前 ID collision 且零 mutation', () => {
     const { conflict } = definitionCollisionConflict();
     state.timelines.push(timeline('taken', fileHandle(null, log, 'taken.json'), false));
