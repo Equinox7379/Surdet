@@ -17,6 +17,7 @@ function createTestRuntime() {
   };
   const interpreter = {
     status: 'awaiting-advance',
+    get textExecutionId() { return pc; },
     saveSnapshot: vi.fn(() => structuredClone({ ...snapshot, position: { ...snapshot.position!, pc } })),
     loadSnapshot: vi.fn(),
   } as unknown as Interpreter;
@@ -46,8 +47,8 @@ function createTestRuntime() {
   };
 }
 
-describe('rollback runtime generation', () => {
-  it('invalidates a queued text checkpoint when a system boundary clears rollback', async () => {
+describe('rollback runtime boundaries', () => {
+  it('does not recreate a cleared text checkpoint after a system boundary', async () => {
     const fixture = createTestRuntime();
     fixture.runtime.captureText();
     fixture.runtime.clear();
@@ -57,7 +58,7 @@ describe('rollback runtime generation', () => {
     expect(fixture.runtime.canRollback()).toBe(false);
   });
 
-  it('captures new checkpoints after the boundary generation advances', async () => {
+  it('captures new checkpoints after a system boundary', async () => {
     const fixture = createTestRuntime();
     fixture.runtime.captureText();
     fixture.runtime.clear();

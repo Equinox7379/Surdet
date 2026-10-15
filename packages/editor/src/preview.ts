@@ -807,6 +807,7 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
     if (controller.backlogOpen) {
       if (e.key === 'l' || e.key === 'L') {
         e.preventDefault();
+        if (e.repeat) return;
         controller.dispatchInput({ type: 'backlog.toggle' });
       } else if (e.key === 'PageUp' || e.key === 'PageDown') {
         e.preventDefault();
@@ -823,7 +824,7 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
       }
       if (/^[1-9]$/.test(e.key)) {
         e.preventDefault();
-        controller.dispatchInput({ type: 'choice.select', index: Number(e.key) - 1 });
+        controller.dispatchInput({ type: 'choice.select-visible', position: Number(e.key) - 1 });
         return;
       }
     }
@@ -859,6 +860,7 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
       return;
     }
 
+    if (e.repeat && ['a', 's', 'x', 'l', 'h'].includes(e.key.toLowerCase())) return;
     switch (e.key.toLowerCase()) {
       case 'a': controller.dispatchInput({ type: 'auto.toggle' }); break;
       case 's':

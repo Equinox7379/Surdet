@@ -446,7 +446,7 @@ async function main(): Promise<void> {
   const performRollback = (): boolean => rollbackRuntime.perform();
 
   bus.on('stateReset', () => { uiSession.setVideoActive(false); });
-  bus.on('text', () => rollbackRuntime.captureText());
+  bus.on('textSettled', () => rollbackRuntime.captureText());
 
   // E2E/调试探针：只读暴露最小运行状态（不参与任何生产逻辑；自我迭代②，Playwright 自动通关用）
   (window as unknown as Record<string, unknown>).__surdetDebug = {
@@ -1666,9 +1666,12 @@ async function main(): Promise<void> {
     }
     const action = actionForKeyboardEvent(e, settings.settings.keyPreset);
     if (action) {
-      e.preventDefault(); routeGameAction(action); return;
+      e.preventDefault();
+      if (e.repeat && ['auto', 'skip', 'backlog', 'hideUi'].includes(action)) return;
+      routeGameAction(action); return;
     }
     if (e.code === 'KeyX' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (e.repeat) return;
       e.preventDefault(); renderer.dispatchInput({ type: 'skip.toggle', scope: 'all' }); refreshCommandRail(); return;
     }
     if (e.key === 'Escape') {
@@ -1694,7 +1697,7 @@ async function main(): Promise<void> {
       return;
     }
     if (renderer.status === 'choice' && /^[1-9]$/.test(e.key)) {
-      renderer.dispatchInput({ type: 'choice.select', index: Number(e.key) - 1 });
+      renderer.dispatchInput({ type: 'choice.select-visible', position: Number(e.key) - 1 });
       return;
     }
     if (isOverlay('backlog') && (e.key === 'PageUp' || e.key === 'PageDown')) {
@@ -1702,6 +1705,7 @@ async function main(): Promise<void> {
       renderer.dispatchInput({ type: 'backlog.scroll', delta: e.key === 'PageUp' ? -240 : 240 });
       return;
     }
+    if (e.repeat && ['a', 's', 'x', 'l', 'h'].includes(e.key.toLowerCase())) return;
     if (e.key === 'F5') {
       e.preventDefault();
       quickSave();
