@@ -1,8 +1,8 @@
 /**
  * M7 支柱5：手柄边沿检测纯逻辑测试。
  */
-import { describe, expect, it } from 'vitest';
-import { diffGamepad, rendererInputForGamepadAction, snapshotOf } from '../src/gamepad.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { diffGamepad, GamepadPoller, rendererInputForGamepadAction, snapshotOf } from '../src/gamepad.js';
 import type { GamepadSnapshot } from '../src/gamepad.js';
 
 function snap(buttons: number[], axes: number[] = [0, 0]): GamepadSnapshot {
@@ -72,5 +72,136 @@ describe('diffGamepad（边沿检测）', () => {
     expect(rendererInputForGamepadAction('shoulderLeft', false)).toBeNull();
     expect(rendererInputForGamepadAction('shoulderLeft', true)).toEqual({ type: 'skip.toggle', scope: 'read' });
     expect(rendererInputForGamepadAction('menu')).toBeNull();
+  });
+});
+
+describe('GamepadPoller RAF lifecycle', () => {
+  let pending: Map<number, FrameRequestCallback>;
+  let current: GamepadSnapshot;
+  let connected: boolean;
+  let nextId: number;
+  const pollers: GamepadPoller[] = [];
+
+  beforeEach(() => {
+    pending = new Map();
+    current = snap([]);
+    connected = true;
+    nextId = 0;
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const id = ++nextId;
+      pending.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => { pending.delete(id); });
+    vi.stubGlobal('navigator', {
+      getGamepads: () => [null, ...(connected ? [{
+        connected: true,
+        buttons: current.buttons.map((pressed) => ({ pressed })),
+        axes: current.axes,
+      }] : [])],
+    });
+  });
+
+  afterEach(() => {
+    for (const poller of pollers.splice(0)) poller.stop();
+    vi.unstubAllGlobals();
+  });
+
+  function runNextFrame(): void {
+    expect(pending.size).toBe(1);
+    const [id, callback] = pending.entries().next().value!;
+    pending.delete(id);
+    callback(16);
+  }
+
+  it('keeps the callback error visible, records the edge, and receives later input', () => {
+    const failure = new Error('input callback failed');
+    const onActions = vi.fn().mockImplementationOnce(() => { throw failure; });
+    const poller = new GamepadPoller(onActions);
+    pollers.push(poller);
+    poller.start();
+    poller.start();
+    current = snap([0]);
+
+    expect(runNextFrame).toThrow(failure);
+    expect(onActions).toHaveBeenCalledExactlyOnceWith(['advance']);
+    expect(pending.size).toBe(1);
+    runNextFrame();
+    expect(onActions).toHaveBeenCalledTimes(1);
+    current = snap([]);
+    runNextFrame();
+    current = snap([0]);
+    runNextFrame();
+    expect(onActions).toHaveBeenCalledTimes(2);
+    expect(onActions).toHaveBeenLastCalledWith(['advance']);
+    current = snap([1]);
+    runNextFrame();
+    expect(onActions).toHaveBeenLastCalledWith(['cancel']);
+    expect(pending.size).toBe(1);
+  });
+
+  it.each([false, true])('does not renew after stop inside a callback (throws=%s)', (throws) => {
+    const failure = new Error('stopped callback failed');
+    const onActions = vi.fn(() => {
+      poller.stop();
+      if (throws) throw failure;
+    });
+    const poller = new GamepadPoller(onActions);
+    pollers.push(poller);
+    poller.start();
+    current = snap([0]);
+    if (throws) expect(runNextFrame).toThrow(failure);
+    else runNextFrame();
+    expect(onActions).toHaveBeenCalledTimes(1);
+    expect(pending.size).toBe(0);
+
+    onActions.mockImplementation(() => undefined);
+    poller.start();
+    runNextFrame();
+    expect(onActions).toHaveBeenCalledTimes(2);
+    expect(onActions).toHaveBeenLastCalledWith(['advance']);
+    poller.stop();
+    poller.stop();
+    expect(pending.size).toBe(0);
+  });
+
+  it('does not create two RAF chains when a callback stops and restarts polling', () => {
+    const onActions = vi.fn(() => { poller.stop(); poller.start(); });
+    const poller = new GamepadPoller(onActions);
+    pollers.push(poller);
+    poller.start();
+    current = snap([0]);
+    runNextFrame();
+    expect(pending.size).toBe(1);
+    onActions.mockImplementation(() => undefined);
+    current = snap([]);
+    runNextFrame();
+    current = snap([1]);
+    runNextFrame();
+    expect(onActions).toHaveBeenLastCalledWith(['cancel']);
+    poller.stop();
+    expect(pending.size).toBe(0);
+  });
+
+  it('waits for a connected pad and resets its edge when the pad disconnects', () => {
+    const onActions = vi.fn();
+    const poller = new GamepadPoller(onActions);
+    pollers.push(poller);
+    connected = false;
+    poller.start();
+    runNextFrame();
+    expect(onActions).not.toHaveBeenCalled();
+    connected = true;
+    current = snap([12]);
+    runNextFrame();
+    runNextFrame();
+    expect(onActions).toHaveBeenCalledExactlyOnceWith(['up']);
+    connected = false;
+    runNextFrame();
+    connected = true;
+    runNextFrame();
+    expect(onActions).toHaveBeenCalledTimes(2);
+    poller.stop();
+    expect(pending.size).toBe(0);
   });
 });
