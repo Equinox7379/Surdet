@@ -112,14 +112,42 @@ function isJsonObject(v: unknown): v is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-/** JSON 安全递归检查：null/string/有限 number/boolean/数组/普通对象 */
+const MAX_JSON_DEPTH = 256;
+
+/** Bound traversal before recursive serialization; repeated references are not cycles. */
+function boundedJsonTree(value: unknown, checkTypes: boolean): boolean {
+  const visiting = new Set<object>();
+  const heights = new WeakMap<object, number>();
+  const visit = (v: unknown, depth: number): number => {
+    if (depth > MAX_JSON_DEPTH) return -1;
+    if (v === null || typeof v !== 'object') {
+      return !checkTypes && v === undefined || v === null || typeof v === 'string' || typeof v === 'boolean'
+        || typeof v === 'number' && Number.isFinite(v) ? 0 : -1;
+    }
+    if (!Array.isArray(v) && !isJsonObject(v)) return -1;
+    if (visiting.has(v)) return -1;
+    const known = heights.get(v);
+    if (known !== undefined) return depth + known <= MAX_JSON_DEPTH ? known : -1;
+    visiting.add(v);
+    let height = 0;
+    // Iteration visits sparse array holes as undefined; Array.every silently skips them.
+    for (const child of Array.isArray(v) ? v : Object.values(v)) {
+      // JSON turns array holes/undefined into null, unlike optional object metadata.
+      if (Array.isArray(v) && child === undefined) return -1;
+      const nested = visit(child, depth + 1);
+      if (nested < 0) return -1;
+      height = Math.max(height, nested + 1);
+    }
+    visiting.delete(v);
+    heights.set(v, height);
+    return height;
+  };
+  return visit(value, 0) >= 0;
+}
+
+/** JSON安全值：有限原始值、数组、普通对象，无环且最多256层。 */
 export function isJsonSafeValue(v: unknown): boolean {
-  if (v === null) return true;
-  if (typeof v === 'string' || typeof v === 'boolean') return true;
-  if (typeof v === 'number') return Number.isFinite(v);
-  if (Array.isArray(v)) return v.every(isJsonSafeValue);
-  if (isJsonObject(v)) return Object.values(v).every(isJsonSafeValue);
-  return false;
+  return boundedJsonTree(v, true);
 }
 
 export type SnapshotValidationPhase = 'legacy' | 'current';
@@ -134,6 +162,9 @@ export function assertValidSnapshot(
     throw new Error(`存档结构非法：${msg}`);
   };
   if (typeof snap !== 'object' || snap === null) fail('顶层必须是对象');
+  // Include unknown extension fields, which are serialized too; optional undefined
+  // metadata keeps its existing omission semantics and is checked separately below.
+  if (!boundedJsonTree(snap, false)) fail('含非 JSON 安全值、数组空位、循环引用或嵌套超过256层');
   const s = snap as Record<string, unknown>;
   const strict = phase === 'current';
   if (!isJsonObject(s.meta)) fail('meta 必须是普通对象');
@@ -398,7 +429,7 @@ export class SaveManager {
         ...snapshot.meta,
         id: slot,
         updatedAt: now,
-        createdAt: snapshot.meta.createdAt || now,
+        createdAt: snapshot.meta.createdAt ?? now,
         schemaVersion: SAVE_SCHEMA_VERSION,
       },
     };
