@@ -47,6 +47,46 @@ function choiceCollector(bus: EventBus<CoreEventMap>): ChoiceEventPayload[] {
 }
 
 describe('Interpreter', () => {
+  it('identifies each text execution across loop visits and load replay without counting display refresh', () => {
+    const { store, bus, registry, interp } = makeRuntime(baseDecls);
+    registry.register(compileScene('循环句\n@jump loop', 'loop.gal', 'loop'));
+    const executions: number[] = [];
+    bus.on('textSettled', () => executions.push(interp.textExecutionId));
+    interp.start('loop');
+    const first = interp.textExecutionId;
+    interp.refreshDisplayedText();
+    expect(interp.textExecutionId).toBe(first);
+    interp.advance();
+    expect(interp.textExecutionId).toBeGreaterThan(first);
+    const saved = interp.saveSnapshot()!;
+    const second = interp.textExecutionId;
+    interp.loadSnapshot(saved);
+    expect(interp.textExecutionId).toBeGreaterThan(second);
+    expect(executions).toHaveLength(3);
+    expect(new Set(executions).size).toBe(3);
+    expect(store.snapshot()).toEqual(saved.variables);
+  });
+
+  it.each(['stay', 'advance', 'jump', 'pause'] as const)('emits textSettled only for a stable text boundary (%s)', mode => {
+    const { store, bus, registry, interp } = makeRuntime(baseDecls);
+    registry.register(compileScene('第一句\n第二句', 'source.gal', 'source'));
+    registry.register(compileScene('目标句', 'target.gal', 'target'));
+    const captures: { scene: string | undefined; pc: number | undefined; trust: unknown }[] = [];
+    bus.on('textSettled', () => {
+      const snapshot = interp.saveSnapshot()!;
+      captures.push({ scene: snapshot.position?.sceneId, pc: snapshot.position?.pc, trust: snapshot.variables.trust });
+    });
+    bus.on('text', event => {
+      store.set('trust', event.value === '第一句' ? 1 : 2);
+      if (event.value !== '第一句') return;
+      if (mode === 'advance') interp.advance();
+      if (mode === 'jump') interp.hostJump('target');
+      if (mode === 'pause') interp.pauseHost();
+    });
+    interp.start('source');
+    expect(captures).toEqual(mode === 'pause' ? [] : [{ scene: mode === 'jump' ? 'target' : 'source', pc: mode === 'advance' ? 1 : 0, trust: mode === 'stay' ? 1 : 2 }]);
+  });
+
   it.each([
     ['未闭合的 "文案', '@bg "night"'],
     ["未闭合的 '文案", "@bg 'night'"],

@@ -173,6 +173,25 @@ describe('SettingsStore', () => {
     expect(audio.se).toEqual([0.4]);
     expect(audio.voice).toEqual([0.6]);
   });
+
+  it('steps within legal settings bounds independently of slider bounds', async () => {
+    const current = { ...DEFAULT_SETTINGS, textSpeedCps: 200, autoBaseDelayMs: 8000 };
+    expect(stepSetting(current, 'textSpeedCps', 1).textSpeedCps).toBe(200);
+    expect(stepSetting(current, 'textSpeedCps', -1).textSpeedCps).toBe(194);
+    expect(stepSetting(current, 'autoBaseDelayMs', -1).autoBaseDelayMs).toBe(7800);
+    expect(stepSetting(current, 'autoBaseDelayMs', 1).autoBaseDelayMs).toBe(8200);
+    expect(stepSetting({ ...current, autoBaseDelayMs: 60000 }, 'autoBaseDelayMs', 1).autoBaseDelayMs).toBe(60000);
+    expect(stepSetting({ ...current, autoBaseDelayMs: 100 }, 'autoBaseDelayMs', -1).autoBaseDelayMs).toBe(0);
+    expect(stepSetting({ ...current, textSpeedCps: 198 }, 'textSpeedCps', 1).textSpeedCps).toBe(200);
+    const store = new SettingsStore(new MemorySettingsStorage());
+    await store.update(current);
+    await store.update(confirmed => stepSetting(confirmed, 'autoBaseDelayMs', -1));
+    expect(store.settings.autoBaseDelayMs).toBe(7800);
+    expect(store.settings.dialogueOpacity).toBeNull();
+    expect(current).toMatchObject({ textSpeedCps: 200, autoBaseDelayMs: 8000, dialogueOpacity: null });
+    expect(SETTING_STEPS.find(def => def.key === 'textSpeedCps')!.max).toBe(199);
+    expect(SETTING_STEPS.find(def => def.key === 'autoBaseDelayMs')!.max).toBe(6000);
+  });
 });
 
 describe('settings completion ownership', () => {
