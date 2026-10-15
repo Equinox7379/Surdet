@@ -1,4 +1,4 @@
-import { sceneDirectorySegments, timelineIdFromPath, timelinePathFor } from '@surdet/authoring';
+import { timelineIdFromPath, timelinePathFor } from '@surdet/authoring';
 
 export interface TimelineAutosaveDocument {
   id: string;
@@ -43,8 +43,6 @@ function normalizedRelativeFile(file: string): string | null {
   if (normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized) || !normalized.toLowerCase().endsWith('.json')) return null;
   const parts = normalized.split('/');
   if (parts.some((part) => part.length === 0 || part === '.' || part === '..')) return null;
-  try { sceneDirectorySegments(parts.slice(0, -1).join('/')); }
-  catch { return null; }
   return normalized;
 }
 

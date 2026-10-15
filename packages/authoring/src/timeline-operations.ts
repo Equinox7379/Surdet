@@ -1,4 +1,4 @@
-import { validateTimeline, resolveTimelineDefinition, TIMELINE_TRANSITION_ACTIONS, type TimelineDefinition } from '@surdet/core';
+import { isReservedSceneFileId, validateTimeline, resolveTimelineDefinition, TIMELINE_TRANSITION_ACTIONS, type TimelineDefinition } from '@surdet/core';
 import { parseProjectConfigDocument } from './config-document.js';
 import {
   AuthoringOperationError,
@@ -34,9 +34,6 @@ const WAVE2_ACTIONS: Record<string, ReadonlySet<string>> = {
 export function timelinePathFor(timelineId: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(timelineId)) {
     throw new AuthoringOperationError('VALIDATION_FAILED', `时间轴 ID 非法：${timelineId}`);
-  }
-  if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(timelineId)) {
-    throw new AuthoringOperationError('INVALID_REQUEST', '时间轴 ID 不能使用 Windows 设备名');
   }
   return normalizeProjectPath(`content/timelines/${timelineId}.json`);
 }
@@ -142,6 +139,9 @@ export async function applyTimelineCreate(
   hasher: TextHasher,
 ): Promise<TimelineCreateResult> {
   const path = timelinePathFor(input.timelineId);
+  if (isReservedSceneFileId(input.timelineId.split('.')[0]!)) {
+    throw new AuthoringOperationError('INVALID_REQUEST', '时间轴 ID 不能使用 Windows 设备名');
+  }
   return runOperation<TimelineCreateResult>(change, input, async (record) => {
     if (resolveUniqueTimelinePath(record.workingFiles, input.timelineId) !== undefined
       || Object.keys(record.workingFiles).some(file => file.startsWith('content/timelines/') && file.toLowerCase().endsWith('.json')

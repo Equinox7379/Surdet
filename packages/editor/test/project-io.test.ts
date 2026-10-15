@@ -1415,6 +1415,18 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expectTimelineMutationUnchanged(before);
   });
 
+  it.each([['CON', 'CON.json'], ['intro', 'CON/intro.json']])('portable timeline recovery updates an existing %s identity but cannot create its path', (id, file) => {
+    const entry = timeline(id, fileHandle(null, log, file), false, file);
+    state.timelines.push(entry);
+    const recovered = { id, file, text: timelineText(id, '\n', 2400), eol: '\n' as const };
+    const result = restoreTimelineAutosaveEntries([recovered]);
+    expect(result).toEqual({ restored: 1, conflicts: [] });
+    expect(entry.text).toBe(recovered.text);
+    state.timelines = [];
+    const missing = restoreTimelineAutosaveEntries([recovered]);
+    expect(missing.restored).toBe(0); expect(missing.conflicts).toHaveLength(1);
+    expect(state.timelines).toEqual([]);
+  });
   it('portable pending timeline restoration refuses an existing case alias', () => {
     const old = timeline('old', fileHandle(null, log, 'old.json'), false);
     state.pendingTimelineRestores.set(old.id, { entry: old, index: 0, previousTimelineId: null, previousCue: null });
