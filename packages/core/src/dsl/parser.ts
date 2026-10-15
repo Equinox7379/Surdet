@@ -337,16 +337,16 @@ export class Parser {
 
     let when: string | null = null;
     let labelText = labelPart.trim();
-    const whenMatch = /\[if:(.+?)\]\s*$/.exec(labelText);
+    const whenMatch = findChoiceCondition(labelText, textTok);
     if (whenMatch) {
-      when = whenMatch[1]!.trim();
+      when = whenMatch.value.trim();
       if (when.length === 0) {
         throw new DslError('S005', '选项条件为空（[if:expr]）', textTok);
       }
       try {
         validateExpr(when);
       } catch {
-        const start = textTok.col + whenMatch.index + 4 + whenMatch[1]!.length - whenMatch[1]!.trimStart().length;
+        const start = textTok.col + whenMatch.index + 4 + whenMatch.value.length - whenMatch.value.trimStart().length;
         throw new DslError('S002', `选项条件表达式语法错误：'${when}'`, { ...textTok,
           range: { start: { line: textTok.line, col: start }, end: { line: textTok.line, col: start + when.length } } });
       }
@@ -407,6 +407,10 @@ export class Parser {
         }
         continue;
       }
+      if (jump !== null) {
+        throw new DslError('S010', `choice 跳转后不能再写 @${ins.name}`, ins.pos,
+          '把需要执行的动作放在 @goto/@jump 之前，或移到目标标签下；引擎不会重排动作。');
+      }
       rest.push(ins);
     }
 
@@ -426,6 +430,46 @@ export class Parser {
     };
   }
 
+}
+
+/** 成对文案引号保护箭头和条件样式文字；未闭合引号仍按原有正文规则处理。 */
+function choiceQuoteEnd(raw: string, start: number, limit: number): number {
+  const char = raw[start];
+  const closing = char === '“' ? '”' : char === '‘' ? '’' : char;
+  if (!['"', "'", '“', '‘'].includes(char ?? '') || (char === "'" && /[a-z0-9]/i.test(raw[start - 1] ?? ''))) return start;
+  for (let end = start + 1; end < limit; end++) {
+    if (raw[end] === '\\') { end++; continue; }
+    if (raw[end] === closing) return end;
+  }
+  return start;
+}
+
+function findChoiceCondition(label: string, source: SourcePos): { index: number; value: string } | null {
+  // A prose quote cannot borrow a closing quote from the trailing expression.
+  const conditionStart = [...label.matchAll(/\[if:/g)].find(match => choiceConditionEnd(label, match.index) === label.length - 1)?.index ?? label.length;
+  for (let i = 0; i < label.length; i++) {
+    const quotedEnd = choiceQuoteEnd(label, i, conditionStart);
+    if (quotedEnd !== i) { i = quotedEnd; continue; }
+    if (!label.startsWith('[if:', i)) continue;
+    const end = choiceConditionEnd(label, i);
+    if (end === -1) throw new DslError('S005', '选项条件缺少结束方括号 ]', source);
+    if (label.slice(end + 1).trim() !== '') throw new DslError('S005', '选项条件必须放在文案末尾、动作箭头之前', source);
+    return { index: i, value: label.slice(i + 4, end) };
+  }
+  return null;
+}
+
+function choiceConditionEnd(label: string, start: number): number {
+  let quote: string | null = null;
+  for (let end = start + 4; end < label.length; end++) {
+    const char = label[end];
+    if (quote) {
+      if (char === '\\') end++;
+      else if (char === quote) quote = null;
+    } else if (char === '"' || char === "'") quote = char;
+    else if (char === ']') return end;
+  }
+  return -1;
 }
 
 /** Locate the exact choice action boundary for parser and source-preserving authoring. */
@@ -457,10 +501,17 @@ export function findChoiceArrow(raw: string, source: SourcePos = pos('<choice>',
     found = { index, end };
   }
   // Preserve no-action prose and the existing diagnostics for malformed actions.
-  return found ?? ordinary;
+  const result = found ?? ordinary;
+  if (result === null) {
+    const malformed = scanChoiceArrow(raw, raw.length, false);
+    if (malformed && raw.slice(malformed.end).trimStart().startsWith('@')) {
+      throw new DslError('S009', 'choice 动作箭头 -> 两侧必须留空白', source, '形如：选项文字 [if:条件] -> @goto target');
+    }
+  }
+  return result;
 }
 
-function scanChoiceArrow(raw: string, labelEnd: number): { index: number; end: number } | null {
+function scanChoiceArrow(raw: string, labelEnd: number, requireSpaces = true): { index: number; end: number } | null {
   let quote: '"' | "'" | null = null;
   let escaped = false;
   let inCondition = false;
@@ -489,18 +540,13 @@ function scanChoiceArrow(raw: string, labelEnd: number): { index: number; end: n
     }
     // Labels are prose: paired quotes protect literal arrows, while English
     // apostrophes and an unmatched quote remain ordinary label characters.
-    if ((char === '"' || char === "'") && !(char === "'" && /[a-z0-9]/i.test(raw[i - 1] ?? ''))) {
-      for (let end = i + 1; end < labelEnd; end++) {
-        if (raw[end] === '\\') { end++; continue; }
-        if (raw[end] === char) { i = end; break; }
-      }
-      continue;
-    }
+    const quotedEnd = choiceQuoteEnd(raw, i, labelEnd);
+    if (quotedEnd !== i) { i = quotedEnd; continue; }
     if (char !== '-' || raw[i + 1] !== '>') continue;
     const before = i > 0 ? raw[i - 1]! : '';
     const after = raw[i + 2] ?? '';
-    if (!/\s/.test(before) || (after !== '' && !/\s/.test(after))) continue;
-    return { index: i - 1, end: i + 2 + (after === '' ? 0 : 1) };
+    if (requireSpaces && (!/\s/.test(before) || (after !== '' && !/\s/.test(after)))) continue;
+    return { index: i - (/\s/.test(before) ? 1 : 0), end: i + 2 + (/\s/.test(after) ? 1 : 0) };
   }
   return null;
 }

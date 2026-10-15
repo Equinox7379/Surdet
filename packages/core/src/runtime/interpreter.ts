@@ -1210,7 +1210,8 @@ export class Interpreter {
           throw new RuntimeError('@add_item 目标变量必须是 string[]', instr);
         }
         const arr = current as string[];
-        this.#store.set(vn, arr.includes(item) ? arr : [...arr, item]);
+        const id = dequoteInstrArg(item);
+        this.#store.set(vn, arr.includes(id) ? arr : [...arr, id]);
         return;
       }
       case 'remove_item': {
@@ -1221,7 +1222,8 @@ export class Interpreter {
         if (!Array.isArray(current) || current.some((value) => typeof value !== 'string')) {
           throw new RuntimeError('@remove_item 目标变量必须是 string[]', instr);
         }
-        this.#store.set(vn, (current as string[]).filter((x) => x !== item));
+        const id = dequoteInstrArg(item);
+        this.#store.set(vn, (current as string[]).filter((x) => x !== id));
         return;
       }
       case 'has_item': {
@@ -1233,25 +1235,28 @@ export class Interpreter {
         if (this.#store.getType(vn) !== 'string[]') {
           throw new RuntimeError('@has_item 来源变量必须是 string[]', instr);
         }
-        this.#store.set(resultVar, this.#store.get<string[]>(vn).includes(item));
+        this.#store.set(resultVar, this.#store.get<string[]>(vn).includes(dequoteInstrArg(item)));
         return;
       }
       case 'unlock_cg': {
         requireArg(instr, arg0, '@unlock_cg');
-        const fresh = this.gallery.unlockCg(arg0!);
-        this.#bus.emit('gallery', { type: 'cg', id: arg0!, fresh });
+        const id = dequoteInstrArg(arg0!);
+        const fresh = this.gallery.unlockCg(id);
+        this.#bus.emit('gallery', { type: 'cg', id, fresh });
         return;
       }
       case 'unlock_music': {
         requireArg(instr, arg0, '@unlock_music');
-        const fresh = this.gallery.unlockMusic(arg0!);
-        this.#bus.emit('gallery', { type: 'music', id: arg0!, fresh });
+        const id = dequoteInstrArg(arg0!);
+        const fresh = this.gallery.unlockMusic(id);
+        this.#bus.emit('gallery', { type: 'music', id, fresh });
         return;
       }
       case 'unlock_text': {
         requireArg(instr, arg0, '@unlock_text');
-        const fresh = this.gallery.unlockText(arg0!);
-        this.#bus.emit('gallery', { type: 'text', id: arg0!, fresh });
+        const id = dequoteInstrArg(arg0!);
+        const fresh = this.gallery.unlockText(id);
+        this.#bus.emit('gallery', { type: 'text', id, fresh });
         return;
       }
       case 'unlock_profile':
@@ -1283,7 +1288,7 @@ export class Interpreter {
         if (!Number.isFinite(amount)) {
           throw new RuntimeError(`@exp 经验值非法：'${amountRaw}'`, instr);
         }
-        const result = this.#growth.gainExp(characterId, amount);
+        const result = this.#growth.gainExp(dequoteInstrArg(characterId), amount);
         this.#bus.emit('growth', result);
         return;
       }

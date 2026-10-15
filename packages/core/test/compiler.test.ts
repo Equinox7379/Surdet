@@ -8,6 +8,34 @@ import type { ChoiceInstr, CondJumpInstr, CompiledScene, JumpInstr } from '../sr
 const compile = (src: string, sceneId = 'ch01_01') => compileScene(src, 'ch01_01.gal', sceneId);
 
 describe('Parser', () => {
+  it.each(['@set score = 1', '@mod score 1', '@wait 1', '@video clip', '@timeline intro', '@switch score 1:done', '@loop done', '@goto done', '@jump other', '@call other', '@return', '@end'])('warns when lowering %s would discard a modifier', command => {
+    const scene = compile(`${command} @unused yes\n@label done\n@end`);
+    expect(scene.diagnostics.some(issue => issue.code === 'W003' && issue.message.includes('unused'))).toBe(true);
+  });
+  it('keeps consumed timeline blocking without warning', () => {
+    expect(compile('@timeline intro @blocking\n@end').diagnostics).toEqual([]);
+  });
+  it.each(['@check', '@check score >'])('rejects malformed assertion expression %s at compile time', source => {
+    expect(() => compile(source)).toThrow(/C005/);
+  });
+  it.each([
+    '选择 [if:trust > 1] 后文 -> @goto done',
+    '选择 [if:] -> @goto done',
+    '选择 [if:trust > 1 -> @goto done',
+    '选择 [if:trust > 1]-> @goto done',
+    '选择-> @goto done',
+    '选择 ->@goto done',
+  ])('diagnoses an ignored condition or malformed action boundary: %s', row => {
+    expect(() => compile(`@choice\n  ${row}\n@label done\n@end`)).toThrow(/S005|S009/);
+  });
+  it.each(['选择“同意 -> 继续”', '选择‘同意 -> 继续’', '显示"[if:false]"'])('keeps quoted prose literal: %s', label => {
+    const scene = compile(`@choice\n  ${label} [if:true] -> @goto done\n@label done\n@end`);
+    const option = (scene.instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]!;
+    expect(option.label).toBe(label); expect(option.when).toBe('true');
+  });
+  it('rejects an action after the first choice jump rather than executing it before that jump', () => {
+    expect(() => compile('@choice\n  继续 -> @set trust = 1 @goto done @set trust = 2\n@label done\n@end')).toThrow(/S010/);
+  });
   it.each([
     '选 "同意 -> 继续" 这项', "选 '同意 -> 继续' 这项",
     String.raw`选 "同意 \" -> 继续" 这项`, String.raw`选 '同意 \' -> 继续' 这项`,

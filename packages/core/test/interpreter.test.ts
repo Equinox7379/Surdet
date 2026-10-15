@@ -47,6 +47,22 @@ function choiceCollector(bus: EventBus<CoreEventMap>): ChoiceEventPayload[] {
 }
 
 describe('Interpreter', () => {
+  it('uses decoded item IDs consistently across add, membership and remove', () => {
+    const { store, registry, interp } = makeRuntime([{ name: 'bag', type: 'string[]', initial: [] }, { name: 'owned', type: 'flag', initial: false }]);
+    registry.register(compileScene('@add_item bag "sword"\n@has_item bag sword owned\n第一句\n@remove_item bag sword\n@add_item bag "long sword"\n@has_item bag \'long sword\' owned\n第二句\n@remove_item bag \'long sword\'\n第三句', 'items.gal', 'items'));
+    interp.start('items'); expect(store.get('bag')).toEqual(['sword']); expect(store.get('owned')).toBe(true);
+    interp.advance(); expect(store.get('bag')).toEqual(['long sword']); expect(store.get('owned')).toBe(true);
+    interp.advance(); expect(store.get('bag')).toEqual([]);
+  });
+  it.each(['cg', 'music', 'text'] as const)('decodes quoted %s IDs before collection and gallery events', kind => {
+    const { bus, registry, interp } = makeRuntime();
+    const events: CoreEventMap['gallery'][] = []; bus.on('gallery', event => events.push(event));
+    registry.register(compileScene(`@unlock_${kind} "long id"\n@unlock_${kind} 'long id'\n@end`, 'gallery.gal', 'gallery'));
+    interp.start('gallery');
+    expect(events).toEqual([{ type: kind, id: 'long id', fresh: true }, { type: kind, id: 'long id', fresh: false }]);
+    const snapshot = interp.gallery.snapshot();
+    expect(snapshot[kind === 'cg' ? 'cgs' : kind === 'text' ? 'texts' : 'music']).toEqual(['long id']);
+  });
   it.each([
     ['未闭合的 "文案', '@bg "night"'],
     ["未闭合的 '文案", "@bg 'night'"],
