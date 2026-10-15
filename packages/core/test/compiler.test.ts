@@ -8,6 +8,12 @@ import type { ChoiceInstr, CondJumpInstr, CompiledScene, JumpInstr } from '../sr
 const compile = (src: string, sceneId = 'ch01_01') => compileScene(src, 'ch01_01.gal', sceneId);
 
 describe('Parser', () => {
+  it('keeps mixed quoted condition prose and unmatched prose quotes out of action fallback bounds', () => {
+    const scene = compile('@choice\n  选择 "同意 -> [if:false]" 未闭合 "文案 [if:true] -> @bg "night" @goto done\n@label done\n完成');
+    const choice = scene.instructions.find(instruction => instruction.op === 'choice');
+    expect(choice).toMatchObject({ options: [{ label: '选择 "同意 -> [if:false]" 未闭合 "文案', when: 'true' }] });
+    expect(scene.instructions).toEqual(expect.arrayContaining([expect.objectContaining({ op: 'instr', name: 'bg', args: ['"night"'] })]));
+  });
   it.each([
     '选择 ->@set score = 1 -> @goto done',
     '选择-> @set score = 1 -> @goto done',

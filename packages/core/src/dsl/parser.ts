@@ -494,7 +494,7 @@ export function findChoiceArrow(raw: string, source: SourcePos = pos('<choice>',
     // Pair prose quotes only inside this possible label, not with quotes in
     // its condition or action arguments. Conditions keep their own grammar.
     const label = raw.slice(0, index);
-    const condition = /\[if:(.+?)\]\s*$/.exec(label);
+    const condition = findChoiceCondition(label.trimEnd(), source);
     if (scanChoiceArrow(raw, condition?.index ?? index, source)?.index !== index) continue;
     if (found !== null) {
       throw new DslError('S009', 'choice 文案与行内动作边界有歧义',
