@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { ProjectFile } from '@surdet/authoring';
+import { resolveContentDirectory } from './scenario-loader.js';
 
 /** FNV-1a 32 位文本摘要：CLI 侧 ProjectFile 构造（scene/config/timeline）共用的内容摘要，
  *  与 lint / legacy simulate 的 snapshot revision 输入同源。 */
@@ -14,13 +15,9 @@ export function authoringDigest(text: string): string {
 }
 
 function scanTimelineDir(dir: string, prefix: string, out: ProjectFile[]): void {
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return; // 无 timelines 目录：空集合（complete scope 下由引用检查负责报告缺失）
-  }
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
+    if (entry.isSymbolicLink()) throw new Error(`内容读取不接受链接文件或目录：${path.join(dir, entry.name)}`);
     if (entry.isDirectory()) {
       scanTimelineDir(path.join(dir, entry.name), `${prefix}${entry.name}/`, out);
     } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.json')) {
@@ -36,6 +33,7 @@ function scanTimelineDir(dir: string, prefix: string, out: ProjectFile[]): void 
  *  lint（A3）与 legacy simulate（R4-A）共享本实现，禁止各自复制发现规则。 */
 export function collectTimelineFiles(root: string): ProjectFile[] {
   const out: ProjectFile[] = [];
-  scanTimelineDir(path.join(root, 'content/timelines'), '', out);
+  const dir = resolveContentDirectory(root, 'content/timelines');
+  if (dir !== null) scanTimelineDir(dir, '', out);
   return out;
 }
