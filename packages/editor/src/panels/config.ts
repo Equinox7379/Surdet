@@ -755,6 +755,16 @@ export function prepareConfigSceneRename(from: string, to: string, fallbackEntry
   const rewrite = (snapshot: ConfigSnapshot): ConfigSnapshot => {
     const next = clone(snapshot);
     rewriteHistoryConfigSources(next, rewriteHistoryText);
+    // Base-command scene references live in the hidden row fields; rebase them
+    // alongside visible references in drafts, clean baselines and undo/redo.
+    for (const row of next.calRows?.baseCommands ?? []) {
+      const extra = row[ROW_EXTRA_FIELDS];
+      if (typeof extra !== 'string') continue;
+      const fields = JSON.parse(extra) as Record<string, unknown>;
+      if (fields.eventId !== from) continue;
+      fields.eventId = to;
+      row[ROW_EXTRA_FIELDS] = JSON.stringify(fields);
+    }
     const files: Record<string, string> = { 'game.config.json': next.gameConfigText || '{}' };
     if (next.calRows) files['content/config/calendar.json'] = JSON.stringify(next.calRows);
     if (next.evRows) files['content/config/events.json'] = JSON.stringify(next.evRows);
