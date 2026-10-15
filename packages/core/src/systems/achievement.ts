@@ -96,17 +96,17 @@ export class AchievementSystem {
   /**
    * 批量判定 when 条件，解锁所有新满足的成就。
    * 返回本次新解锁的结果列表（供宿主播放横幅；无新解锁返回空数组）。
-   * 条件求值严格策略（与 @if 一致）：未定义变量/类型错误抛错，暴露配置缺陷。
+   * 条件求值严格策略（与 @if 一致）：未定义变量/类型错误抛错，整轮不提交解锁。
    */
   check(): AchievementUnlockResult[] {
     const fresh: AchievementUnlockResult[] = [];
     for (const def of this.#defs) {
       if (def.when === undefined || this.isUnlocked(def.id)) continue;
       if (evalExprBoolean(def.when, this.#env)) {
-        this.#unlocked.push(def.id);
         fresh.push({ id: def.id, def, fresh: true });
       }
     }
+    this.#unlocked.push(...fresh.map(({ id }) => id));
     return fresh;
   }
 
