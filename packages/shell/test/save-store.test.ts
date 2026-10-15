@@ -104,7 +104,7 @@ describe('FileSaveStore', () => {
     const rename = fs.renameSync;
     const main = path.join(dir, `${canonicalSlotStem('s1')}.json`);
     const fault = vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
-      if (String(from) === `${main}.tmp` && String(to) === main) throw new Error('injected main rename failure');
+      if (String(from).endsWith('.tmp') && String(to) === main) throw new Error('injected main rename failure');
       return rename(from, to);
     });
     try {

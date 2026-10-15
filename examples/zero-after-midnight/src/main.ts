@@ -446,7 +446,7 @@ async function main(): Promise<void> {
   const performRollback = (): boolean => rollbackRuntime.perform();
 
   bus.on('stateReset', () => { uiSession.setVideoActive(false); });
-  bus.on('text', () => rollbackRuntime.captureText());
+  bus.on('textSettled', () => rollbackRuntime.captureText());
 
   // E2E/调试探针：只读暴露最小运行状态（不参与任何生产逻辑；自我迭代②，Playwright 自动通关用）
   (window as unknown as Record<string, unknown>).__surdetDebug = {
@@ -541,7 +541,7 @@ async function main(): Promise<void> {
   }
 
   /** 回合尾事件演出前的挂起点快照：事件场景播完后经 sceneEnd 恢复，剧情续跑（回合头尾闭环） */
-  let turnResumeSnap: SaveSnapshot | null = null;
+  let turnResumeSnap: (() => void) | null = null;
 
   const host = createDefaultHost({
     interpreter: interp,
@@ -561,7 +561,7 @@ async function main(): Promise<void> {
       achievements,
       onAchievementsChanged: () => checkAchievements(),
       onBattleResult: (winner) => store.set('battleWon', winner === 'allies'),
-      onTurnResumeSnapshot: (snapshot) => { turnResumeSnap = snapshot; },
+      onScheduledSceneEnd: (resume) => { turnResumeSnap = resume; },
       onLog: (message) => console.info(`[zero] ${message}`),
     }),
     onError: (error) => console.error('[zero] 宿主 adapter 失败：', error),
@@ -650,18 +650,18 @@ async function main(): Promise<void> {
     menu.hideSystemMenu();
   });
 
-  // 回合尾事件场景播完 → 恢复跳转前快照，剧情从挂起点续跑（回合头尾闭环）。
+  // 日程事件场景播完 → 只恢复调用方位置，保留演出中的状态变更。
   // loadSnapshot 不可在事件回调内调用（撞解释器 #stepping 重入守卫），延迟到 UI 线程执行。
   let endingTransitionActive = false;
   const endingSceneIds = new Set(['route_meeting_rooftop', 'route_silence_dawn', 'route_testimony_rooftop']);
   bus.on('sceneEnd', ({ sceneId }) => {
     if (turnResumeSnap) {
       const snap = turnResumeSnap;
-      turnResumeSnap = null;
       setTimeout(() => {
-        if (gameResourcesDisposed) return;
+        if (gameResourcesDisposed || turnResumeSnap !== snap) return;
+        turnResumeSnap = null;
         try {
-          interp.loadSnapshot(snap);
+          snap();
         } catch (err) {
           console.error('[zero] 回合尾事件恢复失败:', err);
         }
@@ -1666,9 +1666,12 @@ async function main(): Promise<void> {
     }
     const action = actionForKeyboardEvent(e, settings.settings.keyPreset);
     if (action) {
-      e.preventDefault(); routeGameAction(action); return;
+      e.preventDefault();
+      if (e.repeat && ['auto', 'skip', 'backlog', 'hideUi'].includes(action)) return;
+      routeGameAction(action); return;
     }
     if (e.code === 'KeyX' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (e.repeat) return;
       e.preventDefault(); renderer.dispatchInput({ type: 'skip.toggle', scope: 'all' }); refreshCommandRail(); return;
     }
     if (e.key === 'Escape') {
@@ -1694,7 +1697,7 @@ async function main(): Promise<void> {
       return;
     }
     if (renderer.status === 'choice' && /^[1-9]$/.test(e.key)) {
-      renderer.dispatchInput({ type: 'choice.select', index: Number(e.key) - 1 });
+      renderer.dispatchInput({ type: 'choice.select-visible', position: Number(e.key) - 1 });
       return;
     }
     if (isOverlay('backlog') && (e.key === 'PageUp' || e.key === 'PageDown')) {
@@ -1702,6 +1705,7 @@ async function main(): Promise<void> {
       renderer.dispatchInput({ type: 'backlog.scroll', delta: e.key === 'PageUp' ? -240 : 240 });
       return;
     }
+    if (e.repeat && ['a', 's', 'x', 'l', 'h'].includes(e.key.toLowerCase())) return;
     if (e.key === 'F5') {
       e.preventDefault();
       quickSave();

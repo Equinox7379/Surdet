@@ -587,6 +587,7 @@ export class PresentationController {
         else this.choiceDown();
         return true;
       case 'choice.select': return this.select(action.index);
+      case 'choice.select-visible': return this.selectChoiceAt(action.position);
       case 'backlog.toggle': return this.toggleBacklog();
       case 'backlog.scroll': return this.scrollBacklog(action.delta);
       case 'auto.toggle': return this.toggleAuto();

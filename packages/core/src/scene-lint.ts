@@ -335,10 +335,18 @@ export function validateSceneVariables(
         const m = instr as ModifyInstr;
         checkVarDeclared(m.varName, at(m.file, m.line, m.col), variables, issues, 'V001', '修改目标');
         checkNotReadonly(m.varName, at(m.file, m.line, m.col), readonlyVars, issues);
+        const type = types.get(m.varName);
+        if (type !== undefined && type !== 'number') issues.push({ severity: 'error', code: 'T001', file: m.file, line: m.line, col: m.col,
+          text: `${m.file}:${m.line}:${m.col}: @mod 目标 '${m.varName}' 必须为 number，声明类型为 ${type}` });
         break;
       }
       case 'instr': {
         const g = instr as GenericInstr;
+        if (g.name === 'check') {
+          const expr = g.args.join(' '), pos = at(g.file, g.line, g.col);
+          const ast = checkExpr(expr, pos, types, issues);
+          if (ast) checkBooleanType(expr, ast, pos, types, issues);
+        }
         if (VARIABLE_INSTRUCTIONS.has(g.name)) {
           const arg0 = g.args[0];
           if (arg0 !== undefined) {
