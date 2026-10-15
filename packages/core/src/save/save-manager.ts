@@ -132,6 +132,8 @@ function boundedJsonTree(value: unknown, checkTypes: boolean): boolean {
     let height = 0;
     // Iteration visits sparse array holes as undefined; Array.every silently skips them.
     for (const child of Array.isArray(v) ? v : Object.values(v)) {
+      // JSON turns array holes/undefined into null, unlike optional object metadata.
+      if (Array.isArray(v) && child === undefined) return -1;
       const nested = visit(child, depth + 1);
       if (nested < 0) return -1;
       height = Math.max(height, nested + 1);
@@ -162,7 +164,7 @@ export function assertValidSnapshot(
   if (typeof snap !== 'object' || snap === null) fail('顶层必须是对象');
   // Include unknown extension fields, which are serialized too; optional undefined
   // metadata keeps its existing omission semantics and is checked separately below.
-  if (!boundedJsonTree(snap, false)) fail('含循环引用或嵌套超过256层');
+  if (!boundedJsonTree(snap, false)) fail('含数组空位、循环引用或嵌套超过256层');
   const s = snap as Record<string, unknown>;
   const strict = phase === 'current';
   if (!isJsonObject(s.meta)) fail('meta 必须是普通对象');
