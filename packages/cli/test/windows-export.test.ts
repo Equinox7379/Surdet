@@ -24,6 +24,19 @@ it('returns real saved content errors, including audio not just images', async (
   expect(inspection.issues.some(issue => issue.code === 'ASSET_UNRESOLVED')).toBe(true);
   expect(inspection.issues.some(issue => issue.code === 'ASSET_REFERENCE_MISSING')).toBe(true);
 });
+it.each([true, false])('rejects already packaged asset bytes before export (encrypted=%s)', async encrypted => {
+  const { game, root, options } = await project();
+  const asset = path.join(game, 'content/assets/bg/packed.png');
+  await fs.mkdir(path.dirname(asset), { recursive: true });
+  const bytes = Buffer.concat([Buffer.from('SDAT2'), Buffer.alloc(40, 7)]);
+  await fs.writeFile(asset, bytes);
+  expect((await inspectWindowsExport(game, '')).issues).toEqual(expect.arrayContaining([
+    expect.objectContaining({ code: 'EXPORT_ENCRYPTED_SOURCE', severity: 'error', file: 'content/assets/bg/packed.png' }),
+  ]));
+  await expect(exportWindowsGame({ ...options, encrypted })).rejects.toThrow('导出检查未通过');
+  expect(await fs.readdir(root)).toEqual(['project']);
+  expect(await fs.readFile(asset)).toEqual(bytes);
+});
 it('rejects an existing output without touching its content', async () => {
   const { root, options } = await project();
   await fs.mkdir(path.join(root, '成品')); await fs.writeFile(path.join(root, '成品/保留.txt'), '我的文件');
