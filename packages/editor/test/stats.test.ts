@@ -6,6 +6,10 @@ import { computeProjectStats, sceneTextCharacters } from '../src/stats.js';
 import { listLabels } from '../src/panels/preview-panel.js';
 
 describe('computeProjectStats', () => {
+  it('#63 follow-up counts decoded CG identities including inline choice instructions', () => {
+    const text = '@unlock_cg art\n@unlock_cg "art"\n@unlock_cg "long id"\n@unlock_cg \'long id\'\n@choice\n  继续 -> @unlock_cg "third id"\n@end';
+    expect(computeProjectStats([{ id: 'gallery', text }]).cgUnlocks).toBe(3);
+  });
   const scenes = [
     {
       id: 'ch1',

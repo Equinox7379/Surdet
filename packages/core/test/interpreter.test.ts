@@ -48,6 +48,15 @@ function choiceCollector(bus: EventBus<CoreEventMap>): ChoiceEventPayload[] {
 }
 
 describe('Interpreter', () => {
+  it.each(['add_item', 'remove_item', 'has_item'])('#63 follow-up rejects blank decoded IDs in %s without changing inventory or result', command => {
+    for (const token of ['""', "''", '"   "']) {
+      const { store, registry, interp } = makeRuntime([{ name: 'bag', type: 'string[]', initial: ['kept'] }, { name: 'owned', type: 'flag', initial: true }]);
+      registry.register(compileScene(`@${command} bag ${token}${command === 'has_item' ? ' owned' : ''}\n@end`, 'items.gal', 'items'));
+      expect(() => interp.start('items')).toThrow(/非空/);
+      expect(store.get('bag')).toEqual(['kept']);
+      expect(store.get('owned')).toBe(true);
+    }
+  });
   it.each([
     ['plain', 'plain'], ['"long id"', 'long id'], ["'long id'", 'long id'],
     [String.raw`"a\"b\\c"`, 'a"b\\c'], ['"a"b"c"', '"a"b"c"'],
