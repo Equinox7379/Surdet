@@ -8,6 +8,21 @@ import type { ChoiceInstr, CondJumpInstr, CompiledScene, JumpInstr } from '../sr
 const compile = (src: string, sceneId = 'ch01_01') => compileScene(src, 'ch01_01.gal', sceneId);
 
 describe('Parser', () => {
+  it.each([['“', '”'], ['‘', '’'], ['"', '"'], ["'", "'"]])('keeps a quoted condition marker literal before an outer bracket: %s', (opening, closing) => {
+    const label = `显示${opening}[if:oops${closing}]`;
+    for (const suffix of ['', ' -> @goto done', ' [if:true] -> @goto done']) {
+      const scene = compile(`@choice\n  ${label}${suffix}\n@label done\n@end`);
+      const option = (scene.instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]!;
+      expect(option.label).toBe(label);
+      expect(option.when).toBe(suffix.includes('[if:true]') ? 'true' : null);
+    }
+  });
+  it.each([['“', '”'], ['‘', '’']])('does not borrow a condition string to close Chinese prose: %s', (opening, closing) => {
+    const label = `选择${opening}未闭合`;
+    const condition = `"结尾${closing}" == "结尾${closing}"`;
+    const scene = compile(`@choice\n  ${label} [if:${condition}] -> @goto done\n@label done\n@end`);
+    expect((scene.instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]).toMatchObject({ label, when: condition });
+  });
   it.each(['选择“稍后 -> @goto hidden”', '选择‘稍后 -> @goto hidden’'])('keeps a paired Chinese no-action label intact: %s', label => {
     expect(findChoiceArrow(`  ${label}`)).toBeNull();
     const result = compile(`@choice\n  ${label}\n@end`);

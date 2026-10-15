@@ -444,12 +444,37 @@ function choiceQuoteEnd(raw: string, start: number, limit: number): number {
   return start;
 }
 
+function choiceStringQuoteAt(raw: string, start: number, end: number): string | null {
+  let quote: string | null = null;
+  for (let i = start; i < end; i++) {
+    const char = raw[i];
+    if (quote !== null) {
+      if (char === '\\') i++;
+      else if (char === quote) quote = null;
+    } else if (char === '"' || char === "'") quote = char;
+  }
+  return quote;
+}
+
 /** Read a trailing condition from a trimmed choice label, keeping quoted prose literal.
  * `index` is the condition's source offset in `label`, for source-preserving editors. */
 export function findChoiceCondition(label: string, source: SourcePos = pos('<choice>', 1, 1)): { index: number; value: string } | null {
   // Use the rightmost trailing candidate: a marker inside prose must not borrow
   // the real condition's closing bracket. Prose quotes cannot borrow expression quotes.
-  const conditionStart = [...label.matchAll(/\[if:/g)].reverse().find(match => choiceConditionEnd(label, match.index) === label.length - 1)?.index ?? label.length;
+  const conditionStart = [...label.matchAll(/\[if:/g)].reverse().find(match => {
+    if (choiceConditionEnd(label, match.index) !== label.length - 1) return false;
+    for (let i = 0; i < match.index; i++) {
+      const end = choiceQuoteEnd(label, i, label.length);
+      if (end === i) continue;
+      if (end < match.index) { i = end; continue; }
+      // Chinese prose can contain an unfinished marker followed by a literal
+      // bracket outside the quote. A closing mark inside an expression string,
+      // however, belongs to that expression and cannot close the prose.
+      if ((label[i] === '“' || label[i] === '‘') && choiceStringQuoteAt(label, match.index + 4, end) === null) return false;
+      break;
+    }
+    return true;
+  })?.index ?? label.length;
   for (let i = 0; i < label.length; i++) {
     const quotedEnd = choiceQuoteEnd(label, i, conditionStart);
     if (quotedEnd !== i) { i = quotedEnd; continue; }
@@ -503,15 +528,7 @@ export function findChoiceArrow(raw: string, source: SourcePos = pos('<choice>',
       if (raw[i] !== '“' && raw[i] !== '‘') continue;
       const closing = choiceQuoteEnd(raw, i, raw.length);
       if (closing <= index) { if (closing > i) i = closing; continue; }
-      let actionQuote: string | null = null;
-      for (let cursor = end; cursor < closing; cursor++) {
-        const char = raw[cursor];
-        if (actionQuote !== null) {
-          if (char === '\\') cursor++;
-          else if (char === actionQuote) actionQuote = null;
-        } else if (char === '"' || char === "'") actionQuote = char;
-      }
-      if (actionQuote === null) { protectedProse = true; break; }
+      if (choiceStringQuoteAt(raw, end, closing) === null) { protectedProse = true; break; }
     }
     if (protectedProse) continue;
     if (scanChoiceArrow(raw, condition?.index ?? index, source)?.index !== index) continue;
