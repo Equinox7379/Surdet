@@ -7,6 +7,16 @@ const valid = (text: string): void => {
   expect(parseInlineText(text).issues.filter((issue) => issue.severity === 'error')).toEqual([]);
 };
 
+it.each(['显示"[if:false]"', "显示'[if:false]'", '显示“[if:false]”', '显示‘[if:false]’'])('#63 keeps the complete quoted prose span with and without a trailing condition: %s', label => {
+  for (const condition of ['', ' [if:route == "a]b"]']) {
+    const row = `\t  ${label}${condition} -> @goto done  `;
+    const span = choiceLabelSpan(row)!;
+    expect(span).toEqual({ start: 3, end: 3 + label.length });
+    expect(row.slice(span.start, span.end)).toBe(label);
+  }
+  expect(choiceLabelSpan(`  ${label} [if:true] 后文 -> @goto done`)).toBeNull();
+});
+
 describe('选中文字加标签', () => {
   it('包裹选区并选中原文字，结果仍是合法标记', () => {
     const result = wrapInlineSelection('你说什么？再说一遍。', 5, 9, 'color', 'accent');

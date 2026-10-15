@@ -5,6 +5,7 @@ import { SceneRegistry } from '../src/runtime/scene-registry.js';
 import { EventBus } from '../src/runtime/event-bus.js';
 import { VariableStore } from '../src/state/variable-store.js';
 import { createSeededRandomSource } from '../src/runtime/random-source.js';
+import { GrowthSystem } from '../src/systems/growth.js';
 import type { VarDeclaration } from '../src/state/types.js';
 import type { ChoiceEventPayload, TextEventPayload, InstrEventPayload, CoreEventMap } from '../src/runtime/interpreter.js';
 
@@ -87,6 +88,83 @@ describe('Interpreter', () => {
     expect(captures).toEqual(mode === 'pause' ? [] : [{ scene: mode === 'jump' ? 'target' : 'source', pc: mode === 'advance' ? 1 : 0, trust: mode === 'stay' ? 1 : 2 }]);
   });
 
+  it.each([['“', '”'], ['‘', '’']])('#63 an action string cannot close unmatched Chinese prose %s', (opening, closing) => {
+    for (const condition of ['', ' [if:true]']) {
+      const { store, bus, registry, interp } = makeRuntime([{ name: 'msg', type: 'string', initial: '' }]);
+      const choices = choiceCollector(bus), texts = valueCollector(bus);
+      const label = `选择 ${opening}未闭合`;
+      registry.register(compileScene(`@choice\n  ${label}${condition} -> @set msg = "结束${closing}" @goto done\n错误\n@label done\n成功`, 'quotes.gal', 'quotes'));
+      interp.start('quotes');
+      expect(choices[0]!.options[0]!.label).toBe(label);
+      interp.choose(0);
+      expect(store.get('msg')).toBe(`结束${closing}`); expect(texts).toEqual(['成功']);
+    }
+  });
+  it.each(['plain', '"long sword"', "'long sword'", '""', '"   "'])('#63 preserves persisted inventory token identity after load: %s', token => {
+    const compiled = compileScene(`存档停点\n@has_item bag ${token} owned\n@add_item bag ${token}\n检查持有\n@remove_item bag ${token}\n@has_item bag ${token} owned\n检查移除`, 'items.gal', 'items');
+    const decls: VarDeclaration[] = [{ name: 'bag', type: 'string[]', initial: [token] }, { name: 'owned', type: 'flag', initial: false }];
+    const original = makeRuntime(decls); original.registry.register(compiled); original.interp.start('items');
+    const saved = JSON.parse(JSON.stringify(original.interp.saveSnapshot()));
+    const restored = makeRuntime(decls); restored.registry.register(compiled); restored.interp.loadSnapshot(saved);
+    restored.interp.advance();
+    expect(restored.store.get('owned')).toBe(true); expect(restored.store.get('bag')).toEqual([token]);
+    restored.interp.advance();
+    expect(restored.store.get('owned')).toBe(false); expect(restored.store.get('bag')).toEqual([]);
+  });
+  it.each([
+    ['plain', 'plain'], ['"long id"', 'long id'], ["'long id'", 'long id'],
+    [String.raw`"a\"b\\c"`, 'a"b\\c'], ['"a"b"c"', 'a"b"c'],
+  ])('#63 keeps existing gallery, clear, growth and achievement ID contracts: %s', (token, id) => {
+    const { store, bus, registry, interp } = makeRuntime();
+    const growth = new GrowthSystem({ curve: { base: 10 }, profiles: [{ characterId: token }] }, store);
+    interp.setGrowth(growth);
+    const gallery: CoreEventMap['gallery'][] = [], clear: CoreEventMap['clear'][] = [], systems: CoreEventMap['system'][] = [];
+    bus.on('gallery', value => gallery.push(value)); bus.on('clear', value => clear.push(value)); bus.on('system', value => systems.push(value));
+    registry.register(compileScene([
+      ...['cg', 'music', 'text', 'profile', 'term'].map(kind => `@unlock_${kind} ${token}`),
+      `@exp ${token} 2`, `@achievement ${token} ${token}`, `@clear ${token}`,
+      '第一句',
+    ].join('\n'), 'ids.gal', 'ids'));
+    interp.start('ids');
+    expect(interp.gallery.snapshot()).toMatchObject({ cgs: [token], music: [token], texts: [token], profiles: [id], terms: [id] });
+    expect(gallery.map(value => value.id)).toEqual([token, token, token, id, id]);
+    expect(clear).toEqual([{ ending: id, fresh: true }]); expect(growth.experienceOf(token)).toBe(2);
+    expect(systems.find(value => value.type === 'achievement')?.args).toEqual([id, id]);
+  });
+  it.each(['profile', 'term'] as const)('#63 retains existing rejection of decoded empty %s IDs before collection or broadcast', kind => {
+    for (const token of ['""', "''", '"   "', "'\t'"]) {
+      const { bus, registry, interp } = makeRuntime();
+      const events: CoreEventMap['gallery'][] = []; bus.on('gallery', value => events.push(value));
+      interp.gallery.unlockCg('kept');
+      const before = interp.gallery.snapshot();
+      registry.register(compileScene(`@unlock_${kind} ${token}\n@end`, 'empty.gal', 'empty'));
+      expect(() => interp.start('empty')).toThrow(/非空/);
+      expect(interp.gallery.snapshot()).toEqual(before);
+      expect(events).toEqual([]);
+    }
+  });
+  it('uses literal item tokens consistently across add, membership and remove', () => {
+    const { store, registry, interp } = makeRuntime([{ name: 'bag', type: 'string[]', initial: [] }, { name: 'owned', type: 'flag', initial: false }]);
+    registry.register(compileScene('@add_item bag sword\n@has_item bag sword owned\n第一句\n@remove_item bag sword\n@add_item bag "long sword"\n@has_item bag "long sword" owned\n第二句\n@remove_item bag "long sword"\n第三句', 'items.gal', 'items'));
+    interp.start('items'); expect(store.get('bag')).toEqual(['sword']); expect(store.get('owned')).toBe(true);
+    interp.advance(); expect(store.get('bag')).toEqual(['"long sword"']); expect(store.get('owned')).toBe(true);
+    interp.advance(); expect(store.get('bag')).toEqual([]);
+  });
+  it.each(['cg', 'music', 'text'] as const)('preserves persisted quoted %s identities after snapshot load without unlocking twice', kind => {
+    const { registry, interp } = makeRuntime();
+    const token = '"long id"';
+    const scene = compileScene(`存档位置\n@unlock_${kind} ${token}\n解锁之后`, 'gallery.gal', 'gallery');
+    registry.register(scene); interp.start('gallery');
+    const section = kind === 'cg' ? 'cgs' : kind === 'text' ? 'texts' : 'music';
+    interp.gallery.restore({ ...interp.gallery.snapshot(), [section]: [token] });
+    const saved = JSON.parse(JSON.stringify(interp.saveSnapshot()));
+    const restored = makeRuntime(); restored.registry.register(scene); restored.interp.loadSnapshot(saved);
+    const events: CoreEventMap['gallery'][] = [];
+    restored.bus.on('gallery', event => events.push(event));
+    restored.interp.advance();
+    expect(events).toEqual([{ type: kind, id: token, fresh: false }]);
+    expect(restored.interp.gallery.snapshot()[section]).toEqual([token]);
+  });
   it.each([
     ['未闭合的 "文案', '@bg "night"'],
     ["未闭合的 '文案", "@bg 'night'"],

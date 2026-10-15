@@ -11,6 +11,7 @@ import type {
 import type { SourcePos } from '../dsl/token.js';
 import { SourceError } from '../dsl/token.js';
 import { interpolateInlineText, substituteTextVariables } from '../inline-text.js';
+import { dequoteInstrArg } from './identifier-argument.js';
 import { evalExprBoolean, evalExprString } from './expr-eval.js';
 import type { VariableStore } from '../state/variable-store.js';
 import { EventBus, type EventMap } from './event-bus.js';
@@ -70,16 +71,6 @@ export interface RuntimeDebugSnapshot {
   next: RuntimeDebugLocation | null;
   variables: Record<string, VarValue>;
   callStack: RuntimeDebugLocation[];
-}
-
-/** 指令参数去引号（引号契约：解释器侧消费的 ID 类参数在此去引号，与渲染层 dequote 语义一致）；
- *  例：@clear "ed1" → 结局标识 ed1（避免引号被写进结局/成就 ID） */
-function dequoteInstrArg(s: string): string {
-  if (s.length < 2) return s;
-  const first = s[0];
-  const last = s[s.length - 1];
-  if ((first !== '"' && first !== "'") || first !== last) return s;
-  return s.slice(1, -1).replace(/\\(.)/g, '$1');
 }
 
 /** @call 最大嵌套深度（同步死循环检测兜底之前，先给出更明确的错误） */
