@@ -144,6 +144,7 @@ export async function applySceneRename(change: ChangeSession, input: SceneRename
       throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `目标场景已存在：${input.newSceneId}`);
     }
     const path = previousPath.slice(0, previousPath.lastIndexOf('/') + 1) + input.newSceneId + previousPath.slice(-4);
+    assertProjectTargetNamespace(path, Object.keys(record.workingFiles));
     const workingFiles = { ...record.workingFiles };
     for (const file of scenePaths) workingFiles[file] = visitSceneReferences(workingFiles[file]!, input.sceneId, input.newSceneId, file).text;
     workingFiles[path] = renameSceneDefinition(workingFiles[previousPath]!, input.sceneId, input.newSceneId, previousPath);
@@ -184,6 +185,13 @@ export function sceneMoveTargetPath(previousPath: string, directory: string, exi
   const path = ['content', 'scenario', ...segments, previousPath.slice(previousPath.lastIndexOf('/') + 1)].join('/');
   const fold = (value: string) => value.normalize('NFC').toUpperCase().toLowerCase();
   if (fold(path) === fold(previousPath)) throw new AuthoringOperationError('INVALID_REQUEST', '目标目录必须不同，不能仅改变大小写或 Unicode 表示');
+  assertProjectTargetNamespace(path, existingPaths);
+  return path;
+}
+
+/** Check a new project-relative target against current file and directory spellings. */
+export function assertProjectTargetNamespace(path: string, existingPaths: readonly string[]): void {
+  const fold = (value: string) => value.normalize('NFC').toUpperCase().toLowerCase();
   const targetParts = path.split('/');
   for (const existing of existingPaths) {
     const existingParts = existing.split('/');
@@ -194,7 +202,6 @@ export function sceneMoveTargetPath(previousPath: string, directory: string, exi
       }
     }
   }
-  return path;
 }
 
 /** Chapter folders are organization only: neither script bytes nor scene IDs change. */

@@ -1,5 +1,6 @@
 import { isReservedSceneFileId, validateTimeline, resolveTimelineDefinition, TIMELINE_TRANSITION_ACTIONS, type TimelineDefinition } from '@surdet/core';
 import { parseProjectConfigDocument } from './config-document.js';
+import { assertProjectTargetNamespace } from './scene-relocation.js';
 import {
   AuthoringOperationError,
   runOperation,
@@ -143,6 +144,7 @@ export async function applyTimelineCreate(
     throw new AuthoringOperationError('INVALID_REQUEST', '时间轴 ID 不能使用 Windows 设备名');
   }
   return runOperation<TimelineCreateResult>(change, input, async (record) => {
+    assertProjectTargetNamespace(path, Object.keys(record.workingFiles));
     if (resolveUniqueTimelinePath(record.workingFiles, input.timelineId) !== undefined
       || Object.keys(record.workingFiles).some(file => file.startsWith('content/timelines/') && file.toLowerCase().endsWith('.json')
         && (file.toLowerCase() === path.toLowerCase() || timelineIdFromPath(file).toLowerCase() === input.timelineId.toLowerCase()))) {

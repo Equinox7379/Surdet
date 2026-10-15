@@ -1,4 +1,5 @@
 import { patchStageSourceLine } from './stage-source-patch.js';
+import { assertProjectTargetNamespace } from './scene-relocation.js';
 import { collectConfigSceneRoots, compileScene, isValidSceneId, isReservedSceneFileId, Lexer, Parser, findChoiceArrow, splitOutsideQuotes, parseInlineInstructions, resolveProjectFontPaths, resolveProjectTitleLogo, type AstBlock } from '@surdet/core';
 import {
   insertLinesAfter,
@@ -589,6 +590,7 @@ export function createSceneText(sceneId: string, blocks: readonly SceneBlockInpu
 export async function applySceneCreate(change: ChangeSession, input: SceneCreateInput, hasher: TextHasher = compositionTextHasher, sealedFingerprint?: string): Promise<{ sceneId: string; path: string }> {
   const path = sceneCreationPath(input.sceneId);
   return runOperation(change, input, async (record) => {
+    assertProjectTargetNamespace(path, Object.keys(record.workingFiles));
     if (resolveUniqueScenarioPath(record.workingFiles, input.sceneId) !== undefined
       || Object.keys(record.workingFiles).some(file => file.startsWith('content/scenario/') && file.toLowerCase().endsWith('.gal')
         && sceneIdFromScenarioPath(file).toLowerCase() === input.sceneId.toLowerCase())) {

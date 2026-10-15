@@ -802,7 +802,7 @@ async function applyFlowPlan(plan: FlowEditPlan): Promise<void> {
       if (file.before === null) {
         if (isReservedSceneFileId(file.sceneId)) throw new Error('场景标识不能使用 Windows 设备名');
         if ([...state.scenes.values()].some(scene => scene.id.normalize('NFC').toUpperCase().toLowerCase() === file.sceneId.toUpperCase().toLowerCase())) throw new Error(`场景 '${file.sceneId}' 已存在，请重新预览。`);
-        if (isSceneFilePathReserved(`${file.sceneId}.gal`)) throw new Error('该场景文件正等待删除，请先保存全部。');
+        if (isSceneFilePathReserved(`${file.sceneId}.gal`)) throw new Error('目标场景路径已占用或目录名称冲突，请先保存全部或更换名称。');
         created.push({ id: file.sceneId, text: file.after });
         continue;
       }

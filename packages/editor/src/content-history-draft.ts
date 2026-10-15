@@ -1,4 +1,4 @@
-import { isContentHistoryPath, normalizeProjectPath, sceneDirectorySegments, timelineIdFromPath, timelinePathFor, type ContentHistoryFileDiff } from '@surdet/authoring';
+import { assertProjectTargetNamespace, isContentHistoryPath, normalizeProjectPath, sceneDirectorySegments, timelineIdFromPath, timelinePathFor, type ContentHistoryFileDiff } from '@surdet/authoring';
 import { isReservedSceneFileId } from '@surdet/core';
 import { state } from './state.js';
 import { sceneTextSha256 } from './project-io.js';
@@ -30,6 +30,7 @@ export async function prepareHistoryFileDraft(file: ContentHistoryFileDiff): Pro
       sceneDirectorySegments(relative.includes('/') ? relative.slice(0, relative.lastIndexOf('/')) : '');
       if (relative !== relative.normalize('NFC')) throw new Error('历史场景文件名需要规范化，请新建场景后恢复正文');
       if (isReservedSceneFileId(id)) throw new Error('场景标识不能使用 Windows 设备名');
+      assertProjectTargetNamespace(path, [...state.scenes.values(), ...state.pendingSceneDeletes].map(item => `content/scenario/${item.file.replace(/^content\/scenario\//, '')}`));
       if ([...state.scenes.values(), ...state.pendingSceneDeletes].some(item => item.id.normalize('NFC').toUpperCase().toLowerCase() === id.toUpperCase().toLowerCase()
         || item.file.replace(/^content\/scenario\//, '').normalize('NFC').toUpperCase().toLowerCase() === relative.toUpperCase().toLowerCase())) throw new Error('当前已有同名场景或待删除文件，请先处理冲突');
     }
@@ -53,6 +54,7 @@ export async function prepareHistoryFileDraft(file: ContentHistoryFileDiff): Pro
       timelinePathFor(id);
       if (isReservedSceneFileId(id.split('.')[0]!)) throw new Error('时间轴 ID 不能使用 Windows 设备名');
       const reserved = [...state.timelines, ...state.pendingTimelineDeletes, ...[...state.pendingTimelineRestores.values()].map(restore => restore.entry)];
+      assertProjectTargetNamespace(path, reserved.map(item => `content/timelines/${item.file.replace(/^content\/timelines\//, '')}`));
       if (reserved.some(item => item.id.toLowerCase() === id.toLowerCase()
         || item.file.replace(/^content\/timelines\//, '').toLowerCase() === relative.toLowerCase())) throw new Error('当前已有同名时间轴或待恢复文件，请先处理同名冲突');
     }
