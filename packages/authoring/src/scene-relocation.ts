@@ -1,4 +1,4 @@
-import { compileScene, findChoiceArrow, isValidSceneId, parseInlineInstructions, splitOutsideQuotes } from '@surdet/core';
+import { compileScene, findChoiceArrow, isValidSceneId, isReservedSceneFileId, parseInlineInstructions, splitOutsideQuotes } from '@surdet/core';
 import { AuthoringOperationError, runOperation, type ChangeSession } from './change-session.js';
 import { parseProjectConfigDocument, serializeProjectConfigDocument } from './config-document.js';
 import type { SceneMoveInput, SceneRenameInput, TextHasher } from './contracts.js';
@@ -131,7 +131,7 @@ export async function applySceneRename(change: ChangeSession, input: SceneRename
     throw new AuthoringOperationError('UNSUPPORTED_OPERATION', '跨文件场景改名只支持普通 direct 草稿', { operationApplied: false, operationId: input.operationId });
   }
   return runOperation(change, input, async record => {
-    if (!isValidSceneId(input.sceneId) || !isValidSceneId(input.newSceneId) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(input.newSceneId)) {
+    if (!isValidSceneId(input.sceneId) || !isValidSceneId(input.newSceneId) || isReservedSceneFileId(input.newSceneId)) {
       throw new AuthoringOperationError('INVALID_REQUEST', '场景 ID 必须是可用的字母/数字/下划线/连字符名称');
     }
     if (input.sceneId.toLowerCase() === input.newSceneId.toLowerCase()) throw new AuthoringOperationError('INVALID_REQUEST', '新场景 ID 必须不同，不能仅改变大小写');

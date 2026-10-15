@@ -23,7 +23,7 @@ import {
   sceneProjectPath,
   workingGameConfigText,
 } from '../project-io.js';
-import { collectConfigSceneRoots, compileScene, type CompiledScene } from '@surdet/core';
+import { collectConfigSceneRoots, compileScene, isReservedSceneFileId, type CompiledScene } from '@surdet/core';
 import { assertTextCatalogTargetRemovable, parseProjectConfigDocument, renameSceneDefinition, sceneMoveTargetPath, visitSceneReferences } from '@surdet/authoring';
 import { buildFlowGraph } from '../graph/build.js';
 import type { FlowGraph, FlowNode, FlowEdge } from '../graph/build.js';
@@ -267,8 +267,9 @@ async function renameSceneAtKeyUnlocked(sceneKey: string, input: string, expecte
   const sceneId = current.id;
   const newId = input.trim();
   if (newId === sceneId) return;
+  if (isReservedSceneFileId(newId)) throw new Error('场景标识不能使用 Windows 设备名');
   if (!validSceneId(newId)) throw new Error('场景标识不能为空，也不能包含空格、点号或文件名保留字符');
-  if ([...state.scenes.values()].some((scene) => scene.id === newId)) throw new Error(`场景 '${newId}' 已存在`);
+  if ([...state.scenes.values()].some((scene) => scene !== current && scene.id.toLowerCase() === newId.toLowerCase())) throw new Error(`场景 '${newId}' 已存在`);
   const targetFile = renamedSceneFile(current.file, newId);
   if (sceneFileIdentity(targetFile) === sceneFileIdentity(current.file)) throw new Error('Windows 下不能只改变场景文件名的大小写，请使用不同名称');
   if (isSceneFilePathReserved(targetFile, sceneKey)) throw new Error('目标场景路径已存在或正等待删除，请先保存全部');

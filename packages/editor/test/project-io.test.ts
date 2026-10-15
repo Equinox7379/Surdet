@@ -1396,6 +1396,34 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(state.timelines.at(-1)).toMatchObject({ id: 'new.JSON', file: 'new.JSON.json' });
   });
 
+  it('portable timeline ID generation reserves current, deleted, restorable and physical case aliases', () => {
+    state.timelines.push(timeline('TIMELINE_02', fileHandle(null, log, 'TIMELINE_02.json'), false));
+    state.pendingTimelineDeletes.push({ id: 'TIMELINE_03', file: 'TIMELINE_03.json' });
+    const entry = timeline('TIMELINE_04', fileHandle(null, log, 'TIMELINE_04.json'), false);
+    state.pendingTimelineRestores.set(entry.id, { entry, index: 0, previousTimelineId: null, previousCue: null });
+    state.timelines.push(timeline('TIMELINE_05.JSON', fileHandle(null, log, 'TIMELINE_05.JSON'), false, 'TIMELINE_05.JSON'));
+    expect(nextTimelineId()).toBe('timeline_06');
+  });
+
+  it.each(['same-folder', 'other-folder'] as const)('portable automatic timeline recovery reports a case conflict in %s', location => {
+    const existing = timeline('FOO', fileHandle(null, log, 'FOO.json'), false, location === 'same-folder' ? 'FOO.json' : 'nested/FOO.json');
+    state.timelines.push(existing); state.currentTimeline = existing.id;
+    const before = timelineMutationSnapshot();
+    const result = restoreTimelineAutosaveEntries([{ id: 'foo', file: 'foo.json', text: timelineText('foo'), eol: '\n' }]);
+    expect(result.restored).toBe(0);
+    expect(result.conflicts).toHaveLength(1);
+    expectTimelineMutationUnchanged(before);
+  });
+
+  it('portable pending timeline restoration refuses an existing case alias', () => {
+    const old = timeline('old', fileHandle(null, log, 'old.json'), false);
+    state.pendingTimelineRestores.set(old.id, { entry: old, index: 0, previousTimelineId: null, previousCue: null });
+    state.timelines.push(timeline('OLD', fileHandle(null, log, 'OLD.json'), false));
+    const before = timelineMutationSnapshot();
+    expect(restorePendingTimelineDeletion('old')).toBe(false);
+    expectTimelineMutationUnchanged(before);
+  });
+
   it('Save As New 拒绝当前 ID collision 且零 mutation', () => {
     const { conflict } = definitionCollisionConflict();
     state.timelines.push(timeline('taken', fileHandle(null, log, 'taken.json'), false));

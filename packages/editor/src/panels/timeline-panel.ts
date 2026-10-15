@@ -128,13 +128,13 @@ function entryFor(id = state.currentTimeline): (typeof state.timelines)[number] 
 
 export function nextTimelineId(): string {
   const reserved = new Set([
-    ...state.timelines.map((entry) => entry.id),
-    ...state.pendingTimelineDeletes.map((entry) => entry.id),
     ...state.pendingTimelineRestores.keys(),
-  ]);
+    ...[...state.timelines, ...state.pendingTimelineDeletes, ...[...state.pendingTimelineRestores.values()].map(restore => restore.entry)]
+      .flatMap(entry => [entry.id, entry.file.replace(/\.json$/i, '')]),
+  ].map(id => id.toLowerCase()));
   let n = state.timelines.length + state.pendingTimelineRestores.size + 1;
   let id = `timeline_${String(n).padStart(2, '0')}`;
-  while (reserved.has(id)) id = `timeline_${String(++n).padStart(2, '0')}`;
+  while (reserved.has(id.toLowerCase())) id = `timeline_${String(++n).padStart(2, '0')}`;
   return id;
 }
 
@@ -162,7 +162,8 @@ export function deleteTimeline(timelineId: string): boolean {
 
 export function restorePendingTimelineDeletion(timelineId: string): boolean {
   const restore = state.pendingTimelineRestores.get(timelineId);
-  if (!restore || state.timelines.some((entry) => entry.id === timelineId)) return false;
+  if (!restore || state.timelines.some((entry) => entry.id.toLowerCase() === restore.entry.id.toLowerCase()
+    || entry.file.toLowerCase() === restore.entry.file.toLowerCase())) return false;
   state.pendingTimelineDeletes = state.pendingTimelineDeletes.filter((pending) => pending.id !== timelineId);
   const index = Math.max(0, Math.min(restore.index, state.timelines.length));
   state.timelines.splice(index, 0, restore.entry);
