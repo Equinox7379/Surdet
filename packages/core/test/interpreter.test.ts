@@ -61,10 +61,10 @@ describe('Interpreter', () => {
   });
   it.each([
     ['plain', 'plain'], ['"long id"', 'long id'], ["'long id'", 'long id'],
-    [String.raw`"a\"b\\c"`, 'a"b\\c'], ['"a"b"c"', '"a"b"c"'],
-  ])('#63 shares the ID decoder across gallery, clear, growth and achievement: %s', (token, id) => {
+    [String.raw`"a\"b\\c"`, 'a"b\\c'], ['"a"b"c"', 'a"b"c'],
+  ])('#63 keeps existing gallery, clear, growth and achievement ID contracts: %s', (token, id) => {
     const { store, bus, registry, interp } = makeRuntime();
-    const growth = new GrowthSystem({ curve: { base: 10 }, profiles: [{ characterId: id }] }, store);
+    const growth = new GrowthSystem({ curve: { base: 10 }, profiles: [{ characterId: token }] }, store);
     interp.setGrowth(growth);
     const gallery: CoreEventMap['gallery'][] = [], clear: CoreEventMap['clear'][] = [], systems: CoreEventMap['system'][] = [];
     bus.on('gallery', value => gallery.push(value)); bus.on('clear', value => clear.push(value)); bus.on('system', value => systems.push(value));
@@ -74,12 +74,12 @@ describe('Interpreter', () => {
       '第一句',
     ].join('\n'), 'ids.gal', 'ids'));
     interp.start('ids');
-    expect(interp.gallery.snapshot()).toMatchObject({ cgs: [id], music: [id], texts: [id], profiles: [id], terms: [id] });
-    expect(gallery.map(value => value.id)).toEqual([id, id, id, id, id]);
-    expect(clear).toEqual([{ ending: id, fresh: true }]); expect(growth.experienceOf(id)).toBe(2);
+    expect(interp.gallery.snapshot()).toMatchObject({ cgs: [token], music: [token], texts: [token], profiles: [id], terms: [id] });
+    expect(gallery.map(value => value.id)).toEqual([token, token, token, id, id]);
+    expect(clear).toEqual([{ ending: id, fresh: true }]); expect(growth.experienceOf(token)).toBe(2);
     expect(systems.find(value => value.type === 'achievement')?.args).toEqual([id, id]);
   });
-  it.each(['cg', 'music', 'text', 'profile', 'term'] as const)('#63 rejects decoded empty %s IDs before collection or broadcast', kind => {
+  it.each(['profile', 'term'] as const)('#63 retains existing rejection of decoded empty %s IDs before collection or broadcast', kind => {
     for (const token of ['""', "''", '"   "', "'\t'"]) {
       const { bus, registry, interp } = makeRuntime();
       const events: CoreEventMap['gallery'][] = []; bus.on('gallery', value => events.push(value));
@@ -98,14 +98,20 @@ describe('Interpreter', () => {
     interp.advance(); expect(store.get('bag')).toEqual(['"long sword"']); expect(store.get('owned')).toBe(true);
     interp.advance(); expect(store.get('bag')).toEqual([]);
   });
-  it.each(['cg', 'music', 'text'] as const)('decodes quoted %s IDs before collection and gallery events', kind => {
-    const { bus, registry, interp } = makeRuntime();
-    const events: CoreEventMap['gallery'][] = []; bus.on('gallery', event => events.push(event));
-    registry.register(compileScene(`@unlock_${kind} "long id"\n@unlock_${kind} 'long id'\n@end`, 'gallery.gal', 'gallery'));
-    interp.start('gallery');
-    expect(events).toEqual([{ type: kind, id: 'long id', fresh: true }, { type: kind, id: 'long id', fresh: false }]);
-    const snapshot = interp.gallery.snapshot();
-    expect(snapshot[kind === 'cg' ? 'cgs' : kind === 'text' ? 'texts' : 'music']).toEqual(['long id']);
+  it.each(['cg', 'music', 'text'] as const)('preserves persisted quoted %s identities after snapshot load without unlocking twice', kind => {
+    const { registry, interp } = makeRuntime();
+    const token = '"long id"';
+    const scene = compileScene(`存档位置\n@unlock_${kind} ${token}\n解锁之后`, 'gallery.gal', 'gallery');
+    registry.register(scene); interp.start('gallery');
+    const section = kind === 'cg' ? 'cgs' : kind === 'text' ? 'texts' : 'music';
+    interp.gallery.restore({ ...interp.gallery.snapshot(), [section]: [token] });
+    const saved = JSON.parse(JSON.stringify(interp.saveSnapshot()));
+    const restored = makeRuntime(); restored.registry.register(scene); restored.interp.loadSnapshot(saved);
+    const events: CoreEventMap['gallery'][] = [];
+    restored.bus.on('gallery', event => events.push(event));
+    restored.interp.advance();
+    expect(events).toEqual([{ type: kind, id: token, fresh: false }]);
+    expect(restored.interp.gallery.snapshot()[section]).toEqual([token]);
   });
   it.each([
     ['未闭合的 "文案', '@bg "night"'],

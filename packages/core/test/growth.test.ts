@@ -300,11 +300,12 @@ describe('@exp 指令（解释器集成）', () => {
     return { store, bus, registry, interp, growth };
   }
 
-  it('decodes the quoted character ID like other runtime ID arguments', () => {
+  it('preserves the literal growth character identity instead of silently dequoting it', () => {
     const { registry, interp, growth } = makeInterpWithGrowth();
     registry.register(compileScene('@exp "lynn" 10\n升级后', 'quoted-exp.gal', 'quoted_exp'));
-    interp.start('quoted_exp');
-    expect(growth.levelOf('lynn')).toBe(2);
+    const before = growth.snapshot();
+    expect(() => interp.start('quoted_exp')).toThrow();
+    expect(growth.snapshot()).toEqual(before);
   });
 
   it('reports an excessive public @exp grant with source location and no partial growth', () => {

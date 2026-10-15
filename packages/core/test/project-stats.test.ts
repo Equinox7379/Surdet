@@ -6,15 +6,15 @@ function scene(id: string, source: string) {
 }
 
 describe('computeProjectStats', () => {
-  it('uses decoded gallery and asset identities in shared statistics', () => {
-    const commands = ['bg', 'show', 'bgm', 'ambience', 'se', 'voice', 'video', 'unlock_cg', 'unlock_music', 'unlock_text', 'unlock_profile', 'unlock_term'];
+  it('uses existing decoded asset and dossier identities in shared statistics', () => {
+    const commands = ['bg', 'show', 'bgm', 'ambience', 'se', 'voice', 'video', 'unlock_profile', 'unlock_term'];
     const source = commands.flatMap(command => [`@${command} art`, `@${command} "art"`, `@${command} "long id"`, `@${command} 'long id'`]).join('\n');
     const stats = computeProjectStats({ scenes: [scene('start', source)], entryScene: 'start', sourceTextByScene: {} });
     expect(stats.referencedAssets).toEqual({ art: ['start'], 'long id': ['start'] });
   });
-  it('distinguishes a decoded stop token from a literal gallery ID and omits empty IDs', () => {
+  it('preserves the literal persisted gallery IDs, separate from decoded stop tokens', () => {
     const stats = computeProjectStats({ scenes: [scene('audio', '@ambience off\n@ambience "off"'), scene('gallery', '@unlock_cg off\n@unlock_cg "off"\n@unlock_cg ""')], entryScene: 'audio', sourceTextByScene: {} });
-    expect(stats.referencedAssets).toEqual({ off: ['gallery'] });
+    expect(stats.referencedAssets).toEqual({ off: ['gallery'], '"off"': ['gallery'], '""': ['gallery'] });
   });
   it('only ambience treats off as a stop sentinel', () => {
     const commands = ['bg', 'show', 'bgm', 'se', 'voice', 'video', 'unlock_cg', 'unlock_music', 'unlock_text', 'unlock_profile', 'unlock_term'];

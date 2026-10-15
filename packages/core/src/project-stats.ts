@@ -1,6 +1,7 @@
 import type { CompiledScene, TextInstr } from './dsl/ast.js';
 import { inlineTextLength } from './inline-text.js';
 import { decodeStageToken } from './stage.js';
+import { dequoteInstrArg } from './runtime/identifier-argument.js';
 
 export interface ProjectStats {
   sceneCount: number;
@@ -82,7 +83,8 @@ export function computeProjectStats(input: ProjectStatsInput): ProjectStats {
         const argument = instr.op === 'video' ? instr.src : instr.args[0];
         if (name === 'clear') endingCount++;
         if (ASSET_INSTRUCTIONS.has(name) && argument) {
-          const key = decodeStageToken(argument);
+          const key = name === 'unlock_cg' || name === 'unlock_music' || name === 'unlock_text' ? argument
+            : name === 'unlock_profile' || name === 'unlock_term' ? dequoteInstrArg(argument) : decodeStageToken(argument);
           if (!key.trim() || key === 'off' && name === 'ambience') continue;
           const uses = referencedAssets.get(key) ?? new Set<string>();
           uses.add(scene.sceneId);

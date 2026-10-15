@@ -18,10 +18,10 @@ describe('raw composition reference analysis', () => {
     expect(references.some(reference => reference.objectRef === 'label:entry.done')).toBe(true);
     expect(() => analyzeSceneCompositionReferences({ sceneId: 'entry', path: 'entry.gal', text: `@choice\n  ${label} -> @goto done\n@label done`, characters: {} })).not.toThrow();
   });
-  it.each([['"long id"', 'long id'], ['"a"b"c"', '"a"b"c"']])('#63 uses runtime gallery identity in composition references: %s', (token, id) => {
+  it.each([['"long id"', 'long id'], ['"a"b"c"', 'a"b"c']])('#63 uses runtime gallery identity in composition references: %s', (token, id) => {
     const text = ['cg', 'text', 'profile', 'term'].map(kind => `@unlock_${kind} ${token}`).join('\n');
     const references = analyzeSceneCompositionReferences({ sceneId: 'entry', path: 'entry.gal', text, characters: {} });
-    expect(references.map(reference => reference.objectRef).sort()).toEqual(['cgs', 'texts', 'profiles', 'terms'].map(section => `gallery:${section}:${id}`).sort());
+    expect(references.map(reference => reference.objectRef).sort()).toEqual([`gallery:cgs:${token}`, `gallery:texts:${token}`, `gallery:profiles:${id}`, `gallery:terms:${id}`].sort());
   });
   it.each([
     ['@random "dice" 1 6', [{ name: '"dice"', type: 'number', initial: 0 }]],
