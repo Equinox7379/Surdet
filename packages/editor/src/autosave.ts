@@ -11,7 +11,7 @@ import {
   type TimelineAutosaveDocument,
 } from './timeline-autosave-identity.js';
 import { sceneReferenceConfigPaths, isValidLabelName, validateLabelRenameBatch } from '@surdet/authoring';
-import { isValidSceneId } from '@surdet/core';
+import { isValidSceneId, isReservedSceneFileId } from '@surdet/core';
 import { desktopProjectIdentity } from './desktop.js';
 
 export const AUTOSAVE_KEY = 'surdet-editor:autosave';
@@ -588,6 +588,19 @@ export function inspectSceneAutosaveRecovery(
     .filter((pending) => pending.kind === 'rename' && pending.replacementKey)
     .map((pending) => pending.replacementKey!));
   const createKeys = new Set(payload.sceneTransaction.pendingCreates?.map((pending) => pending.key) ?? []);
+  const fold = (value: string): string => value.normalize('NFC').toLowerCase();
+  for (const entry of entries) {
+    if (!replacementKeys.has(entry.key) && !createKeys.has(entry.key)) continue;
+    if (isReservedSceneFileId(entry.id)) return { status: 'blocked', scenes: [], pendingDeletes: [] };
+    const source = payload.sceneTransaction.pendingDeletes.find(pending => pending.kind === 'rename' && pending.replacementKey === entry.key);
+    const sourceKey = source ? normalizedSceneKeyFromFile(source.file) : null;
+    if (sourceKey && fold(sourceKey) === fold(entry.key)) return { status: 'blocked', scenes: [], pendingDeletes: [] };
+    const collision = entries.some(other => other !== entry && (fold(other.id) === fold(entry.id) || fold(other.key) === fold(entry.key)))
+      || [...scenes].some(([key, current]) => key !== sourceKey && (fold(key) === fold(entry.key)
+        || fold(current.id ?? key.split('/').at(-1)!) === fold(entry.id)
+        || fold(normalizedSceneKeyFromFile(current.file ?? '') ?? key) === fold(entry.key)));
+    if (collision) return { status: 'blocked', scenes: [], pendingDeletes: [] };
+  }
   const labelRenames = payload.sceneTransaction.configRenames?.filter(rename => rename.labelScene !== undefined) ?? [];
   if (labelRenames.length > 0) {
     if (labelRenames.length !== payload.sceneTransaction.configRenames!.length || payload.sceneTransaction.pendingDeletes.length > 0) return { status: 'blocked', scenes: [], pendingDeletes: [] };

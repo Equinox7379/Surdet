@@ -1,4 +1,5 @@
-import { isContentHistoryPath, normalizeProjectPath, type ContentHistoryFileDiff } from '@surdet/authoring';
+import { isContentHistoryPath, normalizeProjectPath, timelineIdFromPath, timelinePathFor, type ContentHistoryFileDiff } from '@surdet/authoring';
+import { isReservedSceneFileId } from '@surdet/core';
 import { state } from './state.js';
 import { sceneTextSha256 } from './project-io.js';
 import { setSceneText } from './history.js';
@@ -22,11 +23,17 @@ export async function prepareHistoryFileDraft(file: ContentHistoryFileDiff): Pro
   if (path.startsWith('content/scenario/')) {
     const relative = path.slice('content/scenario/'.length);
     const key = relative.replace(/\.gal$/i, '');
+    const id = key.split('/').at(-1)!;
     const entry = state.scenes.get(key);
     if ((entry?.text ?? null) !== file.currentText) throw new Error('剧本已经修改，请先处理当前草稿');
+    if (!entry) {
+      if (isReservedSceneFileId(id)) throw new Error('场景标识不能使用 Windows 设备名');
+      if ([...state.scenes.values(), ...state.pendingSceneDeletes].some(item => item.id.toLowerCase() === id.toLowerCase()
+        || item.file.replace(/^content\/scenario\//, '').toLowerCase() === relative.toLowerCase())) throw new Error('当前已有同名场景或待删除文件，请先处理冲突');
+    }
     return () => {
       if (entry) setSceneText(key, text);
-      else state.scenes.set(key, { id: key.split('/').at(-1)!, file: relative, text,
+      else state.scenes.set(key, { id, file: relative, text,
         eol: text.includes('\r\n') ? '\r\n' : '\n', dirty: true, handle: null, pendingCreateOperationId: crypto.randomUUID() });
       state.current = key;
       state.mainTab = 'editor';
@@ -34,12 +41,17 @@ export async function prepareHistoryFileDraft(file: ContentHistoryFileDiff): Pro
   }
   if (path.startsWith('content/timelines/')) {
     const relative = path.slice('content/timelines/'.length);
-    const id = relative.split('/').at(-1)!.replace(/\.json$/i, '');
+    const id = timelineIdFromPath(relative);
     const parsed = parseTimelineText(text);
     if (parsed.definition === null || parsed.definition.id !== id) throw new Error(`历史时间轴无效：${parsed.issues.join('；') || '时间轴标识与文件名不符'}`);
     const entry = state.timelines.find(item => item.file === relative || item.file === path);
     if ((entry?.text ?? null) !== file.currentText) throw new Error('时间轴已经修改，请先处理当前草稿');
-    if (!entry && state.timelines.some(item => item.id === id)) throw new Error('当前已有同名时间轴，请先处理同名冲突');
+    if (!entry) {
+      timelinePathFor(id);
+      const reserved = [...state.timelines, ...state.pendingTimelineDeletes, ...[...state.pendingTimelineRestores.values()].map(restore => restore.entry)];
+      if (reserved.some(item => item.id.toLowerCase() === id.toLowerCase()
+        || item.file.replace(/^content\/timelines\//, '').toLowerCase() === relative.toLowerCase())) throw new Error('当前已有同名时间轴或待恢复文件，请先处理同名冲突');
+    }
     return () => {
       if (entry) {
         pushTimelineSnapshot(entry.id, entry.text);
