@@ -536,7 +536,9 @@ function scanChoiceArrow(raw: string, labelEnd: number, source: SourcePos): { in
     }
     // Labels are prose: paired quotes protect literal arrows, while English
     // apostrophes and an unmatched quote remain ordinary label characters.
-    const quotedEnd = choiceQuoteEnd(raw, i, labelEnd);
+    // Unlike ASCII prose quotes, paired Chinese delimiters cannot be borrowed
+    // from a quoted action argument; retain them during unmatched-quote fallback.
+    const quotedEnd = choiceQuoteEnd(raw, i, char === '“' || char === '‘' ? raw.length : labelEnd);
     if (quotedEnd !== i) { i = quotedEnd; continue; }
     if (char !== '-' || raw[i + 1] !== '>') continue;
     const before = i > 0 ? raw[i - 1]! : '';

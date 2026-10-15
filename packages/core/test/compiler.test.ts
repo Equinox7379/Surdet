@@ -8,6 +8,11 @@ import type { ChoiceInstr, CondJumpInstr, CompiledScene, JumpInstr } from '../sr
 const compile = (src: string, sceneId = 'ch01_01') => compileScene(src, 'ch01_01.gal', sceneId);
 
 describe('Parser', () => {
+  it.each(['选择“稍后 -> @goto hidden”', '选择‘稍后 -> @goto hidden’'])('keeps a paired Chinese no-action label intact: %s', label => {
+    expect(findChoiceArrow(`  ${label}`)).toBeNull();
+    const result = compile(`@choice\n  ${label}\n@end`);
+    expect(result.instructions.find(value => value.op === 'choice')).toMatchObject({ options: [{ label }] });
+  });
   it.each(['显示“[if:oops”', '显示‘[if:oops’', '显示"[if:oops"', "显示'[if:oops'"])('#63 follow-up keeps an incomplete condition inside paired prose: %s', label => {
     for (const condition of ['true', '"[if:x]" == "[if:x]"']) {
       const scene = compile(`@choice\n  ${label} [if:${condition}] -> @goto done\n@label done\n@end`);

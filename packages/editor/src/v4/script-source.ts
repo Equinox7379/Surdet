@@ -248,7 +248,11 @@ export function simpleChoice(raw: string): SimpleChoice | null {
   const match = /^(\s+)(.*?)\s+->\s+(@goto\s+\S+)([ \t]*)$/.exec(raw);
   if (!match || /[\r\n]/.test(raw)) return null;
   let instructions: ReturnType<typeof parseInlineInstructions>;
-  try { instructions = parseInlineInstructions(match[3]!, 'editor-choice.gal', 1, 1); }
+  try {
+    const arrow = findChoiceArrow(raw);
+    if (!arrow || raw.slice(arrow.end).trimStart() !== match[3]! + match[4]!) return null;
+    instructions = parseInlineInstructions(match[3]!, 'editor-choice.gal', 1, 1);
+  }
   catch { return null; }
   if (instructions.length !== 1 || instructions[0]?.name !== 'goto' || instructions[0]?.args.length !== 1) return null;
   let label = match[2]!, condition = '';
