@@ -121,10 +121,10 @@ function boundedJsonTree(value: unknown, checkTypes: boolean): boolean {
   const visit = (v: unknown, depth: number): number => {
     if (depth > MAX_JSON_DEPTH) return -1;
     if (v === null || typeof v !== 'object') {
-      return !checkTypes || v === null || typeof v === 'string' || typeof v === 'boolean'
+      return !checkTypes && v === undefined || v === null || typeof v === 'string' || typeof v === 'boolean'
         || typeof v === 'number' && Number.isFinite(v) ? 0 : -1;
     }
-    if (checkTypes && !Array.isArray(v) && !isJsonObject(v)) return -1;
+    if (!Array.isArray(v) && !isJsonObject(v)) return -1;
     if (visiting.has(v)) return -1;
     const known = heights.get(v);
     if (known !== undefined) return depth + known <= MAX_JSON_DEPTH ? known : -1;
@@ -164,7 +164,7 @@ export function assertValidSnapshot(
   if (typeof snap !== 'object' || snap === null) fail('顶层必须是对象');
   // Include unknown extension fields, which are serialized too; optional undefined
   // metadata keeps its existing omission semantics and is checked separately below.
-  if (!boundedJsonTree(snap, false)) fail('含数组空位、循环引用或嵌套超过256层');
+  if (!boundedJsonTree(snap, false)) fail('含非 JSON 安全值、数组空位、循环引用或嵌套超过256层');
   const s = snap as Record<string, unknown>;
   const strict = phase === 'current';
   if (!isJsonObject(s.meta)) fail('meta 必须是普通对象');

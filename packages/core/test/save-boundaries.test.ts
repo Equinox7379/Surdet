@@ -8,6 +8,13 @@ function snapshot(): SaveSnapshot {
 }
 
 describe('bounded save input', () => {
+  it.each([Infinity, -Infinity, NaN, 1n, Symbol('invalid'), () => 1, new Date(), new Map()])('rejects non-JSON extension value %s before storage', async value => {
+    const saves = new SaveManager(new MemoryStorage());
+    await saves.save('1', snapshot());
+    const before = await saves.load('1');
+    await expect(saves.save('1', { ...snapshot(), extension: { value } } as SaveSnapshot)).rejects.toThrow(/存档结构非法/);
+    expect(await saves.load('1')).toEqual(before);
+  });
   it.each(['readSet', 'cgs', 'music', 'texts', 'profiles', 'terms', 'endings'] as const)('rejects sparse %s before replacing a valid save', async field => {
     const saves = new SaveManager(new MemoryStorage());
     const good = snapshot();
