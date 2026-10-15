@@ -1078,23 +1078,25 @@ export function repairTimelineAutosaveConflict(
     return repairFailure(error instanceof Error ? error.message : String(error));
   }
   const newFile = projectPath.slice('content/timelines/'.length);
+  const sameId = (id: string | null): boolean => id?.toLowerCase() === newId.toLowerCase();
+  const sameFile = (file: string): boolean => file.toLowerCase() === newFile.toLowerCase();
   const currentCollision = state.timelines.some((entry) => (
-    entry.id === newId
-    || entry.file === newFile
-    || timelineDefinitionId(entry) === newId
+    sameId(entry.id)
+    || sameFile(entry.file)
+    || sameId(timelineDefinitionId(entry))
   ));
   if (currentCollision) return repairFailure(`演出标识 或文件已存在：${newId}`);
 
   const deletedCollision = state.pendingTimelineDeletes.some((entry) => (
-    entry.id === newId || entry.file === newFile
+    sameId(entry.id) || sameFile(entry.file)
   ));
   if (deletedCollision) return repairFailure(`演出仍在待删除列表中：${newId}`);
 
   const restoreCollision = [...state.pendingTimelineRestores.entries()].some(([id, restore]) => (
-    id === newId
-    || restore.entry.id === newId
-    || restore.entry.file === newFile
-    || timelineDefinitionId(restore.entry) === newId
+    sameId(id)
+    || sameId(restore.entry.id)
+    || sameFile(restore.entry.file)
+    || sameId(timelineDefinitionId(restore.entry))
   ));
   if (restoreCollision) return repairFailure(`演出仍在可恢复列表中：${newId}`);
 
