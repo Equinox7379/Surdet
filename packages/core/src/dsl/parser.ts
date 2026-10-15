@@ -496,6 +496,24 @@ export function findChoiceArrow(raw: string, source: SourcePos = pos('<choice>',
     // its condition or action arguments. Conditions keep their own grammar.
     const label = raw.slice(0, index);
     const condition = findChoiceCondition(label.trimEnd(), source);
+    // A complete Chinese-quoted command is prose, unless its closing mark is
+    // inside an ASCII-quoted action value (which cannot close the label).
+    let protectedProse = false;
+    for (let i = 0; i < (condition?.index ?? index); i++) {
+      if (raw[i] !== '“' && raw[i] !== '‘') continue;
+      const closing = choiceQuoteEnd(raw, i, raw.length);
+      if (closing <= index) { if (closing > i) i = closing; continue; }
+      let actionQuote: string | null = null;
+      for (let cursor = end; cursor < closing; cursor++) {
+        const char = raw[cursor];
+        if (actionQuote !== null) {
+          if (char === '\\') cursor++;
+          else if (char === actionQuote) actionQuote = null;
+        } else if (char === '"' || char === "'") actionQuote = char;
+      }
+      if (actionQuote === null) { protectedProse = true; break; }
+    }
+    if (protectedProse) continue;
     if (scanChoiceArrow(raw, condition?.index ?? index, source)?.index !== index) continue;
     if (found !== null) {
       throw new DslError('S009', 'choice 文案与行内动作边界有歧义',
@@ -536,9 +554,7 @@ function scanChoiceArrow(raw: string, labelEnd: number, source: SourcePos): { in
     }
     // Labels are prose: paired quotes protect literal arrows, while English
     // apostrophes and an unmatched quote remain ordinary label characters.
-    // Unlike ASCII prose quotes, paired Chinese delimiters cannot be borrowed
-    // from a quoted action argument; retain them during unmatched-quote fallback.
-    const quotedEnd = choiceQuoteEnd(raw, i, char === '“' || char === '‘' ? raw.length : labelEnd);
+    const quotedEnd = choiceQuoteEnd(raw, i, labelEnd);
     if (quotedEnd !== i) { i = quotedEnd; continue; }
     if (char !== '-' || raw[i + 1] !== '>') continue;
     const before = i > 0 ? raw[i - 1]! : '';

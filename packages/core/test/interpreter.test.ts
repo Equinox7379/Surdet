@@ -48,6 +48,18 @@ function choiceCollector(bus: EventBus<CoreEventMap>): ChoiceEventPayload[] {
 }
 
 describe('Interpreter', () => {
+  it.each([['“', '”'], ['‘', '’']])('#63 an action string cannot close unmatched Chinese prose %s', (opening, closing) => {
+    for (const condition of ['', ' [if:true]']) {
+      const { store, bus, registry, interp } = makeRuntime([{ name: 'msg', type: 'string', initial: '' }]);
+      const choices = choiceCollector(bus), texts = valueCollector(bus);
+      const label = `选择 ${opening}未闭合`;
+      registry.register(compileScene(`@choice\n  ${label}${condition} -> @set msg = "结束${closing}" @goto done\n错误\n@label done\n成功`, 'quotes.gal', 'quotes'));
+      interp.start('quotes');
+      expect(choices[0]!.options[0]!.label).toBe(label);
+      interp.choose(0);
+      expect(store.get('msg')).toBe(`结束${closing}`); expect(texts).toEqual(['成功']);
+    }
+  });
   it.each(['plain', '"long sword"', "'long sword'", '""', '"   "'])('#63 preserves persisted inventory token identity after load: %s', token => {
     const compiled = compileScene(`存档停点\n@has_item bag ${token} owned\n@add_item bag ${token}\n检查持有\n@remove_item bag ${token}\n@has_item bag ${token} owned\n检查移除`, 'items.gal', 'items');
     const decls: VarDeclaration[] = [{ name: 'bag', type: 'string[]', initial: [token] }, { name: 'owned', type: 'flag', initial: false }];
