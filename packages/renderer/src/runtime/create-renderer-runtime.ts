@@ -257,7 +257,17 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
     // WorldLayer/DialogueLayer/MenuLayer update work. Registering WorldLayer
     // separately duplicates its wake-up path (WorldLayer also calls the Stage
     // callback), so keep one production scheduler source.
-    scheduler = new FrameScheduler(stage.app!, controller, [stage], { monitor });
+    scheduler = new FrameScheduler(stage.app!, controller, [stage], {
+      monitor,
+      ...(options.onError ? {
+        onError: (cause: unknown) => options.onError!(cause instanceof RendererError ? cause : new RendererError('Renderer frame update failed', {
+          code: 'COMMAND_COMMIT_FAILED',
+          domain: 'runtime',
+          command: 'update',
+          cause,
+        })),
+      } : {}),
+    });
     compositionAttempted = true;
     return await createRendererRuntimeFromInternals({
       canvas: stage.app!.canvas,
