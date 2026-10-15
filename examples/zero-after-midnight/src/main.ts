@@ -541,7 +541,7 @@ async function main(): Promise<void> {
   }
 
   /** 回合尾事件演出前的挂起点快照：事件场景播完后经 sceneEnd 恢复，剧情续跑（回合头尾闭环） */
-  let turnResumeSnap: SaveSnapshot | null = null;
+  let turnResumeSnap: (() => void) | null = null;
 
   const host = createDefaultHost({
     interpreter: interp,
@@ -561,7 +561,7 @@ async function main(): Promise<void> {
       achievements,
       onAchievementsChanged: () => checkAchievements(),
       onBattleResult: (winner) => store.set('battleWon', winner === 'allies'),
-      onTurnResumeSnapshot: (snapshot) => { turnResumeSnap = snapshot; },
+      onScheduledSceneEnd: (resume) => { turnResumeSnap = resume; },
       onLog: (message) => console.info(`[zero] ${message}`),
     }),
     onError: (error) => console.error('[zero] 宿主 adapter 失败：', error),
@@ -650,18 +650,18 @@ async function main(): Promise<void> {
     menu.hideSystemMenu();
   });
 
-  // 回合尾事件场景播完 → 恢复跳转前快照，剧情从挂起点续跑（回合头尾闭环）。
+  // 日程事件场景播完 → 只恢复调用方位置，保留演出中的状态变更。
   // loadSnapshot 不可在事件回调内调用（撞解释器 #stepping 重入守卫），延迟到 UI 线程执行。
   let endingTransitionActive = false;
   const endingSceneIds = new Set(['route_meeting_rooftop', 'route_silence_dawn', 'route_testimony_rooftop']);
   bus.on('sceneEnd', ({ sceneId }) => {
     if (turnResumeSnap) {
       const snap = turnResumeSnap;
-      turnResumeSnap = null;
       setTimeout(() => {
-        if (gameResourcesDisposed) return;
+        if (gameResourcesDisposed || turnResumeSnap !== snap) return;
+        turnResumeSnap = null;
         try {
-          interp.loadSnapshot(snap);
+          snap();
         } catch (err) {
           console.error('[zero] 回合尾事件恢复失败:', err);
         }
