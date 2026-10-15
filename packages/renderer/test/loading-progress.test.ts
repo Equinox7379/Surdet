@@ -2,6 +2,18 @@ import { describe, expect, it, vi } from 'vitest';
 import { AssetLoadQueue } from '../src/loading-progress.js';
 
 describe('AssetLoadQueue', () => {
+  it.each([NaN, Infinity, -Infinity])('rejects non-finite worker counts %s', concurrency => {
+    expect(() => new AssetLoadQueue(concurrency)).toThrow(RangeError);
+  });
+
+  it('keeps finite concurrency clamping and executes every queued job', async () => {
+    for (const [value, expected] of [[0, 1], [-2, 1], [2.9, 2], [99, 8]]) {
+      const queue = new AssetLoadQueue(value); const load = vi.fn(async () => {});
+      expect(queue.concurrency).toBe(expected);
+      expect(await queue.run([{ id: 'one', priority: 'critical', load }])).toMatchObject({ completed: 1, failed: 0, done: true });
+      expect(load).toHaveBeenCalledOnce();
+    }
+  });
   it('runs critical before scene before background while preserving order inside a priority', async () => {
     const order: string[] = [];
     const queue = new AssetLoadQueue(1);
