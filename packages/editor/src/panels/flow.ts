@@ -800,7 +800,8 @@ async function applyFlowPlan(plan: FlowEditPlan): Promise<void> {
     const edits: { key: string; text: string }[] = [], created: { id: string; text: string }[] = [];
     for (const file of plan.files) {
       if (file.before === null) {
-        if ([...state.scenes.values()].some(scene => scene.id === file.sceneId)) throw new Error(`场景 '${file.sceneId}' 已存在，请重新预览。`);
+        if (isReservedSceneFileId(file.sceneId)) throw new Error('场景标识不能使用 Windows 设备名');
+        if ([...state.scenes.values()].some(scene => scene.id.toLowerCase() === file.sceneId.toLowerCase())) throw new Error(`场景 '${file.sceneId}' 已存在，请重新预览。`);
         if (isSceneFilePathReserved(`${file.sceneId}.gal`)) throw new Error('该场景文件正等待删除，请先保存全部。');
         created.push({ id: file.sceneId, text: file.after });
         continue;

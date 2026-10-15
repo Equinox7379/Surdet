@@ -600,6 +600,36 @@ describe('inspectSceneAutosaveRecovery（场景路径事务整组恢复）', () 
     }],
   ]);
 
+  it.each(['CON', 'COM¹', 'OLD'])('portable scene autosave refuses a new conflicting identity %s', id => {
+    const operationId = '22222222-2222-4222-8222-222222222222';
+    const built = buildAutosave('proj', new Map([[`fresh/${id}`, {
+      id, file: `fresh/${id}.gal`, text: `@scene ${id}\n`, eol: '\n', dirty: true, pendingCreateOperationId: operationId,
+    }]]), [], 12, 'project');
+    expect(inspectSceneAutosaveRecovery(built, 'project', diskScenes)).toEqual({ status: 'blocked', scenes: [], pendingDeletes: [] });
+  });
+  it.each(['CON', 'COM¹', 'READER'])('portable scene autosave refuses a conflicting rename identity %s', id => {
+    const next = structuredClone(payload);
+    const entry = next.scenes[0]!;
+    entry.id = id; entry.key = `chapter/${id}`; entry.file = `chapter/${id}.gal`; entry.text = `@scene ${id}\n`;
+    next.sceneTransaction.pendingDeletes[0]!.replacementKey = entry.key;
+    next.sceneTransaction.pendingDeletes[0]!.affectedSceneKeys[0] = entry.key;
+    expect(inspectSceneAutosaveRecovery(next, 'project', diskScenes)).toEqual({ status: 'blocked', scenes: [], pendingDeletes: [] });
+  });
+  it('portable scene autosave allows moving the original identity to another folder', () => {
+    const next = structuredClone(payload);
+    const entry = next.scenes[0]!;
+    entry.id = 'old'; entry.key = 'other/old'; entry.file = 'other/old.gal'; entry.text = '@scene old\n';
+    next.sceneTransaction.pendingDeletes[0]!.replacementKey = entry.key;
+    next.sceneTransaction.pendingDeletes[0]!.affectedSceneKeys[0] = entry.key;
+    expect(inspectSceneAutosaveRecovery(next, 'project', diskScenes).status).toBe('recoverable');
+  });
+  it('portable scene autosave refuses case aliases between two pending creates', () => {
+    const operationId = '22222222-2222-4222-8222-222222222222';
+    const built = buildAutosave('proj', new Map(['fresh', 'FRESH'].map(id => [id, {
+      id, file: `${id}.gal`, text: `@scene ${id}\n`, eol: '\n', dirty: true, pendingCreateOperationId: operationId,
+    }])), [], 12, 'project');
+    expect(inspectSceneAutosaveRecovery(built, 'project', diskScenes).status).toBe('blocked');
+  });
   it('完整成员齐备时同时恢复新场景、引用与待提交计划', () => {
     expect(inspectSceneAutosaveRecovery(payload, 'project', diskScenes)).toEqual({
       status: 'recoverable',
