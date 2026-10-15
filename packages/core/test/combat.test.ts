@@ -25,6 +25,112 @@ const config: CombatConfig = {
 const fixedRng = (): number => 0.5;
 
 describe('CombatSolver', () => {
+  it.each([
+    { label: '无阵营', teams: [] },
+    { label: '单阵营', teams: ['allies'] },
+    { label: '第三阵营', teams: ['allies', 'enemies', 'neutral'] },
+    { label: '重复阵营', teams: ['allies', 'allies'] },
+    { label: '空名称', teams: ['allies', ''] },
+    { label: '空白名称', teams: ['allies', ' \t'] },
+    { label: '非字符串名称', teams: ['allies', 2] },
+    { label: '非数组', teams: 'allies,enemies' },
+  ])('D66 start 拒绝 $label 配置且保留旧战斗', ({ teams }) => {
+    const c: CombatConfig = { ...config, elementChain: {} };
+    const solver = new CombatSolver(c, fixedRng);
+    solver.start({ allies: ['archer'], enemies: ['wolf'] });
+    const action = solver.act('allies_0', 'enemies_0', 'power_shot');
+    const before = solver.snapshot();
+    const units = solver.units;
+    c.teams = teams as unknown as string[];
+    expect(() => solver.start({ allies: ['sword'], enemies: ['goblin'] })).toThrow(/teams.*两个.*不同.*非空/);
+    c.teams = config.teams;
+    expect(solver.snapshot()).toEqual(before);
+    expect(solver.units).toBe(units);
+    expect(solver.lastAction).toBe(action);
+  });
+
+  it('D66 活动快照预检和恢复均拒绝第三阵营配置且保留旧战斗', () => {
+    const c: CombatConfig = { ...config, winCondition: 'flag', elementChain: {} };
+    const solver = new CombatSolver(c, fixedRng);
+    solver.start({ allies: ['archer'], enemies: ['wolf'] });
+    const incoming = solver.snapshot();
+    const action = solver.act('allies_0', 'enemies_0', 'power_shot');
+    const before = solver.snapshot();
+    c.teams = ['allies', 'enemies', 'neutral'];
+    expect(() => solver.validateSnapshot(incoming)).toThrow(/teams.*两个.*不同.*非空/);
+    expect(() => solver.restore(incoming)).toThrow(/teams.*两个.*不同.*非空/);
+    c.teams = config.teams;
+    expect(solver.snapshot()).toEqual(before);
+    expect(solver.lastAction).toBe(action);
+  });
+
+  it('D66 两个自定义阵营名可开战、轮替、判胜并恢复', () => {
+    const c: CombatConfig = { ...config, teams: ['蓝方 队伍', 'red-team'] };
+    const solver = new CombatSolver(c, fixedRng);
+    solver.start({ allies: ['sword'], enemies: ['goblin'] });
+    expect(solver.finished).toBe(false);
+    expect(solver.units.map(unit => unit.team)).toEqual(c.teams);
+    expect(solver.actingTeam).toBe(c.teams[0]);
+    solver.pass();
+    expect(solver.actingTeam).toBe(c.teams[1]);
+    solver.pass();
+    expect(solver.turn).toBe(2);
+    solver.act('蓝方 队伍_0', 'red-team_0');
+    expect(solver.finished).toBe(true);
+    expect(solver.winner).toBe(c.teams[0]);
+    const restored = new CombatSolver(c, fixedRng);
+    restored.restore(solver.snapshot());
+    expect(restored.snapshot()).toEqual(solver.snapshot());
+  });
+
+  it.each([-1, NaN, Infinity, -Infinity])('D37 start 拒绝 critMultiplier=%s 且保留旧战斗', (critMultiplier) => {
+    const c: CombatConfig = { ...config, elementChain: {} };
+    const solver = new CombatSolver(c, fixedRng);
+    solver.start({ allies: ['archer'], enemies: ['wolf'] });
+    const action = solver.act('allies_0', 'enemies_0', 'power_shot');
+    const before = solver.snapshot();
+    const units = solver.units;
+    c.damage = { ...config.damage!, critMultiplier };
+    expect(() => solver.start({ allies: ['sword'], enemies: ['goblin'] })).toThrow(/critMultiplier.*有限.*非负/);
+    expect(solver.snapshot()).toEqual(before);
+    expect(solver.units).toBe(units);
+    expect(solver.lastAction).toBe(action);
+  });
+
+  it.each([-1, NaN, Infinity, -Infinity])('D37 活动快照预检和恢复拒绝 critMultiplier=%s 且保留旧战斗', (critMultiplier) => {
+    const c: CombatConfig = { ...config, elementChain: {} };
+    const solver = new CombatSolver(c, fixedRng);
+    solver.start({ allies: ['archer'], enemies: ['wolf'] });
+    const incoming = solver.snapshot();
+    const action = solver.act('allies_0', 'enemies_0', 'power_shot');
+    const before = solver.snapshot();
+    c.damage = { ...config.damage!, critMultiplier };
+    expect(() => solver.validateSnapshot(incoming)).toThrow(/critMultiplier.*有限.*非负/);
+    expect(() => solver.restore(incoming)).toThrow(/critMultiplier.*有限.*非负/);
+    expect(solver.snapshot()).toEqual(before);
+    expect(solver.lastAction).toBe(action);
+  });
+
+  it('D37 零暴击倍率可开战和恢复，暴击零伤害不增加 HP', () => {
+    const c: CombatConfig = {
+      ...config, damage: { base: 'atk * 2 - def', critChance: 1, critMultiplier: 0 },
+    };
+    const solver = new CombatSolver(c, fixedRng);
+    solver.start({ allies: ['sword'], enemies: ['goblin'] });
+    const restored = new CombatSolver(c, fixedRng);
+    restored.restore(solver.snapshot());
+    for (const active of [solver, restored]) {
+      const hp = active.units[1]!.hp;
+      const action = active.act('allies_0', 'enemies_0');
+      expect(action.crit).toBe(true);
+      expect(action.rawDamage).toBe(10);
+      expect(action.finalDamage).toBe(0);
+      expect(active.units[1]!.hp).toBe(hp);
+      expect(active.finished).toBe(false);
+      expect(active.actingTeam).toBe('enemies');
+    }
+  });
+
   it.each(['alive', 'winner', 'unfinished'] as const)('rejects contradictory %s snapshot before replacing live battle', (kind) => {
     const solver = new CombatSolver(config, fixedRng);
     solver.start({ allies: ['sword'], enemies: ['goblin'] });
