@@ -131,7 +131,7 @@ let growth: GrowthSystem | null = null;
 let achievements: AchievementSystem | null = null;
 let affection: AffectionSystem | null = null;
 let scheduler: EventScheduler | null = null;
-/** 回合尾事件演出前的挂起点快照（演出场景播完经 sceneEnd 恢复续跑；同 starter 语义） */
+/** 调度事件演出前的挂起点快照（演出场景播完经 sceneEnd 恢复续跑；同共享 Player） */
 let turnResumeSnap: SaveSnapshot | null = null;
 /** 当前预览存档隔离键与会话起始时间（load 在模块级串行队列中执行）。 */
 let previewProjectKey = 'untitled';
@@ -888,6 +888,15 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
           return;
         }
         interp.pauseHost();
+        const playScheduledScene = (scene: string | undefined): boolean => {
+          if (!scene || !registry?.has(scene) || !interp) return false;
+          const snap = interp.saveSnapshot();
+          if (!snap) return false;
+          system.hideMap();
+          turnResumeSnap = snap;
+          interp.hostJump(scene);
+          return true;
+        };
         const renderMap = (): void => {
           if (!calendar || !interp) return;
           const cal = calendar; // 局部固化：模块级变量在嵌套回调内不收窄
@@ -922,21 +931,14 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
               // 回合尾：先结算回合，再调度优先级事件；演出场景经 sceneEnd 恢复续跑
               calendar.advanceTurn();
               const endEv = store ? scheduler?.dispatch(store) ?? null : null;
-              if (endEv?.scene && registry?.has(endEv.scene)) {
-                system.hideMap();
-                const snap = interp.saveSnapshot(); // 挂起点已越过 @calendar，恢复即续跑
-                if (snap) {
-                  turnResumeSnap = snap;
-                  interp.hostJump(endEv.scene);
-                  return;
-                }
-              }
+              if (playScheduledScene(endEv?.scene)) return;
               interp.resumeHost();
             },
           );
         };
-        // 回合头事件：effects 结算（演出留给回合尾，同 starter 语义）
-        if (scheduler && store) scheduler.dispatch(store);
+        // 回合头也即时播放已调度场景，不能消费一次性事件后丢掉演出。
+        const startEv = scheduler && store ? scheduler.dispatch(store) : null;
+        if (playScheduledScene(startEv?.scene)) break;
         renderMap();
         break;
       }
@@ -989,7 +991,7 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
     }
   });
 
-  // 回合尾事件场景播完 → 恢复挂起点续跑（loadSnapshot 不可在事件回调内直调，延迟到下一 tick）
+  // 调度事件场景播完 → 恢复挂起点续跑（loadSnapshot 不可在事件回调内直调，延迟到下一 tick）
   bus.on('sceneEnd', () => {
     if (!turnResumeSnap && interp?.status === 'ended') {
       schedulePreviewTraceComplete(activePreviewTrace!, 'passed');

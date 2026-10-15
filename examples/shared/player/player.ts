@@ -997,7 +997,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         }
       }
       // 事件触发类成就：等级里程碑（level_5 无 when 条件，check() 不会命中，须显式 unlock）
-      if ((growth?.levelOf(p.characterId) ?? 0) >= 5 && achievements.defOf('level_5')) {
+      if (!galleryReplay && (growth?.levelOf(p.characterId) ?? 0) >= 5 && achievements.defOf('level_5')) {
         try {
           const res = achievements.unlock('level_5');
           if (res.fresh) dialogue.showBanner(`成就解锁：${res.def.name}`, 'tip');
@@ -1012,6 +1012,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   // ===== 成就批量判定：状态变更后（text 事件 / 读档）统一扫描 when 条件 =====
   /** 扫描全部 when 条件成就，新解锁播放横幅提示（求值异常不阻断剧情，仅告警） */
   function checkAchievements(): void {
+    if (galleryReplay) return;
     try {
       const fresh = achievements.check();
       for (const r of fresh) {
@@ -1023,7 +1024,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     }
   }
   // 每条文本推进后判定：覆盖 @set/@mod 改变量后的剧情节奏（变量在文本行之间变化）
-  bus.on('text', () => { if (!rollbackRuntime.isRestoring() && !galleryReplay?.restoring) checkAchievements(); });
+  bus.on('text', () => { if (!rollbackRuntime.isRestoring()) checkAchievements(); });
 
   // ===== 标题画面：开始/读档/鉴赏/设置/退出 =====
   function titleView() {

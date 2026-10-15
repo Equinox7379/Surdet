@@ -103,6 +103,8 @@ function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystem
             },
             (commandId) => {
               try {
+                const calendarBefore = calendar.snapshot();
+                const storeBefore = options.store.snapshot();
                 const result = calendar.execBaseCommand(commandId);
                 const name = calendar.baseCommands().find((command) => command.id === commandId)?.name ?? commandId;
                 if (!result.ok) {
@@ -110,12 +112,15 @@ function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystem
                   view();
                   return;
                 }
-                for (const [variable, delta] of Object.entries(result.effects ?? {})) {
-                  try {
+                try {
+                  for (const [variable, delta] of Object.entries(result.effects ?? {})) {
                     options.store.modify(variable, delta);
-                  } catch (error) {
-                    log(options, `据点指令变量写回失败：${variable}（${String(error)}）`);
                   }
+                } catch (error) {
+                  // 日程扣费和变量增量同属一次结算，失败时恢复 AP、次数和全部已写效果。
+                  options.store.restore(storeBefore);
+                  calendar.restore(calendarBefore);
+                  throw error;
                 }
                 baseMsg = `执行了「${name}」。`;
                 if (result.eventId && options.registry.has(result.eventId)) {
