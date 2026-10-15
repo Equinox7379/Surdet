@@ -60,7 +60,7 @@ export interface CombatConfig {
   units: CombatUnitDef[];
   skills: CombatSkillDef[];
   elementChain: ElementChain;
-  /** 阵营列表，如 ["allies", "enemies"]，行动轮替顺序 */
+  /** 开战时须为两个不同的非空阵营名，如 ["allies", "enemies"]，按此顺序轮替 */
   teams: string[];
   /** 胜负条件 */
   winCondition: 'all_down' | 'survive_turns' | 'flag';
@@ -199,8 +199,22 @@ export class CombatSolver {
     return this.#lastAction;
   }
 
+  #validateActiveConfig(): void {
+    const { teams, damage } = this.#config;
+    if (!Array.isArray(teams) || teams.length !== 2
+      || typeof teams[0] !== 'string' || teams[0].trim().length === 0
+      || typeof teams[1] !== 'string' || teams[1].trim().length === 0
+      || teams[0] === teams[1]) {
+      throw new Error('战斗配置 teams 必须包含两个不同的非空阵营名');
+    }
+    if (damage && (!Number.isFinite(damage.critMultiplier) || damage.critMultiplier < 0)) {
+      throw new Error('战斗配置 damage.critMultiplier 必须是有限的非负数');
+    }
+  }
+
   /** 开局布阵 */
   start(setup: CombatStartSetup): void {
+    this.#validateActiveConfig();
     this.#units = [];
     this.#turn = 1;
     this.#teamIndex = 0;
@@ -487,9 +501,11 @@ export class CombatSolver {
 
   validateSnapshot(snap: unknown): asserts snap is CombatSnapshot {
     if (!isRecord(snap)) throw new Error('战斗快照必须是对象');
-    const teamSet = new Set(this.#config.teams);
     if (!Array.isArray(snap.units)) throw new Error('战斗快照 units 必须是数组');
     const units = snap.units;
+    // 未开战的空闲快照允许 teams/units 为空；已有单位的战斗恢复须满足开战配置。
+    if (units.length > 0) this.#validateActiveConfig();
+    const teamSet = new Set(this.#config.teams);
     if (typeof snap.turn !== 'number' || !Number.isInteger(snap.turn) || snap.turn < 1) {
       throw new Error('战斗快照 turn 必须是 >= 1 的整数');
     }
