@@ -487,8 +487,8 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     return snap;
   }
 
-  /** 回合尾事件演出前的挂起点快照：事件场景播完后经 sceneEnd 恢复，剧情续跑（回合头尾闭环） */
-  let turnResumeSnap: SaveSnapshot | null = null;
+  /** 日程事件结束后的控制流续接；变量和系统状态保留演出后的最新值。 */
+  let turnResumeSnap: (() => void) | null = null;
 
   const host = createDefaultHost({
     interpreter: interp,
@@ -510,7 +510,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       onBattleResult: (winner) => {
         if (definitions.combatResultVariable) store.set(definitions.combatResultVariable, winner === 'allies');
       },
-      onTurnResumeSnapshot: (snapshot) => { turnResumeSnap = snapshot; },
+      onScheduledSceneEnd: (resume) => { turnResumeSnap = resume; },
       onLog: (message) => console.info(`[starter] ${message}`),
     }), ...plugins.adapters()],
     onError: (error) => { console.error('[starter] 宿主 adapter 失败：', error); if (galleryReplay) scheduleReplayReturn(error); },
@@ -612,7 +612,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     if (!isUiBusy()) playerShell!.commands.reset(uiSnapshot().base);
   });
 
-  // 回合尾事件场景播完 → 恢复跳转前快照，剧情从挂起点续跑（回合头尾闭环）。
+  // 日程事件场景播完 → 只恢复调用方位置，保留演出中的状态变更。
   // loadSnapshot 不可在事件回调内调用（撞解释器 #stepping 重入守卫），延迟到 UI 线程执行。
   bus.on('sceneEnd', ({ sceneId }) => {
     if (galleryReplay && !turnResumeSnap) { if (!galleryReplay.restoring) scheduleReplayReturn(); return; }
@@ -624,11 +624,11 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     }
     const snap = turnResumeSnap;
     const replayAtEnd = galleryReplay;
-    turnResumeSnap = null;
     setTimeout(() => {
-      if (ownerTeardown.disposed || galleryReplay !== replayAtEnd) return;
+      if (ownerTeardown.disposed || galleryReplay !== replayAtEnd || turnResumeSnap !== snap) return;
+      turnResumeSnap = null;
       try {
-        interp.loadSnapshot(snap);
+        snap();
       } catch (err) {
         console.error('[starter] 回合尾事件恢复失败:', err);
       }
