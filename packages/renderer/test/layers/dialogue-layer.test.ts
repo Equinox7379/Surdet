@@ -95,6 +95,7 @@ it('plain choices use the CJK break rules without changing their accessible or s
     expect(label.style.wordWrap).toBe(false);
     expect(label.width).toBeLessThanOrEqual(1280 * 0.68 - 80);
     expect(runtime.layer.debugSnapshot().visibleChoiceCount).toBe(1);
+    expect(runtime.layer.debugSnapshot().choiceLabels).toEqual([source]);
     expect(label.parent!.accessibleTitle).toBe(source);
     label.parent!.emit('pointerdown', {} as FederatedPointerEvent);
     expect(onSelect).toHaveBeenCalledExactlyOnceWith(4);
