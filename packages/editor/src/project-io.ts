@@ -1087,6 +1087,8 @@ export function repairTimelineAutosaveConflict(
   try {
     projectPath = timelinePathFor(newId);
     if (isReservedSceneFileId(newId.split('.')[0]!)) throw new Error('时间轴 ID 不能使用 Windows 设备名');
+    const reserved = [...state.timelines, ...state.pendingTimelineDeletes, ...[...state.pendingTimelineRestores.values()].map(restore => restore.entry)];
+    assertProjectTargetNamespace(projectPath, reserved.map(entry => `content/timelines/${entry.file.replace(/^content\/timelines\//, '')}`));
   } catch (error) {
     return repairFailure(error instanceof Error ? error.message : String(error));
   }

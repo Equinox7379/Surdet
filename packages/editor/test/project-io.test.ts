@@ -1395,6 +1395,26 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(repairTimelineAutosaveConflict(conflict, { kind: 'save-as-new', newId: 'new.JSON' })).toEqual({ ok: true, timelineId: 'new.JSON' });
     expect(state.timelines.at(-1)).toMatchObject({ id: 'new.JSON', file: 'new.JSON.json' });
   });
+  it.each(['current', 'deleted', 'restorable'] as const)('Save As New refuses a directory occupying its output in %s entries', kind => {
+    const { conflict } = definitionCollisionConflict();
+    const entry = timeline('bar', fileHandle(null, log, 'foo.json/bar.json'), false, 'foo.json/bar.json');
+    if (kind === 'current') state.timelines.push(entry);
+    else if (kind === 'deleted') state.pendingTimelineDeletes.push({ id: entry.id, file: entry.file });
+    else state.pendingTimelineRestores.set(entry.id, { entry, index: 0, previousTimelineId: null, previousCue: null });
+    expectSaveAsNewRejected(conflict, 'foo');
+  });
+  it('portable timeline generation skips an ancestor directory using the candidate filename', () => {
+    state.timelines.push(timeline('foo', fileHandle(null, log, 'timeline_02.json/foo.json'), false, 'timeline_02.json/foo.json'));
+    expect(nextTimelineId()).toBe('timeline_03');
+  });
+  it('portable timeline undo refuses a directory occupying the removed file', () => {
+    const entry = timeline('foo', fileHandle(null, log, 'foo.json'), false);
+    state.pendingTimelineRestores.set('foo', { entry, index: 0, previousTimelineId: null, previousCue: null });
+    state.timelines.push(timeline('bar', fileHandle(null, log, 'foo.json/bar.json'), false, 'foo.json/bar.json'));
+    const before = timelineMutationSnapshot();
+    expect(restorePendingTimelineDeletion('foo')).toBe(false);
+    expectTimelineMutationUnchanged(before);
+  });
 
   it('portable timeline ID generation reserves current, deleted, restorable and physical case aliases', () => {
     state.timelines.push(timeline('TIMELINE_02', fileHandle(null, log, 'TIMELINE_02.json'), false));
