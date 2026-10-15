@@ -10,7 +10,6 @@ import type {
   ShopSystem,
   ShopItemDef,
   VariableStore,
-  SaveSnapshot,
 } from '@surdet/core';
 import type { SystemEventPayload } from '@surdet/core';
 import type {
@@ -50,7 +49,7 @@ export interface ProjectSystemAdapterOptions {
   };
   onAchievementsChanged?: () => void;
   onBattleResult?: (winner: string | null) => void;
-  onTurnResumeSnapshot?: (snapshot: SaveSnapshot) => void;
+  onScheduledSceneEnd?: (resume: () => void) => void;
   onLog?: (message: string) => void;
   timer?: (callback: () => void, delayMs: number) => void;
 }
@@ -68,22 +67,32 @@ function safeJump(options: ProjectSystemAdapterOptions, context: HostSystemConte
   }
 }
 
-function resumeScheduledScene(options: ProjectSystemAdapterOptions, context: HostSystemContext, sceneId: string): boolean {
-  const snapshot = options.interpreter.saveSnapshot();
-  if (!snapshot) return false;
-  options.onTurnResumeSnapshot?.(snapshot);
-  options.interpreter.hostJump(sceneId);
-  context.resume();
-  return true;
-}
-
 function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystemAdapter | null {
   if (!options.calendar) return null;
   const calendar = options.calendar;
   const scheduler = options.scheduler;
+  let resumingTurnStart = false;
   return {
     id: 'calendar',
     open: (_payload, context) => {
+      const playScheduledScene = (sceneId: string, atTurnStart: boolean): boolean => {
+        const origin = options.interpreter.saveSnapshot();
+        if (!origin) return false;
+        options.onScheduledSceneEnd?.(() => {
+          const current = options.interpreter.saveSnapshot();
+          if (!current) throw new Error('日程演出结束后没有可恢复的运行状态');
+          // Only the control-flow position belongs to the caller. Keep every
+          // variable, collection and system change made by the event scene.
+          resumingTurnStart = atTurnStart;
+          try {
+            options.interpreter.loadSnapshot({ ...current, position: origin.position, callStack: origin.callStack });
+          } finally { resumingTurnStart = false; }
+        });
+        options.renderer.hideMap();
+        options.interpreter.hostJump(sceneId);
+        context.resume();
+        return true;
+      };
       function openBasePanel(): void {
         let baseMsg = '选择要执行的指令。';
         const view = (): void => {
@@ -103,6 +112,8 @@ function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystem
             },
             (commandId) => {
               try {
+                const calendarBefore = calendar.snapshot();
+                const storeBefore = options.store.snapshot();
                 const result = calendar.execBaseCommand(commandId);
                 const name = calendar.baseCommands().find((command) => command.id === commandId)?.name ?? commandId;
                 if (!result.ok) {
@@ -110,12 +121,17 @@ function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystem
                   view();
                   return;
                 }
-                for (const [variable, delta] of Object.entries(result.effects ?? {})) {
-                  try {
+                try {
+                  for (const [variable, delta] of Object.entries(result.effects ?? {})) {
                     options.store.modify(variable, delta);
-                  } catch (error) {
-                    log(options, `据点指令变量写回失败：${variable}（${String(error)}）`);
                   }
+                } catch (error) {
+                  // 日程扣费和变量增量同属一次结算，失败时恢复 AP、次数和全部已写效果。
+                  options.store.restore(storeBefore);
+                  calendar.restore(calendarBefore);
+                  baseMsg = `执行失败：${error instanceof Error ? error.message : String(error)}`;
+                  view();
+                  return;
                 }
                 baseMsg = `执行了「${name}」。`;
                 if (result.eventId && options.registry.has(result.eventId)) {
@@ -185,7 +201,7 @@ function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystem
                 }
                 if (event?.scene && options.registry.has(event.scene)) {
                   options.renderer.hideMap();
-                  if (resumeScheduledScene(options, context, event.scene)) return;
+                  if (playScheduledScene(event.scene, false)) return;
                 }
                 context.resume();
               } catch (error) {
@@ -198,12 +214,12 @@ function createCalendarAdapter(options: ProjectSystemAdapterOptions): HostSystem
         }
       }
 
-      const event = scheduler?.dispatch(options.store) ?? null;
+      const event = resumingTurnStart ? null : scheduler?.dispatch(options.store) ?? null;
       if (event) {
         log(options, `回合头事件触发：${event.id}${event.scene ? `（演出 → ${event.scene}）` : ''}`);
         options.onAchievementsChanged?.();
       }
-      if (event?.scene && options.registry.has(event.scene) && resumeScheduledScene(options, context, event.scene)) return;
+      if (event?.scene && options.registry.has(event.scene) && playScheduledScene(event.scene, true)) return;
       renderMap();
     },
     reset: () => {

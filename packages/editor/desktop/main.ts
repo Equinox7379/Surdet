@@ -9,6 +9,7 @@ import { startEditorServer } from './server.js';
 import { DESKTOP_ORIGIN } from './contracts.js';
 import { createDesktopProject, selectProjectLocation, type SelectedProjectLocation } from './project-creation.js';
 import { desktopExportError, exportDesktopGame, inspectWindowsExport } from './game-export.js';
+import { writeJsonAtomic } from '../../shell/src/json-file.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 app.setName('Surdet Editor');
@@ -46,7 +47,7 @@ let recentWrites: Promise<void> = Promise.resolve();
 function recordRecentProject(project: Directory): Promise<void> {
   recentWrites = recentWrites.then(async () => {
     const next = withRecentProject(await readRecentProjects(), { path: project.root, name: project.grant.name, openedAt: Date.now() });
-    await fs.writeFile(recentProjectsFile(), JSON.stringify({ entries: next }));
+    writeJsonAtomic(recentProjectsFile(), { entries: next });
     buildMenu(next);
   }).catch(error => { console.error('Recent projects:', error); });
   return recentWrites;
@@ -149,7 +150,7 @@ async function openWindow(project: Directory | null) {
     window.show();
     if (project) {
       await fs.mkdir(app.getPath('userData'), { recursive: true });
-      await fs.writeFile(path.join(app.getPath('userData'), 'last-project.json'), JSON.stringify({ path: project.root }));
+      writeJsonAtomic(path.join(app.getPath('userData'), 'last-project.json'), { path: project.root });
       await recordRecentProject(project);
       // The home window remains open if its in-memory demo has unsaved work.
       for (const other of windows.values()) if (!other.project && other.window !== window) other.window.close();

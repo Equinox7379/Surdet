@@ -4,11 +4,11 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as url from 'node:url';
-import { assertValidSnapshot, type SaveSnapshot } from '@surdet/core'; // 复用 core 深度校验（审计修复：消灭弱版重复实现）
+import { assertValidSnapshot, normalizeGameSettings, type SaveSnapshot } from '@surdet/core'; // 复用 core 深度校验（审计修复：消灭弱版重复实现）
 import { FileSaveStore } from './save-store.js';
 import { checkReleaseManifest } from './release-service.js';
 import { writeCrashReport } from './crash-reporter.js';
-import { writeJsonAtomic } from './json-file.js';
+import { assertOrdinaryDirectory, assertOrdinaryFile, writeJsonAtomic } from './json-file.js';
 import { FileProfileStore } from './profile-store.js';
 import { assertProfileKey } from '@surdet/host';
 import { resolveWindowState, type WindowState } from './window-state.js';
@@ -124,9 +124,13 @@ function logLine(level: string, msg: string): void {
   try {
     const dir = path.join(app.getPath('userData'), 'logs');
     fs.mkdirSync(dir, { recursive: true });
+    assertOrdinaryDirectory(dir);
     const file = path.join(dir, 'session.log');
-    if (fs.existsSync(file) && fs.statSync(file).size > 1024 * 1024) fs.rmSync(file);
-    fs.appendFileSync(file, `[${new Date().toISOString()}] [${level}] ${msg}\n`);
+    assertOrdinaryFile(file);
+    const line = `[${new Date().toISOString()}] [${level.slice(0, 32)}] ${msg.slice(0, 16_000)}\n`;
+    if (fs.existsSync(file) && fs.statSync(file).size + Buffer.byteLength(line) > 1024 * 1024) fs.unlinkSync(file);
+    const fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_APPEND | fs.constants.O_NOFOLLOW, 0o600);
+    try { fs.writeFileSync(fd, line); } finally { fs.closeSync(fd); }
   } catch {
     /* 日志失败不影响游戏 */
   }
@@ -179,11 +183,15 @@ function registerSettingsIpc(): void {
   });
   ipcMain.handle('settings:write', (e, data: unknown) => {
     assertTrustedSender(e);
-    if (typeof data !== 'object' || data === null) {
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
       throw new Error('设置数据必须是对象');
     }
+    // Persist only the same finite preference fields consumed by SettingsStore.
+    // Unknown/deep values never reach JSON serialization or the user-data file.
+    const settings = normalizeGameSettings(data);
+    if (Buffer.byteLength(JSON.stringify(settings), 'utf8') > 64 * 1024) throw new Error('设置内容超出大小上限');
     const file = settingsPath();
-    writeJsonAtomic(file, data);
+    writeJsonAtomic(file, settings);
   });
 }
 
