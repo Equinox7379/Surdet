@@ -8,6 +8,24 @@ function snapshot(): SaveSnapshot {
 }
 
 describe('bounded save input', () => {
+  it.each(['readSet', 'cgs', 'music', 'texts', 'profiles', 'terms', 'endings'] as const)('rejects sparse %s before replacing a valid save', async field => {
+    const saves = new SaveManager(new MemoryStorage());
+    const good = snapshot();
+    await saves.save('1', good);
+    const before = await saves.load('1');
+    const bad = snapshot();
+    if (field === 'readSet') bad.readSet = new Array<string>(1);
+    else if (field === 'endings') bad.clears = { endings: new Array<string>(1) };
+    else bad.gallery[field] = new Array<string>(1);
+    expect(() => assertValidSnapshot(bad)).toThrow(/存档结构非法/);
+    await expect(saves.save('1', bad)).rejects.toThrow(/存档结构非法/);
+    expect(await saves.load('1')).toEqual(before);
+  });
+  it('rejects undefined array entries in extension data but retains optional undefined object metadata', () => {
+    const good = snapshot(); good.meta.label = undefined;
+    expect(() => assertValidSnapshot(good)).not.toThrow();
+    expect(() => assertValidSnapshot({ ...good, extension: [undefined] })).toThrow(/存档结构非法/);
+  });
   it.each(['number[]', 'string[]', 'object'] as const)('rejects sparse %s through declaration, update and restore', type => {
     const initial = type === 'object' ? {} : [];
     const sparse = type === 'object' ? { nested: new Array(2) } : new Array(2);

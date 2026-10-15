@@ -48,6 +48,21 @@ afterAll(() => {
 });
 
 describe('release IPC source ownership', () => {
+  it('rejects sparse known arrays through save:write without replacing the readable slot', async () => {
+    const write = electron.handlers.get('save:write')!;
+    const read = electron.handlers.get('save:read')!;
+    const good = { meta: { id: 'sparse-case', createdAt: 1, updatedAt: 1, schemaVersion: 3 }, variables: { score: 7 },
+      position: null, kind: 'manual', readSet: ['intro:1'], gallery: { cgs: [], music: [] } };
+    await write(trusted, 'sparse-case', good);
+    for (const bad of [
+      { ...good, readSet: new Array(1) },
+      { ...good, gallery: { cgs: new Array(1), music: [] } },
+      { ...good, clears: { endings: new Array(1) } },
+    ]) {
+      await expect(Promise.resolve().then(() => write(trusted, 'sparse-case', bad))).rejects.toThrow(/存档结构非法/);
+      expect(await read(trusted, 'sparse-case')).toEqual(good);
+    }
+  });
   it('rejects cyclic and excessively nested saves through the real handler before changing the stored slot', async () => {
     const write = electron.handlers.get('save:write')!;
     const read = electron.handlers.get('save:read')!;
