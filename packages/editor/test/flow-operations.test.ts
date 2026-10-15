@@ -16,6 +16,12 @@ async function reaches(files: Record<string, string>, sceneId: string, line: num
 }
 
 describe('flow-map edits through the shared scene operations', () => {
+  it('#63 retargets a choice through shared operations without changing quoted prose, condition or effects', async () => {
+    const row = '  显示"[if:false]" [if:trust > 0] -> @set trust = 2 @goto done';
+    const result = await plan({ intro: `@scene intro\n@choice\n${row}\n@label done\n@end\n`, home: '@scene home\n@end\n' },
+      { kind: 'retarget', edge: { sceneId: 'intro', line: 3, kind: 'choice' }, to: { sceneId: 'home' } });
+    expect(result.text('intro')!.split('\n')[2]).toBe(row.replace('@goto done', '@jump home'));
+  });
   it('connects before a real terminator, so the new jump is reachable instead of dead after @end', async () => {
     const scenes = { intro: '@scene intro\n凛：开场。\n@end\n', home: '@scene home\n凛：到家。\n@end\n' };
     const result = await plan(scenes, { kind: 'connect', from: { sceneId: 'intro' }, to: { sceneId: 'home' } });
