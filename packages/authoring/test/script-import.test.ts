@@ -5,6 +5,12 @@ import { createSceneText } from '../src/operations.js';
 
 const characters = [{ id: 'rin', name: '凛' }, { id: 'n', name: '旁白' }];
 describe('plain text and CSV dialogue import', () => {
+  it.each(['CON', 'nul', 'Prn', 'COM1', 'LPT9'])('rejects reserved scene filename %s in the shared import generator', id => {
+    const preview = previewScriptImport({ format: 'text', source: '正常对白。' });
+    expect(preview.ready).toBe(true);
+    expect(() => createSceneText(id, preview.blocks)).toThrow(/Windows 设备名/);
+    expect(() => createSceneText('console', preview.blocks)).not.toThrow();
+  });
   it('imports angle tags and backslashes as literal prose, not effects', () => {
     const source = '凛：<w><b>不是标签</b>\\《红楼梦》';
     const preview = previewScriptImport({ format: 'text', source }, characters);

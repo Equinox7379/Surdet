@@ -76,10 +76,10 @@ export function createProject(name: string, options: NewProjectOptions = {}): { 
   let published = false;
   try {
     const rootPkgPath = root ? path.join(root, 'package.json') : undefined;
-    const rootPkg = rootPkgPath
+    const initialRootPkg = rootPkgPath
       ? JSON.parse(fs.readFileSync(rootPkgPath, 'utf8')) as { workspaces: string[] }
       : undefined;
-    if (rootPkg && !Array.isArray(rootPkg.workspaces)) throw new Error('引擎根缺少 workspaces 数组');
+    if (initialRootPkg && !Array.isArray(initialRootPkg.workspaces)) throw new Error('引擎根缺少 workspaces 数组');
     fs.mkdirSync(path.dirname(target), { recursive: true });
     staging = fs.mkdtempSync(path.join(path.dirname(target), `.${name}-`));
     const templates = options.templatesRoot ?? DEFAULT_TEMPLATES_ROOT;
@@ -99,9 +99,15 @@ export function createProject(name: string, options: NewProjectOptions = {}): { 
     fs.renameSync(staging, target);
     staging = undefined;
     published = true;
-    if (rootPkg && rootPkgPath && !rootPkg.workspaces.includes('games/*')) {
-      rootPkg.workspaces.push('games/*');
-      fs.writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2) + '\n');
+    if (rootPkgPath) {
+      // Copying a template can be slow; register against the current workspace,
+      // not the package document observed before copying started.
+      const rootPkg = JSON.parse(fs.readFileSync(rootPkgPath, 'utf8')) as { workspaces: string[] };
+      if (!Array.isArray(rootPkg.workspaces)) throw new Error('引擎根缺少 workspaces 数组');
+      if (!rootPkg.workspaces.includes('games/*')) {
+        rootPkg.workspaces.push('games/*');
+        fs.writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2) + '\n');
+      }
     }
   } catch (error) {
     throw new Error(`${published ? '完整项目已创建，但 workspace 注册失败' : '创建项目失败'}：${error instanceof Error ? error.message : String(error)}`, { cause: error });
