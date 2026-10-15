@@ -11,8 +11,9 @@ import {
 import type { BasePanelView, MapView } from '@surdet/renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { createSystemAdapters } from '../../shared/player/system-adapters.js';
+import { createDefaultHost } from '@surdet/host';
 
-function fixture(command: Partial<BaseCommandDef> = {}) {
+function fixture(command: Partial<BaseCommandDef> = {}, realHost = false) {
   const store = new VariableStore([
     { name: 'hp', type: 'number', initial: 8, min: 0, max: 10 },
     { name: 'gold', type: 'number', initial: 5, min: 0 },
@@ -29,18 +30,22 @@ function fixture(command: Partial<BaseCommandDef> = {}) {
   const bus = new EventBus<CoreEventMap>();
   const registry = new SceneRegistry();
   registry.register(compileScene('@set gold += 1\n训练演出。\n@end', 'trained.gal', 'trained'));
+  registry.register(compileScene('@calendar\n日程结束。\n@end', 'start.gal', 'start'));
   const interpreter = new Interpreter(store, bus, registry);
   const texts: string[] = [];
   bus.on('text', ({ value }) => texts.push(value));
   let enter!: (id: string) => void;
   let execute!: (id: string) => void;
   let panel!: BasePanelView;
+  let closeBase!: () => void;
+  let endTurn!: () => void;
   const renderer = {
-    showMap: vi.fn((_view: MapView, onEnter: (id: string) => void) => { enter = onEnter; }),
+    showMap: vi.fn((_view: MapView, onEnter: (id: string) => void, onEnd: () => void) => { enter = onEnter; endTurn = onEnd; }),
     hideMap: vi.fn(),
-    showBaseCommands: vi.fn((view: BasePanelView, onExec: (id: string) => void) => {
+    showBaseCommands: vi.fn((view: BasePanelView, onExec: (id: string) => void, onClose: () => void) => {
       panel = view;
       execute = onExec;
+      closeBase = onClose;
     }),
     hideBaseCommands: vi.fn(),
     showBattle: vi.fn(),
@@ -54,11 +59,16 @@ function fixture(command: Partial<BaseCommandDef> = {}) {
   const adapter = createSystemAdapters({
     store, calendar, interpreter, registry, renderer, onAchievementsChanged, onLog,
   }).find(({ id }) => id === 'calendar')!;
-  adapter.open(undefined, context);
+  const host = realHost ? createDefaultHost({ interpreter, renderer, adapters: [adapter], onError: context.fail }) : null;
+  if (host) {
+    bus.on('system', p => { void host.routeSystem(p.type, p); });
+    interpreter.start('start');
+  } else adapter.open(undefined, context);
   enter('base');
   expect(context.fail).not.toHaveBeenCalled();
   return {
-    store, calendar, context, renderer, texts, onAchievementsChanged, onLog,
+    store, calendar, context, renderer, texts, onAchievementsChanged, onLog, interpreter, host,
+    closeBase: () => closeBase(), endTurn: () => endTurn(),
     execute: (id = 'train') => execute(id),
     panel: () => panel,
   };
@@ -80,15 +90,29 @@ describe('Shared Player calendar base command settlement', () => {
     expect(f.store.snapshot()).toEqual(beforeStore);
     expect(f.calendar.snapshot()).toEqual(beforeCalendar);
     expect(f.calendar.baseCommandRemaining('train')).toBe(1);
-    expect(f.context.fail).toHaveBeenCalledTimes(1);
-    expect(String(f.context.fail.mock.calls[0]![0])).toMatch(error);
+    expect(f.context.fail).not.toHaveBeenCalled();
+    expect(f.panel().message).toMatch(error);
     expect(f.context.resume).not.toHaveBeenCalled();
     expect(f.renderer.hideBaseCommands).not.toHaveBeenCalled();
     expect(f.texts).toEqual([]);
     expect(f.onAchievementsChanged).not.toHaveBeenCalled();
-    expect(f.renderer.showBaseCommands).toHaveBeenCalledTimes(1);
-    expect(f.panel().message).toBe('选择要执行的指令。');
+    expect(f.renderer.showBaseCommands).toHaveBeenCalledTimes(2);
     expect(f.onLog).not.toHaveBeenCalledWith(expect.stringContaining('写回失败'));
+  });
+
+  it('keeps the real Host paused after failed settlement until the player closes and ends the turn', () => {
+    const f = fixture({ effects: { gold: 2, missing: 1 } }, true);
+    try {
+      f.execute();
+      expect(f.store.getNumber('gold')).toBe(5);
+      expect(f.calendar.ap).toBe(3);
+      expect(f.texts).toEqual([]);
+      expect(f.interpreter.status).toBe('paused');
+      expect(f.context.fail).not.toHaveBeenCalled();
+      expect(f.panel().message).toContain('missing');
+      f.closeBase(); f.endTurn();
+      expect(f.texts).toEqual(['日程结束。']);
+    } finally { f.host?.dispose(); }
   });
 
   it('成功执行全部效果并保留上下限截断；同回合再次执行不重复扣费或通知成就', () => {
