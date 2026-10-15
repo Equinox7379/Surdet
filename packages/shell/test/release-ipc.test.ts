@@ -76,6 +76,38 @@ describe('release IPC source ownership', () => {
     expect(fs.lstatSync(file).isSymbolicLink()).toBe(true);
     fs.unlinkSync(file);
   });
+  it('rejects sparse known arrays through save:write without replacing the readable slot', async () => {
+    const write = electron.handlers.get('save:write')!;
+    const read = electron.handlers.get('save:read')!;
+    const good = { meta: { id: 'sparse-case', createdAt: 1, updatedAt: 1, schemaVersion: 3 }, variables: { score: 7 },
+      position: null, kind: 'manual', readSet: ['intro:1'], gallery: { cgs: [], music: [] } };
+    await write(trusted, 'sparse-case', good);
+    for (const bad of [
+      { ...good, readSet: new Array(1) },
+      { ...good, gallery: { cgs: new Array(1), music: [] } },
+      { ...good, clears: { endings: new Array(1) } },
+      { ...good, extension: { score: Infinity } },
+      { ...good, extension: { calculate: () => 1 } },
+    ]) {
+      await expect(Promise.resolve().then(() => write(trusted, 'sparse-case', bad))).rejects.toThrow(/存档结构非法/);
+      expect(await read(trusted, 'sparse-case')).toEqual(good);
+    }
+  });
+  it('rejects cyclic and excessively nested saves through the real handler before changing the stored slot', async () => {
+    const write = electron.handlers.get('save:write')!;
+    const read = electron.handlers.get('save:read')!;
+    const good = { meta: { id: 'depth-case', createdAt: 1, updatedAt: 1, schemaVersion: 3 }, variables: { score: 7 },
+      position: null, kind: 'manual', readSet: [], gallery: { cgs: [], music: [] } };
+    await write(trusted, 'depth-case', good);
+    const before = await read(trusted, 'depth-case');
+    const cycle: Record<string, unknown> = {}; cycle.self = cycle;
+    const deep: Record<string, unknown> = {}; let tail = deep;
+    for (let i = 0; i < 5000; i++) { const next = {}; tail.next = next; tail = next; }
+    for (const bad of [{ ...good, variables: { data: cycle } }, { ...good, extension: deep }]) {
+      await expect(Promise.resolve().then(() => write(trusted, 'depth-case', bad))).rejects.toThrow(/存档结构非法.*循环|存档结构非法.*256/);
+      expect(await read(trusted, 'depth-case')).toEqual(before);
+    }
+  });
   it('reads only the main-process game manifest and reports missing or malformed local data', async () => {
     const check = electron.handlers.get('release:check')!;
     await expect(check(trusted)).resolves.toMatchObject({ status: 'update-available', manifest });
