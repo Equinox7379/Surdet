@@ -10,7 +10,7 @@ import {
   inspectTimelineAutosaveIdentity,
   type TimelineAutosaveDocument,
 } from './timeline-autosave-identity.js';
-import { sceneReferenceConfigPaths, isValidLabelName, validateLabelRenameBatch } from '@surdet/authoring';
+import { sceneReferenceConfigPaths, sceneDirectorySegments, isValidLabelName, validateLabelRenameBatch } from '@surdet/authoring';
 import { isValidSceneId, isReservedSceneFileId } from '@surdet/core';
 import { desktopProjectIdentity } from './desktop.js';
 
@@ -588,9 +588,11 @@ export function inspectSceneAutosaveRecovery(
     .filter((pending) => pending.kind === 'rename' && pending.replacementKey)
     .map((pending) => pending.replacementKey!));
   const createKeys = new Set(payload.sceneTransaction.pendingCreates?.map((pending) => pending.key) ?? []);
-  const fold = (value: string): string => value.normalize('NFC').toLowerCase();
+  const fold = (value: string): string => value.normalize('NFC').toUpperCase().toLowerCase();
   for (const entry of entries) {
     if (!replacementKeys.has(entry.key) && !createKeys.has(entry.key)) continue;
+    try { sceneDirectorySegments(entry.key.includes('/') ? entry.key.slice(0, entry.key.lastIndexOf('/')) : ''); }
+    catch { return { status: 'blocked', scenes: [], pendingDeletes: [] }; }
     if (isReservedSceneFileId(entry.id)) return { status: 'blocked', scenes: [], pendingDeletes: [] };
     const source = payload.sceneTransaction.pendingDeletes.find(pending => pending.kind === 'rename' && pending.replacementKey === entry.key);
     const sourceKey = source ? normalizedSceneKeyFromFile(source.file) : null;

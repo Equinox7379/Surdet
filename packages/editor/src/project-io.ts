@@ -687,7 +687,7 @@ function scenarioPathParts(file: string): string[] {
 
 /** Windows 磁盘身份按大小写不敏感比较；同时复用同一套越级路径校验。 */
 export function sceneFileIdentity(file: string): string {
-  return scenarioPathParts(file).join('/').normalize('NFC').toLocaleLowerCase('en-US');
+  return scenarioPathParts(file).join('/').normalize('NFC').toUpperCase().toLowerCase();
 }
 
 export function sceneProjectPath(file: string): string {

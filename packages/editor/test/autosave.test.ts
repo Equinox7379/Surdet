@@ -623,11 +623,18 @@ describe('inspectSceneAutosaveRecovery（场景路径事务整组恢复）', () 
     next.sceneTransaction.pendingDeletes[0]!.affectedSceneKeys[0] = entry.key;
     expect(inspectSceneAutosaveRecovery(next, 'project', diskScenes).status).toBe('recoverable');
   });
-  it('portable scene autosave refuses case aliases between two pending creates', () => {
+  it.each([['fresh', 'FRESH'], ['straße', 'STRASSE'], ['ı', 'I']])('portable scene autosave refuses writer-fold aliases %s/%s between pending creates', (left, right) => {
     const operationId = '22222222-2222-4222-8222-222222222222';
-    const built = buildAutosave('proj', new Map(['fresh', 'FRESH'].map(id => [id, {
+    const built = buildAutosave('proj', new Map([left, right].map(id => [id, {
       id, file: `${id}.gal`, text: `@scene ${id}\n`, eol: '\n', dirty: true, pendingCreateOperationId: operationId,
     }])), [], 12, 'project');
+    expect(inspectSceneAutosaveRecovery(built, 'project', diskScenes).status).toBe('blocked');
+  });
+  it.each(['CON', 'LPT1', 'COM¹'])('portable scene autosave rejects new parent directory %s', directory => {
+    const operationId = '22222222-2222-4222-8222-222222222222';
+    const built = buildAutosave('proj', new Map([[`${directory}/fresh`, {
+      id: 'fresh', file: `${directory}/fresh.gal`, text: '@scene fresh\n', eol: '\n', dirty: true, pendingCreateOperationId: operationId,
+    }]]), [], 12, 'project');
     expect(inspectSceneAutosaveRecovery(built, 'project', diskScenes).status).toBe('blocked');
   });
   it('完整成员齐备时同时恢复新场景、引用与待提交计划', () => {

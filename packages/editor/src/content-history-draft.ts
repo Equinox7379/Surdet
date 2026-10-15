@@ -1,4 +1,4 @@
-import { isContentHistoryPath, normalizeProjectPath, timelineIdFromPath, timelinePathFor, type ContentHistoryFileDiff } from '@surdet/authoring';
+import { isContentHistoryPath, normalizeProjectPath, sceneDirectorySegments, timelineIdFromPath, timelinePathFor, type ContentHistoryFileDiff } from '@surdet/authoring';
 import { isReservedSceneFileId } from '@surdet/core';
 import { state } from './state.js';
 import { sceneTextSha256 } from './project-io.js';
@@ -27,10 +27,11 @@ export async function prepareHistoryFileDraft(file: ContentHistoryFileDiff): Pro
     const entry = state.scenes.get(key);
     if ((entry?.text ?? null) !== file.currentText) throw new Error('剧本已经修改，请先处理当前草稿');
     if (!entry) {
+      sceneDirectorySegments(relative.includes('/') ? relative.slice(0, relative.lastIndexOf('/')) : '');
       if (relative !== relative.normalize('NFC')) throw new Error('历史场景文件名需要规范化，请新建场景后恢复正文');
       if (isReservedSceneFileId(id)) throw new Error('场景标识不能使用 Windows 设备名');
-      if ([...state.scenes.values(), ...state.pendingSceneDeletes].some(item => item.id.normalize('NFC').toLowerCase() === id.toLowerCase()
-        || item.file.replace(/^content\/scenario\//, '').normalize('NFC').toLowerCase() === relative.toLowerCase())) throw new Error('当前已有同名场景或待删除文件，请先处理冲突');
+      if ([...state.scenes.values(), ...state.pendingSceneDeletes].some(item => item.id.normalize('NFC').toUpperCase().toLowerCase() === id.toUpperCase().toLowerCase()
+        || item.file.replace(/^content\/scenario\//, '').normalize('NFC').toUpperCase().toLowerCase() === relative.toUpperCase().toLowerCase())) throw new Error('当前已有同名场景或待删除文件，请先处理冲突');
     }
     return () => {
       if (entry) setSceneText(key, text);
@@ -48,6 +49,7 @@ export async function prepareHistoryFileDraft(file: ContentHistoryFileDiff): Pro
     const entry = state.timelines.find(item => item.file === relative || item.file === path);
     if ((entry?.text ?? null) !== file.currentText) throw new Error('时间轴已经修改，请先处理当前草稿');
     if (!entry) {
+      sceneDirectorySegments(relative.includes('/') ? relative.slice(0, relative.lastIndexOf('/')) : '');
       timelinePathFor(id);
       const reserved = [...state.timelines, ...state.pendingTimelineDeletes, ...[...state.pendingTimelineRestores.values()].map(restore => restore.entry)];
       if (reserved.some(item => item.id.toLowerCase() === id.toLowerCase()

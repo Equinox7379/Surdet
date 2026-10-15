@@ -179,7 +179,7 @@ async function createSceneUnlocked(input: string, template: number, project: Fil
   const id = input.trim().normalize('NFC');
   if (isReservedSceneFileId(id)) throw new Error('场景标识不能使用 Windows 设备名');
   if (!/^[^\s.<>:"/\\|?*\u0000-\u001f]+$/u.test(id)) throw new Error('场景标识不能为空，也不能包含空格、点号或文件名保留字符');
-  if ([...state.scenes.values()].some((scene) => scene.id.normalize('NFC').toLowerCase() === id.toLowerCase())) throw new Error(`场景 '${id}' 已存在`);
+  if ([...state.scenes.values()].some((scene) => scene.id.normalize('NFC').toUpperCase().toLowerCase() === id.toUpperCase().toLowerCase())) throw new Error(`场景 '${id}' 已存在`);
   if (isSceneFilePathReserved(`${id}.gal`)) throw new Error('该场景文件正等待删除，请先保存全部');
   const tpl = SCENE_TEMPLATES[template] ?? SCENE_TEMPLATES[0]!;
   const pendingCreateOperationId = [...state.scenes.values()].find((scene) => (

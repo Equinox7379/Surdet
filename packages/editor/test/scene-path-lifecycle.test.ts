@@ -277,6 +277,13 @@ describe('场景路径安全生命周期', () => {
     expect(state.scenes.get('é')).toMatchObject({ id: 'é', file: 'é.gal' });
     expect(state.scenes.has('old')).toBe(false);
   });
+  it.each([['straße', 'STRASSE'], ['ı', 'I']])('portable scene collision matching follows the writer fold for %s/%s', async (existing, alias) => {
+    state.scenes.set(`chapter/${existing}`, scene(existing, `chapter/${existing}.gal`, null));
+    state.scenes.set('old', scene('old', 'old.gal', null));
+    await expect(createScene(alias)).rejects.toThrow(/已存在/);
+    await expect(renameSceneAtKey('old', alias)).rejects.toThrow(/已存在/);
+    expect(sceneFileIdentity(`${existing}.gal`)).toBe(sceneFileIdentity(`${alias}.gal`));
+  });
 
   it('嵌套场景重命名保持目录，改写引用并登记旧文件而不立即删除', async () => {
     state.scenes.set('chapter/old', scene('old', 'chapter/old.gal', diskHandle));
