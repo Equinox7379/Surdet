@@ -48,37 +48,36 @@ function choiceCollector(bus: EventBus<CoreEventMap>): ChoiceEventPayload[] {
 }
 
 describe('Interpreter', () => {
-  it.each(['add_item', 'remove_item', 'has_item'])('#63 follow-up rejects blank decoded IDs in %s without changing inventory or result', command => {
-    for (const token of ['""', "''", '"   "']) {
-      const { store, registry, interp } = makeRuntime([{ name: 'bag', type: 'string[]', initial: ['kept'] }, { name: 'owned', type: 'flag', initial: true }]);
-      registry.register(compileScene(`@${command} bag ${token}${command === 'has_item' ? ' owned' : ''}\n@end`, 'items.gal', 'items'));
-      expect(() => interp.start('items')).toThrow(/非空/);
-      expect(store.get('bag')).toEqual(['kept']);
-      expect(store.get('owned')).toBe(true);
-    }
+  it.each(['plain', '"long sword"', "'long sword'", '""', '"   "'])('#63 preserves persisted inventory token identity after load: %s', token => {
+    const compiled = compileScene(`存档停点\n@has_item bag ${token} owned\n@add_item bag ${token}\n检查持有\n@remove_item bag ${token}\n@has_item bag ${token} owned\n检查移除`, 'items.gal', 'items');
+    const decls: VarDeclaration[] = [{ name: 'bag', type: 'string[]', initial: [token] }, { name: 'owned', type: 'flag', initial: false }];
+    const original = makeRuntime(decls); original.registry.register(compiled); original.interp.start('items');
+    const saved = JSON.parse(JSON.stringify(original.interp.saveSnapshot()));
+    const restored = makeRuntime(decls); restored.registry.register(compiled); restored.interp.loadSnapshot(saved);
+    restored.interp.advance();
+    expect(restored.store.get('owned')).toBe(true); expect(restored.store.get('bag')).toEqual([token]);
+    restored.interp.advance();
+    expect(restored.store.get('owned')).toBe(false); expect(restored.store.get('bag')).toEqual([]);
   });
   it.each([
     ['plain', 'plain'], ['"long id"', 'long id'], ["'long id'", 'long id'],
     [String.raw`"a\"b\\c"`, 'a"b\\c'], ['"a"b"c"', '"a"b"c"'],
-  ])('#63 shares the ID decoder across inventory, gallery, clear, growth and achievement: %s', (token, id) => {
-    const { store, bus, registry, interp } = makeRuntime([{ name: 'bag', type: 'string[]', initial: [] }, { name: 'owned', type: 'flag', initial: false }]);
+  ])('#63 shares the ID decoder across gallery, clear, growth and achievement: %s', (token, id) => {
+    const { store, bus, registry, interp } = makeRuntime();
     const growth = new GrowthSystem({ curve: { base: 10 }, profiles: [{ characterId: id }] }, store);
     interp.setGrowth(growth);
     const gallery: CoreEventMap['gallery'][] = [], clear: CoreEventMap['clear'][] = [], systems: CoreEventMap['system'][] = [];
     bus.on('gallery', value => gallery.push(value)); bus.on('clear', value => clear.push(value)); bus.on('system', value => systems.push(value));
     registry.register(compileScene([
-      `@add_item bag ${token}`, `@has_item bag ${token} owned`,
       ...['cg', 'music', 'text', 'profile', 'term'].map(kind => `@unlock_${kind} ${token}`),
       `@exp ${token} 2`, `@achievement ${token} ${token}`, `@clear ${token}`,
-      '第一句', `@remove_item bag ${token}`, `@has_item bag ${token} owned`, '第二句',
+      '第一句',
     ].join('\n'), 'ids.gal', 'ids'));
     interp.start('ids');
-    expect(store.get('bag')).toEqual([id]); expect(store.get('owned')).toBe(true);
     expect(interp.gallery.snapshot()).toMatchObject({ cgs: [id], music: [id], texts: [id], profiles: [id], terms: [id] });
     expect(gallery.map(value => value.id)).toEqual([id, id, id, id, id]);
     expect(clear).toEqual([{ ending: id, fresh: true }]); expect(growth.experienceOf(id)).toBe(2);
     expect(systems.find(value => value.type === 'achievement')?.args).toEqual([id, id]);
-    interp.advance(); expect(store.get('bag')).toEqual([]); expect(store.get('owned')).toBe(false);
   });
   it.each(['cg', 'music', 'text', 'profile', 'term'] as const)('#63 rejects decoded empty %s IDs before collection or broadcast', kind => {
     for (const token of ['""', "''", '"   "', "'\t'"]) {
@@ -92,11 +91,11 @@ describe('Interpreter', () => {
       expect(events).toEqual([]);
     }
   });
-  it('uses decoded item IDs consistently across add, membership and remove', () => {
+  it('uses literal item tokens consistently across add, membership and remove', () => {
     const { store, registry, interp } = makeRuntime([{ name: 'bag', type: 'string[]', initial: [] }, { name: 'owned', type: 'flag', initial: false }]);
-    registry.register(compileScene('@add_item bag "sword"\n@has_item bag sword owned\n第一句\n@remove_item bag sword\n@add_item bag "long sword"\n@has_item bag \'long sword\' owned\n第二句\n@remove_item bag \'long sword\'\n第三句', 'items.gal', 'items'));
+    registry.register(compileScene('@add_item bag sword\n@has_item bag sword owned\n第一句\n@remove_item bag sword\n@add_item bag "long sword"\n@has_item bag "long sword" owned\n第二句\n@remove_item bag "long sword"\n第三句', 'items.gal', 'items'));
     interp.start('items'); expect(store.get('bag')).toEqual(['sword']); expect(store.get('owned')).toBe(true);
-    interp.advance(); expect(store.get('bag')).toEqual(['long sword']); expect(store.get('owned')).toBe(true);
+    interp.advance(); expect(store.get('bag')).toEqual(['"long sword"']); expect(store.get('owned')).toBe(true);
     interp.advance(); expect(store.get('bag')).toEqual([]);
   });
   it.each(['cg', 'music', 'text'] as const)('decodes quoted %s IDs before collection and gallery events', kind => {
