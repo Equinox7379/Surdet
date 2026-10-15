@@ -529,7 +529,13 @@ export class Interpreter {
     }
     this.#loadingSnapshot = true;
     let resume = false;
-    try { resume = this.#restoreSnapshot(snap, beforeCommit); }
+    try {
+      resume = this.#restoreSnapshot(snap, beforeCommit);
+      const version = snap.meta?.schemaVersion;
+      if (version === undefined || version < SAVE_SCHEMA_VERSION) {
+        this.#bus.emit('saveMigrated', { from: version ?? 1, to: SAVE_SCHEMA_VERSION });
+      }
+    }
     finally { this.#loadingSnapshot = false; }
     if (resume) this.#step();
   }
@@ -611,9 +617,6 @@ export class Interpreter {
       }
     }
     commitPlugins?.();
-    if (version === undefined || version < SAVE_SCHEMA_VERSION) {
-      this.#bus.emit('saveMigrated', { from: version ?? 1, to: SAVE_SCHEMA_VERSION });
-    }
     this.#store.restore(restoredVariables, { allowReadonly: true }); // 旧档缺少的新增变量回到初值；readonly 随档恢复
     this.readTracker.restore(snap.readSet);
     this.gallery.restore(snap.gallery);
