@@ -1427,6 +1427,13 @@ describe('project-io saveAll 失败隔离与恢复备份语义', () => {
     expect(missing.restored).toBe(0); expect(missing.conflicts).toHaveLength(1);
     expect(state.timelines).toEqual([]);
   });
+  it.each([['é', 'e\u0301', false], ['e\u0301', 'e\u0301', true], ['é', 'é', true]] as const)('portable timeline parent spelling %s -> %s', (existing, requested, accepted) => {
+    state.timelines.push(timeline('bar', fileHandle(null, log, `${existing}/bar.json`), false, `${existing}/bar.json`));
+    const result = restoreTimelineAutosaveEntries([{ id: 'foo', file: `${requested}/foo.json`, text: timelineText('foo'), eol: '\n' }]);
+    expect(result.restored).toBe(accepted ? 1 : 0);
+    expect(result.conflicts).toHaveLength(accepted ? 0 : 1);
+    expect(state.timelines).toHaveLength(accepted ? 2 : 1);
+  });
   it('portable pending timeline restoration refuses an existing case alias', () => {
     const old = timeline('old', fileHandle(null, log, 'old.json'), false);
     state.pendingTimelineRestores.set(old.id, { entry: old, index: 0, previousTimelineId: null, previousCue: null });

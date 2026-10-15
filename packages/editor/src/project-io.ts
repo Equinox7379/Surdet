@@ -18,7 +18,7 @@ import {
   type TimelineAutosaveDocument,
   type TimelineAutosaveIdentity,
 } from './timeline-autosave-identity.js';
-import { parseProjectConfigDocument, renameConfigReferences, applyConfigReferenceRename, sceneDirectorySegments, sceneReferenceConfigPaths, serializeProjectConfigDocument, stableStringify, timelinePathFor } from '@surdet/authoring';
+import { assertProjectTargetNamespace, parseProjectConfigDocument, renameConfigReferences, applyConfigReferenceRename, sceneDirectorySegments, sceneReferenceConfigPaths, serializeProjectConfigDocument, stableStringify, timelinePathFor } from '@surdet/authoring';
 import { kindOfDir, parsePortraitFileName } from './assets.js';
 import type { AssetKind, DirAsset } from './assets.js';
 
@@ -828,10 +828,11 @@ export async function prepareSceneConfigRecovery(
 }
 
 export function isSceneFilePathReserved(file: string, ignoredSceneKey?: string): boolean {
-  const identity = sceneFileIdentity(file);
-  return [...state.scenes].some(([key, scene]) => (
-    key !== ignoredSceneKey && sceneFileIdentity(scene.file) === identity
-  )) || state.pendingSceneDeletes.some((pending) => sceneFileIdentity(pending.file) === identity);
+  const target = sceneProjectPath(file);
+  const existing = [...state.scenes].filter(([key]) => key !== ignoredSceneKey).map(([, scene]) => sceneProjectPath(scene.file));
+  existing.push(...state.pendingSceneDeletes.map(pending => sceneProjectPath(pending.file)));
+  try { assertProjectTargetNamespace(target, existing); return false; }
+  catch { return true; }
 }
 
 async function scenarioParentDirectory(
@@ -981,6 +982,8 @@ function classifyTimelineAutosaveEntry(
   try {
     sceneDirectorySegments(recovered.file.includes('/') ? recovered.file.slice(0, recovered.file.lastIndexOf('/')) : '');
     if (isReservedSceneFileId(recovered.id.split('.')[0]!)) throw new Error('时间轴 ID 不能使用 Windows 设备名');
+    const reserved = [...state.timelines, ...state.pendingTimelineDeletes, ...[...state.pendingTimelineRestores.values()].map(restore => restore.entry)];
+    assertProjectTargetNamespace(`content/timelines/${recovered.file}`, reserved.map(item => `content/timelines/${item.file.replace(/^content\/timelines\//, '')}`));
   } catch {
     return { kind: 'conflict', conflict: timelineRestoreConflict(recovered, recoveredIdentity, 'recovered-id-mismatch', index) };
   }

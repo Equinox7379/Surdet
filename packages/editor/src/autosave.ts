@@ -10,7 +10,7 @@ import {
   inspectTimelineAutosaveIdentity,
   type TimelineAutosaveDocument,
 } from './timeline-autosave-identity.js';
-import { sceneReferenceConfigPaths, sceneDirectorySegments, isValidLabelName, validateLabelRenameBatch } from '@surdet/authoring';
+import { assertProjectTargetNamespace, sceneReferenceConfigPaths, sceneDirectorySegments, isValidLabelName, validateLabelRenameBatch } from '@surdet/authoring';
 import { isValidSceneId, isReservedSceneFileId } from '@surdet/core';
 import { desktopProjectIdentity } from './desktop.js';
 
@@ -597,6 +597,10 @@ export function inspectSceneAutosaveRecovery(
     const source = payload.sceneTransaction.pendingDeletes.find(pending => pending.kind === 'rename' && pending.replacementKey === entry.key);
     const sourceKey = source ? normalizedSceneKeyFromFile(source.file) : null;
     if (sourceKey && fold(sourceKey) === fold(entry.key)) return { status: 'blocked', scenes: [], pendingDeletes: [] };
+    const paths = [...scenes].filter(([key]) => key !== sourceKey).map(([key, current]) => `content/scenario/${normalizedSceneKeyFromFile(current.file ?? '') ?? key}.gal`);
+    paths.push(...entries.filter(other => other !== entry).map(other => `content/scenario/${other.key}.gal`));
+    try { assertProjectTargetNamespace(`content/scenario/${entry.key}.gal`, paths); }
+    catch { return { status: 'blocked', scenes: [], pendingDeletes: [] }; }
     const collision = entries.some(other => other !== entry && (fold(other.id) === fold(entry.id) || fold(other.key) === fold(entry.key)))
       || [...scenes].some(([key, current]) => key !== sourceKey && (fold(key) === fold(entry.key)
         || fold(current.id ?? key.split('/').at(-1)!) === fold(entry.id)

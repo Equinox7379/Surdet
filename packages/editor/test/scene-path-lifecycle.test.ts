@@ -284,6 +284,13 @@ describe('场景路径安全生命周期', () => {
     await expect(renameSceneAtKey('old', alias)).rejects.toThrow(/已存在/);
     expect(sceneFileIdentity(`${existing}.gal`)).toBe(sceneFileIdentity(`${alias}.gal`));
   });
+  it('portable scene creation cannot replace an existing directory with a file', async () => {
+    state.scenes.set('foo.gal/bar', scene('bar', 'foo.gal/bar.gal', null));
+    state.scenes.set('old', scene('old', 'old.gal', null));
+    await expect(createScene('foo')).rejects.toThrow(/占用|冲突/);
+    await expect(renameSceneAtKey('old', 'foo')).rejects.toThrow(/存在|冲突/);
+    expect([...state.scenes.keys()]).toEqual(['foo.gal/bar', 'old']);
+  });
 
   it('嵌套场景重命名保持目录，改写引用并登记旧文件而不立即删除', async () => {
     state.scenes.set('chapter/old', scene('old', 'chapter/old.gal', diskHandle));

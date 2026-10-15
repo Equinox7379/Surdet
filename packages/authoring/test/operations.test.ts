@@ -37,6 +37,13 @@ function fixtureStorage(configText = '{"entryScene":"prologue","variables":{}}',
 }
 
 describe('typed authoring operations', () => {
+  it('scene creation rejects a directory occupying the target filename before mutation', async () => {
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, undefined, undefined, { 'content/scenario/foo.gal/bar.gal': '@scene bar\n@end' }), hasher);
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    const before = structuredClone(change.record);
+    await expect(applySceneCreate(change, { operationId: 'directory-collision', sceneId: 'foo' }, hasher)).rejects.toMatchObject({ code: 'OBJECT_PRECONDITION_FAILED' });
+    expect(change.record).toEqual(before);
+  });
   it.each(['patch', 'remove'])('creation filename restrictions do not block %s of an existing logical scene', async action => {
     const path = 'content/scenario/CON.gal';
     const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, undefined, undefined, { [path]: '@scene CON\n保留正文。\n@end\n' }), hasher);

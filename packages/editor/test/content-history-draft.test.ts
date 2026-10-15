@@ -19,6 +19,14 @@ function diff(path: string, before: string | null, after: string): ContentHistor
 beforeEach(() => { state.scenes.clear(); state.timelines = []; state.pendingSceneDeletes = []; state.pendingTimelineDeletes = []; state.pendingTimelineRestores.clear(); histories.clear(); clearTimelineHistories(); baseline.files = []; });
 
 describe('Editor selected historical file draft', () => {
+  it.each([['é', 'e\u0301', false], ['e\u0301', 'e\u0301', true], ['é', 'é', true]] as const)('portable historical timeline parent namespace %s -> %s', async (existing, requested, accepted) => {
+    state.timelines.push({ id: 'bar', file: `${existing}/bar.json`, text: 'kept', eol: '\n', dirty: false, handle: null });
+    const text = '{"version":1,"id":"foo","durationMs":100,"tracks":[{"kind":"camera","cues":[]}]}';
+    const pending = prepareHistoryFileDraft(diff(`content/timelines/${requested}/foo.json`, null, text));
+    if (accepted) { (await pending)(); expect(state.timelines[1]).toMatchObject({ id: 'foo', file: `${requested}/foo.json` }); }
+    else { await expect(pending).rejects.toThrow(/别名|冲突/); expect(state.timelines).toHaveLength(1); }
+    expect(state.timelines[0]!.text).toBe('kept');
+  });
   it.each(['CON', 'LPT1', 'COM¹', 'folder.'])('portable historical restores reject unusable parent directory %s', async directory => {
     await expect(prepareHistoryFileDraft(diff(`content/scenario/${directory}/foo.gal`, null, '@scene foo\n@end'))).rejects.toThrow(/目录/);
     const text = '{"version":1,"id":"foo","durationMs":100,"tracks":[{"kind":"camera","cues":[]}]}';
