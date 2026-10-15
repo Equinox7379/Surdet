@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertValidSnapshot, type SaveSnapshot, type SaveSlotMeta } from '@surdet/core';
+import { assertOrdinaryDirectory, assertOrdinaryFile, writeFileAtomic, writeJsonAtomic } from './json-file.js';
 
 /**
  * 桌面存档存储：按槽位写入 userData/saves/<canonical 词干>.json。
@@ -139,6 +140,7 @@ export class FileSaveStore {
   constructor(dir: string) {
     this.dir = dir;
     fs.mkdirSync(dir, { recursive: true });
+    assertOrdinaryDirectory(dir);
   }
 
   #canonicalFileFor(slot: string): string {
@@ -153,6 +155,7 @@ export class FileSaveStore {
    * 只接受逐字符完全相等的 entry；大小写折叠相同但拼写不同则大声失败。
    */
   #exactPhysicalEntry(expectedName: string): string | null {
+    assertOrdinaryDirectory(this.dir);
     const entries = fs.readdirSync(this.dir);
     const expectedFolded = asciiCaseFold(expectedName);
     const variant = entries.find(
@@ -163,7 +166,10 @@ export class FileSaveStore {
         `canonical 物理目录项拼写不规范：实际 '${variant}' 与期望 '${expectedName}' 大小写折叠相同但不完全相等`,
       );
     }
-    return entries.includes(expectedName) ? path.join(this.dir, expectedName) : null;
+    if (!entries.includes(expectedName)) return null;
+    const file = path.join(this.dir, expectedName);
+    assertOrdinaryFile(file);
+    return file;
   }
 
   #exactCanonicalEntry(slot: string, suffix: '.json' | '.json.bak'): string | null {
@@ -289,12 +295,9 @@ export class FileSaveStore {
     const indexFile = this.indexPath();
     const indexBefore = fs.existsSync(indexFile) ? fs.readFileSync(indexFile) : null;
     const index = this.readIndex();
-    const tmp = `${file}.restore.tmp`;
-    this.#exactPhysicalEntry(path.basename(tmp));
     try {
-      fs.copyFileSync(backupFile, tmp);
       this.#exactPhysicalEntry(path.basename(file));
-      fs.renameSync(tmp, file);
+      writeFileAtomic(file, fs.readFileSync(backupFile));
       this.#setIndexEntry(index, slot, { ...backup.meta, id: slot });
       this.writeIndex(index);
     } catch (error) {
@@ -303,16 +306,13 @@ export class FileSaveStore {
           const currentMain = this.#exactPhysicalEntry(path.basename(file));
           if (currentMain !== null) fs.unlinkSync(currentMain);
         } else {
-          this.#exactPhysicalEntry(path.basename(tmp));
-          fs.writeFileSync(tmp, mainBefore);
           this.#exactPhysicalEntry(path.basename(file));
-          fs.renameSync(tmp, file);
+          writeFileAtomic(file, mainBefore);
         }
         if (indexBefore === null) {
           if (fs.existsSync(indexFile)) fs.unlinkSync(indexFile);
         } else {
-          fs.writeFileSync(`${indexFile}.restore.tmp`, indexBefore);
-          fs.renameSync(`${indexFile}.restore.tmp`, indexFile);
+          writeFileAtomic(indexFile, indexBefore);
         }
       } catch (compensationError) {
         throw new Error(`显式恢复失败且无法可靠恢复原主档/索引：${slot}`, {
@@ -320,9 +320,6 @@ export class FileSaveStore {
         });
       }
       throw error;
-    } finally {
-      const tmpEntry = this.#exactPhysicalEntry(path.basename(tmp));
-      if (tmpEntry !== null) fs.unlinkSync(tmpEntry);
     }
   }
 
@@ -370,8 +367,6 @@ export class FileSaveStore {
     const file = this.#canonicalFileFor(slot);
     const existingFile = this.#exactCanonicalEntry(slot, '.json');
     const existingBackup = this.#exactCanonicalEntry(slot, '.json.bak');
-    const tmp = `${file}.tmp`;
-    this.#exactPhysicalEntry(path.basename(tmp));
     // 先验证索引；失败不能轮换玩家最后有效的主档或备份。
     const index = this.readIndex();
     const indexFile = this.indexPath();
@@ -379,19 +374,15 @@ export class FileSaveStore {
     const backupBefore = existingBackup === null ? null : fs.readFileSync(existingBackup);
     const indexBefore = fs.existsSync(indexFile) ? fs.readFileSync(indexFile) : null;
     const backupFile = `${file}.bak`;
-    const backupTmp = `${backupFile}.tmp`;
-    this.#exactPhysicalEntry(path.basename(backupTmp));
     this.#setIndexEntry(index, slot, { ...data.meta, id: slot });
     const changed: Array<{ file: string; before: Buffer | null }> = [];
     try {
-      fs.writeFileSync(tmp, json);
-      if (mainBefore !== null) fs.writeFileSync(backupTmp, mainBefore);
       this.#exactPhysicalEntry(path.basename(file));
-      fs.renameSync(tmp, file);
+      writeFileAtomic(file, json);
       changed.push({ file, before: mainBefore });
       if (mainBefore !== null) {
         this.#exactPhysicalEntry(path.basename(backupFile));
-        fs.renameSync(backupTmp, backupFile);
+        writeFileAtomic(backupFile, mainBefore);
         changed.push({ file: backupFile, before: backupBefore });
       }
       // 索引发布可能已改变文件后才报错，因此在调用前记录补偿内容。
@@ -405,22 +396,12 @@ export class FileSaveStore {
           if (original.before === null) {
             if (fs.existsSync(original.file)) fs.unlinkSync(original.file);
           } else {
-            const restoreTmp = `${original.file}.restore.tmp`;
-            this.#exactPhysicalEntry(path.basename(restoreTmp));
-            fs.writeFileSync(restoreTmp, original.before);
-            fs.renameSync(restoreTmp, original.file);
+            writeFileAtomic(original.file, original.before);
           }
         } catch (compensationError) { failures.push(compensationError); }
       }
       if (failures.length > 1) throw new AggregateError(failures, `存档失败且无法完整恢复原主档/备份/索引：${slot}`);
       throw error;
-    } finally {
-      for (const temporary of [tmp, backupTmp, `${indexFile}.tmp`]) {
-        try {
-          const entry = this.#exactPhysicalEntry(path.basename(temporary));
-          if (entry !== null) fs.unlinkSync(entry);
-        } catch (error) { console.warn(`存档临时文件未清理：${path.basename(temporary)}`, error); }
-      }
     }
     // A5 懒迁移收尾：仅清理所有权已验证的 legacy 文件（历史碰撞中属于
     // 其他逻辑槽位的数据保持原样）；新写入恒落 canonical 物理身份。
@@ -470,10 +451,7 @@ export class FileSaveStore {
       const failures: unknown[] = [error];
       for (const original of deleted) {
         try {
-          const temporary = `${original.file}.restore.tmp`;
-          this.#exactPhysicalEntry(path.basename(temporary));
-          fs.writeFileSync(temporary, original.bytes);
-          fs.renameSync(temporary, original.file);
+          writeFileAtomic(original.file, original.bytes);
         } catch (restoreError) { failures.push(restoreError); }
       }
       if (indexAttempted) {
@@ -481,8 +459,7 @@ export class FileSaveStore {
           if (indexBefore === null) {
             if (fs.existsSync(indexFile)) fs.unlinkSync(indexFile);
           } else {
-            fs.writeFileSync(`${indexFile}.restore.tmp`, indexBefore);
-            fs.renameSync(`${indexFile}.restore.tmp`, indexFile);
+            writeFileAtomic(indexFile, indexBefore);
           }
         } catch (restoreError) { failures.push(restoreError); }
       }
@@ -519,6 +496,8 @@ export class FileSaveStore {
 
   /** 读取单个存档文件；仅缺失返回 null，I/O/解析/结构错误全部上抛。 */
   #readFile(file: string): SaveSnapshot | null {
+    assertOrdinaryDirectory(this.dir);
+    assertOrdinaryFile(file);
     if (!fs.existsSync(file)) return null;
     try {
       // 读隔离：JSON.parse 每次读盘产出的本就是全新对象图（无共享引用），
@@ -564,6 +543,8 @@ export class FileSaveStore {
    *  索引的写入/删除/序列化对任意逻辑键安全。（JSON.parse 以 DefineOwnProperty
    *  落键，本身不触发访问器；此处统一复制到空原型对象供后续操作。） */
   private readIndex(): Record<string, SaveSlotMeta> {
+    assertOrdinaryDirectory(this.dir);
+    assertOrdinaryFile(this.indexPath());
     if (!fs.existsSync(this.indexPath())) {
       return Object.create(null) as Record<string, SaveSlotMeta>;
     }
@@ -583,8 +564,6 @@ export class FileSaveStore {
   /** 原子写索引 */
   private writeIndex(index: Record<string, SaveSlotMeta>): void {
     const file = this.indexPath();
-    const tmp = `${file}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(index));
-    fs.renameSync(tmp, file);
+    writeJsonAtomic(file, index);
   }
 }
