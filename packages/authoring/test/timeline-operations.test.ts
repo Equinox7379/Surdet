@@ -77,6 +77,21 @@ function createInput(operationId: string, definition: TimelineDefinition): Timel
 }
 
 describe('timeline.create', () => {
+  it.each(['direct', 'candidate'] as const)('timeline creation rejects Windows device names and physical case aliases in %s mode', async mode => {
+    const { change } = await open();
+    change.record.composition!.mode = mode;
+    change.record.workingFiles['content/timelines/existing.JSON'] = JSON.stringify({ ...baseDefinition, id: 'existing.JSON' });
+    const before = structuredClone(change.record);
+    for (const id of ['CON', 'nul.scene', 'COM1', 'Lpt9.ext', 'existing', 'EXISTING.JSON']) {
+      await expect(applyTimelineCreate(change, createInput(id, { ...baseDefinition, id }), hasher)).rejects.toMatchObject({
+        code: ['existing', 'EXISTING.JSON'].includes(id) ? 'OBJECT_PRECONDITION_FAILED' : 'INVALID_REQUEST',
+      });
+      expect(change.record).toEqual(before);
+    }
+    change.record.composition!.mode = 'direct';
+    await applyTimelineCreate(change, createInput('legal', { ...baseDefinition, id: 'console.JSON' }), hasher);
+    expect(JSON.parse(change.record.workingFiles['content/timelines/console.JSON.json']!).id).toBe('console.JSON');
+  });
   it('creates a timeline file through the isolated transaction', async () => {
     const { change } = await open();
     const result = await applyTimelineCreate(change, createInput('op-create', baseDefinition), hasher);

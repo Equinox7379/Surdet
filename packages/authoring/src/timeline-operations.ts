@@ -18,7 +18,7 @@ import type {
 import { normalizeProjectPath } from './project-storage.js';
 import type { TextHasher } from './project-storage.js';
 import { buildTimelineOperationCompositionDraft } from './operation-composition-facts.js';
-import { resolveUniqueTimelinePath, timelineIdentityConflict, timelineIdentityMismatchMessage } from './timeline-identity.js';
+import { resolveUniqueTimelinePath, timelineIdFromPath, timelineIdentityConflict, timelineIdentityMismatchMessage } from './timeline-identity.js';
 
 const WAVE2_TRACK_KINDS: ReadonlySet<string> = new Set(['background', 'portrait', 'camera', 'screen', 'particle', 'audio', 'layer']);
 const WAVE2_ACTIONS: Record<string, ReadonlySet<string>> = {
@@ -139,8 +139,13 @@ export async function applyTimelineCreate(
   hasher: TextHasher,
 ): Promise<TimelineCreateResult> {
   const path = timelinePathFor(input.timelineId);
+  if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(input.timelineId)) {
+    throw new AuthoringOperationError('INVALID_REQUEST', '时间轴 ID 不能使用 Windows 设备名');
+  }
   return runOperation<TimelineCreateResult>(change, input, async (record) => {
-    if (resolveUniqueTimelinePath(record.workingFiles, input.timelineId) !== undefined) {
+    if (resolveUniqueTimelinePath(record.workingFiles, input.timelineId) !== undefined
+      || Object.keys(record.workingFiles).some(file => file.startsWith('content/timelines/') && file.toLowerCase().endsWith('.json')
+        && (file.toLowerCase() === path.toLowerCase() || timelineIdFromPath(file).toLowerCase() === input.timelineId.toLowerCase()))) {
       throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `时间轴已存在：${input.timelineId}`);
     }
     const definition = input.definition;
