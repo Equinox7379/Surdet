@@ -162,13 +162,15 @@ function readGameTitle(): string {
 
 /** 素材加密密钥（打包时生成于 game/.skey，32 字节 hex）；文件不存在 = 素材未加密（开发模式） */
 function assetKey(): Buffer | null {
+  let hex: string;
   try {
-    const hex = fs.readFileSync(path.join(gameRoot(), '.skey'), 'utf8').trim();
-    const key = Buffer.from(hex, 'hex');
-    return key.length > 0 ? key : null;
-  } catch {
-    return null;
+    hex = fs.readFileSync(path.join(gameRoot(), '.skey'), 'utf8').trim();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
   }
+  if (!/^[0-9a-f]{64}$/i.test(hex)) throw new Error('作品素材密钥格式无效，请重新导出完整游戏包');
+  return Buffer.from(hex, 'hex');
 }
 
 /** 注册设置持久化 IPC（渲染层 preload 经 invoke 转发；内容校验 + 原子写） */
