@@ -411,6 +411,42 @@ export const v4WorkbenchCases: BrowserCase[] = [
     assert(host.querySelector('[data-flow-scene-frame="warning"].has-warning'), 'warning scene displayed without warning');
     assert(host.querySelector('[data-flow-scene-frame="broken"]')?.textContent?.includes('错误'), 'error count missing');
   } },
+  { name: 'flow undo status describes connection-only undo when creating a scene', run: async () => {
+    for (const createScene of [false, true]) {
+      const original = '@scene start\n凛：开场。\n@end\n';
+      const scene = fixture(original);
+      state.entryScene = 'start';
+      if (!createScene) state.scenes.set('river', { ...scene, id: 'river', file: 'river.gal', text: '@scene river\n@end\n' });
+      state.lastValidation = await validateProject([...state.scenes].map(([key, value]) => ({ key, id: value.id, file: value.file, source: value.text })), 'start');
+      const host = document.createElement('div'); document.body.append(host);
+      renderFlow(host);
+      control('[data-node-id="s:start"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }));
+      clickText('#flow-menu', '编辑连接…');
+      const field = createScene ? '[aria-label="新场景标识"]' : '[aria-label="连到"]';
+      input(field, createScene ? 'river' : 's:river');
+      control(field).closest('.flow-edit-row')!.querySelector<HTMLButtonElement>('button')!.click();
+      const previewDeadline = performance.now() + 5000;
+      while (control<HTMLElement>('.flow-edit-preview').hidden && performance.now() < previewDeadline) await nextTask();
+      assert(!control<HTMLElement>('.flow-edit-preview').hidden, `flow preview failed: ${control('.flow-edit-status').textContent}`);
+      clickText('.flow-edit-preview', '应用修改');
+      const applyDeadline = performance.now() + 5000;
+      while (document.querySelector('dialog.flow-edit-dialog') && performance.now() < applyDeadline) await nextTask();
+      assert(!document.querySelector('dialog.flow-edit-dialog'), 'flow operation did not finish');
+      assert(scene.text === '@scene start\n凛：开场。\n@jump river\n@end\n' && state.current === 'start', 'connection was not applied to the source scene');
+      const river = state.scenes.get('river');
+      assert(river?.text === '@scene river\n@end\n', 'target scene missing');
+      const status = control('#status').textContent ?? '';
+      if (createScene) {
+        assert(status.includes('撤销仅回退连接，新建场景会保留'), `creation status overstates undo: ${status}`);
+      } else {
+        assert(status.includes('已应用，可撤销；保存全部后写入项目'), `connection status changed: ${status}`);
+      }
+      undo();
+      assert(currentFixtureText() === original && state.scenes.get('river') === river, 'undo must restore the connection source and retain the target scene');
+      redo();
+      assert(currentFixtureText().includes('@jump river') && state.scenes.get('river') === river, 'redo must restore the connection without replacing the target scene');
+    }
+  } },
   { name: '项目切换后拒绝旧名词表异步导入', run: async () => {
     fixture(); resetConfigSession();
     document.body.innerHTML = '<div id="config-view"></div><div id="status"></div>';
