@@ -593,8 +593,8 @@ export function inspectSceneAutosaveRecovery(
     if (!replacementKeys.has(entry.key) && !createKeys.has(entry.key)) continue;
     try { sceneDirectorySegments(entry.key.includes('/') ? entry.key.slice(0, entry.key.lastIndexOf('/')) : ''); }
     catch { return { status: 'blocked', scenes: [], pendingDeletes: [] }; }
-    if (isReservedSceneFileId(entry.id)) return { status: 'blocked', scenes: [], pendingDeletes: [] };
     const source = payload.sceneTransaction.pendingDeletes.find(pending => pending.kind === 'rename' && pending.replacementKey === entry.key);
+    if (isReservedSceneFileId(entry.id) && (createKeys.has(entry.key) || source?.id !== entry.id)) return { status: 'blocked', scenes: [], pendingDeletes: [] };
     const sourceKey = source ? normalizedSceneKeyFromFile(source.file) : null;
     if (sourceKey && fold(sourceKey) === fold(entry.key)) return { status: 'blocked', scenes: [], pendingDeletes: [] };
     const paths = [...scenes].filter(([key]) => key !== sourceKey).map(([key, current]) => `content/scenario/${normalizedSceneKeyFromFile(current.file ?? '') ?? key}.gal`);
