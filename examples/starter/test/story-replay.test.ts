@@ -1,11 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import { compileScene, EventBus, Interpreter, SceneRegistry, VariableStore, resolveGalleryReplayVariables, readGalleryReplayEntries } from '@surdet/core';
 import { prepareStoryReplay } from '../../shared/player/story-replay.js';
+import { AchievementSystem } from '@surdet/core';
+import { readFileSync } from 'node:fs';
+import { ScriptTarget, transpileModule } from 'typescript';
 
 const declarations = [{ name: 'score', type: 'number' as const, initial: 1, min: 0, max: 20 },
   { name: 'route', type: 'string' as const, initial: 'normal', readonly: true }];
 
 describe('story replay snapshot contract', () => {
+  it.each([false, true])('does not award or announce conditional achievements during replay (restoring=%s)', restoring => {
+    const store = new VariableStore([{ name: 'received', type: 'flag', initial: true }]);
+    const achievements = new AchievementSystem([{ id: 'letter', name: '收到来信', when: 'received' }], store);
+    const banners: string[] = [];
+    const source = readFileSync(new URL('../../shared/player/player.ts', import.meta.url), 'utf8');
+    const start = source.indexOf('  function checkAchievements(): void {');
+    const end = source.indexOf('  // 每条文本推进后判定', start);
+    if (start < 0 || end < 0) throw new Error('achievement callback not found');
+    const body = transpileModule(source.slice(start, end), { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText;
+    const check = new Function('achievements', 'dialogue', 'console', body + '\nreturn replay => { galleryReplay = replay; checkAchievements(); };\nvar galleryReplay;')(
+      achievements, { showBanner: (text: string) => banners.push(text) }, { info: () => {}, warn: () => {} });
+    check({ restoring });
+    expect(achievements.unlocked()).toEqual([]); expect(banners).toEqual([]);
+    check(null); check(null);
+    expect(achievements.unlocked()).toEqual(['letter']); expect(banners).toEqual(['成就解锁：收到来信']);
+  });
+
   it('runs from author conditions then restores original text and story collections', () => {
     const scenes = new SceneRegistry();
     scenes.register(compileScene('@scene main\n@set score = 7\n@unlock_text memory\n旁白：原进度。\n@end', 'main.gal', 'main'));

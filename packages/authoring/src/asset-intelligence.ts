@@ -404,13 +404,11 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
         case 'voice': add('voice', first, ref('voice')); break;
         case 'video': add('video', first, ref('video')); break;
         case 'unlock_cg': {
-          const id = first ? dequoteAssetToken(first) : undefined;
-          for (const source of id ? gallerySources.get(`cgs:${id}`) ?? [] : []) add(source.kind, source.key, ref('unlock_cg'));
+          for (const source of first ? gallerySources.get(`cgs:${first}`) ?? [] : []) add(source.kind, source.key, ref('unlock_cg'));
           break;
         }
         case 'unlock_music': {
-          const id = first ? dequoteAssetToken(first) : undefined;
-          for (const source of id ? gallerySources.get(`music:${id}`) ?? [] : []) add(source.kind, source.key, ref('unlock_music'));
+          for (const source of first ? gallerySources.get(`music:${first}`) ?? [] : []) add(source.kind, source.key, ref('unlock_music'));
           break;
         }
         default: break;

@@ -26,13 +26,9 @@ export interface RollbackRuntime {
   clearForBoundary(): void;
   canRollback(): boolean;
   perform(): boolean;
+  /** Capture synchronously at Core's textSettled boundary, before another line can run. */
   captureText(): void;
   isRestoring(): boolean;
-}
-
-function checkpointKey(snapshot: SaveSnapshot): string | null {
-  const position = snapshot.position;
-  return position ? `${position.sceneId}:${position.pc}:${position.sceneHash ?? ''}` : null;
 }
 
 function reportWarning(label: string, error: unknown): void {
@@ -44,14 +40,12 @@ function reportWarning(label: string, error: unknown): void {
 
 export function createRollbackRuntime(options: RollbackRuntimeOptions): RollbackRuntime {
   const rollback = new RollbackBuffer<SaveSnapshot>();
-  let lastRollbackKey: string | null = null;
+  let capturedTextExecution: number | null = null;
   let restoring = false;
-  let captureGeneration = 0;
 
   const clear = (): void => {
-    captureGeneration += 1;
     rollback.clear();
-    lastRollbackKey = null;
+    capturedTextExecution = null;
   };
 
   const clearForBoundary = (): void => {
@@ -80,12 +74,10 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
       reportWarning(`[${options.label}] 回退失败：`, error);
       return false;
     }
-    const currentKey = checkpointKey(current);
+    const firstIsCurrent = capturedTextExecution === options.interpreter.textExecutionId;
     const first = rollback.pop();
     if (!first) return false;
-    const frame = currentKey !== null && checkpointKey(first.snapshot) === currentKey
-      ? rollback.pop()
-      : first;
+    const frame = firstIsCurrent ? rollback.pop() : first;
     if (!frame) {
       rollback.push(first);
       return false;
@@ -102,7 +94,7 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
       // Hook-backed snapshots are restored by Core before it replays the text.
       if (frame.snapshot.presentation === undefined) options.renderer.restorePresentation(frame.presentation);
       options.audio.restorePlayback?.(frame.audio);
-      lastRollbackKey = checkpointKey(frame.snapshot);
+      capturedTextExecution = options.interpreter.textExecutionId;
       // Keep the restored boundary available for the next real text cycle.
       // The next perform() consumes this current duplicate before taking the
       // preceding frame, matching the same invariant as the initial capture.
@@ -110,12 +102,14 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
       return true;
     } catch (error) {
       if (commitStarted) {
+        capturedTextExecution = null;
         try {
           options.interpreter.loadSnapshot(current, () => {
             options.renderer.resetSession({ preserveWorld: false, preserveReadingHistory: true });
           });
           if (current.presentation === undefined) options.renderer.restorePresentation(currentPresentation);
           if (currentAudio !== undefined) options.audio.restorePlayback?.(currentAudio);
+          if (firstIsCurrent) capturedTextExecution = options.interpreter.textExecutionId;
         } catch (recoveryError) {
           reportWarning(`[${options.label}] 回退后的当前状态恢复失败：`, recoveryError);
         }
@@ -132,27 +126,23 @@ export function createRollbackRuntime(options: RollbackRuntimeOptions): Rollback
 
   const captureText = (): void => {
     if (restoring) return;
-    const generation = captureGeneration;
-    Promise.resolve().then(() => {
-      try {
-        if (restoring || generation !== captureGeneration) return;
-        if (!options.renderer.canCaptureRollbackCheckpoint()) return;
-        const snapshot = options.interpreter.saveSnapshot();
-        if (!snapshot || options.interpreter.status === 'running'
-          || options.interpreter.status === 'paused' || options.interpreter.status === 'awaiting-timer') return;
-        const key = checkpointKey(snapshot);
-        if (key === null || key === lastRollbackKey) return;
-        rollback.push({
-          snapshot,
-          presentation: options.renderer.snapshotPresentation(),
-          audio: options.audio.snapshotPlayback?.() ?? { bgm: null, ambience: null },
-        });
-        lastRollbackKey = key;
-        options.onRefresh();
-      } catch (error) {
-        reportWarning(`[${options.label}] 回退检查点创建失败：`, error);
-      }
-    });
+    try {
+      if (!options.renderer.canCaptureRollbackCheckpoint()) return;
+      const snapshot = options.interpreter.saveSnapshot();
+      if (!snapshot || options.interpreter.status === 'running'
+        || options.interpreter.status === 'paused' || options.interpreter.status === 'awaiting-timer') return;
+      const execution = options.interpreter.textExecutionId;
+      if (!snapshot.position || execution === capturedTextExecution) return;
+      rollback.push({
+        snapshot,
+        presentation: options.renderer.snapshotPresentation(),
+        audio: options.audio.snapshotPlayback?.() ?? { bgm: null, ambience: null },
+      });
+      capturedTextExecution = execution;
+      options.onRefresh();
+    } catch (error) {
+      reportWarning(`[${options.label}] 回退检查点创建失败：`, error);
+    }
   };
 
   return { clear, clearForBoundary, canRollback, perform, captureText, isRestoring: () => restoring };

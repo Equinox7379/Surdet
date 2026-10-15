@@ -4,11 +4,11 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as url from 'node:url';
-import { assertValidSnapshot, type SaveSnapshot } from '@surdet/core'; // 复用 core 深度校验（审计修复：消灭弱版重复实现）
+import { assertValidSnapshot, normalizeGameSettings, type SaveSnapshot } from '@surdet/core'; // 复用 core 深度校验（审计修复：消灭弱版重复实现）
 import { FileSaveStore } from './save-store.js';
 import { checkReleaseManifest } from './release-service.js';
 import { writeCrashReport } from './crash-reporter.js';
-import { writeJsonAtomic } from './json-file.js';
+import { assertOrdinaryDirectory, assertOrdinaryFile, writeJsonAtomic } from './json-file.js';
 import { FileProfileStore } from './profile-store.js';
 import { assertProfileKey } from '@surdet/host';
 import { resolveWindowState, type WindowState } from './window-state.js';
@@ -124,9 +124,13 @@ function logLine(level: string, msg: string): void {
   try {
     const dir = path.join(app.getPath('userData'), 'logs');
     fs.mkdirSync(dir, { recursive: true });
+    assertOrdinaryDirectory(dir);
     const file = path.join(dir, 'session.log');
-    if (fs.existsSync(file) && fs.statSync(file).size > 1024 * 1024) fs.rmSync(file);
-    fs.appendFileSync(file, `[${new Date().toISOString()}] [${level}] ${msg}\n`);
+    assertOrdinaryFile(file);
+    const line = `[${new Date().toISOString()}] [${level.slice(0, 32)}] ${msg.slice(0, 16_000)}\n`;
+    if (fs.existsSync(file) && fs.statSync(file).size + Buffer.byteLength(line) > 1024 * 1024) fs.unlinkSync(file);
+    const fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_APPEND | fs.constants.O_NOFOLLOW, 0o600);
+    try { fs.writeFileSync(fd, line); } finally { fs.closeSync(fd); }
   } catch {
     /* 日志失败不影响游戏 */
   }
@@ -181,12 +185,32 @@ function registerSettingsIpc(): void {
   });
   ipcMain.handle('settings:write', (e, data: unknown) => {
     assertTrustedSender(e);
-    if (typeof data !== 'object' || data === null) {
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
       throw new Error('设置数据必须是对象');
     }
+    // Persist only the same finite preference fields consumed by SettingsStore.
+    // Unknown/deep values never reach JSON serialization or the user-data file.
+    const settings = normalizeGameSettings(data);
+    if (Buffer.byteLength(JSON.stringify(settings), 'utf8') > 64 * 1024) throw new Error('设置内容超出大小上限');
     const file = settingsPath();
-    writeJsonAtomic(file, data);
+    writeJsonAtomic(file, settings);
   });
+}
+
+/** The selected game is the authority root, not a linked content/assets folder. */
+function assetRoot(): string | null {
+  let current = gameRoot();
+  for (const segment of ['content', 'assets']) {
+    current = path.join(current, segment);
+    let stat: fs.Stats;
+    try { stat = fs.lstatSync(current); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`素材目录不是普通目录：${current}`);
+  }
+  return current;
 }
 
 /** 应用级 IPC：退出/全屏切换/渲染端日志/素材读取（自动解密） */
@@ -217,14 +241,14 @@ function registerAppIpc(): void {
   });
   ipcMain.handle('asset:list', (e) => {
     assertTrustedSender(e);
-    const root = path.join(gameRoot(), 'content', 'assets');
-    if (!fs.existsSync(root)) return [];
+    const root = assetRoot();
+    if (root === null) return [];
     const out: string[] = [];
     const walk = (dir: string): void => {
       for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, ent.name);
         if (ent.isDirectory()) walk(full);
-        else out.push(path.relative(root, full).replace(/\\/g, '/'));
+        else if (ent.isFile()) out.push(path.relative(root, full).replace(/\\/g, '/'));
       }
     };
     walk(root);
@@ -236,7 +260,9 @@ function registerAppIpc(): void {
       || relPath.split(/[\\/]/).some(segment => segment === '..') || path.isAbsolute(relPath)) {
       throw new Error(`非法素材路径：${String(relPath)}`);
     }
-    const root = fs.realpathSync(path.join(gameRoot(), 'content', 'assets'));
+    const directory = assetRoot();
+    if (directory === null) throw new Error('作品素材目录不存在');
+    const root = fs.realpathSync(directory);
     const full = fs.realpathSync(path.resolve(root, relPath));
     const relative = path.relative(root, full);
     if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {

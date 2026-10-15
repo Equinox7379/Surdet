@@ -24,6 +24,24 @@ function makeFakeEngine(): string {
 }
 
 describe('surdet new', () => {
+  it('registers the new project against workspace edits made during template copying', async () => {
+    const engine = makeFakeEngine();
+    const rootPackage = path.join(engine, 'package.json');
+    const original = fs.copyFileSync;
+    let changed = false;
+    const copy = vi.spyOn(fs, 'copyFileSync').mockImplementation((...args) => {
+      if (!changed) {
+        changed = true;
+        fs.writeFileSync(rootPackage, JSON.stringify({ name: 'fake-engine', workspaces: ['packages/*', 'extra-workspace'], ownerNote: 'keep' }));
+      }
+      return original(...args);
+    });
+    try {
+      expect(await cmdNew('parallel-edit', { engineRoot: engine })).toBe(0);
+      expect(JSON.parse(fs.readFileSync(rootPackage, 'utf8'))).toEqual({ name: 'fake-engine', workspaces: ['packages/*', 'extra-workspace', 'games/*'], ownerNote: 'keep' });
+      expect(fs.existsSync(path.join(engine, 'games/parallel-edit/game.config.json'))).toBe(true);
+    } finally { copy.mockRestore(); }
+  });
   it('模板使用公共 Presentation 与标题会话边界', () => {
     expect(gameTemplateMain).toContain("from '@surdet/player'");
     expect(gameTemplateMain).toContain('startPlayer({');

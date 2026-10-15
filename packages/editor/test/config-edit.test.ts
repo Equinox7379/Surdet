@@ -14,6 +14,7 @@ import {
   parseGalleryRows, rowsToGallery,
   parseTerminologyRows, rowsToTerminology,
 } from '../src/config-edit.js';
+import type { RowMap } from '../src/config-edit.js';
 
 describe('变量表 ⇄ JSON', () => {
   const cfg = {
@@ -617,5 +618,137 @@ describe('terminology ⇄ JSON', () => {
     const { json, errors } = rowsToTerminology(null, rows);
     expect(errors).toEqual([]);
     expect(json.terms).toEqual([]);
+  });
+});
+
+describe.each([
+  ...([
+    ['cgs', { name: 'CG', src: 'image' }],
+    ['music', { name: '音乐', src: 'track' }],
+    ['texts', { name: '回想', scene: 'main' }],
+    ['endings', { name: '结局', description: '结局描述' }],
+    ['profiles', { character: 'lynn', title: '人物', description: '人物描述' }],
+    ['terms', { canonical: '词条', description: '词条描述' }],
+  ] as const).map(([field, seed]) => ({
+    name: `gallery.${field}`, field, seed, primaryKey: 'id',
+    parse: (raw: unknown) => parseGalleryRows(raw)[field]!,
+    save: (raw: unknown, rows: RowMap[]) => rowsToGallery(raw, { ...parseGalleryRows(raw), [field]: rows }),
+  })),
+  ...(['profiles', 'events', 'scheduled'] as const).map(field => ({
+    name: `events.${field}`, field, seed: field === 'profiles' ? { variable: 'trust', tiers: [] } : { scene: 'main' }, primaryKey: field === 'profiles' ? 'characterId' : 'id',
+    parse: (raw: unknown) => parseEventsRows(raw)[field],
+    save: (raw: unknown, rows: RowMap[]) => rowsToEvents(raw, { ...parseEventsRows(raw), [field]: rows }),
+  })),
+  ...(['nodes', 'baseCommands'] as const).map(field => ({
+    name: `calendar.${field}`, field, seed: { name: '日历条目', apCost: 0 }, primaryKey: 'id',
+    parse: (raw: unknown) => parseCalendarRows(raw)[field],
+    save: (raw: unknown, rows: RowMap[]) => rowsToCalendar(raw, { ...parseCalendarRows(raw), [field]: rows }),
+  })),
+  {
+    name: 'growth.profiles', field: 'profiles', seed: { initialLevel: 1, maxLevel: 20 }, primaryKey: 'characterId',
+    parse: (raw: unknown) => parseGrowthRows(raw).profiles,
+    save: (raw: unknown, rows: RowMap[]) => rowsToGrowth(raw, { ...parseGrowthRows(raw), profiles: rows }),
+  },
+  {
+    name: 'terminology.terms', field: 'terms', seed: { variants: [] }, primaryKey: 'canonical',
+    parse: (raw: unknown) => parseTerminologyRows(raw).terms,
+    save: (raw: unknown, rows: RowMap[]) => rowsToTerminology(raw, { terms: rows }),
+  },
+])('D59 来源字段归属：$name', ({ field, seed, primaryKey, parse, save }) => {
+  const original = [
+    { ...seed, [primaryKey]: 'a', group: 'group-a', unlockWhen: 'flagA', extension: { owner: 'a' } },
+    { ...seed, [primaryKey]: 'b', group: 'group-b', unlockWhen: 'flagB', extension: { owner: 'b' } },
+  ];
+  const raw = { maxAp: 3, maxTurns: 10, [field]: original };
+  const fieldsOf = (owner: string) => ({ group: `group-${owner}`, unlockWhen: `flag${owner.toUpperCase()}`, extension: { owner } });
+
+  it('改名保留自己的隐藏字段，输出不泄漏行标记，源对象不变', () => {
+    const before = structuredClone(raw);
+    const rows = parse(raw);
+    rows[0]![primaryKey] = 'renamed';
+    const { json, errors } = save(raw, rows);
+    expect(errors).toEqual([]);
+    const entries = json[field] as Record<string, unknown>[];
+    expect(entries[0]).toMatchObject({ [primaryKey]: 'renamed', ...fieldsOf('a') });
+    expect(entries[1]).toMatchObject({ [primaryKey]: 'b', ...fieldsOf('b') });
+    expect(entries.every(entry => !('__sourcePrimaryKey' in entry))).toBe(true);
+    expect(entries.every(entry => !('__extraFields' in entry))).toBe(true);
+    expect(raw).toEqual(before);
+  });
+
+  it('互换主键并调整行序时，隐藏字段跟随原来源', () => {
+    const rows = parse(raw).reverse();
+    rows[0]![primaryKey] = 'a';
+    rows[1]![primaryKey] = 'b';
+    const { json, errors } = save(raw, rows);
+    expect(errors).toEqual([]);
+    expect(json[field]).toEqual([
+      expect.objectContaining({ [primaryKey]: 'a', ...fieldsOf('b') }),
+      expect.objectContaining({ [primaryKey]: 'b', ...fieldsOf('a') }),
+    ]);
+  });
+
+  it('连续保存、已保存删除后的撤销仍保留本行未显示的字段', () => {
+    const rows = parse(raw);
+    const undo = structuredClone(rows);
+    rows[0]![primaryKey] = 'first-rename';
+    const first = save(raw, rows);
+    expect(first.errors).toEqual([]);
+    rows[0]![primaryKey] = 'second-rename';
+    const second = save(first.json, rows);
+    expect(second.errors).toEqual([]);
+    expect((second.json[field] as Record<string, unknown>[])[0]).toMatchObject(fieldsOf('a'));
+    const removed = save(second.json, []);
+    const restored = save(removed.json, undo);
+    expect(restored.errors).toEqual([]);
+    expect(restored.json[field]).toEqual([
+      expect.objectContaining({ [primaryKey]: 'a', ...fieldsOf('a') }),
+      expect.objectContaining({ [primaryKey]: 'b', ...fieldsOf('b') }),
+    ]);
+  });
+
+  it('重复来源报错，不能改用另一主键继承别人的隐藏字段', () => {
+    const rows = parse(raw);
+    const duplicate = { ...rows[0], [primaryKey]: 'b' };
+    rows[0]![primaryKey] = 'renamed-a';
+    rows[1]![primaryKey] = 'renamed-b';
+    rows.splice(1, 0, duplicate);
+    const { json, errors } = save(raw, rows);
+    expect(errors.some(error => error.includes('来源') && error.includes('重复'))).toBe(true);
+    const entries = json[field] as Record<string, unknown>[];
+    expect(entries[0]).toMatchObject(fieldsOf('a'));
+    expect(entries[1]).not.toHaveProperty('group');
+    expect(entries[1]).not.toHaveProperty('unlockWhen');
+    expect(entries[1]).not.toHaveProperty('extension');
+    expect(entries[2]).toMatchObject({ [primaryKey]: 'renamed-b', ...fieldsOf('b') });
+  });
+
+  it('删行、改名和前插新增行一起保存时不丢失或抢占存活来源', () => {
+    const rows = parse(raw);
+    rows.shift();
+    rows[0]![primaryKey] = 'renamed-b';
+    const added = Object.fromEntries(Object.entries(seed).map(([key, value]) => [key, typeof value === 'object' ? JSON.stringify(value) : String(value)]));
+    rows.unshift({ ...added, [primaryKey]: 'new' }, { ...added, [primaryKey]: 'b' });
+    const { json, errors } = save(raw, rows);
+    expect(errors).toEqual([]);
+    const entries = json[field] as Record<string, unknown>[];
+    expect(entries.map(entry => entry[primaryKey])).toEqual(['new', 'b', 'renamed-b']);
+    for (const entry of entries.slice(0, 2)) {
+      expect(entry).not.toHaveProperty('group');
+      expect(entry).not.toHaveProperty('unlockWhen');
+      expect(entry).not.toHaveProperty('extension');
+    }
+    expect(entries[2]).toMatchObject(fieldsOf('b'));
+  });
+
+  it('没有来源标记的行仍按主键合并原对象', () => {
+    const rows = parse(raw).reverse();
+    for (const row of rows) { delete row.__sourcePrimaryKey; delete row.__extraFields; }
+    const { json, errors } = save(raw, rows);
+    expect(errors).toEqual([]);
+    expect(json[field]).toEqual([
+      expect.objectContaining({ [primaryKey]: 'b', ...fieldsOf('b') }),
+      expect.objectContaining({ [primaryKey]: 'a', ...fieldsOf('a') }),
+    ]);
   });
 });

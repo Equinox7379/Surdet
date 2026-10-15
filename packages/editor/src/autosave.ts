@@ -10,8 +10,8 @@ import {
   inspectTimelineAutosaveIdentity,
   type TimelineAutosaveDocument,
 } from './timeline-autosave-identity.js';
-import { sceneReferenceConfigPaths, isValidLabelName, validateLabelRenameBatch } from '@surdet/authoring';
-import { isValidSceneId } from '@surdet/core';
+import { assertProjectTargetNamespace, sceneReferenceConfigPaths, sceneDirectorySegments, isValidLabelName, validateLabelRenameBatch } from '@surdet/authoring';
+import { isValidSceneId, isReservedSceneFileId } from '@surdet/core';
 import { desktopProjectIdentity } from './desktop.js';
 
 export const AUTOSAVE_KEY = 'surdet-editor:autosave';
@@ -588,6 +588,25 @@ export function inspectSceneAutosaveRecovery(
     .filter((pending) => pending.kind === 'rename' && pending.replacementKey)
     .map((pending) => pending.replacementKey!));
   const createKeys = new Set(payload.sceneTransaction.pendingCreates?.map((pending) => pending.key) ?? []);
+  const fold = (value: string): string => value.normalize('NFC').toUpperCase().toLowerCase();
+  for (const entry of entries) {
+    if (!replacementKeys.has(entry.key) && !createKeys.has(entry.key)) continue;
+    try { sceneDirectorySegments(entry.key.includes('/') ? entry.key.slice(0, entry.key.lastIndexOf('/')) : ''); }
+    catch { return { status: 'blocked', scenes: [], pendingDeletes: [] }; }
+    const source = payload.sceneTransaction.pendingDeletes.find(pending => pending.kind === 'rename' && pending.replacementKey === entry.key);
+    if (isReservedSceneFileId(entry.id) && (createKeys.has(entry.key) || source?.id !== entry.id)) return { status: 'blocked', scenes: [], pendingDeletes: [] };
+    const sourceKey = source ? normalizedSceneKeyFromFile(source.file) : null;
+    if (sourceKey && fold(sourceKey) === fold(entry.key)) return { status: 'blocked', scenes: [], pendingDeletes: [] };
+    const paths = [...scenes].filter(([key]) => key !== sourceKey).map(([key, current]) => `content/scenario/${normalizedSceneKeyFromFile(current.file ?? '') ?? key}.gal`);
+    paths.push(...entries.filter(other => other !== entry).map(other => `content/scenario/${other.key}.gal`));
+    try { assertProjectTargetNamespace(`content/scenario/${entry.key}.gal`, paths); }
+    catch { return { status: 'blocked', scenes: [], pendingDeletes: [] }; }
+    const collision = entries.some(other => other !== entry && (fold(other.id) === fold(entry.id) || fold(other.key) === fold(entry.key)))
+      || [...scenes].some(([key, current]) => key !== sourceKey && (fold(key) === fold(entry.key)
+        || fold(current.id ?? key.split('/').at(-1)!) === fold(entry.id)
+        || fold(normalizedSceneKeyFromFile(current.file ?? '') ?? key) === fold(entry.key)));
+    if (collision) return { status: 'blocked', scenes: [], pendingDeletes: [] };
+  }
   const labelRenames = payload.sceneTransaction.configRenames?.filter(rename => rename.labelScene !== undefined) ?? [];
   if (labelRenames.length > 0) {
     if (labelRenames.length !== payload.sceneTransaction.configRenames!.length || payload.sceneTransaction.pendingDeletes.length > 0) return { status: 'blocked', scenes: [], pendingDeletes: [] };
