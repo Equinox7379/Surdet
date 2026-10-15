@@ -62,13 +62,13 @@ export function wrapCjk(text: string, perLine: number): string[] {
   while (i < units.length) {
     let end = Math.min(i + width, units.length);
     if (end < units.length) {
-      // 行尾禁则：当前行末字不可收尾 → 断点前移一字（该字随下一行）
+      // 行尾禁则：连续前引号/前括号全部退让，至少保留一个字素以保证进展。
       if (end > i + 1 && NO_LINE_END.has(units[end - 1]!)) {
-        end -= 1;
+        while (end > i + 1 && NO_LINE_END.has(units[end - 1]!)) end -= 1;
       } else {
-        // 行首禁则：下一行首字不可开头 → 断点后移，把禁则字收进当前行
-        // （连续禁则字/连续符一并收入，如 "……，"）
-        while (end < units.length && (NO_LINE_START.has(units[end]!)
+        // 最多悬挂两字素；过长标点串仍需分行，即使下一行只能以标点开头。
+        const hangingLimit = end + 2;
+        while (end < units.length && end < hangingLimit && (NO_LINE_START.has(units[end]!)
           || (UNBREAKABLE_RUN.has(units[end]!) && units[end] === units[end - 1]))) {
           end += 1;
         }
@@ -85,7 +85,7 @@ export function wrapCjk(text: string, perLine: number): string[] {
 /**
  * 像素级断行（wrapCjk 的测量版）：禁则规则完全一致，但每行容量用真实测量宽度
  * （宿主传入 measure，如 canvas measureText）而非字数估算——中英混排/窄 ASCII 段落不再误差。
- * 行首禁则触发的行允许超宽（悬挂），与字数版同口径；单字超宽强制独占一行（防死循环）。
+ * 行首禁则触发的行最多悬挂两字素，与字数版同口径；单字超宽强制前进（防死循环）。
  */
 export function wrapCjkMeasure(text: string, maxWidth: number, measure: (s: string) => number): string[] {
   if (text.length === 0) return [];
@@ -105,10 +105,11 @@ export function wrapCjkMeasure(text: string, maxWidth: number, measure: (s: stri
     if (end <= i) end = i + 1; // 单字已超宽：强制至少一字，防死循环
     if (end < units.length) {
       if (end > i + 1 && NO_LINE_END.has(units[end - 1]!)) {
-        end -= 1; // 行尾禁则：前移
+        while (end > i + 1 && NO_LINE_END.has(units[end - 1]!)) end -= 1;
       } else {
-        // 行首禁则：后移收进当前行（允许悬挂超宽）
-        while (end < units.length && (NO_LINE_START.has(units[end]!)
+        // 按字素而非像素计悬挂余量，长标点串不能无限超宽。
+        const hangingLimit = end + 2;
+        while (end < units.length && end < hangingLimit && (NO_LINE_START.has(units[end]!)
           || (UNBREAKABLE_RUN.has(units[end]!) && units[end] === units[end - 1]))) {
           end += 1;
         }
@@ -137,7 +138,9 @@ export function wrapCjkUnits<T>(units: readonly T[], maxWidth: number, text: (un
       if (end <= i) end = i + 1;
       const fitted = end;
       if (end < paragraph.length) {
-        if (end > i + 1 && NO_LINE_END.has(words[end - 1]!.at(-1)!)) end--;
+        if (end > i + 1 && NO_LINE_END.has(words[end - 1]!.at(-1)!)) {
+          while (end > i + 1 && NO_LINE_END.has(words[end - 1]!.at(-1)!)) end--;
+        }
         else while (end < paragraph.length && (NO_LINE_START.has(words[end]![0]!)
           || UNBREAKABLE_RUN.has(words[end]![0]!) && words[end]![0] === words[end - 1]!.at(-1))) end++;
       }
@@ -147,6 +150,9 @@ export function wrapCjkUnits<T>(units: readonly T[], maxWidth: number, text: (un
         end = fitted;
         while (end > i + 1 && (NO_LINE_START.has(words[end]![0]!) || NO_LINE_END.has(words[end - 1]!.at(-1)!)
           || UNBREAKABLE_RUN.has(words[end]![0]!) && words[end]![0] === words[end - 1]!.at(-1))) end--;
+        // A punctuation run wider than the whole line has no legal kinsoku
+        // boundary. Use the fitted width instead of producing one glyph per row.
+        if (end === i + 1 && NO_LINE_START.has(words[end]![0]!)) end = fitted;
       }
       end = wordBoundary(words, i, end);
       lines.push(paragraph.slice(i, end)); i = end;
