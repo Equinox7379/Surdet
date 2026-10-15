@@ -473,9 +473,9 @@ Owner 2026-10-10 原话：“手柄、steam先不做，目前只需支持win平�
 
 **现状（已核实）：**
 
-- `surdet pack <目录>` 设置 `SURDET_GAME_DIR`、默认 release 模式，然后在引擎仓库的 `packages/shell` 里执行 `npm run pack`（`packages/cli/src/pack.ts:9-36`）。链路是：编译 shell → `prepare-pack.mjs` 要求项目已有构建好的 `dist/`（它不负责构建），复制 dist、`game.config.json`、更新清单和素材，并加密素材 → `verify-pack --preflight` → `electron-builder --win` → `verify-pack --artifact`（`packages/shell/package.json:14`）。
+- 规划时的旧链路曾依赖项目dist和prepare-pack；现已由`packages/cli/src/pack.ts`直接调用共享`exportWindowsGame`，使用预构建运行环境与项目内容。2026-10-15退役旧prepare-pack及其专属策略，不再复制项目dist；旧实现可从Git历史查阅，不应执行。
 - `electron-builder.yml` 把 appId `com.surdet.game`、productName `Surdet Game`、输出文件名写死，产出便携版和 NSIS 安装包，没有配置图标（`packages/shell/electron-builder.yml:1-27`）；exe 文件名用的是 shell 自己的版本号（`verify-pack.mjs:17`、`:183-185`）。
-- 加密：每次打包随机生成 32 字节密钥，存于 asar 内 `game/.skey`；`content/assets` 全部转为 SDAT2（AES-256-GCM）；剧本所在的 dist 不加密，脚本注释也承认密钥可被提取（`packages/shell/prepare-pack.mjs:3-5`、`:114-141`）。
+- 加密：当前共享Windows导出每次随机生成32字节密钥，存于asar内`game/.skey`；`content/assets`转为SDAT2（AES-256-GCM），许可原文另复制到包外licenses。剧本与配置不是加密内容，密钥随包可提取，定位仍是轻度防随手提取而非保密承诺。
 - 依赖引擎仓库：CLI 按相对路径找 shell，preflight 读仓库根 `node_modules`，还需要 electron 与 electron-builder 两个开发依赖（`pack.ts:10`、`verify-pack.mjs:168-169`、`packages/shell/package.json:33-37`）。推断：单独安装的 CLI 无法打包；首次打包要联网下载 Electron 与 NSIS。
 - 游戏入口 `src/main.ts` 用 Vite 的 `import.meta.glob` 在构建时收集剧本、素材、字体、时间轴和配置（`packages/cli/templates/game/src/main.ts`），所以现在导出前必须先 `vite build`；新建项目在 Editor 里编辑、保存、试玩都不需要装依赖，但构建需要（`docs/desktop-project-creation.md:44`）。
 - Editor 桌面版带有 Renderer 等运行时用于试玩、带 CLI 的建项目与 authority 代码，但**没有** shell、electron-builder、vite、npm，主进程里也没有 `child_process`（`packages/editor/scripts/build-desktop.mjs:10-51`）。
