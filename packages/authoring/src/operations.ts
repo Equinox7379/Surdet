@@ -65,6 +65,9 @@ function sceneCompositionConfig(files: Record<string, string>) {
 
 function scenePath(sceneId: string): string {
   if (!isValidSceneId(sceneId)) throw new AuthoringOperationError('PATH_OUTSIDE_PROJECT', `场景 ID 非法：${sceneId}`);
+  if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(sceneId)) {
+    throw new AuthoringOperationError('INVALID_REQUEST', '场景 ID 不能使用 Windows 设备名');
+  }
   return normalizeProjectPath(`content/scenario/${sceneId}.gal`);
 }
 
@@ -580,9 +583,6 @@ export function createSceneText(sceneId: string, blocks: readonly SceneBlockInpu
 
 export async function applySceneCreate(change: ChangeSession, input: SceneCreateInput, hasher: TextHasher = compositionTextHasher, sealedFingerprint?: string): Promise<{ sceneId: string; path: string }> {
   const path = scenePath(input.sceneId);
-  if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(input.sceneId)) {
-    throw new AuthoringOperationError('INVALID_REQUEST', '场景 ID 不能使用 Windows 设备名');
-  }
   return runOperation(change, input, async (record) => {
     if (resolveUniqueScenarioPath(record.workingFiles, input.sceneId) !== undefined
       || Object.keys(record.workingFiles).some(file => file.startsWith('content/scenario/') && file.toLowerCase().endsWith('.gal')
