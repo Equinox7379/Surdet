@@ -6,7 +6,7 @@ import {
   serializeProfileEnvelope,
 } from '@surdet/host';
 import type { ProfileStorage } from '@surdet/host';
-import { writeJsonAtomic } from './json-file.js';
+import { assertOrdinaryDirectory, assertOrdinaryFile, writeJsonAtomic } from './json-file.js';
 
 export class FileProfileStore implements ProfileStorage {
   readonly dir: string;
@@ -32,6 +32,8 @@ export class FileProfileStore implements ProfileStorage {
     const file = this.#fileFor(key);
     if (!fs.existsSync(file)) return null;
     try {
+      assertOrdinaryDirectory(this.dir);
+      assertOrdinaryFile(file);
       const value = parseProfileEnvelope<T>(fs.readFileSync(file, 'utf8'), options);
       if (value === null) this.#warn(`Profile 数据损坏，已忽略：${file}`);
       return value;
@@ -51,6 +53,7 @@ export class FileProfileStore implements ProfileStorage {
 
   async delete(key: string): Promise<void> {
     const file = this.#fileFor(key);
+    if (fs.existsSync(this.dir)) assertOrdinaryDirectory(this.dir);
     if (fs.existsSync(file)) fs.rmSync(file);
   }
 }

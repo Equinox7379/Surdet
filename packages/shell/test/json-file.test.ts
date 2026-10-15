@@ -34,14 +34,18 @@ describe('writeJsonAtomic', () => {
     const failure = new Error('rename failed');
     const unlinkSync = vi.fn((target: fs.PathLike) => fs.unlinkSync(target));
     const ops: JsonFileOps = {
+      openSync: fs.openSync,
+      closeSync: fs.closeSync,
+      lstatSync: fs.lstatSync,
       writeFileSync: fs.writeFileSync,
       renameSync: () => { throw failure; },
-      existsSync: fs.existsSync,
       unlinkSync,
     };
 
     expect(() => writeJsonAtomic(file, { x: 1 }, ops)).toThrow(failure);
-    expect(unlinkSync).toHaveBeenCalledWith(`${file}.tmp`);
+    expect(unlinkSync).toHaveBeenCalledOnce();
+    expect(path.dirname(String(unlinkSync.mock.calls[0]![0]))).toBe(dir);
+    expect(fs.readdirSync(dir)).toEqual(['keep.txt']);
     expect(fs.existsSync(`${file}.tmp`)).toBe(false);
     expect(fs.readFileSync(unrelated, 'utf8')).toBe('keep');
   });
