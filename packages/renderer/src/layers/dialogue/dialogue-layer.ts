@@ -1,4 +1,5 @@
 import {
+  CanvasTextMetrics,
   Container,
   Graphics,
   Rectangle,
@@ -13,7 +14,7 @@ import { parseInlineText, inlinePlainText, escapeInlineText, type InlineTextDocu
 import { InlineTextView } from './inline-text-view.js';
 import type { ReadingDiagnostic } from '../../reading-diagnostics.js';
 import { DEFAULT_READING_PREFERENCES, normalizeReadingPreferences, type ReadingPreferences } from '../../presentation.js';
-import { wrapCjk, wrapCjkMeasure } from '../../text-wrap.js';
+import { wrapCjk, wrapCjkMeasure, wrapCjkUnits } from '../../text-wrap.js';
 import type { PresentationPreferences } from '../../presentation.js';
 import { DEFAULT_PRESENTATION_PREFERENCES } from '../../presentation.js';
 import { RenderLifecycle } from '../../lifecycle/render-lifecycle.js';
@@ -655,7 +656,13 @@ export class DialogueLayer implements DialogueProjectionPort {
     this.#drawDialogPanel();
     this.#drawSpeakerPlate();
     const gap = 12;
-    for (const view of this.#choiceViews) view.rich?.setContent(view.document, this.#w * 0.68 - 80, this.#theme, this.#assets.fontFamily('body'), Infinity, view === this.#choiceViews[this.#choiceHighlight] ? 'accent' : 'text');
+    for (const view of this.#choiceViews) {
+      const textWidth = this.#w * 0.68 - 80;
+      if (view.rich) view.rich.setContent(view.document, textWidth, this.#theme, this.#assets.fontFamily('body'), Infinity, view === this.#choiceViews[this.#choiceHighlight] ? 'accent' : 'text');
+      else view.label.text = wrapCjkUnits(view.document.units, textWidth, unit => unit.text,
+        units => CanvasTextMetrics.measureText(units.map(unit => unit.text).join(''), view.label.style).width)
+        .map(units => units.map(unit => unit.text).join('')).join('\n');
+    }
     const width = Math.min(this.#w * 0.68, Math.max(440, ...this.#choiceViews.map((view) => (view.rich?.contentWidth ?? view.label.width) + 80)));
     const heights = this.#choiceViews.map((view) => Math.max(56, (view.rich?.contentHeight ?? view.label.height) + 24));
     const totalHeight = heights.reduce((sum, height) => sum + height, 0)
@@ -774,7 +781,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       const document = parseInlineText(option.label, 'choice');
       const label = bindThemeTextProjection(new PText({
         text: document.plainText,
-        style: { fontSize: this.#theme.typography.bodySize, fill: this.#theme.colors.text, fontFamily: this.#assets.fontFamily('body'), letterSpacing: this.#theme.typography.uiLetterSpacing, wordWrap: true, breakWords: true, wordWrapWidth: this.#w * 0.68 - 80 } satisfies TextStyleOptions,
+        style: { fontSize: this.#theme.typography.bodySize, fill: this.#theme.colors.text, fontFamily: this.#assets.fontFamily('body'), letterSpacing: this.#theme.typography.uiLetterSpacing, wordWrap: false } satisfies TextStyleOptions,
       }), { fill: 'text' });
       label.position.set(40, 12);
       const bg = bindThemeGraphicsProjection(new Graphics(), ['surface', 'line']);
