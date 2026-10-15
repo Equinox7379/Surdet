@@ -23,6 +23,7 @@ export class RollbackBuffer<TSnapshot> {
   #frames: RollbackFrame<TSnapshot>[] = [];
 
   constructor(capacity = 50) {
+    if (!Number.isFinite(capacity)) throw new RangeError('回退容量必须是有限数字');
     this.#capacity = Math.max(1, Math.floor(capacity));
   }
 
