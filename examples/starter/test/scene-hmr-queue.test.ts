@@ -24,6 +24,32 @@ afterEach(() => {
 });
 
 describe('scene HMR queue fairness', () => {
+  it.each(['出发\n新增一句\n@call sub\n回来\n@end', '出发\n@call sub\n@jump missing\n@end'])('retains an active caller until restart instead of reusing its old return PC: %s', async replacement => {
+    vi.stubGlobal('window', { location: { origin: 'http://surdet.test' } });
+    const registry = new SceneRegistry();
+    const original = compileScene('出发\n@call sub\n回来\n@end', 'main.gal', 'main');
+    registry.register(original);
+    registry.register(compileScene('@inc hits\n子场景\n@return', 'sub.gal', 'sub'));
+    registry.register(compileScene('旧旁支', 'other.gal', 'other'));
+    const bus = new EventBus<CoreEventMap>(), store = new VariableStore([{ name: 'hits', type: 'number', initial: 0 }]);
+    const interpreter = new Interpreter(store, bus, registry);
+    const seen: string[] = []; bus.on('text', text => seen.push(text.value));
+    interpreter.start('main'); interpreter.advance();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => ({ ok: true, text: async () => String(input).includes('other.gal') ? '新旁支' : replacement })));
+    let update!: (payload: { updates: { path: string }[] }) => void;
+    installSceneHotReload({ hot: { accept() {}, on(_event, callback) { update = callback; } }, registry, interpreter,
+      label: 'caller-test', sceneFiles: {}, resolveSceneUrl: path => path });
+    update({ updates: [{ path: '/content/scenario/main.gal' }] });
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(warn.mock.calls.flat().join(' ')).toContain('返回点');
+    expect(registry.get('main')).toBe(original);
+    interpreter.advance();
+    expect(seen).toEqual(['出发', '子场景', '回来']);
+    expect(store.getNumber('hits')).toBe(1);
+    update({ updates: [{ path: '/content/scenario/other.gal' }] });
+    await vi.waitFor(() => expect(registry.get('other').instructions).toEqual(expect.arrayContaining([expect.objectContaining({ op: 'text', value: '新旁支' })])));
+  });
   it('applies two valid boundary edits and reports the third invalid edit within 9 seconds', async () => {
     vi.useFakeTimers();
     vi.stubGlobal('window', { location: { origin: 'http://surdet.test' } });

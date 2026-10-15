@@ -65,6 +65,10 @@ export function installSceneHotReload(options: SceneHmrOptions): void {
           const current = options.registry.get(sceneId);
           if (replacement.sceneHash === current.sceneHash) continue;
           const active = options.interpreter.saveSnapshot();
+          if (active?.callStack?.some(frame => frame.sceneId === sceneId)) {
+            console.warn(`[${options.label}] 热重载已跳过：场景 ${sceneId} 仍有未完成的返回点，请重新启动试玩以载入新稿`);
+            continue;
+          }
           const position = active?.position ?? null;
           const decision = position?.sceneId === sceneId
             ? decideSceneHotReload(sceneId, position.pc, replacement, position.sceneHash)
