@@ -65,10 +65,15 @@ function sceneCompositionConfig(files: Record<string, string>) {
 
 function scenePath(sceneId: string): string {
   if (!isValidSceneId(sceneId)) throw new AuthoringOperationError('PATH_OUTSIDE_PROJECT', `场景 ID 非法：${sceneId}`);
+  return normalizeProjectPath(`content/scenario/${sceneId}.gal`);
+}
+
+function sceneCreationPath(sceneId: string): string {
+  const path = scenePath(sceneId);
   if (isReservedSceneFileId(sceneId)) {
     throw new AuthoringOperationError('INVALID_REQUEST', '场景 ID 不能使用 Windows 设备名');
   }
-  return normalizeProjectPath(`content/scenario/${sceneId}.gal`);
+  return path;
 }
 
 function assertSingleLine(value: string, field: string): void {
@@ -572,7 +577,7 @@ export function rewriteLabelReferences(source: string, path: string, currentScen
 
 /** Shared source generation for typed creation and confirmed Editor imports. */
 export function createSceneText(sceneId: string, blocks: readonly SceneBlockInput[] = []): string {
-  scenePath(sceneId);
+  sceneCreationPath(sceneId);
   const bodyLines: SceneDocumentLine[] = renderBlocks(blocks).map(line => line.kind === 'text'
     ? { ...line, sep: line.sep ?? '：', eol: '\n' as const } : { ...line, eol: '\n' as const });
   const lines: SceneDocumentLine[] = [{ kind: 'instr', name: 'scene', raw: `@scene ${sceneId}`, eol: '\n' }, ...bodyLines];
@@ -582,7 +587,7 @@ export function createSceneText(sceneId: string, blocks: readonly SceneBlockInpu
 }
 
 export async function applySceneCreate(change: ChangeSession, input: SceneCreateInput, hasher: TextHasher = compositionTextHasher, sealedFingerprint?: string): Promise<{ sceneId: string; path: string }> {
-  const path = scenePath(input.sceneId);
+  const path = sceneCreationPath(input.sceneId);
   return runOperation(change, input, async (record) => {
     if (resolveUniqueScenarioPath(record.workingFiles, input.sceneId) !== undefined
       || Object.keys(record.workingFiles).some(file => file.startsWith('content/scenario/') && file.toLowerCase().endsWith('.gal')

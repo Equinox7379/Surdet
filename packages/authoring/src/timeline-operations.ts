@@ -198,9 +198,8 @@ export async function applyTimelinePatch(
   input: TimelinePatchInput,
   hasher: TextHasher,
 ): Promise<TimelinePatchResult> {
-  const defaultPath = timelinePathFor(input.timelineId);
   return runOperation<TimelinePatchResult>(change, input, async (record) => {
-    const path = resolveUniqueTimelinePath(record.workingFiles, input.timelineId) ?? defaultPath;
+    const path = resolveUniqueTimelinePath(record.workingFiles, input.timelineId) ?? timelinePathFor(input.timelineId);
     const source = record.workingFiles[path];
     if (source === undefined) {
       throw new AuthoringOperationError('OBJECT_NOT_FOUND', `时间轴不存在：${input.timelineId}`);

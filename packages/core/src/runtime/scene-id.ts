@@ -6,7 +6,7 @@ export function isValidSceneId(value: string): boolean {
 
 /** Windows file stems rejected at creation/rename, without narrowing in-memory scene IDs. */
 export function isReservedSceneFileId(value: string): boolean {
-  return /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(value);
+  return /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])$/i.test(value);
 }
 
 export function assertValidSceneId(value: string): void {
