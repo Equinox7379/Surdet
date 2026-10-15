@@ -6,6 +6,7 @@ import type {
   CausalTraceEvent,
 } from '@surdet/authoring';
 import { locateObjectForTraceEvent } from '@surdet/authoring';
+import { findChoiceArrow } from '@surdet/core';
 export { locateObjectForTraceEvent, type CausalTraceEvent } from '@surdet/authoring';
 
 /**
@@ -125,7 +126,11 @@ function sceneNameFromPath(path: string): string {
 function quotedSummary(kind: AuthoringObject['kind'], raw: string): string {
   const trimmed = raw.trim();
   if (kind === 'choice-option') {
-    const label = trimmed.split(' -> ')[0]?.trim() ?? trimmed;
+    let label = trimmed;
+    try {
+      const arrow = findChoiceArrow(trimmed);
+      if (arrow) label = trimmed.slice(0, arrow.index).trim();
+    } catch { /* Incomplete drafts stay readable; diagnostics own the syntax error. */ }
     return `选项“${label}”`;
   }
   if (kind === 'text') return `台词“${trimmed}”`;

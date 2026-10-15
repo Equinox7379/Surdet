@@ -1,4 +1,4 @@
-import { decodeStageToken, Lexer, parseInlineInstructions } from '@surdet/core';
+import { decodeStageToken, findChoiceArrow, findChoiceCondition, Lexer, parseInlineInstructions } from '@surdet/core';
 import { decodeInstructionArgument } from '@surdet/authoring';
 import { parseScript, serializeScript, splitInstr, type LineModel } from '../model.js';
 import { InstructionFieldSource } from '../instruction-field-source.js';
@@ -248,24 +248,29 @@ export function simpleChoice(raw: string): SimpleChoice | null {
   const match = /^(\s+)(.*?)\s+->\s+(@goto\s+\S+)([ \t]*)$/.exec(raw);
   if (!match || /[\r\n]/.test(raw)) return null;
   let instructions: ReturnType<typeof parseInlineInstructions>;
-  try { instructions = parseInlineInstructions(match[3]!, 'editor-choice.gal', 1, 1); }
+  try {
+    const arrow = findChoiceArrow(raw);
+    if (!arrow || raw.slice(arrow.end).trimStart() !== match[3]! + match[4]!) return null;
+    instructions = parseInlineInstructions(match[3]!, 'editor-choice.gal', 1, 1);
+  }
   catch { return null; }
   if (instructions.length !== 1 || instructions[0]?.name !== 'goto' || instructions[0]?.args.length !== 1) return null;
   let label = match[2]!, condition = '';
-  const when = /\s*\[if:(.*?)\]\s*$/.exec(label);
+  let when: ReturnType<typeof findChoiceCondition>;
+  try { when = findChoiceCondition(label); } catch { return null; }
   if (when) {
-    condition = when[1]!;
+    condition = when.value;
     if (!condition.trim()) return null;
-    label = label.slice(0, when.index);
+    label = label.slice(0, when.index).trimEnd();
   }
-  if (label.includes('[if:') || condition.includes(']')) return null;
   return { text: label, condition, target: instructions[0]!.args[0]!, indent: match[1]!, trailing: match[4]! };
 }
 
 export function writeSimpleChoice(value: SimpleChoice): string {
-  if (/[\r\n]/.test(value.text + value.condition + value.target) || value.text.includes(' ->') || value.text.includes('[if:') || value.condition.includes(']') || /\s|@/.test(value.target)) {
+  if (/[\r\n]/.test(value.text + value.condition + value.target) || findChoiceArrow(value.text) || findChoiceCondition(value.text) || /\s|@/.test(value.target)) {
     throw new Error('这段内容需要在完整原始行中编辑');
   }
+  if (value.condition.trim() && findChoiceCondition(`选项 [if:${value.condition}]`)?.value !== value.condition) throw new Error('这段内容需要在完整原始行中编辑');
   return `${value.indent}${value.text}${value.condition.trim() ? ` [if:${value.condition}]` : ''} -> @goto ${value.target}${value.trailing}`;
 }
 

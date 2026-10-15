@@ -8,6 +8,98 @@ import type { ChoiceInstr, CondJumpInstr, CompiledScene, JumpInstr } from '../sr
 const compile = (src: string, sceneId = 'ch01_01') => compileScene(src, 'ch01_01.gal', sceneId);
 
 describe('Parser', () => {
+  it.each(['"', "'"])('preserves paired ASCII condition prose before a later unmatched quote: %s', quote => {
+    const label = `显示${quote}[if:oops${quote} 未闭合 ${quote}]`;
+    for (const suffix of ['', ' -> @goto done', ' [if:true] -> @goto done']) {
+      const scene = compile(`@choice\n  ${label}${suffix}\n@label done\n@end`);
+      expect((scene.instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]).toMatchObject({ label, when: suffix.includes('[if:true]') ? 'true' : null });
+    }
+  });
+  it.each(['"', "'"])('lets the expression parser own strings after unmatched ASCII prose: %s', quote => {
+    const label = `选择${quote}未闭合`;
+    for (const condition of [`${quote}x${quote} == ${quote}x${quote}`, `(flag == ${quote}x${quote})`, `flag == (${quote}x${quote})`]) {
+      const scene = compile(`@choice\n  ${label} [if:${condition}] -> @goto done\n@label done\n@end`);
+      expect((scene.instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]).toMatchObject({ label, when: condition });
+    }
+    expect(() => compile(`@choice\n  ${label} [if:${quote}x${quote} == ] -> @goto done\n@label done\n@end`)).toThrow(/S002/);
+  });
+  it.each(['显示“[if:oops -> @goto hidden”', '显示‘[if:oops -> @goto hidden’'])('does not parse a quoted no-action label as a candidate condition: %s', label => {
+    expect(findChoiceArrow(label)).toBeNull();
+    const scene = compile(`@choice\n  ${label}\n@end`);
+    expect((scene.instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]).toMatchObject({ label, when: null });
+  });
+  it.each([['“', '”'], ['‘', '’'], ['"', '"'], ["'", "'"]])('keeps a quoted condition marker literal before an outer bracket: %s', (opening, closing) => {
+    const label = `显示${opening}[if:oops${closing}]`;
+    for (const suffix of ['', ' -> @goto done', ' [if:true] -> @goto done']) {
+      const scene = compile(`@choice\n  ${label}${suffix}\n@label done\n@end`);
+      const option = (scene.instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]!;
+      expect(option.label).toBe(label);
+      expect(option.when).toBe(suffix.includes('[if:true]') ? 'true' : null);
+    }
+  });
+  it.each([['“', '”'], ['‘', '’']])('does not borrow a condition string to close Chinese prose: %s', (opening, closing) => {
+    const label = `选择${opening}未闭合`;
+    const condition = `"结尾${closing}" == "结尾${closing}"`;
+    const scene = compile(`@choice\n  ${label} [if:${condition}] -> @goto done\n@label done\n@end`);
+    expect((scene.instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]).toMatchObject({ label, when: condition });
+  });
+  it.each(['选择“稍后 -> @goto hidden”', '选择‘稍后 -> @goto hidden’'])('keeps a paired Chinese no-action label intact: %s', label => {
+    expect(findChoiceArrow(`  ${label}`)).toBeNull();
+    const result = compile(`@choice\n  ${label}\n@end`);
+    expect(result.instructions.find(value => value.op === 'choice')).toMatchObject({ options: [{ label }] });
+  });
+  it.each(['显示“[if:oops”', '显示‘[if:oops’', '显示"[if:oops"', "显示'[if:oops'"])('#63 follow-up keeps an incomplete condition inside paired prose: %s', label => {
+    for (const condition of ['true', '"[if:x]" == "[if:x]"']) {
+      const scene = compile(`@choice\n  ${label} [if:${condition}] -> @goto done\n@label done\n@end`);
+      expect((scene.instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]).toMatchObject({ label, when: condition });
+    }
+  });
+  it('keeps mixed quoted condition prose and unmatched prose quotes out of action fallback bounds', () => {
+    const scene = compile('@choice\n  选择 "同意 -> [if:false]" 未闭合 "文案 [if:true] -> @bg "night" @goto done\n@label done\n完成');
+    const choice = scene.instructions.find(instruction => instruction.op === 'choice');
+    expect(choice).toMatchObject({ options: [{ label: '选择 "同意 -> [if:false]" 未闭合 "文案', when: 'true' }] });
+    expect(scene.instructions).toEqual(expect.arrayContaining([expect.objectContaining({ op: 'instr', name: 'bg', args: ['"night"'] })]));
+  });
+  it.each([
+    '选择 ->@set score = 1 -> @goto done',
+    '选择-> @set score = 1 -> @goto done',
+    'a->b 选择 ->@set score = 1 -> @goto done',
+    '选择 [if:true]->@set score = 1 -> @goto done',
+  ])('#63 rejects an earlier malformed arrow before a valid action: %s', row => {
+    expect(() => compile(`@choice\n  ${row}\n@label done\n@end`)).toThrow(/S009/);
+  });
+  it.each(['选择 "->@set score = 1"', "选择 '->@set score = 1'", '选择“->@set score = 1”', '选择‘->@set score = 1’'])('#63 keeps malformed-arrow-like prose inside paired quotes: %s', label => {
+    const scene = compile(`@choice\n  ${label} [if:true] -> @goto done\n@label done\n@end`);
+    expect((scene.instructions.find(instruction => instruction.op === 'choice') as ChoiceInstr).options[0]).toMatchObject({ label, when: 'true' });
+  });
+  it.each(['@set score = 1', '@mod score 1', '@wait 1', '@video clip', '@timeline intro', '@switch score 1:done', '@loop done', '@goto done', '@jump other', '@call other', '@return', '@end'])('warns when lowering %s would discard a modifier', command => {
+    const scene = compile(`${command} @unused yes\n@label done\n@end`);
+    expect(scene.diagnostics.some(issue => issue.code === 'W003' && issue.message.includes('unused'))).toBe(true);
+  });
+  it('keeps consumed timeline blocking without warning', () => {
+    expect(compile('@timeline intro @blocking\n@end').diagnostics).toEqual([]);
+  });
+  it.each(['@check', '@check score >'])('rejects malformed assertion expression %s at compile time', source => {
+    expect(() => compile(source)).toThrow(/C005/);
+  });
+  it.each([
+    '选择 [if:trust > 1] 后文 -> @goto done',
+    '选择 [if:] -> @goto done',
+    '选择 [if:trust > 1 -> @goto done',
+    '选择 [if:trust > 1]-> @goto done',
+    '选择-> @goto done',
+    '选择 ->@goto done',
+  ])('diagnoses an ignored condition or malformed action boundary: %s', row => {
+    expect(() => compile(`@choice\n  ${row}\n@label done\n@end`)).toThrow(/S005|S009/);
+  });
+  it.each(['选择“同意 -> 继续”', '选择‘同意 -> 继续’', '显示"[if:false]"'])('keeps quoted prose literal: %s', label => {
+    const scene = compile(`@choice\n  ${label} [if:true] -> @goto done\n@label done\n@end`);
+    const option = (scene.instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]!;
+    expect(option.label).toBe(label); expect(option.when).toBe('true');
+  });
+  it('rejects an action after the first choice jump rather than executing it before that jump', () => {
+    expect(() => compile('@choice\n  继续 -> @set trust = 1 @goto done @set trust = 2\n@label done\n@end')).toThrow(/S010/);
+  });
   it.each([
     '选 "同意 -> 继续" 这项', "选 '同意 -> 继续' 这项",
     String.raw`选 "同意 \" -> 继续" 这项`, String.raw`选 '同意 \' -> 继续' 这项`,
@@ -364,6 +456,12 @@ describe('SceneCompiler', () => {
   it('未知指令产生 W001 诊断', () => {
     const scene = compile('@choise abc');
     expect(scene.diagnostics.some((d) => d.code === 'W001')).toBe(true);
+  });
+
+  it('reports unsupported @ruby while retaining explicit inline ruby and declared custom commands', () => {
+    expect(compile('@ruby test').diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'W001' })]));
+    expect(compile('凛：<ruby=せかい>世界</ruby>和《书名》').diagnostics).toEqual([]);
+    expect(compileScene('@ruby test', 'custom.gal', 'custom', ['ruby']).diagnostics).toEqual([]);
   });
 
   it('原规划指令（particle/mov/tint/clear）全部已实现，不再产生 W002', () => {

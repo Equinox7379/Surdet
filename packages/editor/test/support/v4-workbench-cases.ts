@@ -216,6 +216,21 @@ export const v4WorkbenchCases: BrowserCase[] = [
     await nextTask(); assert(panel.textContent?.includes('尚未运行检查或记录真实试玩'), 'old project result survived reset');
     assert(scene.text === '@scene start\n@choice\n  继续 -> @end\n', 'checks modified source'); disposeStoryCheckPanel();
   } },
+  { name: 'branch dialog preserves protected prose and rejects real control syntax', run: async () => {
+    const scene = fixture('@scene start\n正文。\n@end');
+    clickText('#script-v4-toolbar', '添加剧情'); input('.v4-insert-dialog > label select', 'choice', 'change');
+    input('.v4-insert-fields label:nth-child(1) input', '显示"[if:false]"');
+    input('.v4-insert-fields label:nth-child(2) input', '选择“同意 -> 继续”');
+    clickText('.v4-insert-dialog footer', '插入到当前步骤之后');
+    assert(!document.querySelector('.v4-insert-dialog'), 'protected prose was rejected');
+    assert(scene.text.includes('显示"[if:false]" -> @goto') && scene.text.includes('选择“同意 -> 继续” -> @goto'), 'branch text was changed');
+    const before = scene.text;
+    clickText('#script-v4-toolbar', '添加剧情'); input('.v4-insert-dialog > label select', 'choice', 'change');
+    input('.v4-insert-fields label:nth-child(1) input', '越界 -> @goto hidden');
+    clickText('.v4-insert-dialog footer', '插入到当前步骤之后');
+    assert(scene.text === before && document.querySelector('.v4-insert-dialog'), 'real control syntax was accepted');
+    clickText('.v4-insert-dialog footer', '取消');
+  } },
   { name: 'unsaved inserted labels reject rename before changing drafts, histories, config rows or pending facts', run: async () => {
     for (const variant of ['source', 'BOM', 'branch']) {
       const source = variant === 'BOM' ? '\uFEFF@scene start\r\n正文保持不变。\r\n@end' : '@scene start\n正文保持不变。\n@end';

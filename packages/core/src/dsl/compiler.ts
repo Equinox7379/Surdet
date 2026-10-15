@@ -20,7 +20,7 @@ export const IMPLEMENTED_INSTRUCTIONS: ReadonlySet<string> = new Set([
   'bg', 'show', 'hide', 'pose', 'layer', 'stage', 'voice', 'bgm', 'se', 'fadein', 'fadeout',
   'shake', 'flash', 'zoom', 'wipe', 'transition', 'ambience',
   'particle', 'mov', 'tint', 'filter',
-  'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'ruby',
+  'title', 'chapter', 'tip', 'note', 'center', 'nvl',
   // 周目（解释器记录 ClearTracker + 发 clear 事件，宿主接全局通关记录）
   'clear',
   // 角色成长（解释器驱动 GrowthSystem，升级属性增量写回变量仓库，发 growth 事件）
@@ -125,6 +125,10 @@ export class SceneCompiler {
     const parser = new Parser();
     const ast = parser.parse(tokens, sceneId);
     const emitter = new Emitter(source.split(/\r\n|\n|\r/));
+    // Specialized instructions lose their modifier maps when lowered to bytecode.
+    for (const token of tokens) if (token.type === 'instruction') {
+      this.#warnLoweredModifiers(emitter, token.name, token.modifiers, token);
+    }
 
     this.#emitBlocks(emitter, ast.blocks);
 
@@ -543,6 +547,11 @@ export class SceneCompiler {
   }
 
   #makeGeneric(name: string, args: string[], modifiers: Map<string, string>, p: SourcePos): GenericInstr {
+    if (name === 'check') {
+      const expr = args.join(' ');
+      try { validateExpr(expr); }
+      catch { throw new DslError('C005', `@check 条件表达式语法错误：'${expr}'`, p, '形如 @check trust >= 0'); }
+    }
     if (name === 'transition' && decodeStageToken(args[0] ?? '') === 'rule') {
       try { parseRuleTransition(new Map([...modifiers].map(([key, value]) => [key, decodeStageToken(value)]))); }
       catch (error) { throw new DslError('TRANSITION_INVALID', error instanceof Error ? error.message : String(error), p); }
@@ -556,6 +565,16 @@ export class SceneCompiler {
       catch (error) { throw new DslError('STAGE_INVALID', error instanceof Error ? error.message : String(error), p); }
     }
     return { op: 'instr', name, args, modifiers, index: -1, file: p.file, line: p.line, col: p.col };
+  }
+
+  #warnLoweredModifiers(emitter: Emitter, name: string, modifiers: Map<string, string>, p: SourcePos): void {
+    if (!['set', 'mod', 'wait', 'timeline', 'video', 'switch', 'loop', 'goto', 'jump', 'call', 'return', 'end', 'if', 'elif', 'else', 'endif', 'choice'].includes(name)) return;
+    for (const key of modifiers.keys()) {
+      if (name === 'timeline' && key === 'blocking') continue;
+      emitter.addDiagnostic({ code: 'W003', file: p.file, line: p.line, col: p.col,
+        ...(p.range ? { range: p.range } : {}),
+        message: `指令 '@${name}' 的修饰符 '@${key}' 未被引擎消费`, hint: '移除没有效果的修饰符，按该指令支持的参数写法填写。' });
+    }
   }
 
   /** 未知指令告警（拼写错误兜底；自定义指令可通过 SceneCompiler 构造消音）。

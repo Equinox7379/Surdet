@@ -64,6 +64,13 @@ export function computeProjectStats(scenes: Iterable<{ id: string; text: string 
     cgUnlocks: 0, waitMs: 0, estMinutes: 0, perScene: [],
   };
   const cgIds = new Set<string>();
+  for (const scene of compiled) {
+    for (const instruction of scene.instructions) {
+      if (instruction.op !== 'instr' || instruction.name !== 'unlock_cg' || instruction.args[0] === undefined) continue;
+      const id = instruction.args[0];
+      if (id.trim()) cgIds.add(id);
+    }
+  }
   let transitionCount = 0;
 
   for (const sc of materialized) {
@@ -77,10 +84,6 @@ export function computeProjectStats(scenes: Iterable<{ id: string; text: string 
     for (const line of parseScript(sc.text)) {
       if (line.kind === 'instr') {
         const ins = line as { name: string; raw: string };
-        if (ins.name === 'unlock_cg') {
-          const id = ins.raw.trim().split(/\s+/)[1];
-          if (id) cgIds.add(id);
-        }
         if (ins.name === 'wait') {
           const ms = Number(ins.raw.trim().split(/\s+/)[1]);
           if (Number.isFinite(ms) && ms > 0) stats.waitMs += ms;
