@@ -17,6 +17,7 @@ function createTestRuntime() {
   };
   const interpreter = {
     status: 'awaiting-advance',
+    get textExecutionId() { return pc; },
     saveSnapshot: vi.fn(() => structuredClone({ ...snapshot, position: { ...snapshot.position!, pc } })),
     loadSnapshot: vi.fn(),
   } as unknown as Interpreter;

@@ -47,6 +47,26 @@ function choiceCollector(bus: EventBus<CoreEventMap>): ChoiceEventPayload[] {
 }
 
 describe('Interpreter', () => {
+  it('identifies each text execution across loop visits and load replay without counting display refresh', () => {
+    const { store, bus, registry, interp } = makeRuntime(baseDecls);
+    registry.register(compileScene('循环句\n@jump loop', 'loop.gal', 'loop'));
+    const executions: number[] = [];
+    bus.on('textSettled', () => executions.push(interp.textExecutionId));
+    interp.start('loop');
+    const first = interp.textExecutionId;
+    interp.refreshDisplayedText();
+    expect(interp.textExecutionId).toBe(first);
+    interp.advance();
+    expect(interp.textExecutionId).toBeGreaterThan(first);
+    const saved = interp.saveSnapshot()!;
+    const second = interp.textExecutionId;
+    interp.loadSnapshot(saved);
+    expect(interp.textExecutionId).toBeGreaterThan(second);
+    expect(executions).toHaveLength(3);
+    expect(new Set(executions).size).toBe(3);
+    expect(store.snapshot()).toEqual(saved.variables);
+  });
+
   it.each(['stay', 'advance', 'jump', 'pause'] as const)('emits textSettled only for a stable text boundary (%s)', mode => {
     const { store, bus, registry, interp } = makeRuntime(baseDecls);
     registry.register(compileScene('第一句\n第二句', 'source.gal', 'source'));

@@ -206,6 +206,7 @@ export class Interpreter {
   /** 主循环执行中标志：事件回调内重入推进时置 resume 而非递归 */
   #stepping = false;
   #resumeRequested = false;
+  #textExecutionId = 0;
   /** 宿主暂停标志（交互式战斗等宿主接管期间冻结指令流） */
   #hostPaused = false;
   /** hostJump 已在事件回调内重设 pc：主循环跳过本次的 pc++（避免覆盖跳转目标） */
@@ -333,6 +334,11 @@ export class Interpreter {
 
   get status(): RuntimeStatus {
     return this.#status;
+  }
+
+  /** 每次实际执行文本（含读档重播）递增；显示刷新不递增，不写入存档。 */
+  get textExecutionId(): number {
+    return this.#textExecutionId;
   }
 
   /** 当前定位（场景 ID + 指令索引），存档/调试用 */
@@ -835,6 +841,7 @@ export class Interpreter {
             // 先置挂起状态再发事件：回调内可直接 advance()
             this.#pc++;
             this.#status = 'awaiting-advance';
+            this.#textExecutionId++;
             // 用指令索引作为已读 key：避免同场景两条相同文本行被合并为一条已读记录。
             // wasRead 须在 mark 之前查询：渲染层快进"遇未读即停"据此判断（false = 首次播放）。
             const readKey = `${this.#scene!.sceneId}#${instr.index}`;
