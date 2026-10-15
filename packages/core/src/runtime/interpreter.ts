@@ -11,7 +11,7 @@ import type {
 import type { SourcePos } from '../dsl/token.js';
 import { SourceError } from '../dsl/token.js';
 import { interpolateInlineText, substituteTextVariables } from '../inline-text.js';
-import { decodeStageToken } from '../stage.js';
+import { dequoteInstrArg } from './identifier-argument.js';
 import { evalExprBoolean, evalExprString } from './expr-eval.js';
 import type { VariableStore } from '../state/variable-store.js';
 import { EventBus, type EventMap } from './event-bus.js';
@@ -1201,7 +1201,6 @@ export class Interpreter {
           throw new RuntimeError('@add_item 目标变量必须是 string[]', instr);
         }
         const arr = current as string[];
-        // Inventory string[] values are persisted literal tokens, not decoded gallery IDs.
         this.#store.set(vn, arr.includes(item) ? arr : [...arr, item]);
         return;
       }
@@ -1230,32 +1229,26 @@ export class Interpreter {
       }
       case 'unlock_cg': {
         requireArg(instr, arg0, '@unlock_cg');
-        const id = decodeStageToken(arg0!);
-        if (!id.trim()) throw new RuntimeError('@unlock_cg 需要非空收藏标识', instr);
-        const fresh = this.gallery.unlockCg(id);
-        this.#bus.emit('gallery', { type: 'cg', id, fresh });
+        const fresh = this.gallery.unlockCg(arg0!);
+        this.#bus.emit('gallery', { type: 'cg', id: arg0!, fresh });
         return;
       }
       case 'unlock_music': {
         requireArg(instr, arg0, '@unlock_music');
-        const id = decodeStageToken(arg0!);
-        if (!id.trim()) throw new RuntimeError('@unlock_music 需要非空收藏标识', instr);
-        const fresh = this.gallery.unlockMusic(id);
-        this.#bus.emit('gallery', { type: 'music', id, fresh });
+        const fresh = this.gallery.unlockMusic(arg0!);
+        this.#bus.emit('gallery', { type: 'music', id: arg0!, fresh });
         return;
       }
       case 'unlock_text': {
         requireArg(instr, arg0, '@unlock_text');
-        const id = decodeStageToken(arg0!);
-        if (!id.trim()) throw new RuntimeError('@unlock_text 需要非空收藏标识', instr);
-        const fresh = this.gallery.unlockText(id);
-        this.#bus.emit('gallery', { type: 'text', id, fresh });
+        const fresh = this.gallery.unlockText(arg0!);
+        this.#bus.emit('gallery', { type: 'text', id: arg0!, fresh });
         return;
       }
       case 'unlock_profile':
       case 'unlock_term': {
         requireArg(instr, arg0, `@${instr.name}`);
-        const id = decodeStageToken(arg0!);
+        const id = dequoteInstrArg(arg0!);
         if (!id.trim()) throw new RuntimeError(`@${instr.name} 需要非空资料标识`, instr);
         const fresh = instr.name === 'unlock_profile' ? this.gallery.unlockProfile(id) : this.gallery.unlockTerm(id);
         this.#bus.emit('gallery', { type: instr.name === 'unlock_profile' ? 'profile' : 'term', id, fresh });
@@ -1264,7 +1257,7 @@ export class Interpreter {
       case 'clear': {
         // @clear [结局ID]：周目通关记录。缺省结局标识 = 当前场景 ID（多结局各放一条 @clear）。
         // 引擎只记录与广播；全局通关记录（跨周目）由宿主在 clear 事件回调中落盘。
-        const ending = (arg0 === undefined ? '' : decodeStageToken(arg0)) || this.#scene!.sceneId;
+        const ending = (arg0 === undefined ? '' : dequoteInstrArg(arg0)) || this.#scene!.sceneId;
         const fresh = this.clearTracker.markClear(ending);
         this.#bus.emit('clear', { ending, fresh });
         return;
@@ -1281,7 +1274,7 @@ export class Interpreter {
         if (!Number.isFinite(amount)) {
           throw new RuntimeError(`@exp 经验值非法：'${amountRaw}'`, instr);
         }
-        const result = this.#growth.gainExp(decodeStageToken(characterId), amount);
+        const result = this.#growth.gainExp(characterId, amount);
         this.#bus.emit('growth', result);
         return;
       }
@@ -1333,7 +1326,7 @@ export class Interpreter {
         // 与 @clear 一致，解释器侧消费的 ID 类参数统一去引号）
         this.#bus.emit('system', {
           type: name,
-          args: instr.args.map((a) => decodeStageToken(a)),
+          args: instr.args.map((a) => dequoteInstrArg(a)),
           modifiers: instr.modifiers,
           pos: { file: instr.file, line: instr.line, col: instr.col },
         });

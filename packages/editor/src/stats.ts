@@ -3,7 +3,7 @@
  * 制作人向投资人/发行报进度用：字数/台词数/选择肢/结局数/预估通关时长。
  */
 import { parseScript } from './model.js';
-import { compileScene, computeProjectStats as computeCoreProjectStats, decodeStageToken, inlineTextLength } from '@surdet/core';
+import { compileScene, computeProjectStats as computeCoreProjectStats, inlineTextLength } from '@surdet/core';
 
 export interface SceneStat {
   id: string;
@@ -67,7 +67,7 @@ export function computeProjectStats(scenes: Iterable<{ id: string; text: string 
   for (const scene of compiled) {
     for (const instruction of scene.instructions) {
       if (instruction.op !== 'instr' || instruction.name !== 'unlock_cg' || instruction.args[0] === undefined) continue;
-      const id = decodeStageToken(instruction.args[0]);
+      const id = instruction.args[0];
       if (id.trim()) cgIds.add(id);
     }
   }

@@ -2,7 +2,6 @@ import { compareCanonicalText } from './canonical-order.js';
 import {
   collectVars,
   collectInterpolatedVars,
-  decodeStageToken,
   findChoiceArrow,
   findChoiceCondition,
   parseExpr,
@@ -125,17 +124,17 @@ function addSceneInstructionReferences(
   }
 
   if (name === 'unlock_profile' || name === 'unlock_term') {
-    const token = decodeStageToken(args[0] ?? '');
+    const token = decodeInstructionArgument(args[0] ?? '');
     addReference(references, name === 'unlock_profile' ? 'gallery-profile' : 'gallery-term', 'candidate-external', token, source, `gallery:${name === 'unlock_profile' ? 'profiles' : 'terms'}:${token}`);
     return;
   }
   if (name === 'unlock_text') {
-    const token = decodeStageToken(args[0] ?? '');
+    const token = args[0] ?? '';
     addReference(references, 'gallery-text', 'candidate-external', token, source, `gallery:texts:${token}`);
     return;
   }
   if (name === 'unlock_cg') {
-    const token = decodeStageToken(args[0] ?? '');
+    const token = args[0] ?? '';
     addReference(references, 'gallery-cg', 'candidate-external', token, source, `gallery:cgs:${token}`);
     return;
   }

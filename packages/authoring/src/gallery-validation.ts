@@ -1,5 +1,6 @@
 import type { CompiledScene, LintIssue } from '@surdet/core';
-import { decodeStageToken, readGalleryUnlockPolicy, readGalleryReplayEntries, readGalleryEndings, readGalleryDossiers, parseTerminology, type VarDeclaration } from '@surdet/core';
+import { readGalleryUnlockPolicy, readGalleryReplayEntries, readGalleryEndings, readGalleryDossiers, parseTerminology, type VarDeclaration } from '@surdet/core';
+import { decodeInstructionArgument } from './scene-document.js';
 
 type GallerySection = 'cgs' | 'music' | 'texts' | 'profiles' | 'terms';
 type UnlockInstruction = 'unlock_cg' | 'unlock_music' | 'unlock_text' | 'unlock_profile' | 'unlock_term';
@@ -203,7 +204,8 @@ export function validateGalleryConfig(input: GalleryValidationInput): LintIssue[
       const section = Object.prototype.hasOwnProperty.call(UNLOCK_TO_SECTION, instruction.name)
         ? UNLOCK_TO_SECTION[instruction.name as UnlockInstruction] : undefined;
       if (section === undefined) continue;
-      const id = decodeStageToken(instruction.args[0] ?? '');
+      const id = instruction.name === 'unlock_profile' || instruction.name === 'unlock_term'
+        ? decodeInstructionArgument(instruction.args[0] ?? '') : instruction.args[0];
       if (!nonEmptyString(id) || !ids[section].has(id)) {
         addIssue(
           issues,
