@@ -822,7 +822,10 @@ async function applyFlowPlan(plan: FlowEditPlan): Promise<void> {
   });
   requestValidateHook();
   renderSidebar();
-  setStatus(`${plan.summary}。已应用，可撤销；保存全部后写入项目`, true, 5000);
+  const undoNotice = plan.files.some(file => file.before === null)
+    ? '撤销仅回退连接，新建场景会保留'
+    : '可撤销';
+  setStatus(`${plan.summary}。已应用，${undoNotice}；保存全部后写入项目`, true, 5000);
 }
 
 /** The graph of the text being edited now. Validation is debounced, so its result can trail a quick series of edits;
