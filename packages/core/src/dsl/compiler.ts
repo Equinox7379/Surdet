@@ -20,7 +20,7 @@ export const IMPLEMENTED_INSTRUCTIONS: ReadonlySet<string> = new Set([
   'bg', 'show', 'hide', 'pose', 'layer', 'stage', 'voice', 'bgm', 'se', 'fadein', 'fadeout',
   'shake', 'flash', 'zoom', 'wipe', 'transition', 'ambience',
   'particle', 'mov', 'tint', 'filter',
-  'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'ruby',
+  'title', 'chapter', 'tip', 'note', 'center', 'nvl',
   // 周目（解释器记录 ClearTracker + 发 clear 事件，宿主接全局通关记录）
   'clear',
   // 角色成长（解释器驱动 GrowthSystem，升级属性增量写回变量仓库，发 growth 事件）
