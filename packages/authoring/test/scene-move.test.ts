@@ -56,7 +56,7 @@ describe('chapter scene move', () => {
     expect(JSON.parse(text.replace(/^\uFEFF/, ''))).toEqual({ custom: { entryScene: 'keep' }, entryScene: snapshot.scenes[0]!.id });
   });
 
-  it.each(['../outside', '/absolute', 'C:/else', 'a\\b', 'a//b', 'a/./b', 'a/../b', 'a/', 'NUL.txt', 'x/COM1', 'chapter.', 'chapter ', 'a:b', 'node_modules', '.git', 'dist', '.surdet-tmp'])('rejects unusable directory %s before mutation', async directory => {
+  it.each(['../outside', '/absolute', 'C:/else', 'a\\b', 'a//b', 'a/./b', 'a/../b', 'a/', 'NUL.txt', 'x/COM1', 'x/COM¹', 'LPT².txt', 'chapter.', 'chapter ', 'a:b', 'node_modules', '.git', 'dist', '.surdet-tmp'])('rejects unusable directory %s before mutation', async directory => {
     const { change, input } = await fixture();
     const before = structuredClone(change.record);
     await expect(applySceneMove(change, { ...input, directory }, hasher)).rejects.toMatchObject({ code: 'INVALID_REQUEST' });

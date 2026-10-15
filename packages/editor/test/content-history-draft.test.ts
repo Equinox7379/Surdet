@@ -19,6 +19,12 @@ function diff(path: string, before: string | null, after: string): ContentHistor
 beforeEach(() => { state.scenes.clear(); state.timelines = []; state.pendingSceneDeletes = []; state.pendingTimelineDeletes = []; state.pendingTimelineRestores.clear(); histories.clear(); clearTimelineHistories(); baseline.files = []; });
 
 describe('Editor selected historical file draft', () => {
+  it.each(['CON', 'LPT1', 'COM¹', 'folder.'])('portable historical restores reject unusable parent directory %s', async directory => {
+    await expect(prepareHistoryFileDraft(diff(`content/scenario/${directory}/foo.gal`, null, '@scene foo\n@end'))).rejects.toThrow(/目录/);
+    const text = '{"version":1,"id":"foo","durationMs":100,"tracks":[{"kind":"camera","cues":[]}]}';
+    await expect(prepareHistoryFileDraft(diff(`content/timelines/${directory}/foo.json`, null, text))).rejects.toThrow(/目录/);
+    expect(state.scenes.size).toBe(0); expect(state.timelines).toEqual([]);
+  });
   it.each(['scene', 'timeline'])('portable historical %s restore refuses a case alias without editing', async kind => {
     state.scenes.set('chapter/FOO', { id: 'FOO', file: 'chapter/FOO.gal', text: 'kept', eol: '\n', dirty: false, handle: null });
     state.timelines.push({ id: 'FOO', file: 'FOO.json', text: 'kept', eol: '\n', dirty: false, handle: null });

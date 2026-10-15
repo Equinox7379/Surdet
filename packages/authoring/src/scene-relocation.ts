@@ -171,7 +171,7 @@ export function sceneDirectorySegments(directory: string): string[] {
   const segments = directory === '' ? [] : directory.split('/');
   if (directory.length > 1024 || segments.some(segment => !segment || segment === '.' || segment === '..'
     || /[\\<>:"|?*\u0000-\u001f]/.test(segment) || /[. ]$/.test(segment)
-    || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(segment)
+    || isReservedSceneFileId(segment.split('.')[0]!)
     || /^(?:node_modules|dist|\.git)$/i.test(segment) || /^\.surdet-/i.test(segment))) {
     throw new AuthoringOperationError('INVALID_REQUEST', '章节目录必须是 content/scenario 内可用的相对目录；返回根目录请传空字符串');
   }

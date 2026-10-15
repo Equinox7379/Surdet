@@ -269,7 +269,7 @@ async function renameSceneAtKeyUnlocked(sceneKey: string, input: string, expecte
   if (newId === sceneId) return;
   if (isReservedSceneFileId(newId)) throw new Error('场景标识不能使用 Windows 设备名');
   if (!validSceneId(newId)) throw new Error('场景标识不能为空，也不能包含空格、点号或文件名保留字符');
-  if ([...state.scenes.values()].some((scene) => scene !== current && scene.id.normalize('NFC').toLowerCase() === newId.toLowerCase())) throw new Error(`场景 '${newId}' 已存在`);
+  if ([...state.scenes.values()].some((scene) => scene !== current && scene.id.normalize('NFC').toUpperCase().toLowerCase() === newId.toUpperCase().toLowerCase())) throw new Error(`场景 '${newId}' 已存在`);
   const targetFile = renamedSceneFile(current.file, newId);
   if (sceneFileIdentity(targetFile) === sceneFileIdentity(current.file)) throw new Error('Windows 下不能只改变场景文件名的大小写，请使用不同名称');
   if (isSceneFilePathReserved(targetFile, sceneKey)) throw new Error('目标场景路径已存在或正等待删除，请先保存全部');
@@ -801,7 +801,7 @@ async function applyFlowPlan(plan: FlowEditPlan): Promise<void> {
     for (const file of plan.files) {
       if (file.before === null) {
         if (isReservedSceneFileId(file.sceneId)) throw new Error('场景标识不能使用 Windows 设备名');
-        if ([...state.scenes.values()].some(scene => scene.id.normalize('NFC').toLowerCase() === file.sceneId.toLowerCase())) throw new Error(`场景 '${file.sceneId}' 已存在，请重新预览。`);
+        if ([...state.scenes.values()].some(scene => scene.id.normalize('NFC').toUpperCase().toLowerCase() === file.sceneId.toUpperCase().toLowerCase())) throw new Error(`场景 '${file.sceneId}' 已存在，请重新预览。`);
         if (isSceneFilePathReserved(`${file.sceneId}.gal`)) throw new Error('该场景文件正等待删除，请先保存全部。');
         created.push({ id: file.sceneId, text: file.after });
         continue;
