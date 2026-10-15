@@ -11,6 +11,15 @@ import {
 const branch = '@scene test\r\n@choice\r\n  继续 -> @goto again\r\n  离开 -> @goto end\r\n@label again\r\n岚:你好\r\n@label end\r\n@end';
 const separatedBranch = '@scene test\r\n@choice\r\n// 第一项说明\r\n\r\n  继续 -> @goto again\r\n\t// 第二项说明\r\n\r\n  离开 -> @goto end\r\n@label again\r\n岚:你好\r\n@label end\r\n@end';
 describe('V4 source adapters use shared rows and preserve B01', () => {
+  it.each(['显示"[if:false]"', "显示'[if:false]'", '显示“[if:false]”', '显示‘[if:false]’'])('#63 simple choice edits keep quoted prose and condition strings with brackets: %s', text => {
+    for (const condition of ['', 'route == "a]b"']) {
+      const raw = `\t${text}${condition ? ` [if:${condition}]` : ''} -> @goto again  `;
+      const value = simpleChoice(raw)!;
+      expect(value).toEqual({ text, condition, target: 'again', indent: '\t', trailing: '  ' });
+      expect(writeSimpleChoice(value)).toBe(raw);
+      expect(writeSimpleChoice({ ...value, target: 'done' })).toBe(raw.replace('@goto again', '@goto done'));
+    }
+  });
   it('changes an expression parameter without dropping position or an extra argument', () => {
     expect(setInstructionArgument('  @show  lynn:uniform\tnormal  extra @ right  ', 1, 'despair'))
       .toBe('  @show  lynn:uniform\tdespair  extra @ right  ');

@@ -444,7 +444,9 @@ function choiceQuoteEnd(raw: string, start: number, limit: number): number {
   return start;
 }
 
-function findChoiceCondition(label: string, source: SourcePos): { index: number; value: string } | null {
+/** Read a trailing condition from a trimmed choice label, keeping quoted prose literal.
+ * `index` is the condition's source offset in `label`, for source-preserving editors. */
+export function findChoiceCondition(label: string, source: SourcePos = pos('<choice>', 1, 1)): { index: number; value: string } | null {
   // A prose quote cannot borrow a closing quote from the trailing expression.
   const conditionStart = [...label.matchAll(/\[if:/g)].find(match => choiceConditionEnd(label, match.index) === label.length - 1)?.index ?? label.length;
   for (let i = 0; i < label.length; i++) {
@@ -482,7 +484,7 @@ export function findChoiceArrow(raw: string, source: SourcePos = pos('<choice>',
   };
   // Complete prose quotes keep precedence. Only infer an unmatched prose quote
   // when the ordinary boundary cannot produce a lexically complete action list.
-  const ordinary = scanChoiceArrow(raw, raw.length);
+  const ordinary = scanChoiceArrow(raw, raw.length, source);
   if (ordinary !== null && hasActions(ordinary.end)) return ordinary;
   let found: { index: number; end: number } | null = null;
   for (const match of raw.matchAll(/\s->(?=\s|$)/g)) {
@@ -493,7 +495,7 @@ export function findChoiceArrow(raw: string, source: SourcePos = pos('<choice>',
     // its condition or action arguments. Conditions keep their own grammar.
     const label = raw.slice(0, index);
     const condition = /\[if:(.+?)\]\s*$/.exec(label);
-    if (scanChoiceArrow(raw, condition?.index ?? index)?.index !== index) continue;
+    if (scanChoiceArrow(raw, condition?.index ?? index, source)?.index !== index) continue;
     if (found !== null) {
       throw new DslError('S009', 'choice 文案与行内动作边界有歧义',
         pos(source.file, source.line, source.col + index + 1), '请闭合文案引号，或用中文引号明确文案范围。');
@@ -501,17 +503,10 @@ export function findChoiceArrow(raw: string, source: SourcePos = pos('<choice>',
     found = { index, end };
   }
   // Preserve no-action prose and the existing diagnostics for malformed actions.
-  const result = found ?? ordinary;
-  if (result === null) {
-    const malformed = scanChoiceArrow(raw, raw.length, false);
-    if (malformed && raw.slice(malformed.end).trimStart().startsWith('@')) {
-      throw new DslError('S009', 'choice 动作箭头 -> 两侧必须留空白', source, '形如：选项文字 [if:条件] -> @goto target');
-    }
-  }
-  return result;
+  return found ?? ordinary;
 }
 
-function scanChoiceArrow(raw: string, labelEnd: number, requireSpaces = true): { index: number; end: number } | null {
+function scanChoiceArrow(raw: string, labelEnd: number, source: SourcePos): { index: number; end: number } | null {
   let quote: '"' | "'" | null = null;
   let escaped = false;
   let inCondition = false;
@@ -545,7 +540,12 @@ function scanChoiceArrow(raw: string, labelEnd: number, requireSpaces = true): {
     if (char !== '-' || raw[i + 1] !== '>') continue;
     const before = i > 0 ? raw[i - 1]! : '';
     const after = raw[i + 2] ?? '';
-    if (requireSpaces && (!/\s/.test(before) || (after !== '' && !/\s/.test(after)))) continue;
+    if (!/\s/.test(before) || (after !== '' && !/\s/.test(after))) {
+      if (raw.slice(i + 2).trimStart().startsWith('@')) {
+        throw new DslError('S009', 'choice 动作箭头 -> 两侧必须留空白', source, '形如：选项文字 [if:条件] -> @goto target');
+      }
+      continue;
+    }
     return { index: i - (/\s/.test(before) ? 1 : 0), end: i + 2 + (/\s/.test(after) ? 1 : 0) };
   }
   return null;

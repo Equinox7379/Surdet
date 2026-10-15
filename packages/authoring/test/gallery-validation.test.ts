@@ -34,6 +34,15 @@ function compiledScene(): ReturnType<typeof compileScene> {
 }
 
 describe('validateGalleryConfig', () => {
+  it.each([
+    ['plain', 'plain'], ['"long id"', 'long id'], ["'long id'", 'long id'],
+    [String.raw`"a\"b\\c"`, 'a"b\\c'], ['"a"b"c"', '"a"b"c"'],
+  ])('#63 matches decoded cg, music and text IDs without G006 or G007: %s', (token, id) => {
+    const scene = compileScene(`@unlock_cg ${token}\n@unlock_music ${token}\n@unlock_text ${token}\n正文`, 'a.gal', 'a');
+    expect(validateGalleryConfig(input(JSON.stringify({
+      cgs: [{ id, name: '图' }], music: [{ id, name: '曲' }], texts: [{ id, name: '文', scene: 'a' }],
+    }), { scenes: new Map([['a', scene]]) }))).toEqual([]);
+  });
   it('ignores custom instructions whose names match inherited object keys', () => {
     const scene = compileScene('@scene a\n@constructor\n@toString\n@end', 'a.gal', 'a', ['constructor', 'toString']);
     expect(validateGalleryConfig(input('{"cgs":[],"music":[]}', { scenes: new Map([['a', scene]]) }))).toEqual([]);

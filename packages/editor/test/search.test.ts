@@ -11,6 +11,19 @@ const scenes: SceneText[] = [
   { key: 'sub/ch2', id: 'ch2', text: '凛：你好吗？\n@bg hall' },
 ];
 
+it.each(['\n', '\r\n', '\r'])('#63 visible choice search and replacement preserve quoted markers and real conditions: %j', eol => {
+  const text = ['@choice', '\t显示"[if:false]" [if:flag] -> @goto done', '@label done', '@end'].join(eol);
+  const found = searchScenes([{ key: 's', id: 's', text }], '[if:false]', false, 'visible');
+  expect(found).toHaveLength(1);
+  expect(found[0]?.visible?.text).toBe('显示"[if:false]"');
+  expect(searchScenes([{ key: 's', id: 's', text }], 'flag', false, 'visible')).toEqual([]);
+  const next = previewSceneReplacement(text, 'false', 'true', false, 'visible')!;
+  expect(next.text).toBe(text.replace('"[if:false]"', '"[if:true]"'));
+  expect(next.count).toBe(1);
+  const choice = compileScene(next.text, 's.gal', 's').instructions.find(instruction => instruction.op === 'choice');
+  expect(choice?.op === 'choice' && choice.options[0]).toMatchObject({ label: '显示"[if:true]"', when: 'flag' });
+});
+
 describe('buildMatcher', () => {
   it('文本模式转义正则字符', () => {
     const re = buildMatcher('a.b', false);

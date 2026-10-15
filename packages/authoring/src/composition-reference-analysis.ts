@@ -2,7 +2,9 @@ import { compareCanonicalText } from './canonical-order.js';
 import {
   collectVars,
   collectInterpolatedVars,
+  decodeStageToken,
   findChoiceArrow,
+  findChoiceCondition,
   parseExpr,
   parseInlineInstructions,
   Lexer,
@@ -123,18 +125,17 @@ function addSceneInstructionReferences(
   }
 
   if (name === 'unlock_profile' || name === 'unlock_term') {
-    const token = args[0] === undefined ? '' : decodeInstructionArgument(args[0]);
+    const token = decodeStageToken(args[0] ?? '');
     addReference(references, name === 'unlock_profile' ? 'gallery-profile' : 'gallery-term', 'candidate-external', token, source, `gallery:${name === 'unlock_profile' ? 'profiles' : 'terms'}:${token}`);
     return;
   }
   if (name === 'unlock_text') {
-    const token = args[0] ?? '';
+    const token = decodeStageToken(args[0] ?? '');
     addReference(references, 'gallery-text', 'candidate-external', token, source, `gallery:texts:${token}`);
     return;
   }
   if (name === 'unlock_cg') {
-    // Core stores the exact argument for unlock_cg, including any literal quotes.
-    const token = args[0] ?? '';
+    const token = decodeStageToken(args[0] ?? '');
     addReference(references, 'gallery-cg', 'candidate-external', token, source, `gallery:cgs:${token}`);
     return;
   }
@@ -236,9 +237,9 @@ function analyzeChoiceOption(
   const labelPart = arrowIndex >= 0 ? trimmed.slice(0, arrowIndex) : trimmed;
   const inlinePart = arrowEnd >= 0 ? trimmed.slice(arrowEnd).trim() : '';
   const labelText = labelPart.trim();
-  for (const name of collectInterpolatedVars(labelText.replace(/\[if:.+?\]\s*$/, ''))) addVariableReference(references, name, source);
-  const whenMatch = /\[if:(.+?)\]\s*$/.exec(labelText);
-  if (whenMatch !== null) addExpressionVariables(references, whenMatch[1]!.trim(), source);
+  const whenMatch = findChoiceCondition(labelText, { file: path, line, col: raw.length - trimmed.length + 1 });
+  for (const name of collectInterpolatedVars(whenMatch ? labelText.slice(0, whenMatch.index).trim() : labelText)) addVariableReference(references, name, source);
+  if (whenMatch !== null) addExpressionVariables(references, whenMatch.value.trim(), source);
 
   if (inlinePart.length === 0) return;
   const inline = parseInlineInstructions(inlinePart, path, line, raw.length - trimmed.length + Math.max(1, arrowEnd + 1));

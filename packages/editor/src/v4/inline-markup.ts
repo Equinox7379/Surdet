@@ -3,7 +3,7 @@
  * parser (`parseInlineText`); this module only maps its source ranges onto edits,
  * so a refused case is reported instead of guessing what the author meant.
  */
-import { INLINE_TEXT_TAGS, containsInlineTag, escapeInlineText, findChoiceArrow, parseInlineText, type InlineTagSpan, type InlineTextContext, type InlineTextDocument } from '@surdet/core';
+import { INLINE_TEXT_TAGS, containsInlineTag, escapeInlineText, findChoiceArrow, findChoiceCondition, parseInlineText, type InlineTagSpan, type InlineTextContext, type InlineTextDocument } from '@surdet/core';
 
 export type InlineTagName = typeof INLINE_TEXT_TAGS[number]['name'];
 export type InlineEdit =
@@ -182,8 +182,10 @@ export function choiceLabelSpan(raw: string): { start: number; end: number } | n
   const part = arrow ? trimmed.slice(0, arrow.index) : trimmed;
   const start = indent + part.length - part.trimStart().length;
   let label = part.trim();
-  const when = /\[if:(.+?)\]\s*$/.exec(label);
-  if (when) label = label.slice(0, when.index).trim();
+  try {
+    const when = findChoiceCondition(label);
+    if (when) label = label.slice(0, when.index).trim();
+  } catch { return null; }
   return label.length > 0 ? { start, end: start + label.length } : null;
 }
 
