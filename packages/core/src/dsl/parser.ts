@@ -8,7 +8,7 @@ import {
   type SceneAst,
 } from './ast.js';
 import { parseInlineInstructions } from './lexer.js';
-import { validateExpr } from './expr-parser.js';
+import { ExprParseError, validateExpr } from './expr-parser.js';
 import { SourceError, rangeOfArguments, type SourcePos, type InstructionToken, type TextToken, type Token } from './token.js';
 
 /** token 游标 */
@@ -467,10 +467,20 @@ export function findChoiceCondition(label: string, source: SourcePos = pos('<cho
       const end = choiceQuoteEnd(label, i, label.length);
       if (end === i) continue;
       if (end < match.index) { i = end; continue; }
-      // Chinese prose can contain an unfinished marker followed by a literal
-      // bracket outside the quote. A closing mark inside an expression string,
-      // however, belongs to that expression and cannot close the prose.
-      if ((label[i] === '“' || label[i] === '‘') && choiceStringQuoteAt(label, match.index + 4, end) === null) return false;
+      // Paired prose may contain a marker followed by a literal outer bracket.
+      // Only let expression-owned quotes cross this possible prose boundary.
+      if (label[i] === '“' || label[i] === '‘') {
+        if (choiceStringQuoteAt(label, match.index + 4, end) === null) return false;
+      } else {
+        // Reuse the expression grammar: a prose closing quote after `oops`
+        // is an unexpected token, unlike the string opener after `flag ==`.
+        // Errors later in a real string/expression must still be diagnosed.
+        try { validateExpr(label.slice(match.index + 4, -1)); }
+        catch (error) {
+          if (!(error instanceof ExprParseError)) throw error;
+          if (error.offset <= end - match.index - 4) return false;
+        }
+      }
       break;
     }
     return true;
@@ -517,20 +527,20 @@ export function findChoiceArrow(raw: string, source: SourcePos = pos('<choice>',
     const index = match.index;
     const end = index + 3 + (index + 3 < raw.length ? 1 : 0);
     if (!hasActions(end)) continue;
-    // Pair prose quotes only inside this possible label, not with quotes in
-    // its condition or action arguments. Conditions keep their own grammar.
-    const label = raw.slice(0, index);
-    const condition = findChoiceCondition(label.trimEnd(), source);
     // A complete Chinese-quoted command is prose, unless its closing mark is
     // inside an ASCII-quoted action value (which cannot close the label).
     let protectedProse = false;
-    for (let i = 0; i < (condition?.index ?? index); i++) {
+    for (let i = 0; i < index; i++) {
       if (raw[i] !== '“' && raw[i] !== '‘') continue;
       const closing = choiceQuoteEnd(raw, i, raw.length);
       if (closing <= index) { if (closing > i) i = closing; continue; }
       if (choiceStringQuoteAt(raw, end, closing) === null) { protectedProse = true; break; }
     }
     if (protectedProse) continue;
+    // Reject protected prose before parsing this truncated candidate as a
+    // condition. Unmatched quotes cannot borrow action argument delimiters.
+    const label = raw.slice(0, index);
+    const condition = findChoiceCondition(label.trimEnd(), source);
     if (scanChoiceArrow(raw, condition?.index ?? index, source)?.index !== index) continue;
     if (found !== null) {
       throw new DslError('S009', 'choice 文案与行内动作边界有歧义',

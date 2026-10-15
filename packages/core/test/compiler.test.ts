@@ -8,6 +8,26 @@ import type { ChoiceInstr, CondJumpInstr, CompiledScene, JumpInstr } from '../sr
 const compile = (src: string, sceneId = 'ch01_01') => compileScene(src, 'ch01_01.gal', sceneId);
 
 describe('Parser', () => {
+  it.each(['"', "'"])('preserves paired ASCII condition prose before a later unmatched quote: %s', quote => {
+    const label = `显示${quote}[if:oops${quote} 未闭合 ${quote}]`;
+    for (const suffix of ['', ' -> @goto done', ' [if:true] -> @goto done']) {
+      const scene = compile(`@choice\n  ${label}${suffix}\n@label done\n@end`);
+      expect((scene.instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]).toMatchObject({ label, when: suffix.includes('[if:true]') ? 'true' : null });
+    }
+  });
+  it.each(['"', "'"])('lets the expression parser own strings after unmatched ASCII prose: %s', quote => {
+    const label = `选择${quote}未闭合`;
+    for (const condition of [`${quote}x${quote} == ${quote}x${quote}`, `(flag == ${quote}x${quote})`, `flag == (${quote}x${quote})`]) {
+      const scene = compile(`@choice\n  ${label} [if:${condition}] -> @goto done\n@label done\n@end`);
+      expect((scene.instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]).toMatchObject({ label, when: condition });
+    }
+    expect(() => compile(`@choice\n  ${label} [if:${quote}x${quote} == ] -> @goto done\n@label done\n@end`)).toThrow(/S002/);
+  });
+  it.each(['显示“[if:oops -> @goto hidden”', '显示‘[if:oops -> @goto hidden’'])('does not parse a quoted no-action label as a candidate condition: %s', label => {
+    expect(findChoiceArrow(label)).toBeNull();
+    const scene = compile(`@choice\n  ${label}\n@end`);
+    expect((scene.instructions.find(value => value.op === 'choice') as ChoiceInstr).options[0]).toMatchObject({ label, when: null });
+  });
   it.each([['“', '”'], ['‘', '’'], ['"', '"'], ["'", "'"]])('keeps a quoted condition marker literal before an outer bracket: %s', (opening, closing) => {
     const label = `显示${opening}[if:oops${closing}]`;
     for (const suffix of ['', ' -> @goto done', ' [if:true] -> @goto done']) {
