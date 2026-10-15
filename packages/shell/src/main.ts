@@ -187,6 +187,22 @@ function registerSettingsIpc(): void {
   });
 }
 
+/** The selected game is the authority root, not a linked content/assets folder. */
+function assetRoot(): string | null {
+  let current = gameRoot();
+  for (const segment of ['content', 'assets']) {
+    current = path.join(current, segment);
+    let stat: fs.Stats;
+    try { stat = fs.lstatSync(current); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`素材目录不是普通目录：${current}`);
+  }
+  return current;
+}
+
 /** 应用级 IPC：退出/全屏切换/渲染端日志/素材读取（自动解密） */
 function registerAppIpc(): void {
   ipcMain.handle('app:quit', (e) => {
@@ -215,14 +231,14 @@ function registerAppIpc(): void {
   });
   ipcMain.handle('asset:list', (e) => {
     assertTrustedSender(e);
-    const root = path.join(gameRoot(), 'content', 'assets');
-    if (!fs.existsSync(root)) return [];
+    const root = assetRoot();
+    if (root === null) return [];
     const out: string[] = [];
     const walk = (dir: string): void => {
       for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, ent.name);
         if (ent.isDirectory()) walk(full);
-        else out.push(path.relative(root, full).replace(/\\/g, '/'));
+        else if (ent.isFile()) out.push(path.relative(root, full).replace(/\\/g, '/'));
       }
     };
     walk(root);
@@ -234,7 +250,9 @@ function registerAppIpc(): void {
       || relPath.split(/[\\/]/).some(segment => segment === '..') || path.isAbsolute(relPath)) {
       throw new Error(`非法素材路径：${String(relPath)}`);
     }
-    const root = fs.realpathSync(path.join(gameRoot(), 'content', 'assets'));
+    const directory = assetRoot();
+    if (directory === null) throw new Error('作品素材目录不存在');
+    const root = fs.realpathSync(directory);
     const full = fs.realpathSync(path.resolve(root, relPath));
     const relative = path.relative(root, full);
     if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {

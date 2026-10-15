@@ -48,6 +48,50 @@ afterAll(() => {
 });
 
 describe('release IPC source ownership', () => {
+  it.for(['content', 'assets'])('refuses a junction at the %s asset-root segment before reading outside files', (segment, ctx) => {
+    const normalContent = path.join(electron.root, 'content');
+    const root = segment === 'content' ? normalContent : path.join(normalContent, 'assets');
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-linked-assets-'));
+    const outsideAssets = segment === 'content' ? path.join(outside, 'assets') : outside;
+    fs.mkdirSync(outsideAssets, { recursive: true });
+    fs.writeFileSync(path.join(outsideAssets, 'outside.svg'), 'outside');
+    fs.mkdirSync(path.dirname(root), { recursive: true });
+    const parked = root + '-ordinary';
+    const existed = fs.existsSync(root);
+    if (existed) fs.renameSync(root, parked);
+    try {
+      try { fs.symlinkSync(outside, root, process.platform === 'win32' ? 'junction' : 'dir'); }
+      catch (error) {
+        if (['EPERM', 'EACCES', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? '')) { ctx.skip(); return; }
+        throw error;
+      }
+      expect(() => electron.handlers.get('asset:list')!(trusted)).toThrow('素材目录');
+      expect(() => electron.handlers.get('asset:read')!(trusted, 'outside.svg')).toThrow('素材目录');
+      expect(fs.readFileSync(path.join(outsideAssets, 'outside.svg'), 'utf8')).toBe('outside');
+    } finally {
+      if (fs.lstatSync(root, { throwIfNoEntry: false })?.isSymbolicLink()) fs.unlinkSync(root);
+      if (existed) fs.renameSync(parked, root);
+    }
+  });
+  it('asset listing includes ordinary files but not symbolic links or directory junctions', (ctx) => {
+    const root = path.join(electron.root, 'content', 'assets');
+    fs.mkdirSync(path.join(root, 'bg'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'bg', 'ordinary.svg'), '<svg/>');
+    const outside = path.join(electron.root, 'outside-assets');
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'outside.svg'), 'outside');
+    try {
+      fs.symlinkSync(path.join(outside, 'outside.svg'), path.join(root, 'linked.svg'), 'file');
+      fs.symlinkSync(outside, path.join(root, 'linked-dir'), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      if (['EPERM', 'EACCES', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? '')) { ctx.skip(); return; }
+      throw error;
+    }
+    expect(electron.handlers.get('asset:list')!(trusted)).toEqual(['bg/ordinary.svg']);
+    expect(Buffer.from(electron.handlers.get('asset:read')!(trusted, 'bg/ordinary.svg') as ArrayBuffer).toString()).toBe('<svg/>');
+    expect(() => electron.handlers.get('asset:read')!(trusted, 'linked.svg')).toThrow('非法素材路径');
+    expect(fs.readFileSync(path.join(outside, 'outside.svg'), 'utf8')).toBe('outside');
+  });
   it('reads only the main-process game manifest and reports missing or malformed local data', async () => {
     const check = electron.handlers.get('release:check')!;
     await expect(check(trusted)).resolves.toMatchObject({ status: 'update-available', manifest });
