@@ -11,6 +11,7 @@ function createRollbackFixture(options: {
   presentationHooks?: boolean;
 } = {}) {
   let pc = 0;
+  let textExecutionId = 0;
   let failRestore = options.failRestore === true;
   let checkpointSafe = options.checkpointSafe !== false;
   let runtime: ReturnType<typeof createRollbackRuntime>;
@@ -29,10 +30,12 @@ function createRollbackFixture(options: {
   });
   const interpreter = {
     status: 'awaiting-advance',
+    get textExecutionId() { return textExecutionId; },
     saveSnapshot: vi.fn(() => structuredClone(snapshotAt())),
     loadSnapshot: vi.fn((snapshot: SaveSnapshot, beforeCommit?: () => void) => {
       beforeCommit?.();
       pc = snapshot.position?.pc ?? pc;
+      textExecutionId++;
       if (snapshot.presentation) renderer.restorePresentation(snapshot.presentation.payload);
       runtime.captureText();
     }),
@@ -72,13 +75,51 @@ function createRollbackFixture(options: {
     hostReset,
     onSystemBoundary,
     reentrantResults,
-    setPosition(nextPc: number): void { pc = nextPc; },
+    setPosition(nextPc: number): void { pc = nextPc; textExecutionId++; },
     setRestoreFailure(value: boolean): void { failRestore = value; },
     setCheckpointSafe(value: boolean): void { checkpointSafe = value; },
   };
 }
 
 describe('rollback runtime — consecutive player rollback', () => {
+  it('retains repeated visits to one text position while deduplicating capture of the same execution', () => {
+    const store = new VariableStore([{ name: 'score', type: 'number', initial: 0 }]);
+    const scenes = new SceneRegistry();
+    scenes.register(compileScene('@label loop\n@inc score\n循环句\n@if score < 3\n@jump loop.loop\n@endif\n结束句\n@end', 'loop.gal', 'loop'));
+    const bus = new EventBus<CoreEventMap>(), interpreter = new Interpreter(store, bus, scenes);
+    let latest = '';
+    bus.on('text', event => { latest = event.value; });
+    const runtime = createRollbackRuntime({ interpreter,
+      renderer: { status: 'awaiting', backlogOpen: false, canCaptureRollbackCheckpoint: () => true,
+        resetSession() {}, snapshotPresentation: () => ({}), restorePresentation() {} },
+      audio: {} as AudioHandle, isBlocked: () => false, label: 'loop-rollback', onRefresh() {} });
+    bus.on('textSettled', () => { runtime.captureText(); runtime.captureText(); });
+    interpreter.start('loop');
+    interpreter.advance(); interpreter.advance(); interpreter.advance();
+    expect(latest).toBe('结束句');
+    for (const score of [3, 2, 1]) {
+      expect(runtime.perform()).toBe(true);
+      expect(latest).toBe('循环句');
+      expect(store.getNumber('score')).toBe(score);
+      runtime.captureText(); // Loading already retained this visit; do not duplicate it.
+    }
+    expect(runtime.perform()).toBe(false);
+    interpreter.advance();
+    expect(store.getNumber('score')).toBe(2);
+    expect(runtime.perform()).toBe(true);
+    expect(store.getNumber('score')).toBe(1);
+  });
+
+  it('can return to a captured visit when the latest visit to the same position was unsafe to capture', () => {
+    const fixture = createRollbackFixture();
+    fixture.setPosition(1); fixture.runtime.captureText();
+    fixture.setCheckpointSafe(false);
+    fixture.setPosition(1); fixture.runtime.captureText();
+    expect(fixture.runtime.perform()).toBe(true);
+    expect(fixture.interpreter.loadSnapshot).toHaveBeenCalledTimes(1);
+    expect(fixture.runtime.perform()).toBe(false);
+  });
+
   it('retains every line of one skip frame after all text observers have settled', async () => {
     const store = new VariableStore([{ name: 'score', type: 'number', initial: 0 }, { name: 'observer', type: 'string', initial: '' }]);
     const scenes = new SceneRegistry();
