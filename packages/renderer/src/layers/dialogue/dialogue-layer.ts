@@ -418,7 +418,7 @@ export class DialogueLayer implements DialogueProjectionPort {
       speakerText: String(this.#speakerText.text),
       dialogText: this.#visibleDialogText,
       panelVisible: this.#dialogPanel.visible,
-      choiceLabels: this.#choiceViews.map((view) => String(view.label.text)),
+      choiceLabels: this.#choiceViews.map((view) => view.document.plainText),
       choiceBounds: this.#choiceViews.map((view) => ({
         x: view.holder.x,
         y: view.holder.y,
