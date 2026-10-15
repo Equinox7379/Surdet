@@ -8,7 +8,7 @@ import {
   type SceneAst,
 } from './ast.js';
 import { parseInlineInstructions } from './lexer.js';
-import { validateExpr } from './expr-parser.js';
+import { ExprParseError, validateExpr } from './expr-parser.js';
 import { SourceError, rangeOfArguments, type SourcePos, type InstructionToken, type TextToken, type Token } from './token.js';
 
 /** token 游标 */
@@ -337,16 +337,16 @@ export class Parser {
 
     let when: string | null = null;
     let labelText = labelPart.trim();
-    const whenMatch = /\[if:(.+?)\]\s*$/.exec(labelText);
+    const whenMatch = findChoiceCondition(labelText, textTok);
     if (whenMatch) {
-      when = whenMatch[1]!.trim();
+      when = whenMatch.value.trim();
       if (when.length === 0) {
         throw new DslError('S005', '选项条件为空（[if:expr]）', textTok);
       }
       try {
         validateExpr(when);
       } catch {
-        const start = textTok.col + whenMatch.index + 4 + whenMatch[1]!.length - whenMatch[1]!.trimStart().length;
+        const start = textTok.col + whenMatch.index + 4 + whenMatch.value.length - whenMatch.value.trimStart().length;
         throw new DslError('S002', `选项条件表达式语法错误：'${when}'`, { ...textTok,
           range: { start: { line: textTok.line, col: start }, end: { line: textTok.line, col: start + when.length } } });
       }
@@ -407,6 +407,10 @@ export class Parser {
         }
         continue;
       }
+      if (jump !== null) {
+        throw new DslError('S010', `choice 跳转后不能再写 @${ins.name}`, ins.pos,
+          '把需要执行的动作放在 @goto/@jump 之前，或移到目标标签下；引擎不会重排动作。');
+      }
       rest.push(ins);
     }
 
@@ -428,6 +432,84 @@ export class Parser {
 
 }
 
+/** 成对文案引号保护箭头和条件样式文字；未闭合引号仍按原有正文规则处理。 */
+function choiceQuoteEnd(raw: string, start: number, limit: number): number {
+  const char = raw[start];
+  const closing = char === '“' ? '”' : char === '‘' ? '’' : char;
+  if (!['"', "'", '“', '‘'].includes(char ?? '') || (char === "'" && /[a-z0-9]/i.test(raw[start - 1] ?? ''))) return start;
+  for (let end = start + 1; end < limit; end++) {
+    if (raw[end] === '\\') { end++; continue; }
+    if (raw[end] === closing) return end;
+  }
+  return start;
+}
+
+function choiceStringQuoteAt(raw: string, start: number, end: number): string | null {
+  let quote: string | null = null;
+  for (let i = start; i < end; i++) {
+    const char = raw[i];
+    if (quote !== null) {
+      if (char === '\\') i++;
+      else if (char === quote) quote = null;
+    } else if (char === '"' || char === "'") quote = char;
+  }
+  return quote;
+}
+
+/** Read a trailing condition from a trimmed choice label, keeping quoted prose literal.
+ * `index` is the condition's source offset in `label`, for source-preserving editors. */
+export function findChoiceCondition(label: string, source: SourcePos = pos('<choice>', 1, 1)): { index: number; value: string } | null {
+  // Use the rightmost trailing candidate: a marker inside prose must not borrow
+  // the real condition's closing bracket. Prose quotes cannot borrow expression quotes.
+  const conditionStart = [...label.matchAll(/\[if:/g)].reverse().find(match => {
+    if (choiceConditionEnd(label, match.index) !== label.length - 1) return false;
+    for (let i = 0; i < match.index; i++) {
+      const end = choiceQuoteEnd(label, i, label.length);
+      if (end === i) continue;
+      if (end < match.index) { i = end; continue; }
+      // Paired prose may contain a marker followed by a literal outer bracket.
+      // Only let expression-owned quotes cross this possible prose boundary.
+      if (label[i] === '“' || label[i] === '‘') {
+        if (choiceStringQuoteAt(label, match.index + 4, end) === null) return false;
+      } else {
+        // Reuse the expression grammar: a prose closing quote after `oops`
+        // is an unexpected token, unlike the string opener after `flag ==`.
+        // Errors later in a real string/expression must still be diagnosed.
+        try { validateExpr(label.slice(match.index + 4, -1)); }
+        catch (error) {
+          if (!(error instanceof ExprParseError)) throw error;
+          if (error.offset <= end - match.index - 4) return false;
+        }
+      }
+      break;
+    }
+    return true;
+  })?.index ?? label.length;
+  for (let i = 0; i < label.length; i++) {
+    const quotedEnd = choiceQuoteEnd(label, i, conditionStart);
+    if (quotedEnd !== i) { i = quotedEnd; continue; }
+    if (!label.startsWith('[if:', i)) continue;
+    const end = choiceConditionEnd(label, i);
+    if (end === -1) throw new DslError('S005', '选项条件缺少结束方括号 ]', source);
+    if (label.slice(end + 1).trim() !== '') throw new DslError('S005', '选项条件必须放在文案末尾、动作箭头之前', source);
+    return { index: i, value: label.slice(i + 4, end) };
+  }
+  return null;
+}
+
+function choiceConditionEnd(label: string, start: number): number {
+  let quote: string | null = null;
+  for (let end = start + 4; end < label.length; end++) {
+    const char = label[end];
+    if (quote) {
+      if (char === '\\') end++;
+      else if (char === quote) quote = null;
+    } else if (char === '"' || char === "'") quote = char;
+    else if (char === ']') return end;
+  }
+  return -1;
+}
+
 /** Locate the exact choice action boundary for parser and source-preserving authoring. */
 export function findChoiceArrow(raw: string, source: SourcePos = pos('<choice>', 1, 1)): { index: number; end: number } | null {
   const hasActions = (end: number): boolean => {
@@ -438,18 +520,28 @@ export function findChoiceArrow(raw: string, source: SourcePos = pos('<choice>',
   };
   // Complete prose quotes keep precedence. Only infer an unmatched prose quote
   // when the ordinary boundary cannot produce a lexically complete action list.
-  const ordinary = scanChoiceArrow(raw, raw.length);
+  const ordinary = scanChoiceArrow(raw, raw.length, source);
   if (ordinary !== null && hasActions(ordinary.end)) return ordinary;
   let found: { index: number; end: number } | null = null;
   for (const match of raw.matchAll(/\s->(?=\s|$)/g)) {
     const index = match.index;
     const end = index + 3 + (index + 3 < raw.length ? 1 : 0);
     if (!hasActions(end)) continue;
-    // Pair prose quotes only inside this possible label, not with quotes in
-    // its condition or action arguments. Conditions keep their own grammar.
+    // A complete Chinese-quoted command is prose, unless its closing mark is
+    // inside an ASCII-quoted action value (which cannot close the label).
+    let protectedProse = false;
+    for (let i = 0; i < index; i++) {
+      if (raw[i] !== '“' && raw[i] !== '‘') continue;
+      const closing = choiceQuoteEnd(raw, i, raw.length);
+      if (closing <= index) { if (closing > i) i = closing; continue; }
+      if (choiceStringQuoteAt(raw, end, closing) === null) { protectedProse = true; break; }
+    }
+    if (protectedProse) continue;
+    // Reject protected prose before parsing this truncated candidate as a
+    // condition. Unmatched quotes cannot borrow action argument delimiters.
     const label = raw.slice(0, index);
-    const condition = /\[if:(.+?)\]\s*$/.exec(label);
-    if (scanChoiceArrow(raw, condition?.index ?? index)?.index !== index) continue;
+    const condition = findChoiceCondition(label.trimEnd(), source);
+    if (scanChoiceArrow(raw, condition?.index ?? index, source)?.index !== index) continue;
     if (found !== null) {
       throw new DslError('S009', 'choice 文案与行内动作边界有歧义',
         pos(source.file, source.line, source.col + index + 1), '请闭合文案引号，或用中文引号明确文案范围。');
@@ -460,7 +552,7 @@ export function findChoiceArrow(raw: string, source: SourcePos = pos('<choice>',
   return found ?? ordinary;
 }
 
-function scanChoiceArrow(raw: string, labelEnd: number): { index: number; end: number } | null {
+function scanChoiceArrow(raw: string, labelEnd: number, source: SourcePos): { index: number; end: number } | null {
   let quote: '"' | "'" | null = null;
   let escaped = false;
   let inCondition = false;
@@ -489,18 +581,18 @@ function scanChoiceArrow(raw: string, labelEnd: number): { index: number; end: n
     }
     // Labels are prose: paired quotes protect literal arrows, while English
     // apostrophes and an unmatched quote remain ordinary label characters.
-    if ((char === '"' || char === "'") && !(char === "'" && /[a-z0-9]/i.test(raw[i - 1] ?? ''))) {
-      for (let end = i + 1; end < labelEnd; end++) {
-        if (raw[end] === '\\') { end++; continue; }
-        if (raw[end] === char) { i = end; break; }
-      }
-      continue;
-    }
+    const quotedEnd = choiceQuoteEnd(raw, i, labelEnd);
+    if (quotedEnd !== i) { i = quotedEnd; continue; }
     if (char !== '-' || raw[i + 1] !== '>') continue;
     const before = i > 0 ? raw[i - 1]! : '';
     const after = raw[i + 2] ?? '';
-    if (!/\s/.test(before) || (after !== '' && !/\s/.test(after))) continue;
-    return { index: i - 1, end: i + 2 + (after === '' ? 0 : 1) };
+    if (!/\s/.test(before) || (after !== '' && !/\s/.test(after))) {
+      if (raw.slice(i + 2).trimStart().startsWith('@')) {
+        throw new DslError('S009', 'choice 动作箭头 -> 两侧必须留空白', source, '形如：选项文字 [if:条件] -> @goto target');
+      }
+      continue;
+    }
+    return { index: i - (/\s/.test(before) ? 1 : 0), end: i + 2 + (/\s/.test(after) ? 1 : 0) };
   }
   return null;
 }

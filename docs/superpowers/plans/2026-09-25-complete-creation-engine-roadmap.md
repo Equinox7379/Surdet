@@ -441,7 +441,7 @@ Core → Renderer Runtime + Host / Player Shell
 - 更新与卸载验证采用可丢弃的测试作品与测试用户目录；不触碰已有正式游戏数据。**本地测试打包/安装必须在进入阶段时确认属于当轮授权，公开发布、签名、部署、商店操作和付费不自动获得授权。**
 - Windows 原生目录选择器/真实中文 IME 若仍被 Owner 暂缓，则保持未实测，不能宣布完整原生首次使用已验收。要达到 R26 的完整声明需先取得恢复验证授权，不以浏览器脚本冒充真实输入。
 
-**落点：** CLI `new.ts`/`build.ts`/`pack.ts`；Shell `prepare-pack.mjs`/`electron-builder.yml`/`scripts/verify-pack.mjs`/主进程存储；Editor 现有后端与启动配置；项目模板和文档。
+**落点：** CLI `new.ts`/`build.ts`/`pack.ts`/`windows-export.ts`；Shell主进程存储与预构建运行环境；Editor现有后端与启动配置；项目模板和文档。原规划的prepare-pack独立链路已于2026-10-15退役，正式导出统一走共享Windows导出实现。
 
 **完成检查：** 不依赖源码/Vite 的真实 Windows 游戏；独立静态 Web 服务运行成品；两游戏并装、各自保存/重启/更新；同 schema 内容更新的当前位置/调用栈分别符合规则；明确版本的交接项目可重开再编且没有旧批准身份；作者启动不依赖当前开发机隐藏路径。SDK 私人验证、Editor 对外交付和游戏分发分别结论。macOS/Linux/手机不计入此验收。
 

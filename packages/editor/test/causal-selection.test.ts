@@ -13,6 +13,13 @@ import {
 import type { HumanReviewProjection } from '@surdet/authoring';
 
 describe('causal selection bridge', () => {
+  it('#63 follow-up preserves quoted arrows in selected choice summaries', () => {
+    const object = { kind: 'choice-option' as const, objectRef: 'choice', references: [], referencedBy: [] };
+    for (const label of ['选择“同意 -> 继续”', "选择'同意 -> 继续'", '选择“->@goto fake”']) {
+      expect(describeAuthoringObject({ ...object, source: { path: 'content/scenario/start.gal', line: 2, col: 3, raw: `  ${label} -> @goto done` } }).title).toBe(`选项“${label}”`);
+    }
+    expect(describeAuthoringObject({ ...object, source: { path: 'content/scenario/start.gal', line: 2, col: 3, raw: '  还在编辑 ->@goto' } }).title).toBe('选项“还在编辑 ->@goto”');
+  });
   it('reconciles content-only object-ref changes and clears ambiguous or structural changes', () => {
     const previousObject = {
       kind: 'text' as const,
