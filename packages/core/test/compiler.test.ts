@@ -8,6 +8,18 @@ import type { ChoiceInstr, CondJumpInstr, CompiledScene, JumpInstr } from '../sr
 const compile = (src: string, sceneId = 'ch01_01') => compileScene(src, 'ch01_01.gal', sceneId);
 
 describe('Parser', () => {
+  it.each([
+    '选择 ->@set score = 1 -> @goto done',
+    '选择-> @set score = 1 -> @goto done',
+    'a->b 选择 ->@set score = 1 -> @goto done',
+    '选择 [if:true]->@set score = 1 -> @goto done',
+  ])('#63 rejects an earlier malformed arrow before a valid action: %s', row => {
+    expect(() => compile(`@choice\n  ${row}\n@label done\n@end`)).toThrow(/S009/);
+  });
+  it.each(['选择 "->@set score = 1"', "选择 '->@set score = 1'", '选择“->@set score = 1”', '选择‘->@set score = 1’'])('#63 keeps malformed-arrow-like prose inside paired quotes: %s', label => {
+    const scene = compile(`@choice\n  ${label} [if:true] -> @goto done\n@label done\n@end`);
+    expect((scene.instructions.find(instruction => instruction.op === 'choice') as ChoiceInstr).options[0]).toMatchObject({ label, when: 'true' });
+  });
   it.each(['@set score = 1', '@mod score 1', '@wait 1', '@video clip', '@timeline intro', '@switch score 1:done', '@loop done', '@goto done', '@jump other', '@call other', '@return', '@end'])('warns when lowering %s would discard a modifier', command => {
     const scene = compile(`${command} @unused yes\n@label done\n@end`);
     expect(scene.diagnostics.some(issue => issue.code === 'W003' && issue.message.includes('unused'))).toBe(true);

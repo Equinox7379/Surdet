@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { presentFlowEdge } from '../src/flow-presentation.js';
 import type { FlowEdge, FlowEdgeKind, FlowNode, FlowNodeKind } from '../src/graph/build.js';
 
 type FlowValidationState = 'unchecked' | 'ok' | 'warning' | 'error';
@@ -47,6 +48,14 @@ async function requirePresentation(): Promise<FlowPresentationModule> {
 }
 
 describe('Flow Canvas Chinese presentation contract', () => {
+  it('#63 displays the complete quoted choice label and only marks real conditions', () => {
+    const edge: FlowEdge = { kind: 'choice', from: 's:a', to: 's:b', label: '显示"[if:false]" [if:true]' };
+    expect(presentFlowEdge(edge)).toMatchObject({ displayText: '显示"[if:false]"', choiceText: '显示"[if:false]"', conditionText: '有条件' });
+    expect(presentFlowEdge({ ...edge, label: '显示"[if:false]"' }).conditionText).toBeUndefined();
+    expect(presentFlowEdge({ ...edge, label: '显示"[if:false]"' }).choiceText).toBe('显示"[if:false]"');
+    expect(presentFlowEdge({ ...edge, label: '未完成 [if:true' })).toMatchObject({ choiceText: '未完成 [if:true' });
+    expect(presentFlowEdge({ ...edge, label: '条件 [if:true] 后面还在写' })).toMatchObject({ choiceText: '条件 [if:true] 后面还在写' });
+  });
   it('covers every stable node, edge, and validation kind with Chinese-first labels', async () => {
     const presentation = await requirePresentation();
 

@@ -11,6 +11,7 @@ import type {
 import type { SourcePos } from '../dsl/token.js';
 import { SourceError } from '../dsl/token.js';
 import { interpolateInlineText, substituteTextVariables } from '../inline-text.js';
+import { decodeStageToken } from '../stage.js';
 import { evalExprBoolean, evalExprString } from './expr-eval.js';
 import type { VariableStore } from '../state/variable-store.js';
 import { EventBus, type EventMap } from './event-bus.js';
@@ -70,16 +71,6 @@ export interface RuntimeDebugSnapshot {
   next: RuntimeDebugLocation | null;
   variables: Record<string, VarValue>;
   callStack: RuntimeDebugLocation[];
-}
-
-/** 指令参数去引号（引号契约：解释器侧消费的 ID 类参数在此去引号，与渲染层 dequote 语义一致）；
- *  例：@clear "ed1" → 结局标识 ed1（避免引号被写进结局/成就 ID） */
-function dequoteInstrArg(s: string): string {
-  if (s.length < 2) return s;
-  const first = s[0];
-  const last = s[s.length - 1];
-  if ((first !== '"' && first !== "'") || first !== last) return s;
-  return s.slice(1, -1).replace(/\\(.)/g, '$1');
 }
 
 /** @call 最大嵌套深度（同步死循环检测兜底之前，先给出更明确的错误） */
@@ -1210,7 +1201,7 @@ export class Interpreter {
           throw new RuntimeError('@add_item 目标变量必须是 string[]', instr);
         }
         const arr = current as string[];
-        const id = dequoteInstrArg(item);
+        const id = decodeStageToken(item);
         this.#store.set(vn, arr.includes(id) ? arr : [...arr, id]);
         return;
       }
@@ -1222,7 +1213,7 @@ export class Interpreter {
         if (!Array.isArray(current) || current.some((value) => typeof value !== 'string')) {
           throw new RuntimeError('@remove_item 目标变量必须是 string[]', instr);
         }
-        const id = dequoteInstrArg(item);
+        const id = decodeStageToken(item);
         this.#store.set(vn, (current as string[]).filter((x) => x !== id));
         return;
       }
@@ -1235,26 +1226,29 @@ export class Interpreter {
         if (this.#store.getType(vn) !== 'string[]') {
           throw new RuntimeError('@has_item 来源变量必须是 string[]', instr);
         }
-        this.#store.set(resultVar, this.#store.get<string[]>(vn).includes(dequoteInstrArg(item)));
+        this.#store.set(resultVar, this.#store.get<string[]>(vn).includes(decodeStageToken(item)));
         return;
       }
       case 'unlock_cg': {
         requireArg(instr, arg0, '@unlock_cg');
-        const id = dequoteInstrArg(arg0!);
+        const id = decodeStageToken(arg0!);
+        if (!id.trim()) throw new RuntimeError('@unlock_cg 需要非空收藏标识', instr);
         const fresh = this.gallery.unlockCg(id);
         this.#bus.emit('gallery', { type: 'cg', id, fresh });
         return;
       }
       case 'unlock_music': {
         requireArg(instr, arg0, '@unlock_music');
-        const id = dequoteInstrArg(arg0!);
+        const id = decodeStageToken(arg0!);
+        if (!id.trim()) throw new RuntimeError('@unlock_music 需要非空收藏标识', instr);
         const fresh = this.gallery.unlockMusic(id);
         this.#bus.emit('gallery', { type: 'music', id, fresh });
         return;
       }
       case 'unlock_text': {
         requireArg(instr, arg0, '@unlock_text');
-        const id = dequoteInstrArg(arg0!);
+        const id = decodeStageToken(arg0!);
+        if (!id.trim()) throw new RuntimeError('@unlock_text 需要非空收藏标识', instr);
         const fresh = this.gallery.unlockText(id);
         this.#bus.emit('gallery', { type: 'text', id, fresh });
         return;
@@ -1262,7 +1256,7 @@ export class Interpreter {
       case 'unlock_profile':
       case 'unlock_term': {
         requireArg(instr, arg0, `@${instr.name}`);
-        const id = dequoteInstrArg(arg0!);
+        const id = decodeStageToken(arg0!);
         if (!id.trim()) throw new RuntimeError(`@${instr.name} 需要非空资料标识`, instr);
         const fresh = instr.name === 'unlock_profile' ? this.gallery.unlockProfile(id) : this.gallery.unlockTerm(id);
         this.#bus.emit('gallery', { type: instr.name === 'unlock_profile' ? 'profile' : 'term', id, fresh });
@@ -1271,7 +1265,7 @@ export class Interpreter {
       case 'clear': {
         // @clear [结局ID]：周目通关记录。缺省结局标识 = 当前场景 ID（多结局各放一条 @clear）。
         // 引擎只记录与广播；全局通关记录（跨周目）由宿主在 clear 事件回调中落盘。
-        const ending = (arg0 === undefined ? '' : dequoteInstrArg(arg0)) || this.#scene!.sceneId;
+        const ending = (arg0 === undefined ? '' : decodeStageToken(arg0)) || this.#scene!.sceneId;
         const fresh = this.clearTracker.markClear(ending);
         this.#bus.emit('clear', { ending, fresh });
         return;
@@ -1288,7 +1282,7 @@ export class Interpreter {
         if (!Number.isFinite(amount)) {
           throw new RuntimeError(`@exp 经验值非法：'${amountRaw}'`, instr);
         }
-        const result = this.#growth.gainExp(dequoteInstrArg(characterId), amount);
+        const result = this.#growth.gainExp(decodeStageToken(characterId), amount);
         this.#bus.emit('growth', result);
         return;
       }
@@ -1340,7 +1334,7 @@ export class Interpreter {
         // 与 @clear 一致，解释器侧消费的 ID 类参数统一去引号）
         this.#bus.emit('system', {
           type: name,
-          args: instr.args.map((a) => dequoteInstrArg(a)),
+          args: instr.args.map((a) => decodeStageToken(a)),
           modifiers: instr.modifiers,
           pos: { file: instr.file, line: instr.line, col: instr.col },
         });
