@@ -48,6 +48,34 @@ afterAll(() => {
 });
 
 describe('release IPC source ownership', () => {
+  it('persists normalized device settings without arbitrary nested or oversized payloads', () => {
+    const write = electron.handlers.get('settings:write')!;
+    const file = path.join(electron.root, 'settings.json');
+    let deep: Record<string, unknown> = {};
+    for (let i = 0; i < 5000; i++) deep = { nested: deep };
+    write(trusted, { masterVolume: 0.3, textScale: 999, locale: 'zh-CN', unknown: deep });
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    expect(saved).toMatchObject({ masterVolume: 0.3, textScale: 1.4, locale: 'zh-CN' });
+    expect(saved).not.toHaveProperty('unknown');
+    const before = fs.readFileSync(file);
+    expect(() => write(trusted, [1, 2])).toThrow('设置数据必须是对象');
+    expect(() => write(trusted, { locale: `en${'-US'.repeat(30_000)}` })).toThrow('大小上限');
+    expect(fs.readFileSync(file)).toEqual(before);
+  });
+  it('bounds a single log record and does not follow a prepositioned session log link', ctx => {
+    const log = electron.handlers.get('log')!;
+    const file = path.join(electron.root, 'logs/session.log');
+    log(trusted, 'info', '文'.repeat(2_000_000));
+    expect(fs.statSync(file).size).toBeLessThanOrEqual(1024 * 1024);
+    const target = path.join(electron.root, 'log-victim.txt'); fs.writeFileSync(target, 'keep');
+    fs.unlinkSync(file);
+    try { fs.symlinkSync(target, file, 'file'); }
+    catch (error) { if (['EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) ctx.skip(); throw error; }
+    log(trusted, 'info', 'must not reach victim');
+    expect(fs.readFileSync(target, 'utf8')).toBe('keep');
+    expect(fs.lstatSync(file).isSymbolicLink()).toBe(true);
+    fs.unlinkSync(file);
+  });
   it('reads only the main-process game manifest and reports missing or malformed local data', async () => {
     const check = electron.handlers.get('release:check')!;
     await expect(check(trusted)).resolves.toMatchObject({ status: 'update-available', manifest });
