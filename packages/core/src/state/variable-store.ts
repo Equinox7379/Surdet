@@ -242,12 +242,12 @@ function assertType(value: VarValue, decl: VarDeclaration, where: string): void 
       if (typeof value !== 'boolean') bad('boolean');
       break;
     case 'string[]':
-      if (!Array.isArray(value) || value.some((v) => typeof v !== 'string')) bad('string[]');
+      if (!Array.isArray(value)) bad('string[]');
+      else for (const item of value) if (typeof item !== 'string') bad('string[]');
       break;
     case 'number[]':
-      if (!Array.isArray(value) || value.some((v) => typeof v !== 'number' || !Number.isFinite(v))) {
-        bad('number[]');
-      }
+      if (!Array.isArray(value)) bad('number[]');
+      else for (const item of value) if (typeof item !== 'number' || !Number.isFinite(item)) bad('number[]');
       break;
     case 'object': {
       // object 契约为任意 JSON 安全嵌套结构；递归拒绝非 JSON 安全值（undefined/函数/嵌套容器非法值）。
@@ -274,7 +274,7 @@ function assertJsonValue(value: unknown, decl: VarDeclaration, where: string, pa
     return;
   }
   if (Array.isArray(value)) {
-    value.forEach((v, i) => assertJsonValue(v, decl, where, `${pathStr}[${i}]`));
+    for (const [i, v] of value.entries()) assertJsonValue(v, decl, where, `${pathStr}[${i}]`);
     return;
   }
   if (typeof value === 'object' && value !== null) {

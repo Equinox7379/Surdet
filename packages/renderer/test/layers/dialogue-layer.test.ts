@@ -79,6 +79,29 @@ it('shows tips above an existing menu without raising dialogue, and resets and d
   expect(runtime.root.children).toEqual([menu]);
 });
 
+it('plain choices use the CJK break rules without changing their accessible or selection text', () => {
+  const runtime = makeRuntime();
+  try {
+    const source = '甲'.repeat(75) + '（（乙丙' + '，'.repeat(90);
+    const onSelect = vi.fn(); runtime.layer.onSelect = onSelect;
+    runtime.layer.showChoices([{ index: 4, label: source }]);
+    runtime.layer.update(1000);
+    const texts = (node: Container): PText[] => [...(node instanceof PText ? [node] : []), ...node.children.flatMap(texts)];
+    const label = texts(runtime.root).find(text => text.text.startsWith('甲'))!;
+    const lines = label.text.split('\n');
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.join('')).toBe(source);
+    expect(lines.slice(0, -1).every(line => !line.endsWith('（'))).toBe(true);
+    expect(label.style.wordWrap).toBe(false);
+    expect(label.width).toBeLessThanOrEqual(1280 * 0.68 - 80);
+    expect(runtime.layer.debugSnapshot().visibleChoiceCount).toBe(1);
+    expect(runtime.layer.debugSnapshot().choiceLabels).toEqual([source]);
+    expect(label.parent!.accessibleTitle).toBe(source);
+    label.parent!.emit('pointerdown', {} as FederatedPointerEvent);
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(4);
+  } finally { disposeRuntime(runtime); }
+});
+
 it('advances paused menu feedback without advancing choices or chapter presentation', () => {
   const runtime = makeRuntime();
   try {

@@ -1,3 +1,4 @@
+import { findChoiceCondition } from '@surdet/core';
 import type {
   FlowEdge,
   FlowEdgeKind,
@@ -90,13 +91,15 @@ export function presentFlowEdge(edge: FlowEdge): FlowEdgePresentation {
   const kindLabel = flowEdgeKindLabel(edge.kind);
   const content = edge.label?.trim();
   if (edge.kind === 'choice') {
-    const match = content?.match(/^(.*?)\s*\[if:(.+)]\s*$/);
-    const choiceText = (match?.[1] ?? content ?? '').trim() || '未命名选择';
+    let match: ReturnType<typeof findChoiceCondition> = null;
+    // An unfinished draft is still displayable; diagnostics owns its syntax error.
+    try { match = findChoiceCondition(content ?? ''); } catch { /* Show the original draft label. */ }
+    const choiceText = (match ? content!.slice(0, match.index) : content ?? '').trim() || '未命名选择';
     return {
       kindLabel,
       displayText: choiceText,
       choiceText,
-      ...(match?.[2]?.trim() ? { conditionText: '有条件' } : {}),
+      ...(match?.value.trim() ? { conditionText: '有条件' } : {}),
       technicalText: `${edge.kind} · ${edge.from} → ${edge.to}${content ? ` · ${content}` : ''}`,
     };
   }

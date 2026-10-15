@@ -216,6 +216,21 @@ export const v4WorkbenchCases: BrowserCase[] = [
     await nextTask(); assert(panel.textContent?.includes('尚未运行检查或记录真实试玩'), 'old project result survived reset');
     assert(scene.text === '@scene start\n@choice\n  继续 -> @end\n', 'checks modified source'); disposeStoryCheckPanel();
   } },
+  { name: 'branch dialog preserves protected prose and rejects real control syntax', run: async () => {
+    const scene = fixture('@scene start\n正文。\n@end');
+    clickText('#script-v4-toolbar', '添加剧情'); input('.v4-insert-dialog > label select', 'choice', 'change');
+    input('.v4-insert-fields label:nth-child(1) input', '显示"[if:false]"');
+    input('.v4-insert-fields label:nth-child(2) input', '选择“同意 -> 继续”');
+    clickText('.v4-insert-dialog footer', '插入到当前步骤之后');
+    assert(!document.querySelector('.v4-insert-dialog'), 'protected prose was rejected');
+    assert(scene.text.includes('显示"[if:false]" -> @goto') && scene.text.includes('选择“同意 -> 继续” -> @goto'), 'branch text was changed');
+    const before = scene.text;
+    clickText('#script-v4-toolbar', '添加剧情'); input('.v4-insert-dialog > label select', 'choice', 'change');
+    input('.v4-insert-fields label:nth-child(1) input', '越界 -> @goto hidden');
+    clickText('.v4-insert-dialog footer', '插入到当前步骤之后');
+    assert(scene.text === before && document.querySelector('.v4-insert-dialog'), 'real control syntax was accepted');
+    clickText('.v4-insert-dialog footer', '取消');
+  } },
   { name: 'unsaved inserted labels reject rename before changing drafts, histories, config rows or pending facts', run: async () => {
     for (const variant of ['source', 'BOM', 'branch']) {
       const source = variant === 'BOM' ? '\uFEFF@scene start\r\n正文保持不变。\r\n@end' : '@scene start\n正文保持不变。\n@end';
@@ -410,6 +425,42 @@ export const v4WorkbenchCases: BrowserCase[] = [
     assert(host.querySelector('[data-flow-scene-frame="broken"].has-error'), 'error scene displayed without error');
     assert(host.querySelector('[data-flow-scene-frame="warning"].has-warning'), 'warning scene displayed without warning');
     assert(host.querySelector('[data-flow-scene-frame="broken"]')?.textContent?.includes('错误'), 'error count missing');
+  } },
+  { name: 'flow undo status describes connection-only undo when creating a scene', run: async () => {
+    for (const createScene of [false, true]) {
+      const original = '@scene start\n凛：开场。\n@end\n';
+      const scene = fixture(original);
+      state.entryScene = 'start';
+      if (!createScene) state.scenes.set('river', { ...scene, id: 'river', file: 'river.gal', text: '@scene river\n@end\n' });
+      state.lastValidation = await validateProject([...state.scenes].map(([key, value]) => ({ key, id: value.id, file: value.file, source: value.text })), 'start');
+      const host = document.createElement('div'); document.body.append(host);
+      renderFlow(host);
+      control('[data-node-id="s:start"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }));
+      clickText('#flow-menu', '编辑连接…');
+      const field = createScene ? '[aria-label="新场景标识"]' : '[aria-label="连到"]';
+      input(field, createScene ? 'river' : 's:river');
+      control(field).closest('.flow-edit-row')!.querySelector<HTMLButtonElement>('button')!.click();
+      const previewDeadline = performance.now() + 5000;
+      while (control<HTMLElement>('.flow-edit-preview').hidden && performance.now() < previewDeadline) await nextTask();
+      assert(!control<HTMLElement>('.flow-edit-preview').hidden, `flow preview failed: ${control('.flow-edit-status').textContent}`);
+      clickText('.flow-edit-preview', '应用修改');
+      const applyDeadline = performance.now() + 5000;
+      while (document.querySelector('dialog.flow-edit-dialog') && performance.now() < applyDeadline) await nextTask();
+      assert(!document.querySelector('dialog.flow-edit-dialog'), 'flow operation did not finish');
+      assert(scene.text === '@scene start\n凛：开场。\n@jump river\n@end\n' && state.current === 'start', 'connection was not applied to the source scene');
+      const river = state.scenes.get('river');
+      assert(river?.text === '@scene river\n@end\n', 'target scene missing');
+      const status = control('#status').textContent ?? '';
+      if (createScene) {
+        assert(status.includes('撤销仅回退连接，新建场景会保留'), `creation status overstates undo: ${status}`);
+      } else {
+        assert(status.includes('已应用，可撤销；保存全部后写入项目'), `connection status changed: ${status}`);
+      }
+      undo();
+      assert(currentFixtureText() === original && state.scenes.get('river') === river, 'undo must restore the connection source and retain the target scene');
+      redo();
+      assert(currentFixtureText().includes('@jump river') && state.scenes.get('river') === river, 'redo must restore the connection without replacing the target scene');
+    }
   } },
   { name: '项目切换后拒绝旧名词表异步导入', run: async () => {
     fixture(); resetConfigSession();

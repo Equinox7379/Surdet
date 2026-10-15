@@ -49,6 +49,110 @@ afterAll(() => {
 });
 
 describe('release IPC source ownership', () => {
+  it('persists normalized device settings without arbitrary nested or oversized payloads', () => {
+    const write = electron.handlers.get('settings:write')!;
+    const file = path.join(electron.root, 'settings.json');
+    let deep: Record<string, unknown> = {};
+    for (let i = 0; i < 5000; i++) deep = { nested: deep };
+    write(trusted, { masterVolume: 0.3, textScale: 999, locale: 'zh-CN', unknown: deep });
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    expect(saved).toMatchObject({ masterVolume: 0.3, textScale: 1.4, locale: 'zh-CN' });
+    expect(saved).not.toHaveProperty('unknown');
+    const before = fs.readFileSync(file);
+    expect(() => write(trusted, [1, 2])).toThrow('设置数据必须是对象');
+    expect(() => write(trusted, { locale: `en${'-US'.repeat(30_000)}` })).toThrow('大小上限');
+    expect(fs.readFileSync(file)).toEqual(before);
+  });
+  it('bounds a single log record and does not follow a prepositioned session log link', ctx => {
+    const log = electron.handlers.get('log')!;
+    const file = path.join(electron.root, 'logs/session.log');
+    log(trusted, 'info', '文'.repeat(2_000_000));
+    expect(fs.statSync(file).size).toBeLessThanOrEqual(1024 * 1024);
+    const target = path.join(electron.root, 'log-victim.txt'); fs.writeFileSync(target, 'keep');
+    fs.unlinkSync(file);
+    try { fs.symlinkSync(target, file, 'file'); }
+    catch (error) { if (['EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) ctx.skip(); throw error; }
+    log(trusted, 'info', 'must not reach victim');
+    expect(fs.readFileSync(target, 'utf8')).toBe('keep');
+    expect(fs.lstatSync(file).isSymbolicLink()).toBe(true);
+    fs.unlinkSync(file);
+  });
+  it('rejects sparse known arrays through save:write without replacing the readable slot', async () => {
+    const write = electron.handlers.get('save:write')!;
+    const read = electron.handlers.get('save:read')!;
+    const good = { meta: { id: 'sparse-case', createdAt: 1, updatedAt: 1, schemaVersion: 3 }, variables: { score: 7 },
+      position: null, kind: 'manual', readSet: ['intro:1'], gallery: { cgs: [], music: [] } };
+    await write(trusted, 'sparse-case', good);
+    for (const bad of [
+      { ...good, readSet: new Array(1) },
+      { ...good, gallery: { cgs: new Array(1), music: [] } },
+      { ...good, clears: { endings: new Array(1) } },
+      { ...good, extension: { score: Infinity } },
+      { ...good, extension: { calculate: () => 1 } },
+    ]) {
+      await expect(Promise.resolve().then(() => write(trusted, 'sparse-case', bad))).rejects.toThrow(/存档结构非法/);
+      expect(await read(trusted, 'sparse-case')).toEqual(good);
+    }
+  });
+  it('rejects cyclic and excessively nested saves through the real handler before changing the stored slot', async () => {
+    const write = electron.handlers.get('save:write')!;
+    const read = electron.handlers.get('save:read')!;
+    const good = { meta: { id: 'depth-case', createdAt: 1, updatedAt: 1, schemaVersion: 3 }, variables: { score: 7 },
+      position: null, kind: 'manual', readSet: [], gallery: { cgs: [], music: [] } };
+    await write(trusted, 'depth-case', good);
+    const before = await read(trusted, 'depth-case');
+    const cycle: Record<string, unknown> = {}; cycle.self = cycle;
+    const deep: Record<string, unknown> = {}; let tail = deep;
+    for (let i = 0; i < 5000; i++) { const next = {}; tail.next = next; tail = next; }
+    for (const bad of [{ ...good, variables: { data: cycle } }, { ...good, extension: deep }]) {
+      await expect(Promise.resolve().then(() => write(trusted, 'depth-case', bad))).rejects.toThrow(/存档结构非法.*循环|存档结构非法.*256/);
+      expect(await read(trusted, 'depth-case')).toEqual(before);
+    }
+  });
+  it.for(['content', 'assets'])('refuses a junction at the %s asset-root segment before reading outside files', (segment, ctx) => {
+    const normalContent = path.join(electron.root, 'content');
+    const root = segment === 'content' ? normalContent : path.join(normalContent, 'assets');
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-linked-assets-'));
+    const outsideAssets = segment === 'content' ? path.join(outside, 'assets') : outside;
+    fs.mkdirSync(outsideAssets, { recursive: true });
+    fs.writeFileSync(path.join(outsideAssets, 'outside.svg'), 'outside');
+    fs.mkdirSync(path.dirname(root), { recursive: true });
+    const parked = root + '-ordinary';
+    const existed = fs.existsSync(root);
+    if (existed) fs.renameSync(root, parked);
+    try {
+      try { fs.symlinkSync(outside, root, process.platform === 'win32' ? 'junction' : 'dir'); }
+      catch (error) {
+        if (['EPERM', 'EACCES', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? '')) { ctx.skip(); return; }
+        throw error;
+      }
+      expect(() => electron.handlers.get('asset:list')!(trusted)).toThrow('素材目录');
+      expect(() => electron.handlers.get('asset:read')!(trusted, 'outside.svg')).toThrow('素材目录');
+      expect(fs.readFileSync(path.join(outsideAssets, 'outside.svg'), 'utf8')).toBe('outside');
+    } finally {
+      if (fs.lstatSync(root, { throwIfNoEntry: false })?.isSymbolicLink()) fs.unlinkSync(root);
+      if (existed) fs.renameSync(parked, root);
+    }
+  });
+  it('asset listing includes ordinary files but not symbolic links or directory junctions', (ctx) => {
+    const root = path.join(electron.root, 'content', 'assets');
+    fs.mkdirSync(path.join(root, 'bg'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'bg', 'ordinary.svg'), '<svg/>');
+    const outside = path.join(electron.root, 'outside-assets');
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'outside.svg'), 'outside');
+    try {
+      fs.symlinkSync(path.join(outside, 'outside.svg'), path.join(root, 'linked.svg'), 'file');
+      fs.symlinkSync(outside, path.join(root, 'linked-dir'), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      if (['EPERM', 'EACCES', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? '')) { ctx.skip(); return; }
+      throw error;
+    }
+    expect(electron.handlers.get('asset:list')!(trusted)).toEqual(['bg/ordinary.svg']);
+    expect(Buffer.from(electron.handlers.get('asset:read')!(trusted, 'bg/ordinary.svg') as ArrayBuffer).toString()).toBe('<svg/>');
+    expect(() => electron.handlers.get('asset:read')!(trusted, 'linked.svg')).toThrow('非法素材路径');
+    expect(fs.readFileSync(path.join(outside, 'outside.svg'), 'utf8')).toBe('outside');
+  });
   it('reports malformed packaged keys clearly while still reading valid encrypted and ordinary assets', () => {
     const assets = path.join(electron.root, 'content/assets');
     fs.mkdirSync(assets, { recursive: true });

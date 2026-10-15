@@ -10,6 +10,19 @@ import type { RecordedOperationCompositionFacts } from '../src/composition-contr
 import { compileScene, EventBus, Interpreter, SceneRegistry, VariableStore, type CoreEventMap, type VarDeclaration } from '@surdet/core';
 
 describe('raw composition reference analysis', () => {
+  it.each(['显示"[if:{shown}]"', "显示'[if:{shown}]'", '显示“[if:{shown}]”', '显示‘[if:{shown}]’'])('#63 shares quoted condition parsing and preserves label references: %s', label => {
+    const text = `@choice\n  ${label} [if:route == "a]b"] -> @goto done\n@label done\n@end`;
+    expect(() => compileScene(text, 'entry.gal', 'entry')).not.toThrow();
+    const references = analyzeSceneCompositionReferences({ sceneId: 'entry', path: 'entry.gal', text, characters: {} });
+    expect(references.filter(reference => reference.kind === 'variable').map(reference => reference.objectRef).sort()).toEqual(['variable:route', 'variable:shown']);
+    expect(references.some(reference => reference.objectRef === 'label:entry.done')).toBe(true);
+    expect(() => analyzeSceneCompositionReferences({ sceneId: 'entry', path: 'entry.gal', text: `@choice\n  ${label} -> @goto done\n@label done`, characters: {} })).not.toThrow();
+  });
+  it.each([['"long id"', 'long id'], ['"a"b"c"', 'a"b"c']])('#63 uses runtime gallery identity in composition references: %s', (token, id) => {
+    const text = ['cg', 'text', 'profile', 'term'].map(kind => `@unlock_${kind} ${token}`).join('\n');
+    const references = analyzeSceneCompositionReferences({ sceneId: 'entry', path: 'entry.gal', text, characters: {} });
+    expect(references.map(reference => reference.objectRef).sort()).toEqual([`gallery:cgs:${token}`, `gallery:texts:${token}`, `gallery:profiles:${id}`, `gallery:terms:${id}`].sort());
+  });
   it.each([
     ['@random "dice" 1 6', [{ name: '"dice"', type: 'number', initial: 0 }]],
     ["@add_item 'bag' apple", [{ name: "'bag'", type: 'string[]', initial: [] }]],
