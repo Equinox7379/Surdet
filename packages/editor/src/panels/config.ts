@@ -27,6 +27,7 @@ import {
   parseGrowthRows, rowsToGrowth,
   parseGalleryRows, rowsToGallery,
   parseTerminologyRows, rowsToTerminology, normalizeTerminologyImport,
+  ROW_EXTRA_FIELDS,
 } from '../config-edit.js';
 import type {
   VariableRow, AchievementRow, RowMap,
@@ -1016,7 +1017,7 @@ function renderObjectTable(cols: ColDef[], rows: RowMap[], emptyRow: RowMap, opt
   table.appendChild(tbody);
   wrap.appendChild(wrapConfigTable(table, `${options.label}数据表`));
   const addBtn = h('button', 'config-row-add', `＋ ${options.addLabel}`);
-  addBtn.onclick = () => { pushConfigHistory(false); rows.push({ ...emptyRow }); rerenderConfig(); };
+  addBtn.onclick = () => { pushConfigHistory(false); rows.push({ ...emptyRow, [ROW_EXTRA_FIELDS]: '{}' }); rerenderConfig(); };
   wrap.appendChild(addBtn);
   return wrap;
 }
@@ -1910,7 +1911,7 @@ export async function addTerminologyVariant(canonical: string, variant: string):
       }
       pushConfigHistory(false);
       if (!row) {
-        row = { canonical, variants: '[]' };
+        row = { canonical, variants: '[]', [ROW_EXTRA_FIELDS]: '{}' };
         rows.terms.push(row);
       }
       list.push(variant);

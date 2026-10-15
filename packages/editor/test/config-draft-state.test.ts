@@ -216,6 +216,38 @@ afterEach(() => {
 });
 
 describe('configuration draft state', () => {
+  it('retains hidden gallery fields through repeated saves, delete/undo and replacement rows', async () => {
+    const root = await renderFixture();
+    resetConfigSession();
+    state.configFiles.gallery = { cgs: [{ id: 'original', name: '图片', src: 'bg', group: 'keep', extension: { n: 1 } }], music: [], texts: [] };
+    let disk = '';
+    renderConfig(root as unknown as HTMLElement);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    state.handles.gallery = { createWritable: async () => ({ write: async (value: unknown) => { disk = String(value); }, close: async () => {} }) } as unknown as FileSystemFileHandle;
+    const editId = (value: string) => {
+      const input = byAttribute(root, 'aria-label', '条目标识，第 1 行');
+      input.value = value; input.oninput?.();
+    };
+    editId('renamed');
+    await saveDirtyConfigSections();
+    expect(JSON.parse(disk).cgs[0]).toMatchObject({ id: 'renamed', group: 'keep', extension: { n: 1 } });
+    editId('again');
+    await saveDirtyConfigSections();
+    expect(JSON.parse(disk).cgs[0]).toMatchObject({ id: 'again', group: 'keep', extension: { n: 1 } });
+    byAttribute(root, 'aria-label', '删除图片鉴赏第 1 行').click();
+    await saveDirtyConfigSections();
+    expect(JSON.parse(disk).cgs).toEqual([]);
+    configUndo();
+    await saveDirtyConfigSections();
+    expect(JSON.parse(disk).cgs[0]).toMatchObject({ id: 'again', group: 'keep', extension: { n: 1 } });
+    byAttribute(root, 'aria-label', '删除图片鉴赏第 1 行').click();
+    byText(root, '＋ 新增图片').click();
+    editId('again');
+    await saveDirtyConfigSections();
+    expect(JSON.parse(disk).cgs[0]).not.toHaveProperty('group');
+    expect(JSON.parse(disk).cgs[0]).not.toHaveProperty('extension');
+  });
+
   it('edits the Chinese theme form through the existing draft, undo and save path', async () => {
     const root = await renderFixture(JSON.stringify({ ...JSON.parse(INITIAL_GAME_CONFIG),
       theme: { colors: { accent: 7 }, future: { keep: true } }, player: { subtitle: '保留' }, private: { keep: 1 } }));
