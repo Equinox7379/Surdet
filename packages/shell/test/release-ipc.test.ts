@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { createCipheriv } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
 const electron = vi.hoisted(() => ({
@@ -48,6 +49,28 @@ afterAll(() => {
 });
 
 describe('release IPC source ownership', () => {
+  it('reports malformed packaged keys clearly while still reading valid encrypted and ordinary assets', () => {
+    const assets = path.join(electron.root, 'content/assets');
+    fs.mkdirSync(assets, { recursive: true });
+    const keyFile = path.join(electron.root, '.skey');
+    const key = Buffer.alloc(32, 7), iv = Buffer.alloc(12, 3);
+    const cipher = createCipheriv('aes-256-gcm', key, iv);
+    const encrypted = Buffer.concat([cipher.update(Buffer.from('plain asset')), cipher.final()]);
+    fs.writeFileSync(path.join(assets, 'encrypted.bin'), Buffer.concat([Buffer.from('SDAT2'), iv, cipher.getAuthTag(), encrypted]));
+    fs.writeFileSync(path.join(assets, 'ordinary.bin'), 'ordinary');
+    const read = (file: string) => Buffer.from(electron.handlers.get('asset:read')!(trusted, file) as ArrayBuffer).toString();
+    try {
+      for (const invalid of ['', 'zz'.repeat(32), '0'.repeat(63), '00'.repeat(33)]) {
+        fs.writeFileSync(keyFile, invalid);
+        expect(() => read('encrypted.bin')).toThrow('密钥格式无效');
+        expect(read('ordinary.bin')).toBe('ordinary');
+      }
+      fs.writeFileSync(keyFile, key.toString('hex') + '\n');
+      expect(read('encrypted.bin')).toBe('plain asset');
+      fs.unlinkSync(keyFile);
+      expect(() => read('encrypted.bin')).toThrow('缺少密钥');
+    } finally { fs.rmSync(keyFile, { force: true }); }
+  });
   it('reads only the main-process game manifest and reports missing or malformed local data', async () => {
     const check = electron.handlers.get('release:check')!;
     await expect(check(trusted)).resolves.toMatchObject({ status: 'update-available', manifest });
