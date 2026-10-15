@@ -216,6 +216,38 @@ afterEach(() => {
 });
 
 describe('configuration draft state', () => {
+  it('retains hidden gallery fields through repeated saves, delete/undo and replacement rows', async () => {
+    const root = await renderFixture();
+    resetConfigSession();
+    state.configFiles.gallery = { cgs: [{ id: 'original', name: '图片', src: 'bg', group: 'keep', extension: { n: 1 } }], music: [], texts: [] };
+    let disk = '';
+    renderConfig(root as unknown as HTMLElement);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    state.handles.gallery = { createWritable: async () => ({ write: async (value: unknown) => { disk = String(value); }, close: async () => {} }) } as unknown as FileSystemFileHandle;
+    const editId = (value: string) => {
+      const input = byAttribute(root, 'aria-label', '条目标识，第 1 行');
+      input.value = value; input.oninput?.();
+    };
+    editId('renamed');
+    await saveDirtyConfigSections();
+    expect(JSON.parse(disk).cgs[0]).toMatchObject({ id: 'renamed', group: 'keep', extension: { n: 1 } });
+    editId('again');
+    await saveDirtyConfigSections();
+    expect(JSON.parse(disk).cgs[0]).toMatchObject({ id: 'again', group: 'keep', extension: { n: 1 } });
+    byAttribute(root, 'aria-label', '删除图片鉴赏第 1 行').click();
+    await saveDirtyConfigSections();
+    expect(JSON.parse(disk).cgs).toEqual([]);
+    configUndo();
+    await saveDirtyConfigSections();
+    expect(JSON.parse(disk).cgs[0]).toMatchObject({ id: 'again', group: 'keep', extension: { n: 1 } });
+    byAttribute(root, 'aria-label', '删除图片鉴赏第 1 行').click();
+    byText(root, '＋ 新增图片').click();
+    editId('again');
+    await saveDirtyConfigSections();
+    expect(JSON.parse(disk).cgs[0]).not.toHaveProperty('group');
+    expect(JSON.parse(disk).cgs[0]).not.toHaveProperty('extension');
+  });
+
   it('edits the Chinese theme form through the existing draft, undo and save path', async () => {
     const root = await renderFixture(JSON.stringify({ ...JSON.parse(INITIAL_GAME_CONFIG),
       theme: { colors: { accent: 7 }, future: { keep: true } }, player: { subtitle: '保留' }, private: { keep: 1 } }));
@@ -861,6 +893,58 @@ describe('configuration draft state', () => {
     expect(root.textContent).toContain('来源版本已经变化');
     expect(root.textContent).toContain('farewell → 再见。');
     expect(readTextCsvDraft()).toBe('unconfirmed CSV');
+  });
+
+  it('rebases hidden calendar event references in clean baselines, drafts and undo/redo', async () => {
+    const root = await renderFixture();
+    resetConfigSession();
+    state.configFiles.calendar = {
+      maxAp: 3, maxTurns: 10, nodes: [],
+      baseCommands: [
+        { id: 'rest', name: '休息', apCost: 1, eventId: 'old', extension: { owner: 'rest', note: 'old' } },
+        { id: 'other', name: '其他', apCost: 1, eventId: 'unrelated', extension: { owner: 'other' } },
+      ],
+    };
+    renderConfig(root as unknown as HTMLElement);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    const rename = (from: string, to: string) => {
+      const apply = prepareConfigSceneRename(from, to, 'start');
+      const files = { 'game.config.json': state.gameConfigText, 'content/config/calendar.json': JSON.stringify(state.configFiles.calendar) };
+      applyConfigReferenceRename(files, { from, to }, 'start');
+      state.configFiles.calendar = JSON.parse(files['content/config/calendar.json']);
+      apply();
+    };
+    rename('old', 'new');
+    expect(inspectConfigDraftState().dirty).toBe(false);
+    expect(configHistoryDepth()).toEqual({ past: 0, future: 0 });
+    renderConfig(root as unknown as HTMLElement);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+
+    const id = byAttribute(root, 'aria-label', '指令标识，第 1 行');
+    id.value = 'rest_renamed'; id.oninput?.();
+    editTextCsvDraft('unconfirmed CSV');
+    configUndo(); // Both past and future contain the calendar row before the next rename.
+    const depth = configHistoryDepth();
+    rename('new', 'newer');
+    expect(configHistoryDepth()).toEqual(depth);
+    expect(inspectConfigDraftState().dirtySections).toEqual(['calendar']);
+    let disk = '';
+    state.handles.calendar = { createWritable: async () => ({ write: async (value: unknown) => { disk = String(value); }, close: async () => {} }) } as unknown as FileSystemFileHandle;
+    const saveAndExpect = async (expectedId: string) => {
+      expect(await saveDirtyConfigSections()).toMatchObject({ saved: 1, failures: 0, remainingDirty: false });
+      expect(JSON.parse(disk).baseCommands).toEqual([
+        { id: expectedId, name: '休息', apCost: 1, eventId: 'newer', extension: { owner: 'rest', note: 'old' } },
+        { id: 'other', name: '其他', apCost: 1, eventId: 'unrelated', extension: { owner: 'other' } },
+      ]);
+    };
+    await saveAndExpect('rest_renamed');
+    configUndo();
+    await saveAndExpect('rest');
+    configRedo();
+    await saveAndExpect('rest_renamed');
+    configRedo();
+    expect(readTextCsvDraft()).toBe('unconfirmed CSV');
+    expect(inspectConfigDraftState().dirtySections).toEqual(['texts']);
   });
 
   it('rebases live scene references and undo/redo without losing unrelated unfinished fields', async () => {
