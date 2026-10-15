@@ -444,7 +444,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   const performRollback = (): boolean => rollbackRuntime.perform();
 
   bus.on('stateReset', () => { uiSession.setVideoActive(false); });
-  bus.on('text', () => { if (!galleryReplay) rollbackRuntime.captureText(); });
+  bus.on('textSettled', () => { if (!galleryReplay) rollbackRuntime.captureText(); });
 
   // E2E/调试探针：只读暴露最小运行状态（不参与任何生产逻辑；自我迭代②，Playwright 自动通关用）
   (window as unknown as Record<string, unknown>).__surdetDebug = {
@@ -487,8 +487,8 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     return snap;
   }
 
-  /** 回合尾事件演出前的挂起点快照：事件场景播完后经 sceneEnd 恢复，剧情续跑（回合头尾闭环） */
-  let turnResumeSnap: SaveSnapshot | null = null;
+  /** 日程事件结束后的控制流续接；变量和系统状态保留演出后的最新值。 */
+  let turnResumeSnap: (() => void) | null = null;
 
   const host = createDefaultHost({
     interpreter: interp,
@@ -510,7 +510,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       onBattleResult: (winner) => {
         if (definitions.combatResultVariable) store.set(definitions.combatResultVariable, winner === 'allies');
       },
-      onTurnResumeSnapshot: (snapshot) => { turnResumeSnap = snapshot; },
+      onScheduledSceneEnd: (resume) => { turnResumeSnap = resume; },
       onLog: (message) => console.info(`[starter] ${message}`),
     }), ...plugins.adapters()],
     onError: (error) => { console.error('[starter] 宿主 adapter 失败：', error); if (galleryReplay) scheduleReplayReturn(error); },
@@ -612,7 +612,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     if (!isUiBusy()) playerShell!.commands.reset(uiSnapshot().base);
   });
 
-  // 回合尾事件场景播完 → 恢复跳转前快照，剧情从挂起点续跑（回合头尾闭环）。
+  // 日程事件场景播完 → 只恢复调用方位置，保留演出中的状态变更。
   // loadSnapshot 不可在事件回调内调用（撞解释器 #stepping 重入守卫），延迟到 UI 线程执行。
   bus.on('sceneEnd', ({ sceneId }) => {
     if (galleryReplay && !turnResumeSnap) { if (!galleryReplay.restoring) scheduleReplayReturn(); return; }
@@ -624,11 +624,11 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     }
     const snap = turnResumeSnap;
     const replayAtEnd = galleryReplay;
-    turnResumeSnap = null;
     setTimeout(() => {
-      if (ownerTeardown.disposed || galleryReplay !== replayAtEnd) return;
+      if (ownerTeardown.disposed || galleryReplay !== replayAtEnd || turnResumeSnap !== snap) return;
+      turnResumeSnap = null;
       try {
-        interp.loadSnapshot(snap);
+        snap();
       } catch (err) {
         console.error('[starter] 回合尾事件恢复失败:', err);
       }
@@ -997,7 +997,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         }
       }
       // 事件触发类成就：等级里程碑（level_5 无 when 条件，check() 不会命中，须显式 unlock）
-      if ((growth?.levelOf(p.characterId) ?? 0) >= 5 && achievements.defOf('level_5')) {
+      if (!galleryReplay && (growth?.levelOf(p.characterId) ?? 0) >= 5 && achievements.defOf('level_5')) {
         try {
           const res = achievements.unlock('level_5');
           if (res.fresh) dialogue.showBanner(`成就解锁：${res.def.name}`, 'tip');
@@ -1012,6 +1012,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   // ===== 成就批量判定：状态变更后（text 事件 / 读档）统一扫描 when 条件 =====
   /** 扫描全部 when 条件成就，新解锁播放横幅提示（求值异常不阻断剧情，仅告警） */
   function checkAchievements(): void {
+    if (galleryReplay) return;
     try {
       const fresh = achievements.check();
       for (const r of fresh) {
@@ -1023,7 +1024,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     }
   }
   // 每条文本推进后判定：覆盖 @set/@mod 改变量后的剧情节奏（变量在文本行之间变化）
-  bus.on('text', () => { if (!rollbackRuntime.isRestoring() && !galleryReplay?.restoring) checkAchievements(); });
+  bus.on('text', () => { if (!rollbackRuntime.isRestoring()) checkAchievements(); });
 
   // ===== 标题画面：开始/读档/鉴赏/设置/退出 =====
   function titleView() {
@@ -1984,9 +1985,12 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     }
     const action = actionForKeyboardEvent(e, settings.settings.keyPreset);
     if (action) {
-      e.preventDefault(); routeGameAction(action); return;
+      e.preventDefault();
+      if (e.repeat && ['auto', 'skip', 'backlog', 'hideUi'].includes(action)) return;
+      routeGameAction(action); return;
     }
     if (e.code === 'KeyX' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (e.repeat) return;
       e.preventDefault(); renderer.dispatchInput({ type: 'skip.toggle', scope: 'all' }); refreshCommandRail(); return;
     }
     if (e.key === 'Escape') {
@@ -2012,7 +2016,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       return;
     }
     if (renderer.status === 'choice' && /^[1-9]$/.test(e.key)) {
-      renderer.dispatchInput({ type: 'choice.select', index: Number(e.key) - 1 });
+      renderer.dispatchInput({ type: 'choice.select-visible', position: Number(e.key) - 1 });
       return;
     }
     if (renderer.backlogOpen && (e.key === 'PageUp' || e.key === 'PageDown')) {
@@ -2020,6 +2024,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       renderer.dispatchInput({ type: 'backlog.scroll', delta: e.key === 'PageUp' ? -240 : 240 });
       return;
     }
+    if (e.repeat && ['a', 's', 'x', 'l', 'h'].includes(e.key.toLowerCase())) return;
     if (e.key === 'F5') {
       e.preventDefault();
       quickSave();
