@@ -1,5 +1,6 @@
 import type { CompiledScene, GenericInstr, TextInstr } from './dsl/ast.js';
 import { inlineTextLength } from './inline-text.js';
+import { decodeStageToken } from './stage.js';
 
 export interface ProjectStats {
   sceneCount: number;
@@ -79,8 +80,9 @@ export function computeProjectStats(input: ProjectStatsInput): ProjectStats {
       } else if (instr.op === 'instr') {
         const generic = instr as GenericInstr;
         if (generic.name === 'clear') endingCount++;
-        if (ASSET_INSTRUCTIONS.has(generic.name) && generic.args[0] && generic.args[0] !== 'off') {
-          const key = generic.args[0]!;
+        if (ASSET_INSTRUCTIONS.has(generic.name) && generic.args[0]) {
+          const key = decodeStageToken(generic.args[0]!);
+          if (!key.trim() || key === 'off' && !generic.name.startsWith('unlock_')) continue;
           const uses = referencedAssets.get(key) ?? new Set<string>();
           uses.add(scene.sceneId);
           referencedAssets.set(key, uses);
