@@ -255,6 +255,19 @@ async function created(): Promise<{ change: ChangeSession; repo: InMemoryChangeR
 }
 
 describe('timeline.patch', () => {
+  it('creation filename restrictions do not block patching an existing logical timeline', async () => {
+    const file = 'content/timelines/CON.json';
+    const text = JSON.stringify({ version: 1, id: 'CON', durationMs: 100, tracks: [{ kind: 'camera', cues: [] }] });
+    const fixtureVersion = { sha256: async () => 'existing-file' };
+    const project = await loadProjectSnapshot({ rootIdentity: 'existing-logical-timeline', listFiles: async () => [file],
+      exists: async value => value === file, readText: async () => ({ path: file, text, bytes: text.length, sha256: 'existing-file' }) }, fixtureVersion);
+    const change = await beginChange(project, new InMemoryChangeRepository());
+    await applyTimelinePatch(change, { operationId: 'duration', timelineId: 'CON', patch: {
+      kind: 'setDuration', durationMs: 200, expectedFingerprint: 'existing-file',
+    } }, fixtureVersion);
+    expect(JSON.parse(change.record.workingFiles[file]!).durationMs).toBe(200);
+    expect(Object.keys(change.record.workingFiles)).toEqual([file]);
+  });
   it('indexes and patches the same uppercase-extension identity already accepted by the loader', async () => {
     const file = 'content/timelines/chapter/foo.JSON';
     const definition = { version: 1 as const, id: 'foo.JSON', durationMs: 100, tracks: [{ kind: 'camera' as const, cues: [] }] };

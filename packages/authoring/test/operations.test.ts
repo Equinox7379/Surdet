@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ProjectFile, ProjectStorage, TextHasher } from '../src/project-storage.js';
 import { loadProjectSnapshot } from '../src/project-snapshot.js';
 import { InMemoryChangeRepository, beginChange, openChange } from '../src/change-session.js';
-import { applySceneCreate, applyScenePatch, ensureVariable } from '../src/operations.js';
+import { applySceneCreate, applyScenePatch, applySceneRemove, ensureVariable } from '../src/operations.js';
 import { buildObjectIndex } from '../src/object-index.js';
 import type { SceneBlockInput, ScenePatchInput } from '../src/contracts.js';
 import { runExplicitPath } from '../src/simulation.js';
@@ -37,6 +37,22 @@ function fixtureStorage(configText = '{"entryScene":"prologue","variables":{}}',
 }
 
 describe('typed authoring operations', () => {
+  it.each(['patch', 'remove'])('creation filename restrictions do not block %s of an existing logical scene', async action => {
+    const path = 'content/scenario/CON.gal';
+    const snapshot = await loadProjectSnapshot(fixtureStorage(undefined, undefined, undefined, { [path]: '@scene CON\n保留正文。\n@end\n' }), hasher);
+    const index = buildObjectIndex(snapshot);
+    const change = await beginChange(snapshot, new InMemoryChangeRepository());
+    change.record.composition!.mode = 'direct';
+    if (action === 'patch') {
+      const target = index.objects.find(object => object.kind === 'text' && object.source?.path === path)!;
+      await applyScenePatch(change, { operationId: 'edit-existing', patch: { kind: 'replaceText', target: target.objectRef, expectedFingerprint: target.fingerprint!, value: '修改正文。' } }, hasher);
+      expect(change.record.workingFiles[path]).toContain('修改正文。');
+    } else {
+      const target = index.objects.find(object => object.kind === 'scene' && object.source?.path === path)!;
+      await applySceneRemove(change, { operationId: 'remove-existing', sceneId: 'CON', expectedFingerprint: target.fingerprint! }, hasher);
+      expect(change.record.workingFiles[path]).toBeUndefined();
+    }
+  });
   it.each(['direct', 'candidate'] as const)('scene creation rejects Windows device names and case aliases before changing a %s draft', async mode => {
     const snapshot = await loadProjectSnapshot(fixtureStorage(), hasher);
     const change = await beginChange(snapshot, new InMemoryChangeRepository());

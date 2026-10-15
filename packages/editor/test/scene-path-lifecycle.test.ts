@@ -247,7 +247,7 @@ describe('场景路径安全生命周期', () => {
     expect(histories.has('old')).toBe(false);
   });
 
-  it.each(['CON', 'nul', 'LPT1'])('portable scene creation and rename reject device name %s before editing', async id => {
+  it.each(['CON', 'nul', 'LPT1', 'COM¹', 'COM²', 'COM³', 'LPT¹', 'LPT²', 'LPT³'])('portable scene creation and rename reject device name %s before editing', async id => {
     state.scenes.set('old', scene('old', 'old.gal', null));
     const before = [...state.scenes].map(([key, entry]) => [key, { ...entry }]);
     await expect(createScene(id)).rejects.toThrow(/Windows 设备名/);
