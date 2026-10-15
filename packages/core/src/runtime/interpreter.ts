@@ -1202,6 +1202,7 @@ export class Interpreter {
         }
         const arr = current as string[];
         const id = decodeStageToken(item);
+        if (!id.trim()) throw new RuntimeError('@add_item 需要非空道具标识', instr);
         this.#store.set(vn, arr.includes(id) ? arr : [...arr, id]);
         return;
       }
@@ -1214,6 +1215,7 @@ export class Interpreter {
           throw new RuntimeError('@remove_item 目标变量必须是 string[]', instr);
         }
         const id = decodeStageToken(item);
+        if (!id.trim()) throw new RuntimeError('@remove_item 需要非空道具标识', instr);
         this.#store.set(vn, (current as string[]).filter((x) => x !== id));
         return;
       }
@@ -1226,7 +1228,9 @@ export class Interpreter {
         if (this.#store.getType(vn) !== 'string[]') {
           throw new RuntimeError('@has_item 来源变量必须是 string[]', instr);
         }
-        this.#store.set(resultVar, this.#store.get<string[]>(vn).includes(decodeStageToken(item)));
+        const id = decodeStageToken(item);
+        if (!id.trim()) throw new RuntimeError('@has_item 需要非空道具标识', instr);
+        this.#store.set(resultVar, this.#store.get<string[]>(vn).includes(id));
         return;
       }
       case 'unlock_cg': {

@@ -447,8 +447,9 @@ function choiceQuoteEnd(raw: string, start: number, limit: number): number {
 /** Read a trailing condition from a trimmed choice label, keeping quoted prose literal.
  * `index` is the condition's source offset in `label`, for source-preserving editors. */
 export function findChoiceCondition(label: string, source: SourcePos = pos('<choice>', 1, 1)): { index: number; value: string } | null {
-  // A prose quote cannot borrow a closing quote from the trailing expression.
-  const conditionStart = [...label.matchAll(/\[if:/g)].find(match => choiceConditionEnd(label, match.index) === label.length - 1)?.index ?? label.length;
+  // Use the rightmost trailing candidate: a marker inside prose must not borrow
+  // the real condition's closing bracket. Prose quotes cannot borrow expression quotes.
+  const conditionStart = [...label.matchAll(/\[if:/g)].reverse().find(match => choiceConditionEnd(label, match.index) === label.length - 1)?.index ?? label.length;
   for (let i = 0; i < label.length; i++) {
     const quotedEnd = choiceQuoteEnd(label, i, conditionStart);
     if (quotedEnd !== i) { i = quotedEnd; continue; }

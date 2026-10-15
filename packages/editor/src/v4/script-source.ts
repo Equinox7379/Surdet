@@ -1,4 +1,4 @@
-import { decodeStageToken, findChoiceCondition, Lexer, parseInlineInstructions } from '@surdet/core';
+import { decodeStageToken, findChoiceArrow, findChoiceCondition, Lexer, parseInlineInstructions } from '@surdet/core';
 import { decodeInstructionArgument } from '@surdet/authoring';
 import { parseScript, serializeScript, splitInstr, type LineModel } from '../model.js';
 import { InstructionFieldSource } from '../instruction-field-source.js';
@@ -263,7 +263,7 @@ export function simpleChoice(raw: string): SimpleChoice | null {
 }
 
 export function writeSimpleChoice(value: SimpleChoice): string {
-  if (/[\r\n]/.test(value.text + value.condition + value.target) || value.text.includes(' ->') || findChoiceCondition(value.text) || /\s|@/.test(value.target)) {
+  if (/[\r\n]/.test(value.text + value.condition + value.target) || findChoiceArrow(value.text) || findChoiceCondition(value.text) || /\s|@/.test(value.target)) {
     throw new Error('这段内容需要在完整原始行中编辑');
   }
   if (value.condition.trim() && findChoiceCondition(`选项 [if:${value.condition}]`)?.value !== value.condition) throw new Error('这段内容需要在完整原始行中编辑');
