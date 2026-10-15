@@ -58,6 +58,8 @@ describe('release IPC source ownership', () => {
       { ...good, readSet: new Array(1) },
       { ...good, gallery: { cgs: new Array(1), music: [] } },
       { ...good, clears: { endings: new Array(1) } },
+      { ...good, extension: { score: Infinity } },
+      { ...good, extension: { calculate: () => 1 } },
     ]) {
       await expect(Promise.resolve().then(() => write(trusted, 'sparse-case', bad))).rejects.toThrow(/存档结构非法/);
       expect(await read(trusted, 'sparse-case')).toEqual(good);
