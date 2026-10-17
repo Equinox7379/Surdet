@@ -2,6 +2,8 @@
 @bg harbor
 
 旁白：港口还没有醒来。你口袋里的信，已经被海风吹得微微发潮。
+@show rin:coat normal @ right
+凛：这么早就来了？船还没靠岸呢。
 旁白：信封上只有一句话：等你准备好的时候再打开。
 @autosave
 @choice
@@ -18,5 +20,6 @@
 旁白：有些答案，可以留给路上的自己。
 
 @label finish
+@show rin:coat smile @ right
 旁白：第一班船靠岸了。你的故事，从这里继续。
 @end

@@ -35,8 +35,8 @@ npm run preview
 
 外部 Agent 先读本项目自带的 [AGENTS.md](AGENTS.md)，按其中的能力发现、隔离创作、试玩与授权写回流程工作；[MCP 连接示例](.mcp.json.example) 需填写真实路径并由客户端启用，不自动提升写权限。开始创作不需要另外取得引擎仓库的指南。`@end` 结束场景，`@clear 结局ID` 记录通关，`player.endScenes` 决定何时返回标题，三者不能相互替代。
 
-需要立绘时，放入 `content/assets/portrait/<角色>_<服装>_<表情>.png`；例如 `lynn_coat_normal.png` 可以用 `@show lynn:coat normal @ right` 展示。需要音频时，再放入真实的 `bgm/`、`se/` 或 `voice/` 文件并在剧本引用。本模板没有指向不存在文件的音频指令。
+默认附带凛的五套服装（外套、泳衣、旗袍、睡衣、夏日便服）和配套背景、UI图片；外套有平静、微笑、迟疑、认真、惊讶、低落六种表情，泳衣有三个表情。用 `@show rin:coat normal @ right` 显示外套，认真可用 `@show rin:coat serious @ right`；换成旗袍时先 `@hide rin:coat` 隐藏外套，再 `@show rin:qipao normal @ right`。完整资源名、来源与生成提示见 [素材说明](content/assets/README.md)。添加自己的立绘时，放入 `content/assets/portrait/<角色>_<服装>_<表情>.png`，并登记角色。需要音频时，再放入真实的 `bgm/`、`se/` 或 `voice/` 文件并在剧本引用。本模板没有指向不存在文件的音频指令。
 
 地图、商店、战斗等可选系统的完整范例在 Surdet 源码仓库 `examples/starter` 的“自由探索”中，不随本项目附带。这个初始项目可以先专注于讲完一个故事，再按实际需要启用系统。
 
-随附港口背景是 Surdet 模板提供的原创示例素材，并非每个新作品单独生成。可以替换它，素材不会改变剧情或存档的实现方式。
+随附图片由内置生图工具制作，是模板共用素材，并非为每个新作品单独生成。可以替换它们；素材不会改变剧情或存档的实现方式。空白模板不预置人物与背景，沿用同一套默认游戏配色；可以通过 Editor 素材中心导入作者自备的图片。
