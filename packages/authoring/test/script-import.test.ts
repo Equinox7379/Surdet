@@ -5,6 +5,18 @@ import { createSceneText } from '../src/operations.js';
 
 const characters = [{ id: 'rin', name: '凛' }, { id: 'n', name: '旁白' }];
 describe('plain text and CSV dialogue import', () => {
+  it('preserves explicitly mapped narration containing dates and label colons through real compilation', () => {
+    const values = ['【记录】2026年2月5日23:15', '【遗落】暖气片后：胶圈一枚', '2026年2月5日23:15——周四深夜。', '保留\\:和<w>字样'];
+    const csv = 'speaker,text\n' + values.map(value => `,"${value}"`).join('\n');
+    const preview = previewScriptImport({ format: 'csv', source: csv }, characters);
+    expect(preview.ready).toBe(true);
+    expect(preview.issues).toEqual([]);
+    expect(preview.rows.map(row => row.value)).toEqual(values);
+    const compiled = compileScene(createSceneText('paper', preview.blocks), 'paper.gal', 'paper');
+    const lines = compiled.instructions.filter(instruction => instruction.op === 'text');
+    expect(lines.map(line => line.speaker)).toEqual(values.map(() => null));
+    expect(lines.map(line => inlinePlainText(line.value))).toEqual(values);
+  });
   it.each(['CON', 'nul', 'Prn', 'COM1', 'LPT9'])('rejects reserved scene filename %s in the shared import generator', id => {
     const preview = previewScriptImport({ format: 'text', source: '正常对白。' });
     expect(preview.ready).toBe(true);

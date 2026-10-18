@@ -103,6 +103,14 @@ describe('Lexer', () => {
 });
 
 describe('extractSpeaker exported semantic helper (N2 shared truth)', () => {
+  it('keeps escaped colon narration intact without changing ordinary dialogue', () => {
+    for (const text of ['记录\\：23:15', '2026年2月5日23\\:15——周四深夜。']) {
+      expect(extractSpeaker(text)).toBeNull();
+      expect(lex(text)[0]).toMatchObject({ type: 'text', speaker: null, value: text });
+    }
+    expect(extractSpeaker('凛：23:15见。')).toBe('凛');
+    expect(extractSpeaker('路径\\\\:正文')).toBe('路径\\\\');
+  });
   it('generic URL schemes are not speakers; normal speakers survive', () => {
     expect(extractSpeaker('https://example.com/story')).toBeNull();
     expect(extractSpeaker('http://example.com/story')).toBeNull();
