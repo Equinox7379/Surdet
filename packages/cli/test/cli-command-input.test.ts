@@ -13,6 +13,21 @@ function root() { const value = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-co
 function run(cwd: string, args: string[]) { return spawnSync(process.execPath, [cli, ...args], { cwd, encoding: 'utf8' }); }
 
 describe('fresh native CLI arguments', () => {
+  it('keeps pack version options separate from the root version command', () => {
+    const cwd = root();
+    for (const flag of ['--version', '-v']) {
+      const result = run(cwd, [flag]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(/^surdet v\S+\s*$/);
+    }
+    const missing = run(cwd, ['pack', '--version']);
+    expect(missing.status).toBe(1);
+    expect(missing.stderr).toContain('--version 缺少参数值');
+    const invalid = run(cwd, ['pack', 'story', '--version', '1.2.3', '--typo']);
+    expect(invalid.status).toBe(1);
+    expect(invalid.stderr).toContain('不支持参数 --typo');
+    expect(fs.readdirSync(cwd)).toEqual([]);
+  }, 20_000);
   it('authorizes image sources and shares the environment data root across fresh CLI calls', () => {
     const cwd = root(); const project = path.join(cwd, 'project'); const source = path.join(cwd, 'images');
     fs.mkdirSync(path.join(project, 'content/scenario'), { recursive: true }); fs.mkdirSync(source);
