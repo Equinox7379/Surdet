@@ -134,7 +134,7 @@ it.each([true, false])('shared Windows exporter owns media, notices and metadata
   } else expect(packaged).toEqual(media);
   expect(await fs.readFile(path.join(result.directory, 'licenses/project/licenses/LICENSE-font.txt'))).toEqual(notice);
   expect(await fs.readFile(path.join(game, 'dist/assets/room.png'))).toEqual(media);
-  expect(asar.listPackage(archive).some(file => /game[\\/]assets[\\/]room\.png/.test(file))).toBe(false);
+  expect(asar.listPackage(archive, { isPack: false }).some(file => /game[\\/]assets[\\/]room\.png/.test(file))).toBe(false);
   expect(JSON.parse(read('release/pack-metadata.json').toString())).toMatchObject({ game: result.id, encrypted,
     assetFiles: ['bg/room.png', 'licenses/LICENSE-font.txt'] });
 });

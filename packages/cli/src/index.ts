@@ -98,7 +98,7 @@ async function main(): Promise<number> {
     process.stdout.write(HELP);
     return 0;
   }
-  if (args.includes('--version') || args.includes('-v')) {
+  if (args[0] === '--version' || args[0] === '-v') {
     process.stdout.write(`surdet v${VERSION}\n`);
     return 0;
   }
