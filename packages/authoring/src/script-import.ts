@@ -22,6 +22,13 @@ export interface ScriptImportPreview {
   blocks: Extract<SceneBlockInput, { kind: 'text' }>[];
 }
 
+function encodeImportedText(speaker: string, value: string): string {
+  const encoded = escapeInlineText(value);
+  return !speaker && extractSpeaker(encoded) !== null
+    ? encoded.replace(/[:：]/, colon => '\\' + colon)
+    : encoded;
+}
+
 /** Strict comma-separated records with quoted commas/newlines and doubled quotes. */
 export function csvRecords(source: string): { records: { line: number; cells: string[] }[]; issues: ScriptImportIssue[] } {
   const records: { line: number; cells: string[] }[] = [], issues: ScriptImportIssue[] = [];
@@ -70,7 +77,7 @@ export function previewScriptImport(input: ScriptImportInput, characters: readon
     const speaker = Object.hasOwn(input.speakerMap ?? {}, sourceSpeaker) ? input.speakerMap![sourceSpeaker]! : sourceSpeaker;
     const candidates = characters.filter(character => (character.name ?? character.id) === speaker || character.id === speaker);
     // IDs are suggestions only: no silent rename of the imported display name.
-    const encoded = escapeInlineText(value);
+    const encoded = encodeImportedText(speaker, value);
     const parsed = parseSceneLine(speaker ? `${speaker}：${encoded}` : encoded, '');
     result.rows.push({ line, sourceSpeaker, speaker, value, characterIds: candidates.map(character => character.id) });
     if (parsed.kind !== 'text' || parsed.speaker !== speaker || parsed.value !== encoded) {
@@ -129,6 +136,6 @@ export function previewScriptImport(input: ScriptImportInput, characters: readon
   }
   if (!result.rows.length) issue(1, 'error', 'EMPTY_IMPORT', '没有可导入的台词。');
   result.ready = result.rows.length > 0 && !result.issues.some(item => item.severity === 'error');
-  if (result.ready) result.blocks = result.rows.map(({ speaker, value }) => ({ kind: 'text', speaker, value: escapeInlineText(value) }));
+  if (result.ready) result.blocks = result.rows.map(({ speaker, value }) => ({ kind: 'text', speaker, value: encodeImportedText(speaker, value) }));
   return result;
 }
