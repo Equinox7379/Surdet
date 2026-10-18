@@ -206,12 +206,15 @@ export function parseInlineInstructions(
   return result;
 }
 
-/** 从一行文本提取说话人：首个中/英文冒号前的非空短前缀（且非纯数字，避免误判时间；
+/** 从一行文本提取说话人：首个中/英文冒号前的非空短前缀（冒号被转义则整行是旁白；非纯数字，避免误判时间；
  *  且冒号后不紧跟 `/`，避免 `https://…` 这类 URL 的 scheme 被误切为说话人）。
  *  N2：本函数是 speaker 提取语义的跨包唯一事实源（authoring/editor 经 @surdet/core 消费）。 */
 export function extractSpeaker(trimmed: string): string | null {
   const idx = firstColonIndex(trimmed);
   if (idx <= 0) return null;
+  let slashes = 0;
+  for (let at = idx - 1; at >= 0 && trimmed[at] === '\\'; at--) slashes++;
+  if (slashes % 2 !== 0) return null;
   // URL scheme（https://…）不当作说话人：仅当冒号后为 "//" 且前缀形如 scheme 时才跳过，
   // 避免误伤冒号后以斜杠开头的正常台词（如 旁白：/远处钟声/）
   if (

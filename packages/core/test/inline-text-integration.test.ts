@@ -11,6 +11,20 @@ import { computeProjectStats } from '../src/project-stats.js';
 import { auditTerminology } from '../src/terminology-audit.js';
 
 describe('公开编译、运行和校验消费行内合同', () => {
+  it('keeps colon narration and literal backslashes through interpolation and save replay', () => {
+    const store = new VariableStore([{ name: 'time', type: 'string', initial: '23:15' }]);
+    const registry = new SceneRegistry(), bus = new EventBus<CoreEventMap>(), interpreter = new Interpreter(store, bus, registry);
+    registry.register(compileScene('记录\\：{time}，原文\\\\:路径\n下一句', 'paper.gal', 'paper'));
+    const events: CoreEventMap['text'][] = [];
+    bus.on('text', event => events.push(event));
+    interpreter.start('paper');
+    expect(events[0]!.speaker).toBeNull();
+    expect(inlinePlainText(events[0]!.value)).toBe('记录：23:15，原文\\:路径');
+    const saved = interpreter.saveSnapshot()!;
+    interpreter.advance();
+    interpreter.loadSnapshot(saved);
+    expect(events[2]).toMatchObject({ speaker: null, value: events[0]!.value, wasRead: true });
+  });
   it('编译定位到标记本身，含说话人与前导空格', () => {
     try { compileScene('  凛：  你好<size=3>世界</size>', 'intro.gal', 'intro'); throw new Error('must reject'); }
     catch (error) { expect(error).toMatchObject({ code: 'M004', pos: { file: 'intro.gal', line: 1, col: 9, range: { start: { line: 1, col: 9 }, end: { line: 1, col: 17 } } } }); }
