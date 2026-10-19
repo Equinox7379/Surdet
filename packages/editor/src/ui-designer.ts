@@ -1,6 +1,6 @@
-import { PROJECT_UI_NODE_TYPES, PROJECT_UI_PAGES, PROJECT_UI_TAB_BAR_HEIGHT, projectUiChildrenRect, projectUiContentRect, projectUiRect, type ProjectUiDocument, type ProjectUiNode, type ProjectUiNodeType, type ProjectUiPageId, type ProjectUiRect } from '@surdet/core';
+import { PROJECT_UI_NODE_TYPES, PROJECT_UI_PAGES, PROJECT_UI_TAB_BAR_HEIGHT, projectUiChildrenRect, projectUiContentRect, projectUiRect, resolveProjectFontPaths, type ProjectFontRole, type ProjectUiDocument, type ProjectUiNode, type ProjectUiNodeType, type ProjectUiPageId, type ProjectUiRect } from '@surdet/core';
 import { buildAssetCatalog, parseProjectConfigDocument, type UiPatch } from '@surdet/authoring';
-import { applyProjectUiTypography, createProjectUiDecor, createProjectUiImageSizes, usesProjectUiBox, type ProjectUiDecorImage } from '@surdet/renderer';
+import { DEFAULT_RENDERER_FONT_FAMILIES, applyProjectUiTypography, createProjectUiDecor, createProjectUiImageSizes, projectUiInsetCss, usesProjectUiBox, type ProjectUiDecorImage } from '@surdet/renderer';
 import type { DirAsset } from './assets.js';
 import { state } from './state.js';
 import { effectiveUiStyle, renderUiStyleForm } from './ui-style-form.js';
@@ -13,13 +13,20 @@ let dragCleanup: (() => void) | null = null;
 const styleImages = new Map<DirAsset, Promise<ProjectUiDecorImage>>();
 const styleImageUrls = new Set<string>();
 let styleImageSizes = createProjectUiImageSizes();
+/** Project role fonts loaded for the canvas, keyed by `role:path`, released with the designer. */
+const roleFonts = new Map<string, { family: string; face?: FontFace }>();
+/** Bumped by every disposal: a file read that finishes later belongs to a closed designer. */
+let designerGeneration = 0;
 const openStyleGroups = new Set<string>(['text']);
 let styleFocus: string | null = null;
 export function disposeUiDesigner(): void {
+  designerGeneration += 1;
   dragCleanup?.(); dragCleanup = null;
   activeImages?.dispose(); activeImages = null;
   for (const url of styleImageUrls) URL.revokeObjectURL(url);
   styleImageUrls.clear(); styleImages.clear(); styleImageSizes = createProjectUiImageSizes();
+  for (const { face } of roleFonts.values()) if (face) document.fonts.delete(face);
+  roleFonts.clear();
 }
 
 /** The same project background the Player loads for `style.backgroundImage`, read from the asset folder. */
@@ -28,15 +35,49 @@ function styleImage(asset: string): Promise<ProjectUiDecorImage> {
   if (!source?.isImage || !source.handle) return Promise.reject(new Error(`素材中心找不到背景图片：${asset}`));
   let image = styleImages.get(source);
   if (!image) {
-    const handle = source.handle, sizes = styleImageSizes;
-    image = handle.getFile().then(file => {
+    const handle = source.handle, sizes = styleImageSizes, generation = designerGeneration;
+    const loading: Promise<ProjectUiDecorImage> = handle.getFile().then(file => {
+      // A read that outlives the designer creates no URL, so nothing is left unreleased.
+      if (generation !== designerGeneration) throw new Error('界面设计器已关闭');
       const url = URL.createObjectURL(file); styleImageUrls.add(url);
       return { url, size: () => sizes(url) };
     });
-    image.catch(() => styleImages.delete(source));
-    styleImages.set(source, image);
+    loading.catch(() => { if (styleImages.get(source) === loading) styleImages.delete(source); });
+    styleImages.set(source, image = loading);
   }
   return image;
+}
+
+/**
+ * CSS font family for a role on the canvas: the project's role font file (the same file the Player
+ * registers for that role), falling back to the Player's own default family list for the role.
+ */
+function roleFontFamily(role: ProjectFontRole, config: Record<string, unknown>, onError: (message: string) => void): string {
+  const path = ((): string | undefined => {
+    try { return resolveProjectFontPaths(config)[role]; } catch { return undefined; /* reported by project validation */ }
+  })();
+  const fallback = DEFAULT_RENDERER_FONT_FAMILIES[role];
+  const projectRoot = state.dirHandle;
+  if (!path || !projectRoot || typeof FontFace === 'undefined') return fallback;
+  const key = `${role}:${path}`;
+  let font = roleFonts.get(key);
+  if (!font) {
+    const generation = designerGeneration, loaded: { family: string; face?: FontFace } = { family: `SurdetDesigner${role[0]!.toUpperCase()}${role.slice(1)}Font${generation}` };
+    roleFonts.set(key, font = loaded);
+    void (async () => {
+      const segments = path.split('/'), filename = segments.pop()!;
+      let directory = projectRoot;
+      for (const segment of segments) directory = await directory.getDirectoryHandle(segment);
+      const bytes = await (await (await directory.getFileHandle(filename)).getFile()).arrayBuffer();
+      if (generation !== designerGeneration || state.dirHandle !== projectRoot) return;
+      const face = await new FontFace(loaded.family, bytes, { weight: '400' }).load();
+      if (generation !== designerGeneration || roleFonts.get(key) !== loaded) return;
+      loaded.face = face; document.fonts.add(face);
+    })().catch(error => {
+      if (generation === designerGeneration) onError(`画布无法加载${role === 'title' ? '标题' : role === 'body' ? '正文' : '界面'}字体 ${path}：${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+  return `"${font.family}", ${fallback}`;
 }
 
 const cqw = (px: number): string => `${px / 1280 * 100}cqw`;
@@ -228,7 +269,8 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     node.children?.forEach(child => drawTree(parent, child, depth + 1));
   }
 
-  function drawCanvas(canvas: HTMLElement, node: ProjectUiNode, parentRect: ProjectUiRect, config: Record<string, unknown>): void {
+  /** `onSurface`: an ancestor paints a project surface (fill or image) under this node, as the Player does. */
+  function drawCanvas(canvas: HTMLElement, node: ProjectUiNode, parentRect: ProjectUiRect, config: Record<string, unknown>, onSurface = false): void {
     const rect = projectUiRect(parentRect, node.frame);
     const item = element('div', `ui-canvas-node ui-canvas-${node.type}`, node.text?.kind === 'literal' ? node.text.value : node.type === 'container' || node.type === 'tabs' ? '' : TYPE_NAMES[node.type]);
     item.dataset.uiNode = node.id;
@@ -242,11 +284,13 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     if (style?.background !== undefined) item.style.backgroundColor = `#${style.background.toString(16).padStart(6, '0')}`;
     // Inherited size comes from the work's theme (Core), the same value the Player draws.
     const inherited = effectiveUiStyle(node, config);
+    // The role font the Player uses for this node, so wrapping and clipping match on the canvas.
+    item.style.fontFamily = roleFontFamily(inherited.fontRole, config, message => options.onStatus(message, false));
     item.style.fontSize = cqw(style?.fontSize ?? inherited.fontSize);
     item.style.textAlign = style?.align ?? 'left';
     item.style.opacity = String(style?.opacity ?? 1);
     // U1 box fields: the same Core values and decoration layer as the Player, scaled to the canvas.
-    let decor: HTMLDivElement | null = null;
+    let decor: HTMLDivElement | null = null, surface = onSurface;
     if (usesProjectUiBox(style)) {
       try {
         const effective = inherited, content = projectUiContentRect(rect, style);
@@ -259,12 +303,28 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
         decor.className = 'ui-canvas-decor';
         for (const [key, value] of [['left', rect.x / 1280], ['top', rect.y / 720], ['width', rect.width / 1280], ['height', rect.height / 720]] as const) decor.style[key] = `${value * 100}%`;
         decor.style.opacity = item.style.opacity;
-        item.style.background = 'transparent';
+        // An input keeps its native field box in the Player unless the author replaces its fill; show that field
+        // inside the content box, as the Player does, instead of hiding it.
+        if (node.type === 'input' && style!.background === undefined && !style!.backgroundGradient && !style!.backgroundImage) item.style.backgroundClip = 'content-box';
+        else item.style.background = 'transparent';
         item.style.borderRadius = cqw(effective.borderRadius);
-        item.style.padding = [content.y - rect.y, rect.x + rect.width - content.x - content.width, rect.y + rect.height - content.y - content.height, content.x - rect.x].map(cqw).join(' ');
+        item.style.padding = projectUiInsetCss(rect, content, cqw);
+        if ((effective.background !== null || effective.backgroundGradient || effective.backgroundImage) && effective.backgroundOpacity > 0) surface = true;
       } catch (error) { options.onStatus(`${nodeLabel(node)} 的样式无法绘制：${error instanceof Error ? error.message : String(error)}`, false); }
+    } else if (node.type === 'button' && inherited.backgroundImage) {
+      // A button without box fields still inherits the theme button skin, stretched like the Player's legacy path;
+      // a missing inherited skin stays silent there too.
+      const skin = inherited.backgroundImage.asset;
+      void styleImage(skin).then(image => { item.style.backgroundImage = `url(${JSON.stringify(image.url)})`; item.style.backgroundSize = '100% 100%'; }).catch(() => undefined);
+      surface = true;
     }
+    // Over a surface the work paints itself, text takes the Player's colour (Core's effective value: own colour or
+    // the theme text colour); over the bare canvas it keeps the Editor's readable default.
+    if (style?.color === undefined && surface) item.style.color = `#${inherited.color.toString(16).padStart(6, '0')}`;
     if (node.type === 'text' || node.type === 'button' || node.type === 'input' || (node.type === 'content' && !node.children?.length)) {
+      // Core's effective line height (text 1.45, otherwise the native `normal`), not the Editor panel's, so wrapping
+      // and the label's vertical position match the Player.
+      item.style.lineHeight = inherited.lineHeight === null ? 'normal' : String(inherited.lineHeight);
       applyProjectUiTypography(item, style, cqw);
       // Buttons inherit the theme's button weight in the Player; show the same weight here.
       if (node.type === 'button' && style?.fontWeight === undefined && inherited.fontWeight !== null) item.style.fontWeight = String(inherited.fontWeight);
@@ -331,7 +391,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       item.appendChild(bar);
       children = children.filter(child => (child.tab ?? tabs[0]) === active);
     }
-    children.forEach(child => drawCanvas(canvas, child, projectUiChildrenRect(rect, node.type, node.style), config));
+    children.forEach(child => drawCanvas(canvas, child, projectUiChildrenRect(rect, node.type, node.style), config, surface));
   }
 
   function drawProperties(parent: HTMLElement, rootNode: ProjectUiNode, config: Record<string, unknown>): void {

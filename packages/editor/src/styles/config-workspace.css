@@ -18,6 +18,8 @@
 .ui-designer-canvas { position:relative; width:100%; aspect-ratio:16/9; container-type:inline-size; overflow:hidden; background:var(--surdet-surface-panel); outline:1px solid var(--surdet-border-default); }
 .ui-canvas-node { position:absolute; box-sizing:border-box; white-space:pre-wrap; overflow-wrap:anywhere; touch-action:none; cursor:move; user-select:none; color:var(--surdet-text-primary); }
 .ui-canvas-button, .ui-canvas-toggle, .ui-canvas-slider, .ui-canvas-input { background:var(--surdet-surface-subtle); border-radius:3px; }
+/* The Player's native button centres its label vertically inside the content box; show the same on the canvas. */
+.ui-canvas-button { display:flex; flex-direction:column; justify-content:center; }
 .ui-canvas-node[data-selected=true] { outline:2px solid var(--surdet-action-primary); outline-offset:-1px; }
 .ui-canvas-image, .ui-canvas-image img { width:100%; height:100%; pointer-events:none; object-fit:contain; }
 .ui-resize-handle { position:absolute; bottom:0; right:0; width:10px; height:10px; background:var(--surdet-action-primary); cursor:nwse-resize; }

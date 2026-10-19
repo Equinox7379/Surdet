@@ -3,7 +3,7 @@ import type { RendererTheme } from './theme.js';
 import { SETTING_STEPS } from './settings-store.js';
 import { fontTextDiagnostics, isUiTextClipped, type ReadingDiagnostic } from './reading-diagnostics.js';
 import type { BacklogEntry } from './backlog.js';
-import { applyProjectUiTypography, createProjectUiDecor, createProjectUiImageSizes, projectUiLineStep, usesProjectUiBox, type ProjectUiDecorImage } from './project-ui-style-dom.js';
+import { applyProjectUiTypography, createProjectUiDecor, createProjectUiImageSizes, projectUiDecorStyle, projectUiInsetCss, projectUiLineStep, usesProjectUiBox, type ProjectUiDecorImage } from './project-ui-style-dom.js';
 
 export interface ProjectUiItem {
   id: string;
@@ -297,9 +297,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
    * layer is painted in the outer layout box, and the node itself keeps only its content box.
    */
   function renderDecor(node: ProjectUiNode, rect: ProjectUiRect, parentRect: ProjectUiRect): HTMLDivElement {
-    const style = node.style!, effective = resolveProjectUiStyle(node, {}, theme);
-    // A progress track keeps its pre-U1 surface colour and small radius unless the author sets them.
-    if (node.type === 'progress') Object.assign(effective, { background: style.background ?? theme.colors.surface, borderRadius: style.borderRadius ?? theme.radius.sm });
+    const style = node.style!, effective = projectUiDecorStyle(node, resolveProjectUiStyle(node, {}, theme), theme);
     const image = (asset: string): ProjectUiDecorImage | null => {
       const url = options.imageUrl(asset);
       if (url) return { url, size: () => imageSizes(url) };
@@ -330,8 +328,11 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     const element = document.createElement(node.type === 'button' ? 'button' : 'div');
     element.dataset.uiNode = node.id;
     if (node.type === 'text' || node.type === 'button') element.dataset.uiReadingRole = node.style?.fontRole ?? 'ui';
-    // A button keeps its outer hit box; its explicit border/padding become transparent CSS insets.
-    place(element, node.type === 'button' ? rect : content, parentRect);
+    // Buttons and native controls keep their outer hit box; explicit border/padding become transparent
+    // CSS insets, so the native control itself fills exactly Core's content box.
+    const control = node.type === 'toggle' || node.type === 'slider' || node.type === 'input';
+    place(element, node.type === 'button' || control ? rect : content, parentRect);
+    if (control && boxed) element.style.padding = projectUiInsetCss(rect, content, px);
     applyStyle(element, node);
     if ((node.type === 'text' || node.type === 'button') && isReadingText(display.page, node, item)) {
       const base = node.style?.fontSize ?? theme.typography.uiSize;
@@ -425,9 +426,17 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       input.setAttribute('aria-label', label());
       bindings.push(() => input.setAttribute('aria-label', label()));
       input.style.cssText = 'width:100%;height:100%;box-sizing:border-box;font:inherit;color:inherit;accent-color:' + hex(theme.colors.accent);
+      // A boxed control fills exactly the Core content box; the UA margins of checkbox/range inputs would push it
+      // off that box (and out of the frame). Unboxed legacy controls keep their existing native layout.
+      if (boxed) input.style.margin = '0';
       if (node.type === 'input') {
-        // The decoration replaces the native field box; author typography reaches the native text.
-        if (boxed) { input.style.background = 'transparent'; input.style.border = '0'; }
+        // Each native layer of the field gives way only to an author layer that replaces or clears it;
+        // unrelated box fields (padding, shadows, a null skin) keep the native field box.
+        const style = node.style;
+        if (style && (style.background !== undefined || style.backgroundGradient || style.backgroundImage)) input.style.background = 'transparent';
+        if (style?.border !== undefined) input.style.border = '0';
+        // A kept native field follows the author's corner, inside any author border.
+        if (style?.borderRadius !== undefined) input.style.borderRadius = px(Math.max(0, style.borderRadius - (style.border?.width ?? 0)));
         applyProjectUiTypography(input, node.style, px);
       }
       if (node.type === 'slider') {
@@ -447,6 +456,11 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
         const value = node.type === 'toggle' ? input.checked : node.type === 'slider' ? Number(input.value) : input.value;
         if (!acceptsInput()) { sync(); return; }
         wrap(display.context.write(binding, value));
+      });
+      // A press on the control's border/padding frame operates the control instead of reaching the stage.
+      element.addEventListener('click', event => {
+        if (event.target !== element || input.disabled) return;
+        if (node.type === 'toggle') input.click(); else input.focus();
       });
       element.appendChild(input);
     } else if (node.type === 'scroll') {
@@ -505,6 +519,8 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       applyProjectUiTypography(element, node.style, px);
     }
     if (decor) {
+      // An interactive node's border/padding frame stays its own: it never falls through to the stage.
+      decor.style.pointerEvents = element.style.pointerEvents === 'auto' ? 'auto' : 'none';
       // The layer follows the node's visibility and whole-node/disabled opacity.
       const sync = (): void => { decor.hidden = element.hidden; decor.style.opacity = element.style.opacity; };
       sync(); bindings.push(sync);

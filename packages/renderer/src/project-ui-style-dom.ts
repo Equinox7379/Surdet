@@ -1,4 +1,4 @@
-import { projectUiNineSlice, type ProjectUiShadow, type ProjectUiStyle, type resolveProjectUiStyle } from '@surdet/core';
+import { projectUiNineSlice, type ProjectUiNode, type ProjectUiShadow, type ProjectUiStyle, type resolveProjectUiStyle } from '@surdet/core';
 
 /** Values from Core `resolveProjectUiStyle`; this module never invents its own defaults. */
 export type ProjectUiEffectiveStyle = ReturnType<typeof resolveProjectUiStyle>;
@@ -25,6 +25,23 @@ const BOX_KEYS = ['backgroundOpacity', 'backgroundGradient', 'backgroundImage', 
  */
 export function usesProjectUiBox(style: ProjectUiStyle | undefined): boolean {
   return !!style && BOX_KEYS.some(key => style[key] !== undefined);
+}
+
+/**
+ * What the decoration paints for one node: Core's effective values, except that a progress bar keeps
+ * its pre-U1 track (theme surface colour, small radius) unless the author sets those two fields.
+ * Player and Editor canvas both call this, so the two never disagree on the track.
+ */
+export function projectUiDecorStyle(node: Pick<ProjectUiNode, 'type' | 'style'>, effective: ProjectUiEffectiveStyle,
+  theme: { colors: { surface: number }; radius: { sm: number } }): ProjectUiEffectiveStyle {
+  if (node.type !== 'progress') return effective;
+  return { ...effective, background: node.style?.background ?? theme.colors.surface, borderRadius: node.style?.borderRadius ?? theme.radius.sm };
+}
+
+/** CSS padding that turns an outer layout box into Core's content box (explicit border + padding). */
+export function projectUiInsetCss(rect: { x: number; y: number; width: number; height: number },
+  content: { x: number; y: number; width: number; height: number }, unit: (px: number) => string): string {
+  return [content.y - rect.y, rect.x + rect.width - content.x - content.width, rect.y + rect.height - content.y - content.height, content.x - rect.x].map(unit).join(' ');
 }
 
 export function projectUiColor(color: number, opacity = 1): string {
@@ -55,8 +72,10 @@ export function projectUiLineStep(element: HTMLElement): number {
 
 /**
  * Background (color → gradient → image, all under backgroundOpacity), border and box shadows of one
- * node, painted in the node's outer layout box. It never takes pointer events or focus, so the hit
- * box stays `projectUiRect` and the content box stays `projectUiContentRect`.
+ * node, painted in the node's outer layout box. It never takes focus and its painted layers never take
+ * pointer events; a caller may enable pointer events on the returned box itself so that the node's
+ * border/padding frame still belongs to the node (the hit box stays `projectUiRect`, shadows never
+ * enlarge it), while the content box stays `projectUiContentRect`.
  */
 export function createProjectUiDecor(effective: ProjectUiEffectiveStyle, size: { width: number; height: number }, options: ProjectUiDecorOptions): HTMLDivElement {
   const { unit } = options;
