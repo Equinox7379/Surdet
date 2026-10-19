@@ -20,6 +20,7 @@
 
 ### U1前端（2026-10-19，Claude）
 
+- 2026-10-20 GPT本机补正80-REV-05（Owner授权直接修）：Windows原样控件E2E发现checkbox的inline baseline偏移，合法4px内容框可偏17px；仅对boxed原生input设块级布局，未设U1样式的旧控件不变。新增小内容框开关/滑块精确坐标病例，Windows真实Chromium控件E2E全部通过，Renderer构建与类型检查通过；证据和原失败在#80本机评论及任务台账。此项无需Claude重复返修；不代表整个U1/原生IME/打包Player/组合版本验收，未合并或触发CI。
 - 按精修规划U1前端，分支`claude/u1-ui-style`自`codex/ui-style-contract`/654d3a79开出；云端令牌创建PR和评论返回403，草稿PR #80由GPT开启（base `codex/ui-style-contract`）。未合并、未rebase/强推、未merge main或#79；合并顺序#79→#58→#80。只改Renderer绘制与Editor界面设计器；Core/Authoring/CLI/Host/存档/权限及合同字段未动，未开U2/U3/E1/E2。
 - 界面设计器属性区按“文字、背景、框体与皮肤”分组，只显示该组件类型可用的属性，中文标签与单位；每项显示有效值和来源，可“恢复继承”或显式清空（`null`/空数组；内边距以四边0表示清空）。提交仍是现有`node.update`整份`patch.style`，保留未改键。画布与Player共用Core有效值、内容区和九宫格几何；`project-ui-style-dom.ts`绘制背景/边框/阴影/九宫格，素材缺失按组件报中文错误。
 - [U1界面示例](../../ui-style-u1-example.md)为可操作技术示例，非最终美术，未写入任何默认外观；Owner确认后再定默认样式，正式美术由GPT生成。精修规划阶段表在#52分支，未在本分支改。首轮以打桩主题/设置/Authoring做的Chromium核对见#80说明，已由下述第二轮真实接线验证取代。

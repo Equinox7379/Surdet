@@ -33,6 +33,10 @@ const uiDocument = { version: 1, pages: {
     { id: 'input_boxed', type: 'input', frame: frame(1040, 20, 220, 44), binding: { kind: 'variable', name: 'nickname' }, style: { background: 0xffffff, border: line(2), borderRadius: 8 } },
     { id: 'hp_boxed', type: 'progress', frame: frame(40, 90, 280, 20), binding: { kind: 'variable', name: 'hp' }, style: { border: line(1) } },
     { id: 'hp_legacy', type: 'progress', frame: frame(40, 120, 280, 20), binding: { kind: 'variable', name: 'hp' } },
+    { id: 'toggle_small', type: 'toggle', frame: frame(360, 90, 120, 48), binding: { kind: 'variable', name: 'ready' },
+      style: { border: line(2), padding: { top: 20, right: 40, bottom: 20, left: 40 } } },
+    { id: 'slider_small', type: 'slider', frame: frame(520, 90, 280, 32), binding: { kind: 'setting', name: 'textScale' },
+      style: { border: line(2), padding: { top: 12, right: 12, bottom: 12, left: 12 } } },
     { id: 'log', type: 'scroll', frame: frame(40, 160, 400, 200), style: { border: line(2), padding: { top: 16, right: 16, bottom: 16, left: 16 } }, children: [
       { id: 'log_text', type: 'text', frame: frame(0, 0, 368, 400), text: { kind: 'literal', value: '记录'.repeat(200) } },
     ] },
@@ -90,6 +94,9 @@ try {
   assert.deepEqual(nodes.toggle_boxed.decor.rect, nodes.toggle_boxed.rect);
   assert.deepEqual(nodes.slider_boxed.input.rect, { x: 273, y: 29, width: 254, height: 22 });
   assert.equal(nodes.slider_boxed.input.margin, '0px');
+  // A valid 4px-tall content box must not be displaced by the wrapper's larger text baseline.
+  assert.deepEqual(nodes.toggle_small.input.rect, { x: 402, y: 112, width: 36, height: 4 });
+  assert.deepEqual(nodes.slider_small.input.rect, { x: 534, y: 104, width: 252, height: 4 });
   // An unstyled legacy toggle keeps its existing native layout.
   assert.deepEqual(nodes.toggle_legacy.rect, { x: 200, y: 20, width: 40, height: 40 });
   assert.notEqual(nodes.toggle_legacy.input.margin, '0px', 'legacy checkbox keeps the UA margin');
