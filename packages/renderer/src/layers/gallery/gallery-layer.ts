@@ -158,6 +158,7 @@ export class GalleryLayer implements GalleryProjectionPort {
     repaintThemeProjection(this.#galleryLayer, previous, theme);
     this.#layoutHeader();
     this.#layoutContent?.();
+    this.#scrollGallery(0);
     this.#requestFrame();
   }
 
@@ -388,8 +389,8 @@ export class GalleryLayer implements GalleryProjectionPort {
         const note = !item.unlocked ? '未解锁' : isReadOnly ? item.description ?? '' : !enabled ? (isMusic ? '当前无法播放' : '当前无法回想') : '';
         const status = note ? this.#text(note, width - 40, item.unlocked ? 'textMuted' : 'textDisabled') : null;
         if (status) row.addChild(status);
-        const border = this.#controlBorder(row, width, 58, 0, 0, item.unlocked && (isReadOnly || enabled));
-        bindPlayerControl(row, { label: item.unlocked ? `${isReadOnly ? this.#galleryTab === 'profile' ? '人物资料' : '词条' : isMusic ? '播放' : '回想'} ${item.name}${isReadOnly && note ? `：${note}` : ''}` : '未解锁条目', width, height: 58, enabled: item.unlocked && (isReadOnly || enabled), reveal: () => this.#reveal(row) });
+        const border = this.#controlBorder(row, width, 58, 0, 0, enabled);
+        bindPlayerControl(row, { label: item.unlocked ? `${isReadOnly ? this.#galleryTab === 'profile' ? '人物资料' : '词条' : isMusic ? '播放' : '回想'} ${item.name}${isReadOnly && note ? `：${note}` : ''}` : '未解锁条目', width, height: 58, enabled, reveal: () => this.#reveal(row) });
         if (enabled) {
           row.cursor = 'pointer';
           row.on('pointerdown', () => isMusic ? this.#galleryOnPlayMusic?.(item.id, item.src) : this.#galleryOnReplayText?.({ ...item }));
@@ -484,10 +485,10 @@ export class GalleryLayer implements GalleryProjectionPort {
       const title = this.#text(item.unlocked ? item.name : '未书写的结局', 100, item.unlocked ? 'text' : 'textDisabled', 'headingSize');
       const description = this.#text(item.unlocked ? item.description ?? '这一页的回忆已被珍藏。' : '故事尚未抵达此页。', 100, item.unlocked ? 'textMuted' : 'textDisabled');
       card.addChild(background, divider, spine, number, status, title, description);
-      const border = this.#controlBorder(card, 1, 1, 0, 0, item.unlocked);
+      const border = this.#controlBorder(card, 1, 1, 0, 0, false);
       bindPlayerControl(card, {
         label: item.unlocked ? `结局 ${String(index + 1).padStart(2, '0')} ${item.name}：${description.text}` : `结局 ${String(index + 1).padStart(2, '0')} 未解锁`,
-        width: 1, height: 1, enabled: item.unlocked, reveal: () => this.#reveal(card),
+        width: 1, height: 1, enabled: false, reveal: () => this.#reveal(card),
       });
       list.addChild(card);
       return { card, background, divider, spine, number, status, title, description, border, item };

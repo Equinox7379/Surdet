@@ -182,6 +182,42 @@ function controlBounds(node: Container): Rectangle {
 }
 
 describe('Gallery collection layout', () => {
+  it('repositions an empty list and its mask when live typography grows the header', () => {
+    const runtime = makeGalleryRuntime(500, 320);
+    try {
+      runtime.layer.showGallery({ cgs: [], music: [] });
+      findText(runtime.root, '音乐').emit('pointerdown', pointerEvent);
+      const message = findText(runtime.root, '暂无音乐条目');
+      const list = message.parent!;
+      const mask = list.parent!.children.find(child => child instanceof Graphics) as Graphics;
+      const previousTop = list.y;
+      runtime.layer.setTheme(createRendererTheme({ typography: { headingSize: 40, uiSize: 30, captionSize: 24 } }));
+      expect(list.y).toBeGreaterThan(previousTop);
+      expect(mask.getLocalBounds().y).toBe(list.y);
+      expect(list.y + message.y).toBeGreaterThan(controlBounds(findText(runtime.root, '词典')).bottom);
+      expect(findText(runtime.root, '暂无音乐条目')).toBe(message);
+    } finally { disposeGalleryRuntime(runtime); }
+  });
+
+  it.each(['结局', '人物', '词典'])('does not advertise read-only %s cards as actionable keyboard buttons', (tabName) => {
+    const runtime = makeGalleryRuntime(), play = vi.fn(), replay = vi.fn();
+    const entry = { id: 'collected', name: '已经收集的内容', description: '仍然可读的说明', unlocked: true };
+    try {
+      runtime.layer.showGallery({ cgs: [], music: [], endings: [entry], profiles: [entry], terms: [entry], onPlayMusic: play, onReplayText: replay });
+      findText(runtime.root, tabName).emit('pointerdown', pointerEvent);
+      const row = findParentWithText(runtime.root, entry.name);
+      expect(row.tabIndex).toBe(-1);
+      expect(row.accessibleTitle).toContain(entry.name);
+      expect(findText(runtime.root, entry.description).text).toBe(entry.description);
+      row.emit('pointerover', pointerEvent);
+      expect((row.children.at(-1) as Graphics).visible).toBe(false);
+      row.emit('pointerdown', pointerEvent);
+      expect(play).not.toHaveBeenCalled(); expect(replay).not.toHaveBeenCalled();
+      expect(findText(runtime.root, tabName).tabIndex).toBe(0);
+      expect(findText(runtime.root, '关闭').tabIndex).toBe(0);
+    } finally { disposeGalleryRuntime(runtime); }
+  });
+
   it.each([[1280, 720], [960, 540], [500, 320]])('lays out readable ending cards and keeps navigation reachable at %ix%i', (width, height) => {
     const runtime = makeGalleryRuntime(width, height);
     const onClose = vi.fn(), onReplayText = vi.fn(), onPlayMusic = vi.fn();
