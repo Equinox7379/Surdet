@@ -20,10 +20,13 @@
 
 ### U1前端（2026-10-19，Claude）
 
-- 按精修规划U1前端，分支`claude/u1-ui-style`自`codex/ui-style-contract`/654d3a79开出，草稿PR应以`codex/ui-style-contract`为base；云端令牌创建PR和评论均返回403，PR待Owner从对比页手动开启。未合并、未merge main或#79。只改Renderer绘制与Editor界面设计器；Core/Authoring/CLI/Host/存档/权限及合同字段未动，未开U2/U3/E1/E2。
-- 界面设计器属性区按“文字、背景、框体与皮肤”分组，只显示该组件类型可用的属性，中文标签与单位；每项显示有效值和来源，可“恢复继承”或显式清空（`null`/空数组）。提交仍是现有`node.update`整份`patch.style`，保留未改键。画布与Player共用Core有效值、内容区和九宫格几何；新增`project-ui-style-dom.ts`绘制背景/边框/阴影/九宫格，装饰层不扩大点击区，素材缺失按组件报中文错误。
-- 本地Chromium以真实Renderer/Editor源码（主题/设置/Authoring打桩）验证：去掉U1字段的旧文档在标题/对白/选项/记录四页与#58绘制逐字相同；九宫格切边/小尺寸等比/不填中心/缺图报错；140%阅读倍率下对白滚动、Home/End/PageUp/PageDown、标题键盘焦点、选项禁用；记录页注音、着重点、粗体；表单改值/恢复继承/九宫格写出标准样式补丁。未跑仓库构建/vitest/e2e，未代签Windows、原生IME、打包Player、真实撤销重做/保存重开和Editor预览窗口。
-- [U1界面示例](../../ui-style-u1-example.md)为可操作技术示例，非最终美术，未写入任何默认外观；Owner确认后再定默认样式，正式美术由GPT生成。接口问题（#79新增字段与按钮皮肤分支重叠、`background`无显式清空、字距不随阅读倍率、列表行样式不可配等）整理在PR说明草稿中，待PR开启后同步到#58；精修规划阶段表在#52分支，未在本分支改。
+- 按精修规划U1前端，分支`claude/u1-ui-style`自`codex/ui-style-contract`/654d3a79开出；云端令牌创建PR和评论返回403，草稿PR #80由GPT开启（base `codex/ui-style-contract`）。未合并、未rebase/强推、未merge main或#79；合并顺序#79→#58→#80。只改Renderer绘制与Editor界面设计器；Core/Authoring/CLI/Host/存档/权限及合同字段未动，未开U2/U3/E1/E2。
+- 界面设计器属性区按“文字、背景、框体与皮肤”分组，只显示该组件类型可用的属性，中文标签与单位；每项显示有效值和来源，可“恢复继承”或显式清空（`null`/空数组；内边距以四边0表示清空）。提交仍是现有`node.update`整份`patch.style`，保留未改键。画布与Player共用Core有效值、内容区和九宫格几何；`project-ui-style-dom.ts`绘制背景/边框/阴影/九宫格，素材缺失按组件报中文错误。
+- [U1界面示例](../../ui-style-u1-example.md)为可操作技术示例，非最终美术，未写入任何默认外观；Owner确认后再定默认样式，正式美术由GPT生成。精修规划阶段表在#52分支，未在本分支改。首轮以打桩主题/设置/Authoring做的Chromium核对见#80说明，已由下述第二轮真实接线验证取代。
+- 第二轮（#80 Codex评审4项及真实接线）：开关/滑块/输入框外框占整块布局框，边框/内边距转为透明内边距，原生控件恰好落在Core内容区（带框控件去掉UA外边距，无样式旧控件不变）；点外框内边距会操作开关/聚焦控件，不落到舞台；可交互节点（滚动区/列表/页签）的装饰层随节点接收点击，容器仍可穿透。设计器关闭后迟到的样式图读取不再生成URL。输入框原生外观只让位于作者替换的那一层（仅内边距/阴影/禁用皮肤时保留原生框，只设圆角时原生框跟随圆角）。设计器画布按Player加载作品角色字体文件。进度条轨道默认值（主题surface色、radius.sm）抽成`projectUiDecorStyle`，Player、画布和属性区共用。画布另补：未设框体的按钮也画继承的主题按钮皮肤；作品自绘底面上的文字用Core有效文字色；按钮文字垂直居中、行高按Core有效值；只设内边距的输入框保留内容区内的输入框底。
+- 第二轮真实验证（Linux云端Chromium，未用替身）：Renderer/Editor（含desktop）typecheck、`npm run build -w @surdet/renderer`、`npm run build -w surdet-editor`通过；Vitest定向：Editor ui-style-form（8项，含进度条轨道继承/显式0）/ui-settings/ui-sharing/authoring-project-storage共33项、Core project-ui-style/project-ui 11项通过；Renderer全量724/724；Editor全量1384/1385，失败的editor-asset-sidebar-contract及2个node:test文件“No test suite found”与基线相同。新增`packages/renderer/e2e/project-ui-style-controls.e2e.mjs`（真实Project UI DOM：控件内容区、外框点击、原生输入框外观、进度条轨道、滚动区/容器穿透；在本轮修复前代码上会失败）与`packages/editor/e2e/ui-style-u1.e2e.mjs`（真实Editor+FS桥+dev server：表单改字距0/加边框/无边框null/内边距0/背景不透明度0/恢复继承→撤销→重做，草稿逐步断言整份style；保存界面后磁盘只改该节点、私有字段保留；新页面重开草稿与字段状态一致；同一配置在设计器画布与“试玩草稿”预览窗口真实Player中比对九宫格/皮肤优先级/null禁用/旧按钮皮肤、内容区不重复扣减、角色字体、进度条轨道颜色和圆角、140%字号与长正文滚动、键盘焦点、enabledWhen禁用按钮与选项）；renderer project-ui-*四项与editor ui-share-late-import仍通过。截图仅为云端核对，不代表Owner认可。
+- 后端/接口事项交GPT（未改后端）：Core`resolveProjectUiStyle`对progress的background/borderRadius给null/0，而Player旧轨道是surface/radius.sm，前端暂以`projectUiDecorStyle`统一，是否收进Core由后端定；`background`无显式清空；字距不随阅读倍率；列表行（content行底色/分隔线）样式不可配；真实Player的@choice没有逐项禁用态（Core过滤`[if:]`选项），选项禁用只能来自模板`enabledWhen`。
+- 未覆盖：Windows、原生输入法、最终打包Player由GPT本机验收；设计器画布仍是示意（数据文字显示占位、控件不画原生外观、列表只画一个模板行、不显示运行时禁用态）。
 
 ### U1后端与接口（2026-10-14）
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validateProjectUiStyle, type ProjectUiStyle } from '@surdet/core';
-import { inheritStyleKey, isExplicitClear, setStyleKey, uiStyleFields } from '../src/ui-style-form.js';
+import { effectiveUiStyle, inheritStyleKey, isExplicitClear, setStyleKey, uiStyleFields } from '../src/ui-style-form.js';
 
 const BOX = ['background', 'backgroundOpacity', 'backgroundGradient', 'backgroundImage', 'border', 'borderRadius', 'padding', 'shadows', 'opacity'];
 const TEXT = ['fontRole', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'color', 'align', 'textShadows'];
@@ -53,5 +53,23 @@ describe('U1 style form writes the whole style', () => {
     const skin = setStyleKey({}, 'backgroundImage', { asset: 'u1-frame', fit: 'stretch', slice: { top: 24, right: 24, bottom: 24, left: 24, fillCenter: true } });
     expect(() => validateProjectUiStyle(skin, 'style')).not.toThrow();
     expect(() => validateProjectUiStyle(setStyleKey(skin, 'backgroundImage', null), 'style')).not.toThrow();
+  });
+});
+
+describe('U1 style form shows the values the Player draws', () => {
+  const progress = (style?: ProjectUiStyle) => ({ id: 'hp', type: 'progress', frame: { x: 0, y: 0, width: 200, height: 20 }, binding: { kind: 'variable', name: 'hp' }, ...(style ? { style } : {}) }) as never;
+  const config = { theme: { colors: { surface: 0x123456 }, radius: { sm: 5 } } };
+
+  it('inherits the legacy progress track (theme surface, small radius) when the box sets neither', () => {
+    const effective = effectiveUiStyle(progress({ border: { width: 1, color: 0x445566, opacity: 1 } }), config);
+    expect(effective.background).toBe(0x123456);
+    expect(effective.borderRadius).toBe(5);
+    expect(effective.border).toEqual({ width: 1, color: 0x445566, opacity: 1 });
+  });
+
+  it('keeps the author track, including an explicit radius of 0', () => {
+    const effective = effectiveUiStyle(progress({ background: 0xffffff, borderRadius: 0 }), config);
+    expect(effective.background).toBe(0xffffff);
+    expect(effective.borderRadius).toBe(0);
   });
 });

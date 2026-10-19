@@ -1,4 +1,5 @@
-import { resolveProjectUiStyle, type ProjectUiNode, type ProjectUiShadow, type ProjectUiStyle } from '@surdet/core';
+import { resolvePlayerTheme, resolveProjectUiStyle, type ProjectUiNode, type ProjectUiShadow, type ProjectUiStyle } from '@surdet/core';
+import { projectUiDecorStyle } from '@surdet/renderer';
 
 /**
  * U1 style form: only the fields a node type actually draws, grouped as 文字 / 背景 / 框体与皮肤.
@@ -71,8 +72,10 @@ function make<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string,
   return node;
 }
 
+/** What the Player draws when a field is inherited: Core's values plus the Player's progress track. */
 export function effectiveUiStyle(node: ProjectUiNode, config: Record<string, unknown>): Effective {
-  try { return resolveProjectUiStyle(node, config); } catch { return resolveProjectUiStyle(node, {}); }
+  const resolve = (source: Record<string, unknown>): Effective => projectUiDecorStyle(node, resolveProjectUiStyle(node, source), resolvePlayerTheme(source));
+  try { return resolve(config); } catch { return resolve({}); }
 }
 
 function describe(key: UiStyleKey, effective: Effective): string {
