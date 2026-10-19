@@ -391,9 +391,21 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       input.setAttribute('aria-label', label());
       bindings.push(() => input.setAttribute('aria-label', label()));
       input.style.cssText = 'width:100%;height:100%;box-sizing:border-box;font:inherit;color:inherit;accent-color:' + hex(theme.colors.accent);
-      if (node.type === 'slider') {
-        const bounds = display.context.bounds(binding);
-        input.min = String(bounds.min); input.max = String(bounds.max); input.step = String(bounds.step);
+      const range = node.type === 'slider' ? display.context.bounds(binding) : undefined;
+      if (range) {
+        // Valid confirmed values need not be on min + n * step (55% BGM, 24 CPS).
+        input.min = String(range.min); input.max = String(range.max); input.step = 'any';
+        input.addEventListener('keydown', event => {
+          const direction = ({ ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1, PageDown: -10, PageUp: 10 } as Record<string, number>)[event.key];
+          if (direction === undefined && event.key !== 'Home' && event.key !== 'End') return;
+          const current = Number(input.value);
+          event.preventDefault();
+          if (!acceptsInput()) return;
+          const next = event.key === 'Home' ? range.min : event.key === 'End' ? range.max : current + direction! * range.step;
+          const value = Math.max(range.min, Math.min(range.max, next));
+          input.value = String(value);
+          wrap(display.context.write(binding, value));
+        });
       }
       const sync = (): void => {
         if (document.activeElement === input && input.type === 'text') return;
@@ -405,7 +417,9 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       bindings.push(sync);
       bindings.push(() => { input.disabled = Boolean(item?.disabled) || !condition(node.enabledWhen); });
       input.addEventListener(node.type === 'input' ? 'change' : 'input', () => {
-        const value = node.type === 'toggle' ? input.checked : node.type === 'slider' ? Number(input.value) : input.value;
+        const value = node.type === 'toggle' ? input.checked : range
+          ? Math.max(range.min, Math.min(range.max, range.min + Math.round((Number(input.value) - range.min) / range.step) * range.step))
+          : input.value;
         if (!acceptsInput()) { sync(); return; }
         wrap(display.context.write(binding, value));
       });
@@ -688,7 +702,11 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
         const label = document.createElement('p'); label.textContent = message;
         const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = '取消';
         const accept = document.createElement('button'); accept.type = 'button'; accept.textContent = '确认';
-        applyButtonSkin(cancel); applyButtonSkin(accept);
+        for (const button of [cancel, accept]) {
+          button.style.color = 'inherit';
+          button.style.backgroundColor = hex(theme.colors.surface);
+          applyButtonSkin(button);
+        }
         const finish = (accepted: boolean): void => { confirmation = null; element.remove(); if (previous?.isConnected) previous.focus(); resolve(accepted); };
         cancel.onclick = () => finish(false); accept.onclick = () => finish(true);
         element.append(label, cancel, accept); design.appendChild(element);
@@ -711,7 +729,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       viewer.onclick = () => viewer.remove();
       const close = document.createElement('button');
       close.type = 'button'; close.textContent = '关闭图片';
-      close.style.cssText = 'position:absolute;right:16px;top:16px';
+      close.style.cssText = `position:absolute;right:16px;top:16px;color:inherit;background:${hex(theme.colors.surface)}`;
       applyButtonSkin(close);
       close.onclick = () => viewer.remove();
       viewer.append(image, close);
