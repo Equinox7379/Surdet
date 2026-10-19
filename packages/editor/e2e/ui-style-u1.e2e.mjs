@@ -139,6 +139,8 @@ const measure = (root, ids, scope) => root.evaluate(({ ids, scope }) => {
       },
       input: input && { rect: rect(input), border: getComputedStyle(input).borderTopWidth, background: getComputedStyle(input).backgroundColor, radius: getComputedStyle(input).borderTopLeftRadius, disabled: input.disabled, checked: input.checked, value: input.value },
       disabled: element.disabled ?? null, opacity: computed.opacity,
+      // Player: a decorated node's decoration and content share one group that carries the whole-node opacity.
+      group: element.parentElement?.dataset.uiGroup === id ? { opacity: getComputedStyle(element.parentElement).opacity } : null,
     };
   }
   return out;
@@ -286,7 +288,8 @@ try {
   assert.equal(playerTitle.btn_frame.elementBackgroundImage, '');
   assert.equal(playerTitle.btn_noskin.decor.images.length, 0); assert.equal(playerTitle.btn_noskin.elementBackgroundImage, '');
   assert.equal(playerTitle.btn_legacy.decor, null); assert.match(playerTitle.btn_legacy.elementBackgroundImage, /u1_skin\.png/);
-  assert.equal(playerTitle.btn_noskin.disabled, true); assert.equal(playerTitle.btn_noskin.decor.opacity, '0.45');
+  assert.equal(playerTitle.btn_noskin.disabled, true); assert.equal(playerTitle.btn_noskin.group.opacity, '0.45');
+  assert.equal(playerTitle.btn_noskin.decor.opacity, '1'); assert.equal(playerTitle.btn_noskin.opacity, '1', 'disabled fade is applied once, to the group');
   assert.equal(playerTitle.card.decor.images[0].patches, 9);
   // Designer canvas draws the same skins and rects.
   assert.equal(canvasTitle.btn_start.decor.images.length, 1); assert.equal(canvasTitle.btn_frame.decor.images[0].kind, 'nine-slice'); assert.equal(canvasTitle.btn_noskin.decor.images.length, 0);
@@ -398,8 +401,9 @@ try {
     await page.waitForTimeout(500);
   }
   await player.waitForFunction(() => document.querySelectorAll('[data-surdet-project-ui] [data-ui-node="opt"]').length === 2);
-  const disabled = await player.evaluate(() => [...document.querySelectorAll('[data-surdet-project-ui] [data-ui-node="opt"]')].map(button => ({ text: button.textContent, disabled: button.disabled, opacity: button.style.opacity, decorOpacity: button.previousElementSibling?.style.opacity })));
-  assert(disabled.every(item => item.disabled && item.opacity === '0.45' && item.decorOpacity === '0.45'), JSON.stringify(disabled));
+  const disabled = await player.evaluate(() => [...document.querySelectorAll('[data-surdet-project-ui] [data-ui-node="opt"]')].map(button => ({ text: button.textContent, disabled: button.disabled, opacity: getComputedStyle(button).opacity,
+    group: button.parentElement?.dataset.uiGroup === 'opt' ? getComputedStyle(button.parentElement).opacity : null, decorOpacity: getComputedStyle(button.previousElementSibling).opacity })));
+  assert(disabled.every(item => item.disabled && item.group === '0.45' && item.opacity === '1' && item.decorOpacity === '1'), JSON.stringify(disabled));
   await player.locator('[data-ui-node="opt"]').first().click({ force: true });
   await page.waitForTimeout(300);
   assert.equal(await player.locator('[data-ui-node="opt"]').count(), 2, 'a disabled option cannot be chosen');

@@ -9,7 +9,8 @@ import { chromium } from 'playwright';
 // U1 box fields on interactive nodes, in the real Project UI DOM: a boxed toggle/slider wrapper owns the outer box and
 // its native control fills exactly the content box; presses on the border/padding operate the control and never
 // reach the stage; framed scroll areas keep their frame off the stage while containers stay click-through; native
-// input chrome gives way only to the layer the author replaces; a boxed progress track keeps the legacy track.
+// input chrome gives way only to the layer the author replaces; a boxed progress track keeps the legacy track;
+// a decorated node fades as one group (whole-node opacity), and boxed containers/tabs clip children to the content box.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const output = process.env.SURDET_UI_STYLE_CONTROLS_E2E_OUTPUT ?? await fs.mkdtemp(path.join(os.tmpdir(), 'surdet-project-ui-style-controls-'));
 await fs.mkdir(output, { recursive: true });
@@ -41,6 +42,21 @@ const uiDocument = { version: 1, pages: {
       { id: 'log_text', type: 'text', frame: frame(0, 0, 368, 400), text: { kind: 'literal', value: '记录'.repeat(200) } },
     ] },
     { id: 'panel', type: 'container', frame: frame(480, 160, 400, 200), style: { border: line(2), padding: { top: 16, right: 16, bottom: 16, left: 16 }, background: 0xeeeeee } },
+    // Whole-node opacity: the fill is drawn over the red track first, then the assembled bar fades once.
+    { id: 'fade_bar', type: 'progress', frame: frame(40, 400, 280, 20), binding: { kind: 'variable', name: 'hp' }, style: { border: line(1), background: 0xff0000, opacity: 0.5 } },
+    { id: 'fade_button', type: 'button', frame: frame(340, 390, 120, 40), text: { kind: 'literal', value: '淡' }, enabledWhen: 'ready',
+      style: { background: 0xffffff, border: line(1), opacity: 0.5 } },
+    { id: 'hidden_box', type: 'text', frame: frame(1040, 400, 200, 40), visibleWhen: 'hp > 50', text: { kind: 'literal', value: '隐' }, style: { background: 0xffffff, border: line(1) } },
+    // Children reaching past a boxed parent's content box are clipped there (paint and input); legacy parents are not.
+    { id: 'clip_box', type: 'container', frame: frame(480, 400, 300, 160), style: { border: line(2), padding: { top: 16, right: 16, bottom: 16, left: 16 }, background: 0xeeeeee }, children: [
+      { id: 'clip_child', type: 'button', frame: frame(-40, 20, 120, 40), text: { kind: 'literal', value: '裁' } },
+    ] },
+    { id: 'clip_legacy', type: 'container', frame: frame(820, 460, 200, 100), children: [
+      { id: 'legacy_child', type: 'button', frame: frame(-40, 20, 120, 40), text: { kind: 'literal', value: '旧' } },
+    ] },
+    { id: 'clip_tabs', type: 'tabs', frame: frame(40, 440, 400, 200), style: { border: line(2), padding: { top: 10, right: 10, bottom: 10, left: 10 }, background: 0xeeeeee }, children: [
+      { id: 'tab_child', type: 'button', tab: '甲', frame: frame(-30, 10, 100, 30), text: { kind: 'literal', value: '页' } },
+    ] },
   ] },
 } };
 
@@ -76,9 +92,12 @@ try {
     for (const element of document.querySelectorAll('[data-surdet-project-ui] [data-ui-node]')) {
       const decor = element.previousElementSibling?.matches('[data-ui-decor]') ? element.previousElementSibling : null;
       const input = element.querySelector('input'), computed = getComputedStyle(element);
+      const group = element.parentElement?.dataset.uiGroup === element.dataset.uiNode ? element.parentElement : null;
       out[element.dataset.uiNode] = {
         rect: box(element), padding: computed.padding, pointer: computed.pointerEvents, background: computed.backgroundColor, radius: computed.borderTopLeftRadius,
-        decor: decor && { rect: box(decor), pointer: getComputedStyle(decor).pointerEvents, background: getComputedStyle(decor.querySelector('[data-ui-decor-background]') ?? decor).backgroundColor, radius: getComputedStyle(decor).borderTopLeftRadius },
+        opacity: computed.opacity, overflow: computed.overflow,
+        group: group && { rect: box(group), opacity: getComputedStyle(group).opacity, pointer: getComputedStyle(group).pointerEvents, hidden: group.hidden, layers: [...group.children].map(child => child === decor ? 'decor' : child === element ? 'node' : '?') },
+        decor: decor && { rect: box(decor), pointer: getComputedStyle(decor).pointerEvents, background: getComputedStyle(decor.querySelector('[data-ui-decor-background]') ?? decor).backgroundColor, radius: getComputedStyle(decor).borderTopLeftRadius, opacity: getComputedStyle(decor).opacity, shown: decor.getClientRects().length > 0 },
         input: input && { rect: box(input), margin: getComputedStyle(input).margin, border: getComputedStyle(input).borderTopWidth, background: getComputedStyle(input).backgroundColor, radius: getComputedStyle(input).borderTopLeftRadius },
       };
     }
@@ -134,6 +153,42 @@ try {
   await page.mouse.click(484, 200);
   assert.equal(await page.evaluate(() => window.stageClicks), 1, 'container frame stays click-through');
   console.log('PASS scroll frame keeps presses; container stays click-through');
+
+  // Whole-node opacity: decoration and content share one group that carries the opacity; neither layer fades alone.
+  for (const id of ['fade_bar', 'fade_button', 'toggle_boxed', 'clip_box']) {
+    assert.deepEqual(nodes[id].group.layers, ['decor', 'node'], id);
+    assert.deepEqual(nodes[id].group.rect, nodes[id].decor.rect, id); assert.equal(nodes[id].group.pointer, 'none', id);
+    assert.equal(nodes[id].decor.opacity, '1', id); assert.equal(nodes[id].opacity, '1', id);
+  }
+  assert.equal(nodes.fade_bar.group.opacity, '0.5');
+  assert.equal(Number(nodes.fade_button.group.opacity).toFixed(3), '0.225', 'disabled boxed button: node opacity × 0.45 on the group');
+  assert.equal(nodes.toggle_legacy.group, null); assert.equal(nodes.hp_legacy.group, null);
+  assert.equal(nodes.hidden_box.group.hidden, true); assert.equal(nodes.hidden_box.decor.shown, false, 'a hidden node hides its decoration too');
+  // Pixel proof on the fill: fading once gives accent·0.5 + page·0.5 (117,78,46); fading layers separately would
+  // composite the fill over a half-transparent red track (≈177,74,41).
+  const shot = (await page.screenshot()).toString('base64');
+  const pixel = await page.evaluate(async ({ shot, x, y }) => {
+    const image = new Image(); image.src = `data:image/png;base64,${shot}`; await image.decode();
+    const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+    const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+    return [...context.getImageData(x, y, 1, 1).data.slice(0, 3)];
+  }, { shot, x: 60, y: 410 });
+  for (const [channel, expected] of [117, 78, 46].entries()) assert(Math.abs(pixel[channel] - expected) <= 3, `fill pixel ${JSON.stringify(pixel)} ≠ [117,78,46]`);
+  console.log(`PASS decorated nodes fade as one group ${JSON.stringify({ pixel, button: nodes.fade_button.group.opacity })}`);
+
+  // Boxed container/tabs clip their children at Core's content box, for paint and input; a legacy container does not.
+  assert.equal(nodes.clip_box.overflow, 'hidden'); assert.equal(nodes.clip_tabs.overflow, 'hidden'); assert.equal(nodes.clip_legacy.overflow, 'visible');
+  assert.deepEqual(nodes.clip_box.rect, { x: 498, y: 418, width: 264, height: 124 });
+  // The node under a point, or `frame:<id>` when a decorated node's own frame takes the press.
+  const hit = (x, y) => page.evaluate(([x, y]) => {
+    const target = document.elementFromPoint(x, y), decor = target?.closest('[data-ui-decor]');
+    return decor ? `frame:${decor.parentElement.dataset.uiGroup}` : target?.closest('[data-ui-node]')?.dataset.uiNode ?? null;
+  }, [x, y]);
+  assert.equal(await hit(470, 458), null, 'outside the boxed parent'); assert.equal(await hit(490, 458), null, 'on the parent border/padding');
+  assert.equal(await hit(520, 458), 'clip_child');
+  assert.equal(await hit(30, 515), null); assert.equal(await hit(45, 515), 'frame:clip_tabs', 'the tabs frame keeps the press, not the child'); assert.equal(await hit(80, 515), 'tab_child');
+  assert.equal(await hit(800, 500), 'legacy_child', 'legacy container keeps overflow visible');
+  console.log('PASS boxed container/tabs clip children to the content box; legacy container unchanged');
   assert.deepEqual(errors, []);
 } finally {
   await browser.close();

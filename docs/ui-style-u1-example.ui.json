@@ -13,11 +13,11 @@
             "shadows": [{ "x": 0, "y": 18, "blur": 48, "color": 2243914, "opacity": 0.18 }]
           },
           "children": [
-            { "id": "u1_title_name", "type": "text", "frame": { "x": 0, "y": 0, "width": 448, "height": 76 },
+            { "id": "u1_title_name", "type": "text", "frame": { "x": 0, "y": 0, "width": 446, "height": 76 },
               "text": { "kind": "data", "field": "title" },
               "style": { "fontRole": "title", "fontSize": 52, "fontWeight": 700, "letterSpacing": 4, "color": 2243914,
                 "textShadows": [{ "x": 0, "y": 2, "blur": 0, "color": 16777215, "opacity": 0.9 }] } },
-            { "id": "u1_title_subtitle", "type": "text", "frame": { "x": 0, "y": 82, "width": 448, "height": 34 },
+            { "id": "u1_title_subtitle", "type": "text", "frame": { "x": 0, "y": 82, "width": 446, "height": 34 },
               "text": { "kind": "data", "field": "subtitle" },
               "style": { "fontSize": 20, "letterSpacing": 2, "color": 4684421, "lineHeight": 1.4 } },
             { "id": "u1_title_start", "type": "button", "frame": { "x": 0, "y": 142, "width": 280, "height": 48 },
@@ -42,7 +42,7 @@
               "style": { "color": 2243914, "fontSize": 20, "letterSpacing": 2, "align": "left", "background": 16777215, "backgroundOpacity": 0.72,
                 "border": { "width": 1, "color": 4684421, "opacity": 0.55 }, "borderRadius": 8, "backgroundImage": null,
                 "padding": { "top": 0, "right": 20, "bottom": 0, "left": 20 } } },
-            { "id": "u1_title_note", "type": "text", "frame": { "x": 0, "y": 372, "width": 448, "height": 24 },
+            { "id": "u1_title_note", "type": "text", "frame": { "x": 0, "y": 370, "width": 446, "height": 24 },
               "text": { "kind": "literal", "value": "U1 样式示例 · 非最终美术 · 未用于默认外观" },
               "style": { "fontSize": 14, "color": 4684421, "opacity": 0.85, "letterSpacing": 1 } }
           ]
