@@ -261,7 +261,7 @@ try {
   await page.waitForFunction(() => window.__surdetDebug.queries.overlay.gallery().mode === 'grid');
   await activate('音乐');
   assert.equal(await page.evaluate(() => window.__surdetDebug.queries.overlay.gallery().tab), 'music');
-  await activate('✕ 关闭');
+  await activate('关闭');
   await page.waitForFunction(() => window.__surdetDebug.uiSession.overlay !== 'gallery');
   console.log('PASS original backlog search/escape and real gallery unlock/view/return; no music rows are fabricated');
 

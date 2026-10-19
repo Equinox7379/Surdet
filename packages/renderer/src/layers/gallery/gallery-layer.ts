@@ -429,46 +429,53 @@ export class GalleryLayer implements GalleryProjectionPort {
 
   #layoutHeader(): void {
     if (!this.#galleryTabs || !this.#galleryTitle || !this.#sectionTitle || !this.#progress || !this.#closeControl) return;
+    const compact = this.#h < 420;
     const available = this.#w - this.#margin * 2;
     const closeWidth = Math.max(100, this.#theme.typography.uiSize * 2 + 32);
+    const height = Math.max(44, this.#theme.typography.uiSize * 1.4 + (compact ? 8 : 16));
     const title = this.#galleryTitle;
+    title.visible = !compact;
+    this.#sectionTitle.visible = !compact;
     title.style.wordWrapWidth = available - closeWidth - 16;
     title.position.set(this.#margin, 20);
     const close = this.#closeControl;
-    close.position.set(this.#w - this.#margin - closeWidth + 12, 24);
-    close.hitArea = new Rectangle(-12, -8, closeWidth, 44);
+    const insetY = compact ? 4 : 8;
+    const closeHeight = compact ? height : 44;
+    close.position.set(this.#w - this.#margin - closeWidth + 12, compact ? 12 : 24);
+    close.hitArea = new Rectangle(-12, -insetY, closeWidth, closeHeight);
     const closeBorder = this.#tabBorders.get(close.text)!;
     closeBorder.position.copyFrom(close.position);
-    closeBorder.clear().rect(-12, -8, closeWidth, 44).stroke({ color: this.#theme.colors.line, width: 2 });
-    const gap = this.#w < 680 ? this.#theme.spacing.xs : this.#theme.spacing.md;
-    const columns = available >= 6 * Math.max(72, this.#theme.typography.uiSize * 2 + 24) + gap * 5 ? 6 : 3;
-    const width = columns === 6 ? Math.min(96, (available - gap * 5) / 6) : (available - gap * 2) / 3;
-    const height = Math.max(44, this.#theme.typography.uiSize * 1.4 + 16);
-    const top = 20 + Math.max(44, this.#textHeight(title)) + 8;
-    Object.values(this.#galleryTabs).forEach((tab, index) => {
-      const x = this.#margin + index % columns * (width + gap), y = top + Math.floor(index / columns) * (height + 6);
-      tab.position.set(x + 12, y + 8);
-      tab.style.wordWrapWidth = width - 24;
-      tab.hitArea = new Rectangle(-12, -8, width, height);
-      const border = this.#tabBorders.get(tab.text)!;
-      border.position.copyFrom(tab.position);
-      border.clear().rect(-12, -8, width, height).stroke({ color: this.#theme.colors.line, width: 2 });
-      this.#tabAccents.get(tab.text)!.clear().moveTo(x + 12, y + height).lineTo(x + width - 12, y + height)
-        .stroke({ color: this.#theme.colors.accent, width: 2 });
-    });
-    const sectionY = top + Math.ceil(6 / columns) * (height + 6) + 8;
+    closeBorder.clear().rect(-12, -insetY, closeWidth, closeHeight).stroke({ color: this.#theme.colors.line, width: 2 });
     const names = { cg: '图片珍藏', music: '音乐鉴赏', text: '文本回想', ending: '结局收藏', profile: '人物档案', term: '词典拾遗' };
     const views = this.#galleryViews;
     const items = views ? ({ cg: views.cgs, music: views.music, text: views.texts, ending: views.endings, profile: views.profiles, term: views.terms })[this.#galleryTab] : [];
     const unit = this.#galleryTab === 'ending' ? '个结局' : this.#galleryTab === 'profile' ? '项人物资料' : this.#galleryTab === 'term' ? '个词条' : '项';
+    this.#progress.text = `已收集 ${items.filter(item => item.unlocked).length}/${items.length} ${unit}`;
+    this.#progress.style.wordWrapWidth = compact ? available - closeWidth - 16 : available * 0.6;
+    this.#progress.style.align = compact ? 'left' : 'right';
+    const gap = this.#w < 680 ? this.#theme.spacing.xs : this.#theme.spacing.md;
+    const columns = available >= 6 * Math.max(72, this.#theme.typography.uiSize * 2 + 24) + gap * 5 ? 6 : 3;
+    const width = columns === 6 ? Math.min(96, (available - gap * 5) / 6) : (available - gap * 2) / 3;
+    const rowGap = compact ? 4 : 6;
+    const top = compact ? 8 + Math.max(closeHeight, this.#textHeight(this.#progress)) + 6 : 20 + Math.max(44, this.#textHeight(title)) + 8;
+    Object.values(this.#galleryTabs).forEach((tab, index) => {
+      const x = this.#margin + index % columns * (width + gap), y = top + Math.floor(index / columns) * (height + rowGap);
+      tab.position.set(x + 12, y + insetY);
+      tab.style.wordWrapWidth = width - 24;
+      tab.hitArea = new Rectangle(-12, -insetY, width, height);
+      const border = this.#tabBorders.get(tab.text)!;
+      border.position.copyFrom(tab.position);
+      border.clear().rect(-12, -insetY, width, height).stroke({ color: this.#theme.colors.line, width: 2 });
+      this.#tabAccents.get(tab.text)!.clear().moveTo(x + 12, y + height).lineTo(x + width - 12, y + height)
+        .stroke({ color: this.#theme.colors.accent, width: 2 });
+    });
+    const sectionY = top + Math.ceil(6 / columns) * (height + 6) + 8;
     this.#sectionTitle.text = names[this.#galleryTab];
     this.#sectionTitle.style.wordWrapWidth = available * 0.4;
     this.#sectionTitle.position.set(this.#margin, sectionY);
-    this.#progress.text = `已收集 ${items.filter(item => item.unlocked).length}/${items.length} ${unit}`;
-    this.#progress.style.wordWrapWidth = available * 0.6;
-    this.#progress.style.align = 'right';
-    this.#progress.position.set(this.#w - this.#margin - this.#textWidth(this.#progress), sectionY);
-    this.#contentTop = sectionY + Math.max(this.#textHeight(this.#sectionTitle), this.#textHeight(this.#progress)) + 20;
+    this.#progress.position.set(compact ? this.#margin : this.#w - this.#margin - this.#textWidth(this.#progress), compact ? 8 : sectionY);
+    this.#contentTop = compact ? top + Math.ceil(6 / columns) * (height + rowGap) - rowGap + 12
+      : sectionY + Math.max(this.#textHeight(this.#sectionTitle), this.#textHeight(this.#progress)) + 20;
     drawPlayerDivider(this.#headerDivider!, this.#theme, this.#margin, this.#contentTop - 10, available);
   }
 

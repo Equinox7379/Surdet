@@ -182,6 +182,73 @@ function controlBounds(node: Container): Rectangle {
 }
 
 describe('Gallery collection layout', () => {
+  it.each(['图片', '音乐', '文本', '结局', '人物', '词典'])('reserves at least 100px of real scroll viewport for %s in a short window with large typography', (tabName) => {
+    const runtime = makeGalleryRuntime(500, 320);
+    const entries = Array.from({ length: 12 }, (_, index) => ({ id: `entry-${index}`, name: `可滚动收藏 ${index}`, unlocked: true }));
+    try {
+      runtime.layer.showGallery({ cgs: entries, music: entries, texts: entries, endings: entries, profiles: entries, terms: entries });
+      const tabs = ['图片', '音乐', '文本', '结局', '人物', '词典'].map(label => findText(runtime.root, label));
+      findText(runtime.root, tabName).emit('pointerdown', pointerEvent);
+      const close = findText(runtime.root, '关闭');
+      const list = findParentWithText(runtime.root, entries[0]!.name).parent!;
+      const mask = list.parent!.children.find(child => child instanceof Graphics) as Graphics;
+      const initialViewport = { y: mask.getLocalBounds().y, height: mask.getLocalBounds().height };
+      const initialNavigation = [...tabs, close].map(controlBounds);
+      runtime.layer.setTheme(createRendererTheme({ typography: { headingSize: 40, uiSize: 30, captionSize: 24 } }));
+
+      const viewport = mask.getLocalBounds();
+      expect(viewport.height).toBeGreaterThanOrEqual(100);
+      expect(viewport.y + viewport.height).toBeLessThanOrEqual(300);
+      expect(list.y).toBe(viewport.y);
+      expect(findText(runtime.root, '回忆鉴赏').visible).toBe(false);
+      const sectionTitle = allText(runtime.root).find(text => ['图片珍藏', '音乐鉴赏', '文本回想', '结局收藏', '人物档案', '词典拾遗'].includes(text.text))!;
+      expect(sectionTitle.visible).toBe(false);
+      const navigation = [...tabs, close].map(controlBounds);
+      navigation.forEach((rect, index) => {
+        expect(rect.x).toBeGreaterThanOrEqual(0); expect(rect.y).toBeGreaterThanOrEqual(0);
+        expect(rect.right).toBeLessThanOrEqual(500); expect(rect.bottom).toBeLessThan(viewport.y);
+        navigation.slice(index + 1).forEach(other => {
+          expect(rect.x < other.right && rect.right > other.x && rect.y < other.bottom && rect.bottom > other.y).toBe(false);
+        });
+      });
+      expect(new Set(tabs.map(tab => controlBounds(tab).y)).size).toBeLessThanOrEqual(2);
+      tabs.forEach(tab => { expect(tab.style.fontSize).toBe(30); expect(tab.visible).toBe(true); });
+      expect(close.style.fontSize).toBe(30);
+      const progress = allText(runtime.root).find(text => text.text.startsWith('已收集 12/12'))!;
+      expect(progress.visible).toBe(true);
+      expect(progress.y).toBeGreaterThanOrEqual(controlBounds(close).y);
+      expect(progress.y).toBeLessThan(controlBounds(close).bottom);
+      expect(progress.x + progress.style.wordWrapWidth).toBeLessThan(controlBounds(close).x);
+      const beforeScroll = list.y;
+      findParentWithText(runtime.root, entries[11]!.name).emit('mouseover', pointerEvent);
+      expect(list.y).toBeLessThan(beforeScroll);
+      expect(mask.getLocalBounds().y).toBe(viewport.y);
+
+      runtime.layer.setTheme(DEFAULT_RENDERER_THEME);
+      expect({ y: mask.getLocalBounds().y, height: mask.getLocalBounds().height }).toEqual(initialViewport);
+      expect([...tabs, close].map(controlBounds)).toEqual(initialNavigation);
+      expect(findText(runtime.root, '回忆鉴赏').visible).toBe(false);
+      expect(sectionTitle.visible).toBe(false);
+      expect(tabs.every(tab => tab.visible)).toBe(true);
+    } finally { disposeGalleryRuntime(runtime); }
+  });
+
+  it.each([[1280, 720], [960, 540]])('restores the full header after a live typography round trip at %ix%i', (width, height) => {
+    const runtime = makeGalleryRuntime(width, height);
+    try {
+      runtime.layer.showGallery({ cgs: [], music: [] });
+      const header = ['回忆鉴赏', '图片珍藏', '已收集 0/0 项', '图片', '音乐', '文本', '结局', '人物', '词典', '关闭'].map(label => findText(runtime.root, label));
+      const initialHeader = header.map(text => ({ x: text.x, y: text.y, visible: text.visible }));
+      const list = findText(runtime.root, '暂无鉴赏图片').parent!;
+      const initialTop = list.y;
+      runtime.layer.setTheme(createRendererTheme({ typography: { headingSize: 40, uiSize: 30, captionSize: 24 } }));
+      expect(header.every(text => text.visible)).toBe(true);
+      runtime.layer.setTheme(DEFAULT_RENDERER_THEME);
+      expect(header.map(text => ({ x: text.x, y: text.y, visible: text.visible }))).toEqual(initialHeader);
+      expect(list.y).toBe(initialTop);
+    } finally { disposeGalleryRuntime(runtime); }
+  });
+
   it('repositions an empty list and its mask when live typography grows the header', () => {
     const runtime = makeGalleryRuntime(500, 320);
     try {
@@ -312,7 +379,8 @@ describe('Gallery collection layout', () => {
       const viewer = findParentWithText(runtime.root, '点击任意处返回列表');
       expect((viewer.hitArea as Rectangle).y).toBe(viewportY);
       expect(controlBounds(viewer).y).toBeGreaterThan(Math.max(...tabs.map(tab => controlBounds(tab).bottom)));
-      runtime.layer.setTheme(createRendererTheme({ typography: { uiSize: 24, headingSize: 32 } }));
+      runtime.layer.setTheme(createRendererTheme({ typography: { uiSize: 30, headingSize: 40, captionSize: 24 } }));
+      expect(controlBounds(viewer).height).toBeGreaterThanOrEqual(100);
       expect(controlBounds(viewer).bottom).toBeLessThanOrEqual(320);
       viewer.emit('pointerdown', pointerEvent);
       expect(runtime.layer.gallery()).toMatchObject({ mode: 'grid' });
