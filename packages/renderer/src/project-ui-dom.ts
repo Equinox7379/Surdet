@@ -426,9 +426,9 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       input.setAttribute('aria-label', label());
       bindings.push(() => input.setAttribute('aria-label', label()));
       input.style.cssText = 'width:100%;height:100%;box-sizing:border-box;font:inherit;color:inherit;accent-color:' + hex(theme.colors.accent);
-      // A boxed control fills exactly the Core content box; the UA margins of checkbox/range inputs would push it
-      // off that box (and out of the frame). Unboxed legacy controls keep their existing native layout.
-      if (boxed) input.style.margin = '0';
+      // Boxed inputs fill Core's content box without UA margins or inline baseline offsets, including tiny boxes.
+      // Unboxed legacy controls keep their existing native layout.
+      if (boxed) { input.style.margin = '0'; input.style.display = 'block'; }
       if (node.type === 'input') {
         // Each native layer of the field gives way only to an author layer that replaces or clears it;
         // unrelated box fields (padding, shadows, a null skin) keep the native field box.
