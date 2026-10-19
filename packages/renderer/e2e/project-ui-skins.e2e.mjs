@@ -83,7 +83,7 @@ try {
     const nextFrame = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const styles = locator => locator.evaluateAll(elements => elements.map(element => {
       const css = getComputedStyle(element);
-      return { text: element.textContent, image: css.backgroundImage, background: css.backgroundColor,
+      return { text: element.textContent, image: css.backgroundImage, background: css.backgroundColor, color: css.color,
         borders: ['Top', 'Right', 'Bottom', 'Left'].map(side => css[`border${side}Width`]), size: css.backgroundSize };
     }));
     const buttons = await styles(page.locator('[data-surdet-project-ui] button'));
@@ -95,6 +95,7 @@ try {
     assert.equal(await page.evaluate(() => window.skinConfirmation), false);
     await page.evaluate(() => window.skinUi.showGalleryImage('cg', '测试图片'));
     const close = await styles(page.getByRole('button', { name: '关闭图片', exact: true }));
+    for (const button of [...confirmation, ...close]) assert.equal(button.color, 'rgb(244, 239, 230)', 'auxiliary controls use the configured theme text color');
     await page.getByRole('button', { name: '关闭图片', exact: true }).click();
     assert.equal(await page.locator('[data-ui-viewer]').count(), 0);
     const observed = { mode, buttons, confirmation, close, rows };
@@ -342,5 +343,56 @@ try {
   assert.deepEqual(gridErrors, []);
   await gridPage.close();
   console.log('PASS grid: eight unique cards in two scrollable columns; text bounds; readonly; keyboard selection and refresh focus; fill/default contain/cover');
+  const sliderPage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+  const sliderErrors = [];
+  sliderPage.on('pageerror', error => sliderErrors.push(error.message));
+  await sliderPage.setContent('<!doctype html><body style="margin:0"><canvas width="1280" height="720"></canvas></body>');
+  await sliderPage.addScriptTag({ content: chunks[0].code });
+  await sliderPage.evaluate(() => {
+    window.sliderValues = { bgmVolume: 0.55, textSpeedCps: 24, permit: true };
+    window.sliderWrites = [];
+    window.sliderUi = SkinnedUi.createProjectUiDom({
+      canvas: document.querySelector('canvas'),
+      document: { version: 1, pages: { settings: { id: 'range-page', type: 'container', frame: { x: 0, y: 0, width: 1280, height: 720 }, children: [
+        { id: 'volume-range', type: 'slider', text: { kind: 'literal', value: '背景音乐' }, binding: { kind: 'setting', name: 'bgmVolume' }, frame: { x: 80, y: 80, width: 500, height: 40 } },
+        { id: 'speed-range', type: 'slider', text: { kind: 'literal', value: '文字速度' }, binding: { kind: 'setting', name: 'textSpeedCps' }, enabledWhen: 'permit', frame: { x: 80, y: 160, width: 500, height: 40 } },
+      ] } } },
+      theme: { colors: { text: 0x213943, panel: 0xffffff, accent: 0x2799c0 }, typography: { uiSize: 22 }, skins: {} },
+      fontFamily: () => 'Arial', imageUrl: () => undefined, onError: error => { throw error; },
+    });
+    window.sliderUi.show('settings', {
+      read: name => window.sliderValues[name], data: () => undefined, content: () => [], action: () => {}, select: () => {},
+      bounds: binding => binding.name === 'bgmVolume' ? { min: 0, max: 1, step: 0.1 } : { min: 1, max: 199, step: 6 },
+      write: (binding, value) => { window.sliderWrites.push({ name: binding.name, value }); window.sliderValues[binding.name] = value; },
+    });
+  });
+  const volumeRange = sliderPage.getByRole('slider', { name: '背景音乐' });
+  const speedRange = sliderPage.getByRole('slider', { name: '文字速度' });
+  assert.equal(await volumeRange.inputValue(), '0.55', 'show the confirmed 55%, not a browser-rounded 60%');
+  assert.equal(await speedRange.inputValue(), '24', 'show the confirmed 24 CPS, not 25');
+  assert.deepEqual(await sliderPage.evaluate(() => window.sliderWrites), [], 'rendering must not change settings');
+  await volumeRange.focus(); await sliderPage.keyboard.press('ArrowRight');
+  assert.equal(await sliderPage.evaluate(() => window.sliderValues.bgmVolume), 0.65, 'keyboard steps from the actual confirmed value');
+  await sliderPage.keyboard.press('ArrowLeft');
+  assert.equal(await sliderPage.evaluate(() => window.sliderValues.bgmVolume), 0.55);
+  await sliderPage.keyboard.press('Home');
+  assert.equal(await sliderPage.evaluate(() => window.sliderValues.bgmVolume), 0);
+  await sliderPage.keyboard.press('End');
+  assert.equal(await sliderPage.evaluate(() => window.sliderValues.bgmVolume), 1);
+  await volumeRange.click({ position: { x: 250, y: 20 } });
+  assert.equal(await sliderPage.evaluate(() => window.sliderValues.bgmVolume), 0.5, 'pointer input still follows the public step');
+  await speedRange.focus(); await sliderPage.keyboard.press('ArrowRight');
+  assert.equal(await sliderPage.evaluate(() => window.sliderValues.textSpeedCps), 30);
+  await sliderPage.keyboard.press('ArrowLeft');
+  assert.equal(await sliderPage.evaluate(() => window.sliderValues.textSpeedCps), 24);
+  await sliderPage.evaluate(() => { window.sliderValues.bgmVolume = 0.57; window.sliderValues.permit = false; window.sliderUi.refresh(); });
+  assert.equal(await volumeRange.inputValue(), '0.57', 'external confirmed updates remain exact');
+  assert(await speedRange.isDisabled());
+  const writesBeforeDisabled = await sliderPage.evaluate(() => window.sliderWrites.length);
+  await speedRange.evaluate(input => { input.value = '90'; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); });
+  assert.equal(await sliderPage.evaluate(() => window.sliderWrites.length), writesBeforeDisabled, 'disabled controls cannot write via pointer or key handlers');
+  assert.deepEqual(sliderErrors, []);
+  await sliderPage.close();
+  console.log('PASS sliders: confirmed off-grid defaults; stepped keys and pointer; endpoints; refresh; disabled guards');
   console.log(`PASS project UI button skins / ${output}`);
 } finally { await browser.close(); }
