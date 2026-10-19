@@ -81,7 +81,7 @@ interface Display {
   element: HTMLDivElement;
   context: ProjectUiContext;
   bindings: Array<() => void>;
-  contents: Array<{ element: HTMLElement; source: ProjectUiContentSource; template: readonly ProjectUiNode[]; rect: ProjectUiRect; signature: string; bindings: Array<() => void> }>;
+  contents: Array<{ element: HTMLElement; source: ProjectUiContentSource; template: readonly ProjectUiNode[]; columns: 1 | 2; rect: ProjectUiRect; signature: string; bindings: Array<() => void> }>;
   pending: boolean;
 }
 
@@ -297,6 +297,17 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     element.style.boxSizing = 'border-box';
   }
 
+  function applyButtonSkin(element: HTMLElement): boolean {
+    if (!theme.skins.buttonSkin) return false;
+    const url = options.imageUrl(theme.skins.buttonSkin);
+    if (!url) return false;
+    element.style.backgroundImage = `url(${JSON.stringify(url)})`;
+    element.style.backgroundSize = '100% 100%';
+    element.style.backgroundColor = 'transparent';
+    element.style.border = '0';
+    return true;
+  }
+
   function renderNode(display: Display, node: ProjectUiNode, parent: HTMLElement, parentRect: ProjectUiRect, item?: ProjectUiItem, bindings = display.bindings): HTMLElement {
     const rect = projectUiRect(parentRect, node.frame);
     const element = document.createElement(node.type === 'button' ? 'button' : 'div');
@@ -333,10 +344,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       if (node.text) bindings.push(() => { button.textContent = visibleText(node.text, display.context, item, `ui:${node.id}`); });
       bindings.push(() => { button.disabled = Boolean(item?.disabled) || !condition(node.enabledWhen);
         button.style.opacity = String((node.style?.opacity ?? 1) * (button.disabled ? 0.45 : 1)); button.style.cursor = button.disabled ? 'not-allowed' : 'pointer'; });
-      if (theme.skins.buttonSkin) {
-        const url = options.imageUrl(theme.skins.buttonSkin);
-        if (url) { button.style.backgroundImage = `url(${JSON.stringify(url)})`; button.style.backgroundSize = '100% 100%'; }
-      }
+      applyButtonSkin(button);
       button.addEventListener('click', event => {
         event.stopPropagation();
         if (!node.action || display.pending || !acceptsInput()) return;
@@ -357,7 +365,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       image.src = url;
       image.alt = visibleText(node.text, display.context, item, `ui:${node.id}`);
       if (node.text) bindings.push(() => { image.alt = visibleText(node.text, display.context, item, `ui:${node.id}`); });
-      image.style.cssText = 'width:100%;height:100%;object-fit:contain;pointer-events:none';
+      image.style.cssText = `width:100%;height:100%;object-fit:${node.style?.imageFit ?? 'contain'};pointer-events:none`;
       element.appendChild(image);
       element.style.pointerEvents = 'none';
     } else if (node.type === 'progress') {
@@ -408,7 +416,14 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     } else if (node.type === 'content') {
       element.style.overflow = 'auto';
       element.style.pointerEvents = 'auto';
-      display.contents.push({ element, source: node.source!, template: node.children ?? [], rect, signature: '', bindings: [] });
+      const columns = node.style?.columns ?? 1;
+      if (columns === 2) {
+        element.style.display = 'grid';
+        element.style.gridTemplateColumns = 'repeat(2, minmax(0, 1fr))';
+        element.style.gap = `${theme.spacing.md}px`;
+        element.style.alignContent = 'start';
+      }
+      display.contents.push({ element, source: node.source!, template: node.children ?? [], columns, rect, signature: '', bindings: [] });
     } else if (node.type === 'tabs') {
       element.style.pointerEvents = 'auto';
       const tabs = [...new Set((node.children ?? []).map(child => child.tab).filter((name): name is string => !!name))];
@@ -421,7 +436,12 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
         panels.style.cssText = `position:absolute;inset:${PROJECT_UI_TAB_BAR_HEIGHT}px 0 0`;
         const select = (name: string): void => {
           for (const child of Array.from(panels.children) as HTMLElement[]) child.hidden = child.dataset.uiTab !== name;
-          for (const tab of Array.from(bar.children) as HTMLButtonElement[]) tab.setAttribute('aria-selected', String(tab.dataset.uiTab === name));
+          for (const tab of Array.from(bar.children) as HTMLButtonElement[]) {
+            const selected = tab.dataset.uiTab === name;
+            tab.setAttribute('aria-selected', String(selected));
+            tab.style.textDecoration = selected ? 'underline' : 'none';
+            tab.style.textUnderlineOffset = '4px';
+          }
         };
         for (const tab of tabs) {
           const button = document.createElement('button');
@@ -432,7 +452,12 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
             refresh(); bindings.push(refresh);
           }
           button.setAttribute('role', 'tab');
-          button.style.cssText = `border:1px solid ${hex(theme.colors.line)};border-radius:${theme.radius.sm}px;background:${hex(theme.colors.surface)};color:${hex(theme.colors.text)};padding:4px 14px;cursor:pointer`;
+          button.style.cssText = `border:1px solid ${hex(theme.colors.line)};border-radius:${theme.radius.sm}px;background:${hex(theme.colors.surface)};color:${color(node.style?.color, theme.colors.text)};padding:4px 14px;cursor:pointer`;
+          button.style.fontFamily = options.fontFamily('ui');
+          button.style.fontSize = `${Math.min(theme.typography.uiSize, 22)}px`;
+          button.style.lineHeight = '1';
+          button.style.boxSizing = 'border-box';
+          applyButtonSkin(button);
           button.onclick = () => select(tab);
           bar.appendChild(button);
         }
@@ -471,16 +496,28 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     content.element.replaceChildren();
     const rowHeight = content.template.length > 0
       ? Math.max(54, ...content.template.map(node => node.frame.y + node.frame.height + 8)) : 62;
+    const hasImage = (node: ProjectUiNode): boolean => node.type === 'image' || Boolean(node.children?.some(hasImage));
+    const imageTemplate = content.template.some(hasImage);
+    const skinnedSettings = content.source === 'settings' && content.template.length === 0
+      && Boolean(theme.skins.buttonSkin && options.imageUrl(theme.skins.buttonSkin));
+    const gap = content.columns === 2 ? theme.spacing.md : 0;
+    const columnWidth = (content.rect.width - gap) / content.columns;
     items.forEach((item, index) => {
       const row = document.createElement('div');
       row.dataset.uiItem = item.id;
-      row.style.cssText = `position:relative;box-sizing:border-box;min-height:${rowHeight}px;border-bottom:1px solid ${hex(theme.colors.line)};padding:8px 12px;cursor:${item.disabled ? 'default' : 'pointer'};background:${index % 2 ? hex(theme.colors.surface) : hex(theme.colors.panel)};color:${hex(theme.colors.text)}`;
+      row.style.cssText = `position:relative;box-sizing:border-box;min-height:${rowHeight}px;border-bottom:1px solid ${hex(theme.colors.line)};padding:8px 12px;cursor:${item.disabled ? 'default' : 'pointer'};background:${index % 2 ? hex(theme.colors.surface) : hex(theme.colors.panel)};color:inherit`;
+      if (content.columns === 2) row.style.minWidth = '0';
+      if (imageTemplate || skinnedSettings) { row.style.backgroundColor = 'transparent'; row.style.borderBottom = '0'; }
+      else if (content.template.length === 0) applyButtonSkin(row);
+      if (skinnedSettings) { row.style.display = 'flex'; row.style.alignItems = 'center'; row.style.columnGap = '16px'; row.style.paddingRight = '138px'; }
       if (content.template.length > 0) {
-        const rowRect = { x: content.rect.x, y: content.rect.y + index * rowHeight, width: content.rect.width, height: rowHeight };
+        const rowRect = { x: content.rect.x + (index % content.columns) * (columnWidth + gap),
+          y: content.rect.y + Math.floor(index / content.columns) * (rowHeight + gap), width: columnWidth, height: rowHeight };
         content.template.forEach(node => renderNode(display, node, row, rowRect, item, content.bindings));
       } else {
         const title = document.createElement('span');
         title.style.cssText = 'display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+        if (skinnedSettings) { title.style.fontWeight = '400'; title.style.flex = '1'; title.style.minWidth = '0'; }
         if (item.backlog) appendBacklogText(title, item.label, item.backlog);
         else title.textContent = item.label;
         row.appendChild(title);
@@ -488,6 +525,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
           const description = document.createElement('small');
           description.textContent = item.description;
           description.style.cssText = 'display:block;opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+          if (skinnedSettings) { description.style.marginLeft = 'auto'; description.style.textAlign = 'right'; }
           row.appendChild(description);
         }
       }
@@ -516,6 +554,8 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
         const restore = document.createElement('button');
         restore.type = 'button'; restore.textContent = '恢复备份并读取';
         restore.style.cssText = `position:absolute;right:12px;top:12px;border:1px solid ${hex(theme.colors.line)};background:${hex(theme.colors.surface)};color:${hex(theme.colors.text)};cursor:pointer`;
+        restore.style.color = 'inherit';
+        applyButtonSkin(restore);
         restore.onclick = event => { event.stopPropagation(); void activate(true); };
         row.appendChild(restore);
       }
@@ -528,6 +568,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
         toggle.type = 'button'; toggle.dataset.uiControl = 'switch'; toggle.textContent = on ? '开启' : '关闭';
         toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-checked', String(on)); toggle.setAttribute('aria-label', item.label);
         toggle.style.cssText = `position:absolute;right:12px;top:12px;width:102px;height:34px;border-radius:17px;border:1px solid ${hex(on ? theme.colors.accent : theme.colors.line)};background:${hex(on ? theme.colors.accent : theme.colors.surface)};color:${hex(on ? theme.colors.textOnAccent : theme.colors.text)};font-weight:600;cursor:pointer`;
+        if (applyButtonSkin(toggle) || !on) toggle.style.color = 'inherit';
         toggle.onclick = event => { event.stopPropagation(); wrap(display.context.action({ kind: 'setting-step', name: item.id, direction: 1 })); };
         row.appendChild(toggle);
       } else if (content.source === 'settings' && content.template.length === 0) {
@@ -536,6 +577,8 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
           step.type = 'button'; step.textContent = label; step.dataset.uiControl = `step${direction}`;
           step.setAttribute('aria-label', `${item.label}${direction < 0 ? '减少' : '增加'}`);
           step.style.cssText = `position:absolute;right:${direction < 0 ? 72 : 12}px;top:12px;width:42px;height:34px;border:1px solid ${hex(theme.colors.line)};background:${hex(theme.colors.surface)};color:${hex(theme.colors.text)};cursor:pointer`;
+          step.style.color = 'inherit';
+          applyButtonSkin(step);
           step.onclick = event => { event.stopPropagation(); wrap(display.context.action({ kind: 'setting-step', name: item.id, direction })); };
           row.appendChild(step);
         }
@@ -645,6 +688,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
         const label = document.createElement('p'); label.textContent = message;
         const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = '取消';
         const accept = document.createElement('button'); accept.type = 'button'; accept.textContent = '确认';
+        applyButtonSkin(cancel); applyButtonSkin(accept);
         const finish = (accepted: boolean): void => { confirmation = null; element.remove(); if (previous?.isConnected) previous.focus(); resolve(accepted); };
         cancel.onclick = () => finish(false); accept.onclick = () => finish(true);
         element.append(label, cancel, accept); design.appendChild(element);
@@ -668,6 +712,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       const close = document.createElement('button');
       close.type = 'button'; close.textContent = '关闭图片';
       close.style.cssText = 'position:absolute;right:16px;top:16px';
+      applyButtonSkin(close);
       close.onclick = () => viewer.remove();
       viewer.append(image, close);
       display.element.appendChild(viewer);
