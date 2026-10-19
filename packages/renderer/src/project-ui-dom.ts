@@ -287,7 +287,6 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     element.style.fontFamily = options.fontFamily(style?.fontRole ?? 'ui');
     element.style.fontSize = `${style?.fontSize ?? theme.typography.uiSize}px`;
     element.style.textAlign = style?.align ?? 'left';
-    element.style.opacity = String(style?.opacity ?? 1);
     // With U1 box fields the background is painted by the decoration layer instead (see renderNode).
     if (style?.background !== undefined && !usesProjectUiBox(style)) element.style.backgroundColor = color(style.background, theme.colors.surface);
   }
@@ -324,16 +323,23 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     const rect = projectUiRect(parentRect, node.frame);
     // Drawing, child placement, clipping, scrolling and input all share Core's content box.
     const boxed = usesProjectUiBox(node.style), content = boxed ? projectUiContentRect(rect, node.style) : rect;
-    const decor = boxed ? renderDecor(node, rect, parentRect) : null;
+    // A decorated node is one group in its outer box: decoration and content are assembled first and the node's
+    // opacity (and visibility) apply to that group once, so text is never composited over an already-faded background.
+    const group = boxed ? document.createElement('div') : null;
+    if (group) { group.dataset.uiGroup = node.id; place(group, rect, parentRect); group.style.pointerEvents = 'none'; }
+    const origin = group ? rect : parentRect;
+    const decor = boxed ? renderDecor(node, rect, origin) : null;
     const element = document.createElement(node.type === 'button' ? 'button' : 'div');
     element.dataset.uiNode = node.id;
     if (node.type === 'text' || node.type === 'button') element.dataset.uiReadingRole = node.style?.fontRole ?? 'ui';
     // Buttons and native controls keep their outer hit box; explicit border/padding become transparent
     // CSS insets, so the native control itself fills exactly Core's content box.
     const control = node.type === 'toggle' || node.type === 'slider' || node.type === 'input';
-    place(element, node.type === 'button' || control ? rect : content, parentRect);
+    place(element, node.type === 'button' || control ? rect : content, origin);
     if (control && boxed) element.style.padding = projectUiInsetCss(rect, content, px);
     applyStyle(element, node);
+    const faded = group ?? element;
+    faded.style.opacity = String(node.style?.opacity ?? 1);
     if ((node.type === 'text' || node.type === 'button') && isReadingText(display.page, node, item)) {
       const base = node.style?.fontSize ?? theme.typography.uiSize;
       element.dataset.uiReadingScaled = 'true';
@@ -370,7 +376,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       button.textContent = visibleText(node.text, display.context, item, `ui:${node.id}`);
       if (node.text) bindings.push(() => { button.textContent = visibleText(node.text, display.context, item, `ui:${node.id}`); });
       bindings.push(() => { button.disabled = Boolean(item?.disabled) || !condition(node.enabledWhen);
-        button.style.opacity = String((node.style?.opacity ?? 1) * (button.disabled ? 0.45 : 1)); button.style.cursor = button.disabled ? 'not-allowed' : 'pointer'; });
+        faded.style.opacity = String((node.style?.opacity ?? 1) * (button.disabled ? 0.45 : 1)); button.style.cursor = button.disabled ? 'not-allowed' : 'pointer'; });
       if (theme.skins.buttonSkin && !boxed) {
         const url = options.imageUrl(theme.skins.buttonSkin);
         if (url) { button.style.backgroundImage = `url(${JSON.stringify(url)})`; button.style.backgroundSize = '100% 100%'; }
@@ -518,15 +524,18 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     if (node.type === 'text' || node.type === 'button' || node.type === 'input' || (node.type === 'content' && !node.children?.length)) {
       applyProjectUiTypography(element, node.style, px);
     }
-    if (decor) {
+    // A boxed parent clips its children to Core's content box (scroll/content already do so by scrolling); the
+    // decoration and shadows stay outside that clip in the group. Unboxed legacy containers keep overflow visible.
+    if (boxed && (node.type === 'container' || node.type === 'tabs')) element.style.overflow = 'hidden';
+    if (group && decor) {
       // An interactive node's border/padding frame stays its own: it never falls through to the stage.
       decor.style.pointerEvents = element.style.pointerEvents === 'auto' ? 'auto' : 'none';
-      // The layer follows the node's visibility and whole-node/disabled opacity.
-      const sync = (): void => { decor.hidden = element.hidden; decor.style.opacity = element.style.opacity; };
+      // The group follows the node's visibility.
+      const sync = (): void => { group.hidden = element.hidden; };
       sync(); bindings.push(sync);
-      parent.appendChild(decor);
-    }
-    parent.appendChild(element);
+      group.append(decor, element);
+      parent.appendChild(group);
+    } else parent.appendChild(element);
     if (node.type !== 'tabs' && node.type !== 'content') node.children?.forEach(child => renderNode(display, child, element, content, item, bindings));
     return element;
   }
