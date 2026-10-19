@@ -1,8 +1,9 @@
-import { GAME_SETTING_DEFINITIONS, PROJECT_UI_TAB_BAR_HEIGHT, evalExprBoolean, parseInlineText, projectUiChildrenRect, projectUiRect, type InlineStyle, type VarValue, type ProjectUiAction, type ProjectUiBinding, type ProjectUiContentSource, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId, type ProjectUiRect, type ProjectUiText } from '@surdet/core';
+import { GAME_SETTING_DEFINITIONS, PROJECT_UI_TAB_BAR_HEIGHT, evalExprBoolean, parseInlineText, projectUiChildrenRect, projectUiContentRect, projectUiRect, resolveProjectUiStyle, type InlineStyle, type VarValue, type ProjectUiAction, type ProjectUiBinding, type ProjectUiContentSource, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId, type ProjectUiRect, type ProjectUiText } from '@surdet/core';
 import type { RendererTheme } from './theme.js';
 import { SETTING_STEPS } from './settings-store.js';
 import { fontTextDiagnostics, isUiTextClipped, type ReadingDiagnostic } from './reading-diagnostics.js';
 import type { BacklogEntry } from './backlog.js';
+import { applyProjectUiTypography, createProjectUiDecor, createProjectUiImageSizes, projectUiLineStep, usesProjectUiBox, type ProjectUiDecorImage } from './project-ui-style-dom.js';
 
 export interface ProjectUiItem {
   id: string;
@@ -108,6 +109,8 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
   const report = (error: unknown): void => { const message = error instanceof Error ? error.message : String(error);
     if (errorStatus.textContent !== message) { errorStatus.textContent = message; options.onError(error); } };
   const color = (value: number | undefined, fallback: number): string => hex(value ?? fallback);
+  const imageSizes = createProjectUiImageSizes();
+  const px = (value: number): string => `${value}px`;
   const wrap = (promise: void | Promise<void>): void => { void Promise.resolve(promise).catch(report); };
   // Static formatting only, as in the built-in backlog: speed and shake/wave are never drawn.
   const styled = (style: InlineStyle, content: Node): Node => {
@@ -238,7 +241,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     readingScrollers.set(element, scrollBy);
     element.addEventListener('keydown', event => {
       if (max() <= 1) return;
-      const line = parseFloat(getComputedStyle(element).fontSize) * 1.45 || 20;
+      const line = projectUiLineStep(element);
       // A page keeps one line of overlap, but a box shorter than a line (a small body at a large text
       // size) still pages forward by most of its own height, never backwards or by nothing.
       const page = Math.max(element.clientHeight - line, element.clientHeight * 0.875, 1);
@@ -271,7 +274,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       if (element.closest('[hidden]')) continue;
       const box = element.getBoundingClientRect();
       if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) continue;
-      const unit = event.deltaMode === 1 ? parseFloat(getComputedStyle(element).fontSize) * 1.45 : event.deltaMode === 2 ? element.clientHeight : 1;
+      const unit = event.deltaMode === 1 ? projectUiLineStep(element) : event.deltaMode === 2 ? element.clientHeight : 1;
       if (scrollBy(event.deltaY * unit)) { event.preventDefault(); event.stopPropagation(); }
       return;
     }
@@ -285,7 +288,29 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     element.style.fontSize = `${style?.fontSize ?? theme.typography.uiSize}px`;
     element.style.textAlign = style?.align ?? 'left';
     element.style.opacity = String(style?.opacity ?? 1);
-    if (style?.background !== undefined) element.style.backgroundColor = color(style.background, theme.colors.surface);
+    // With U1 box fields the background is painted by the decoration layer instead (see renderNode).
+    if (style?.background !== undefined && !usesProjectUiBox(style)) element.style.backgroundColor = color(style.background, theme.colors.surface);
+  }
+
+  /**
+   * U1 decoration for a node whose author set a box field: Core resolves the effective values, the
+   * layer is painted in the outer layout box, and the node itself keeps only its content box.
+   */
+  function renderDecor(node: ProjectUiNode, rect: ProjectUiRect, parentRect: ProjectUiRect): HTMLDivElement {
+    const style = node.style!, effective = resolveProjectUiStyle(node, {}, theme);
+    // A progress track keeps its pre-U1 surface colour and small radius unless the author sets them.
+    if (node.type === 'progress') Object.assign(effective, { background: style.background ?? theme.colors.surface, borderRadius: style.borderRadius ?? theme.radius.sm });
+    const image = (asset: string): ProjectUiDecorImage | null => {
+      const url = options.imageUrl(asset);
+      if (url) return { url, size: () => imageSizes(url) };
+      // An inherited theme button skin that is not loaded is skipped exactly as before U1.
+      if (style.backgroundImage === undefined) return null;
+      throw new Error(`界面图片未加载：${asset}`);
+    };
+    const decor = createProjectUiDecor(effective, rect, { unit: px, image, onError: error =>
+      report(new Error(`界面组件 ${node.id} 的背景：${error instanceof Error ? error.message : String(error)}`)) });
+    place(decor, rect, parentRect);
+    return decor;
   }
 
   function place(element: HTMLElement, rect: ProjectUiRect, parent: ProjectUiRect): void {
@@ -299,10 +324,14 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
 
   function renderNode(display: Display, node: ProjectUiNode, parent: HTMLElement, parentRect: ProjectUiRect, item?: ProjectUiItem, bindings = display.bindings): HTMLElement {
     const rect = projectUiRect(parentRect, node.frame);
+    // Drawing, child placement, clipping, scrolling and input all share Core's content box.
+    const boxed = usesProjectUiBox(node.style), content = boxed ? projectUiContentRect(rect, node.style) : rect;
+    const decor = boxed ? renderDecor(node, rect, parentRect) : null;
     const element = document.createElement(node.type === 'button' ? 'button' : 'div');
     element.dataset.uiNode = node.id;
     if (node.type === 'text' || node.type === 'button') element.dataset.uiReadingRole = node.style?.fontRole ?? 'ui';
-    place(element, rect, parentRect);
+    // A button keeps its outer hit box; its explicit border/padding become transparent CSS insets.
+    place(element, node.type === 'button' ? rect : content, parentRect);
     applyStyle(element, node);
     if ((node.type === 'text' || node.type === 'button') && isReadingText(display.page, node, item)) {
       const base = node.style?.fontSize ?? theme.typography.uiSize;
@@ -324,16 +353,24 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     if (node.type === 'button') {
       const button = element as HTMLButtonElement;
       button.type = 'button';
-      button.style.border = `1px solid ${hex(theme.colors.line)}`;
-      button.style.borderRadius = `${theme.radius.md}px`;
-      button.style.backgroundColor = color(node.style?.background, theme.colors.surface);
+      if (boxed) {
+        const style = node.style!;
+        button.style.border = `${style.border?.width ?? 0}px solid transparent`;
+        button.style.borderRadius = `${style.borderRadius ?? theme.radius.md}px`;
+        button.style.backgroundColor = 'transparent';
+        if (style.padding) button.style.padding = `${style.padding.top}px ${style.padding.right}px ${style.padding.bottom}px ${style.padding.left}px`;
+      } else {
+        button.style.border = `1px solid ${hex(theme.colors.line)}`;
+        button.style.borderRadius = `${theme.radius.md}px`;
+        button.style.backgroundColor = color(node.style?.background, theme.colors.surface);
+      }
       button.style.cursor = 'pointer';
       button.style.fontWeight = '600';
       button.textContent = visibleText(node.text, display.context, item, `ui:${node.id}`);
       if (node.text) bindings.push(() => { button.textContent = visibleText(node.text, display.context, item, `ui:${node.id}`); });
       bindings.push(() => { button.disabled = Boolean(item?.disabled) || !condition(node.enabledWhen);
         button.style.opacity = String((node.style?.opacity ?? 1) * (button.disabled ? 0.45 : 1)); button.style.cursor = button.disabled ? 'not-allowed' : 'pointer'; });
-      if (theme.skins.buttonSkin) {
+      if (theme.skins.buttonSkin && !boxed) {
         const url = options.imageUrl(theme.skins.buttonSkin);
         if (url) { button.style.backgroundImage = `url(${JSON.stringify(url)})`; button.style.backgroundSize = '100% 100%'; }
       }
@@ -362,8 +399,13 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       element.style.pointerEvents = 'none';
     } else if (node.type === 'progress') {
       element.style.pointerEvents = 'none'; element.style.overflow = 'hidden';
-      element.style.borderRadius = `${theme.radius.sm}px`;
-      element.style.backgroundColor = color(node.style?.background, theme.colors.surface);
+      if (boxed) {
+        // The decoration paints the track; the fill is clipped to the track's inner corners.
+        element.style.borderRadius = `${Math.max(0, (node.style!.borderRadius ?? theme.radius.sm) - (node.style!.border?.width ?? 0))}px`;
+      } else {
+        element.style.borderRadius = `${theme.radius.sm}px`;
+        element.style.backgroundColor = color(node.style?.background, theme.colors.surface);
+      }
       element.setAttribute('role', 'progressbar');
       const fill = document.createElement('div'); fill.style.cssText = `height:100%;background:${hex(theme.colors.accent)};pointer-events:none`;
       element.appendChild(fill);
@@ -383,6 +425,11 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       input.setAttribute('aria-label', label());
       bindings.push(() => input.setAttribute('aria-label', label()));
       input.style.cssText = 'width:100%;height:100%;box-sizing:border-box;font:inherit;color:inherit;accent-color:' + hex(theme.colors.accent);
+      if (node.type === 'input') {
+        // The decoration replaces the native field box; author typography reaches the native text.
+        if (boxed) { input.style.background = 'transparent'; input.style.border = '0'; }
+        applyProjectUiTypography(input, node.style, px);
+      }
       if (node.type === 'slider') {
         const bounds = display.context.bounds(binding);
         input.min = String(bounds.min); input.max = String(bounds.max); input.step = String(bounds.step);
@@ -408,7 +455,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     } else if (node.type === 'content') {
       element.style.overflow = 'auto';
       element.style.pointerEvents = 'auto';
-      display.contents.push({ element, source: node.source!, template: node.children ?? [], rect, signature: '', bindings: [] });
+      display.contents.push({ element, source: node.source!, template: node.children ?? [], rect: content, signature: '', bindings: [] });
     } else if (node.type === 'tabs') {
       element.style.pointerEvents = 'auto';
       const tabs = [...new Set((node.children ?? []).map(child => child.tab).filter((name): name is string => !!name))];
@@ -448,13 +495,23 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
             panels.appendChild(panel);
             tabPanels.set(name, panel);
           }
-          renderNode(display, child, panel, projectUiChildrenRect(rect, node.type), item, bindings);
+          renderNode(display, child, panel, projectUiChildrenRect(rect, node.type, node.style), item, bindings);
         }
         select(tabs[0]!);
       }
     }
+    // Typography never reaches containers: CSS inheritance would leak it into child nodes.
+    if (node.type === 'text' || node.type === 'button' || node.type === 'input' || (node.type === 'content' && !node.children?.length)) {
+      applyProjectUiTypography(element, node.style, px);
+    }
+    if (decor) {
+      // The layer follows the node's visibility and whole-node/disabled opacity.
+      const sync = (): void => { decor.hidden = element.hidden; decor.style.opacity = element.style.opacity; };
+      sync(); bindings.push(sync);
+      parent.appendChild(decor);
+    }
     parent.appendChild(element);
-    if (node.type !== 'tabs' && node.type !== 'content') node.children?.forEach(child => renderNode(display, child, element, rect, item, bindings));
+    if (node.type !== 'tabs' && node.type !== 'content') node.children?.forEach(child => renderNode(display, child, element, content, item, bindings));
     return element;
   }
 
