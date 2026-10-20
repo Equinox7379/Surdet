@@ -636,7 +636,14 @@ export async function commitUiConfiguration(value: ProjectUiDocument | null, exp
   const session = await beginChange(snapshot, new InMemoryChangeRepository());
   session.record.composition = { ...session.record.composition!, mode: 'direct' };
   const fingerprint = (await inspectUi(beforeConfig, editorStorage)).fingerprint;
-  await applyUiDocument(session, { operationId: crypto.randomUUID(), expectedFingerprint: fingerprint, value: after }, editorStorage, catalog);
+  await applyUiDocument(session, { operationId: crypto.randomUUID(), expectedFingerprint: fingerprint, value: after }, editorStorage, catalog, async path => {
+    const asset = state.dirAssets.find(item => (item.sourcePath ?? (item.handle ? assetPathForHandle(item.handle) : undefined)) === path);
+    if (!asset?.handle) throw new Error(`无法读取九宫格图片：${path}`);
+    const bytes = new Uint8Array(await (await asset.handle.getFile()).arrayBuffer());
+    if (state.dirHandle !== root || state.handles.gameConfig !== handle || state.gameConfigText !== expectedConfigText)
+      throw new Error('界面图片读取期间项目已变化。');
+    return bytes;
+  });
   const text = session.record.workingFiles['game.config.json']!;
   const validationStorage: ProjectStorage = { ...editorStorage,
     readText: async path => path === 'game.config.json'

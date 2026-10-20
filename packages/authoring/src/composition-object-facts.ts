@@ -32,7 +32,7 @@ export async function buildReplayStateBaseObjects(snapshot: ProjectSnapshot, has
     { objectRef: 'config:galleryDossiers', expectedFingerprint: await hasher.sha256(stableStringify({ profiles: readGalleryDocument(snapshot.files.find(file => file.path === GALLERY_PATH)?.text).document.profiles ?? [], terms: readGalleryDocument(snapshot.files.find(file => file.path === GALLERY_PATH)?.text).document.terms ?? [] })) },
     { objectRef: 'config:stage', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.config.stage ?? null)) },
     { objectRef: 'config:fonts', expectedFingerprint: await hasher.sha256(stableStringify(resolveProjectFontPaths(snapshot.config))) },
-    { objectRef: 'config:theme', expectedFingerprint: await hasher.sha256(stableStringify({ theme: snapshot.config.theme ?? null, titleLogo: resolveProjectTitleLogo(snapshot.config) })) },
+    { objectRef: 'config:theme', expectedFingerprint: await hasher.sha256(stableStringify({ theme: snapshot.config.theme ?? null, titleLogo: resolveProjectTitleLogo(snapshot.config), titleBackground: (snapshot.config.player as { titleBackground?: string } | undefined)?.titleBackground ?? null })) },
     { objectRef: 'config:ui', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.config.ui ?? null)) },
     { objectRef: 'config:textCatalog', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.config.textCatalog ?? null)) },
     { objectRef: 'config:terminology', expectedFingerprint: await hasher.sha256(stableStringify(snapshot.files.find(file => file.path === 'content/config/terminology.json')?.text ?? null)) },

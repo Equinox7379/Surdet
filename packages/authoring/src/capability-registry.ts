@@ -538,11 +538,32 @@ const themeConfigSchema = strictObject({
   fingerprint: stringSchema,
 }, ['value', 'effective', 'titleLogo', 'fingerprint']);
 
+const uiColorSchema: JsonSchema = { type: 'integer', minimum: 0, maximum: 0xffffff };
+const uiOpacitySchema: JsonSchema = { type: 'number', minimum: 0, maximum: 1 };
+const uiInsetsFields = Object.fromEntries(['top', 'right', 'bottom', 'left'].map(key => [key, { type: 'number', minimum: 0, maximum: 65535 }])) as SchemaProperties;
+const uiShadowSchema = strictObject({ x: { type: 'number', minimum: -4096, maximum: 4096 }, y: { type: 'number', minimum: -4096, maximum: 4096 },
+  blur: { type: 'number', minimum: 0, maximum: 256 }, color: uiColorSchema, opacity: uiOpacitySchema }, ['x', 'y', 'blur', 'color', 'opacity']);
+const uiStyleSchema = strictObject({
+  color: uiColorSchema, background: uiColorSchema, opacity: uiOpacitySchema, backgroundOpacity: uiOpacitySchema,
+  fontSize: { type: 'number', exclusiveMinimum: 0 }, align: { enum: ['left', 'center', 'right'] }, fontRole: { enum: ['body', 'title', 'ui'] },
+  fontWeight: { enum: [100, 200, 300, 400, 500, 600, 700, 800, 900] }, lineHeight: { type: 'number', minimum: 0.5, maximum: 4 },
+  letterSpacing: { type: 'number', minimum: -32, maximum: 128 },
+  textShadows: { ...arrayOf(uiShadowSchema), maxItems: 4 }, shadows: { ...arrayOf(uiShadowSchema), maxItems: 4 },
+  backgroundGradient: { oneOf: [strictObject({ from: uiColorSchema, to: uiColorSchema, angle: { type: 'number', minimum: 0, maximum: 360 } }, ['from', 'to', 'angle']), nullSchema] },
+  backgroundImage: { oneOf: [strictObject({ asset: stringSchema, fit: { enum: ['stretch', 'contain', 'cover'] },
+    slice: strictObject({ ...Object.fromEntries(Object.entries(uiInsetsFields).map(([key, value]) => [key, { ...value, type: 'integer' }])), fillCenter: booleanSchema }, ['top', 'right', 'bottom', 'left', 'fillCenter']),
+  }, ['asset', 'fit']), nullSchema], description: 'Project background asset key only. Slicing requires stretch and actual source-image bounds; null disables the inherited button skin.' },
+  border: { oneOf: [strictObject({ width: { type: 'number', minimum: 0, maximum: 256 }, color: uiColorSchema, opacity: uiOpacitySchema }, ['width', 'color', 'opacity']), nullSchema] },
+  borderRadius: { type: 'number', minimum: 0, maximum: 65535 }, padding: strictObject(uiInsetsFields, ['top', 'right', 'bottom', 'left']),
+  columns: { enum: [1, 2] }, imageFit: { enum: ['contain', 'cover', 'fill'] },
+});
+const uiNodeInputSchema: JsonSchema = { ...jsonObjectSchema, properties: { style: uiStyleSchema }, description: 'ProjectUiNode; Core validates node types, children and all nested styles. See docs/ui-style-contract.md.' };
 const uiInspectionSchema = strictObject({
   view: readViewSchema,
   value: { oneOf: [jsonObjectSchema, nullSchema] },
   defaultPages: stringArraySchema,
-  nodes: arrayOf(strictObject({ page: stringSchema, id: stringSchema, type: stringSchema, parentId: { type: ['string', 'null'] } }, ['page', 'id', 'type', 'parentId'])),
+  nodes: arrayOf(strictObject({ page: stringSchema, id: stringSchema, type: stringSchema, parentId: { type: ['string', 'null'] },
+    effectiveStyle: jsonObjectSchema, rect: jsonObjectSchema, contentRect: jsonObjectSchema }, ['page', 'id', 'type', 'parentId', 'effectiveStyle', 'rect', 'contentRect'])),
   fingerprint: stringSchema,
 }, ['value', 'defaultPages', 'nodes', 'fingerprint']);
 
@@ -1402,10 +1423,10 @@ const definitions = {
     inputSchema: strictObject({
       operationId: stringSchema, expectedFingerprint: stringSchema,
       patch: { oneOf: [
-        strictObject({ type: { const: 'page.set' }, page: stringSchema, root: jsonObjectSchema }, ['type', 'page', 'root']),
+        strictObject({ type: { const: 'page.set' }, page: stringSchema, root: uiNodeInputSchema }, ['type', 'page', 'root']),
         strictObject({ type: { const: 'page.remove' }, page: stringSchema }, ['type', 'page']),
-        strictObject({ type: { const: 'node.insert' }, page: stringSchema, parentId: stringSchema, index: integerSchema, node: jsonObjectSchema }, ['type', 'page', 'parentId', 'index', 'node']),
-        strictObject({ type: { const: 'node.update' }, page: stringSchema, id: stringSchema, patch: jsonObjectSchema }, ['type', 'page', 'id', 'patch']),
+        strictObject({ type: { const: 'node.insert' }, page: stringSchema, parentId: stringSchema, index: integerSchema, node: uiNodeInputSchema }, ['type', 'page', 'parentId', 'index', 'node']),
+        strictObject({ type: { const: 'node.update' }, page: stringSchema, id: stringSchema, patch: { ...jsonObjectSchema, properties: { style: { oneOf: [uiStyleSchema, nullSchema] } } } }, ['type', 'page', 'id', 'patch']),
         strictObject({ type: { const: 'node.remove' }, page: stringSchema, id: stringSchema }, ['type', 'page', 'id']),
         strictObject({ type: { const: 'node.copy' }, page: stringSchema, id: stringSchema, newId: stringSchema, index: integerSchema }, ['type', 'page', 'id', 'newId']),
         strictObject({ type: { const: 'node.reorder' }, page: stringSchema, id: stringSchema, index: integerSchema }, ['type', 'page', 'id', 'index']),

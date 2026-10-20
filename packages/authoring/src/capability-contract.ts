@@ -1,4 +1,4 @@
-export const AUTHORING_CONTRACT_VERSION = '2.38.0' as const;
+export const AUTHORING_CONTRACT_VERSION = '2.39.0' as const;
 export const AUTHORING_ENVELOPE_SCHEMA_VERSION = '1.0.0' as const;
 export const DELIVERY_CAPSULE_VERSION = '2.0.0' as const;
 

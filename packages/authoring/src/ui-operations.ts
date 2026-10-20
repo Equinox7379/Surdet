@@ -1,4 +1,5 @@
-import { PROJECT_UI_PAGES, projectUiAssetKeys, readProjectUi, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId } from '@surdet/core';
+import { PROJECT_UI_PAGES, projectUiAssetKeys, projectUiRect, projectUiChildrenRect, resolveProjectUiStyle, readProjectUi, type ProjectUiRect, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId } from '@surdet/core';
+import { readUiImageFiles, validateUiImageBytes, type UiAssetReader } from './ui-image-assets.js';
 import { AuthoringOperationError, runOperation, stableStringify, type ChangeSession } from './change-session.js';
 import { parseProjectConfigDocument, serializeProjectConfigDocument } from './config-document.js';
 import type { LedgerDiffEntry, ProjectAssetCatalog } from './contracts.js';
@@ -10,7 +11,7 @@ export type UiPatch =
   | { type: 'page.set'; page: ProjectUiPageId; root: ProjectUiNode }
   | { type: 'page.remove'; page: ProjectUiPageId }
   | { type: 'node.insert'; page: ProjectUiPageId; parentId: string; index: number; node: ProjectUiNode }
-  | { type: 'node.update'; page: ProjectUiPageId; id: string; patch: Partial<Omit<ProjectUiNode, 'id' | 'type' | 'children' | 'visibleWhen' | 'enabledWhen'>> & { visibleWhen?: string | null; enabledWhen?: string | null } }
+  | { type: 'node.update'; page: ProjectUiPageId; id: string; patch: Partial<Omit<ProjectUiNode, 'id' | 'type' | 'children' | 'visibleWhen' | 'enabledWhen' | 'style'>> & { visibleWhen?: string | null; enabledWhen?: string | null; style?: ProjectUiNode['style'] | null } }
   | { type: 'node.remove'; page: ProjectUiPageId; id: string }
   | { type: 'node.copy'; page: ProjectUiPageId; id: string; newId: string; index?: number }
   | { type: 'node.reorder'; page: ProjectUiPageId; id: string; index: number };
@@ -21,7 +22,8 @@ export interface UiDocumentInput { operationId: string; expectedFingerprint: str
 export interface UiInspection {
   value: ProjectUiDocument | null;
   defaultPages: ProjectUiPageId[];
-  nodes: Array<{ page: ProjectUiPageId; id: string; type: ProjectUiNode['type']; parentId: string | null }>;
+  nodes: Array<{ page: ProjectUiPageId; id: string; type: ProjectUiNode['type']; parentId: string | null;
+    effectiveStyle: ReturnType<typeof resolveProjectUiStyle>; rect: ProjectUiRect; contentRect: ProjectUiRect }>;
   fingerprint: string;
 }
 
@@ -33,14 +35,17 @@ export async function inspectUi(config: Record<string, unknown>, hasher: TextHas
   let value: ProjectUiDocument | null;
   try { value = readProjectUi(config); } catch (error) { uiError(error); }
   const nodes: UiInspection['nodes'] = [];
-  const visit = (page: ProjectUiPageId, node: ProjectUiNode, parentId: string | null): void => {
-    nodes.push({ page, id: node.id, type: node.type, parentId });
-    node.children?.forEach(child => visit(page, child, node.id));
+  const visit = (page: ProjectUiPageId, node: ProjectUiNode, parentId: string | null, parentRect: ProjectUiRect): void => {
+    const rect = projectUiRect(parentRect, node.frame), contentRect = projectUiChildrenRect(rect, node.type, node.style);
+    nodes.push({ page, id: node.id, type: node.type, parentId, effectiveStyle: resolveProjectUiStyle(node, config), rect, contentRect });
+    node.children?.forEach(child => visit(page, child, node.id, contentRect));
   };
-  if (value) for (const page of PROJECT_UI_PAGES) {
-    const root = value.pages[page];
-    if (root) visit(page, root, null);
-  }
+  try {
+    if (value) for (const page of PROJECT_UI_PAGES) {
+      const root = value.pages[page];
+      if (root) visit(page, root, null, { x: 0, y: 0, width: 1280, height: 720 });
+    }
+  } catch (error) { uiError(error); }
   return { value, nodes, defaultPages: PROJECT_UI_PAGES.filter(page => value?.pages[page] === undefined),
     fingerprint: await hasher.sha256(stableStringify(value)) };
 }
@@ -128,16 +133,16 @@ export function patchUiDocument(current: ProjectUiDocument | null, config: Recor
     try { return readProjectUi(projected); } catch (error) { uiError(error); }
 }
 
-export async function applyUiPatch(change: ChangeSession, input: UiPatchInput, hasher: TextHasher, assets: ProjectAssetCatalog) {
-  return applyUiEdit(change, input, hasher, assets);
+export async function applyUiPatch(change: ChangeSession, input: UiPatchInput, hasher: TextHasher, assets: ProjectAssetCatalog, readAsset?: UiAssetReader) {
+  return applyUiEdit(change, input, hasher, assets, readAsset);
 }
 
 /** Save the Editor's complete draft as one operation, validating only its final document. */
-export async function applyUiDocument(change: ChangeSession, input: UiDocumentInput, hasher: TextHasher, assets: ProjectAssetCatalog) {
-  return applyUiEdit(change, input, hasher, assets);
+export async function applyUiDocument(change: ChangeSession, input: UiDocumentInput, hasher: TextHasher, assets: ProjectAssetCatalog, readAsset?: UiAssetReader) {
+  return applyUiEdit(change, input, hasher, assets, readAsset);
 }
 
-async function applyUiEdit(change: ChangeSession, input: UiPatchInput | UiDocumentInput, hasher: TextHasher, assets: ProjectAssetCatalog) {
+async function applyUiEdit(change: ChangeSession, input: UiPatchInput | UiDocumentInput, hasher: TextHasher, assets: ProjectAssetCatalog, readAsset?: UiAssetReader) {
   if (change.record.composition?.mode !== 'direct' || change.record.integration !== undefined) {
     throw new AuthoringOperationError('UNSUPPORTED_OPERATION', 'UI 修改只支持 direct 草稿', { operationApplied: false, operationId: input.operationId });
   }
@@ -151,6 +156,8 @@ async function applyUiEdit(change: ChangeSession, input: UiPatchInput | UiDocume
     else config.ui = value;
     const after = await inspectUi(config, hasher);
     validateUiAssets(after.value, assets);
+    const imageFiles = await readUiImageFiles(after.value, assets, readAsset);
+    validateUiImageBytes(after.value, assets, path => imageFiles.get(path)!);
     const diffEntry: LedgerDiffEntry = {
       kind: 'config.ui.patch', operationId: input.operationId,
       fingerprintBefore: before.fingerprint, fingerprintAfter: after.fingerprint,

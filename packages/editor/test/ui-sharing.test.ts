@@ -13,6 +13,25 @@ const asset = (path: string, bytes: string): ShareAsset => ({ path, read: async 
 const assets = [asset('content/assets/bg/nested/paper.png', 'image-bytes'), asset('content/assets/fonts/read.ttf', 'font'), asset('content/assets/bg/unrelated.png', 'private')];
 
 describe('local UI sharing', () => {
+  it('shares U1 image styles and checks the bundled image bytes before proposing import', async () => {
+    const bytes = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=='), c => c.charCodeAt(0));
+    const style = { fontWeight: 700, textShadows: [], backgroundGradient: { from: 0, to: 1, angle: 90 },
+      backgroundImage: { asset: 'skin', fit: 'stretch' as const, slice: { top: 0, right: 0, bottom: 0, left: 0, fillCenter: true } } };
+    const node = { id: 'panel', type: 'container' as const, frame, style };
+    const source = { ui: { version: 1, pages: { title: node } } };
+    const share = await exportUiShare(source, [{ path: 'content/assets/bg/skin.png', read: async () => new File([bytes], 'skin.png') }]);
+    expect(share.assets.map(file => file.path)).toEqual(['content/assets/bg/skin.png']);
+    expect(readUiShare(JSON.stringify(share), {})).toEqual(share);
+    expect((share.config.ui as typeof source.ui).pages.title.style).toEqual(style);
+    const invalid = structuredClone(share);
+    (invalid.config.ui as typeof source.ui).pages.title.style.backgroundImage.slice.left = 1;
+    expect(() => readUiShare(JSON.stringify(invalid), {})).toThrow('九宫格');
+    invalid.assets[0]!.base64 = btoa('not an image');
+    expect(() => readUiShare(JSON.stringify(invalid), {})).toThrow('九宫格');
+    const fragment = await exportUiShare(source, [{ path: 'content/assets/bg/skin.png', read: async () => new File([bytes], 'skin.png') }], { page: 'title', node });
+    expect(fragment.config.theme).toBeUndefined();
+    expect(copySharedFragment(node, 'copy').style).toEqual(style);
+  });
   it('keeps variables used only by conditions and button assignments in the dependency manifest', async () => {
     const source = { variables: { trust: { type: 'number', initial: 3 }, panelOpen: { type: 'flag', initial: false }, unused: { type: 'string', initial: 'SECRET' } },
       ui: { version: 1, pages: { hud: { id: 'open', type: 'button' as const, frame, visibleWhen: 'trust > 0', action: { kind: 'variable-set' as const, name: 'panelOpen', value: true } } } } };

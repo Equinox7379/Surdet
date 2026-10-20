@@ -11,6 +11,7 @@
 旧画面溶解后端及Claude转场表单接入：[演出合同](presentation-effects-contract.md)。
 项目插件后端及Claude信任/预览接入：[项目插件合同](project-plugins-contract.md)。
 Windows免安装导出后端及Claude导出界面接入：[Windows导出合同](windows-game-export-contract.md)。
+U1有限样式、九宫格数据及后续前端接入：[作品界面样式合同](ui-style-contract.md)（本批仅后端与接口）。
 
 | 需要做什么 | 阅读入口 |
 | --- | --- |

@@ -25,6 +25,32 @@ async function fixture(extraConfig: Record<string, unknown> = {}) {
 }
 
 describe('project.ui direct working patch', () => {
+  it('validates actual sliced-image bounds before recording a style edit and exposes resolved values', async () => {
+    const { snapshot, change } = await fixture({ theme: { colors: { text: 123 } } });
+    const assets = buildAssetCatalog(['content/assets/bg/paper.svg'], snapshot);
+    const image = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"></svg>');
+    const style = { color: 0, opacity: 0, fontWeight: 700, padding: { top: 2, right: 3, bottom: 4, left: 5 },
+      backgroundImage: { asset: 'paper', fit: 'stretch' as const, slice: { top: 5, right: 10, bottom: 5, left: 10, fillCenter: false } } };
+    const request = { operationId: 'style', expectedFingerprint: (await inspectUi(snapshot.config, hasher)).fingerprint,
+      patch: { type: 'page.set' as const, page: 'hud' as const, root: { ...root, style } } };
+    const before = JSON.stringify(change.record);
+    await expect(applyUiPatch(change, request, hasher, assets)).rejects.toMatchObject({ code: 'UI_INVALID' });
+    await expect(applyUiPatch(change, request, hasher, assets, async () => new TextEncoder().encode('<svg width="10" height="10"></svg>'))).rejects.toMatchObject({ code: 'UI_INVALID' });
+    expect(JSON.stringify(change.record)).toBe(before);
+    const result = await applyUiPatch(change, request, hasher, assets, async () => image);
+    expect(result.ui.nodes[0]).toMatchObject({ effectiveStyle: { color: 0, opacity: 0, fontWeight: 700 }, contentRect: { x: 5, y: 2, width: 1272, height: 714 } });
+    expect(result.ui.nodes[1]?.rect.x).toBe(25);
+    const saved = JSON.stringify(change.record);
+    await expect(applyUiPatch(change, { ...request, operationId: 'stale' }, hasher, assets, async () => image)).rejects.toMatchObject({ code: 'OBJECT_REF_STALE' });
+    expect(JSON.stringify(change.record)).toBe(saved);
+    for (const mode of ['candidate', 'integration'] as const) {
+      change.record.composition!.mode = mode === 'candidate' ? 'candidate' : 'direct';
+      if (mode === 'integration') change.record.integration = {} as NonNullable<typeof change.record.integration>;
+      const untouched = JSON.stringify(change.record);
+      await expect(applyUiPatch(change, { ...request, operationId: mode }, hasher, assets, async () => { throw new Error('must not read'); })).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
+      expect(JSON.stringify(change.record)).toBe(untouched);
+    }
+  });
   it('patches conditional status panels atomically and indexes every actual variable dependency', async () => {
     const { snapshot, change } = await fixture({ variables: { trust: { type: 'number', initial: 3 }, panelOpen: { type: 'flag', initial: false }, energy: { type: 'number', min: 0, max: 10, initial: 5, readonly: true }, bag: { type: 'string[]', initial: [] } } });
     const assets = buildAssetCatalog([], snapshot), frame = root.children[0]!.frame;
