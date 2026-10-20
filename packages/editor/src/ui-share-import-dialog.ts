@@ -105,7 +105,7 @@ export function openUiShareImportDialog(source: { file: File } | 'pending', requ
   disposeUiShareImportDialog();
   const resumed = source === 'pending' ? pending : null;
   if (source === 'pending' && (!resumed || resumed.root !== state.dirHandle)) { pending = null; options.onStatus('没有可继续的界面导入。', false); return; }
-  pending = null;
+  if (!resumed) pending = null;
   const dialog = element('dialog', 'ui-share-import');
   dialog.dataset.uiShareImportDialog = 'true';
   const s: Session = {
@@ -153,6 +153,7 @@ export function openUiShareImportDialog(source: { file: File } | 'pending', requ
     const file = fileInput.files?.[0]; fileInput.value = '';
     if (!file || !cancellable() || s.closed) return;
     // A new file is a new session for its prefix and placement; the old proposal is abandoned.
+    pending = null;
     s.name = file.name; s.prefix = newUiShareImportPrefix(); s.placement = null; s.viewKey = null; read(file);
   };
   repreview.onclick = () => { if (s.text !== null && s.busy !== 'applying' && s.busy !== 'staging') void prepare(); };

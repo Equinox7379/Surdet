@@ -94,7 +94,18 @@ export async function startUiPagePreview(data: UiPagePreviewLoad, signal: AbortS
       if (name === 'dialogueOpacity') return theme.opacity.panel;
       return Object.hasOwn(GAME_SETTING_DEFINITIONS, name) ? GAME_SETTING_DEFINITIONS[name as keyof typeof GAME_SETTING_DEFINITIONS].default : undefined;
     },
-    write() { readOnly('修改数值'); },
+    write(binding) {
+      readOnly('修改数值');
+      // Text fields intentionally retain native edits while focused in the Player. This
+      // read-only preview must undo the visible edit as well as refusing the state write.
+      const input = document.activeElement;
+      if (input instanceof HTMLInputElement) {
+        const value = context(view).read(binding.name, binding.kind);
+        if (input.type === 'checkbox') input.checked = Boolean(value);
+        else input.value = String(value ?? '');
+      }
+      dom.refresh();
+    },
     bounds(binding) {
       if (binding.kind === 'setting') {
         const step = SETTING_STEPS.find(item => item.key === binding.name);
