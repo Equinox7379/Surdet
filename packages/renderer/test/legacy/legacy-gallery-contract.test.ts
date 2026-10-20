@@ -115,7 +115,7 @@ describe('legacy Gallery compatibility contract', () => {
         onClose,
       });
 
-      findTextInCapturedContainers(captured.containers, '✕ 关闭').emit('pointerdown', pointerEvent);
+      findTextInCapturedContainers(captured.containers, '关闭').emit('pointerdown', pointerEvent);
 
       expect(stage.galleryLayer.gallery()).toEqual({ type: 'none' });
       expect(restoreCommandRail).toHaveBeenCalledOnce();
@@ -143,7 +143,7 @@ describe('legacy Gallery compatibility contract', () => {
         onClose: () => { throw failure; },
       });
 
-      expect(() => findTextInCapturedContainers(captured.containers, '✕ 关闭').emit('pointerdown', pointerEvent)).toThrow(failure);
+      expect(() => findTextInCapturedContainers(captured.containers, '关闭').emit('pointerdown', pointerEvent)).toThrow(failure);
       expect(stage.galleryLayer.gallery()).toEqual({ type: 'none' });
       expect(restoreCommandRail).toHaveBeenCalledOnce();
       expect(lifecycle.snapshot().listeners).toBe(0);
@@ -175,7 +175,7 @@ describe('legacy Gallery compatibility contract', () => {
       });
       expect(facade.queries.overlay.gallery()).toEqual({ type: 'gallery', tab: 'cg', mode: 'grid', viewerKey: null });
 
-      findTextInCapturedContainers(captured.containers, '✕ 关闭').emit('pointerdown', pointerEvent);
+      findTextInCapturedContainers(captured.containers, '关闭').emit('pointerdown', pointerEvent);
 
       expect(stage.galleryLayer.gallery()).toEqual({ type: 'none' });
       expect(facade.queries.overlay.gallery()).toEqual({ type: 'none' });

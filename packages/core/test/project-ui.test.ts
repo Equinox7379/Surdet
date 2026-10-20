@@ -51,6 +51,32 @@ describe('declarative project UI', () => {
     expect(readProjectUi({ ui })).toEqual(ui);
     expect(() => readProjectUi({ ui: { version: 1, pages: { title: page } } })).toThrow();
   });
+  it('accepts one or two content columns and the explicit image fit modes without adding defaults', () => {
+    const frame = { x: 0, y: 0, width: 640, height: 320 };
+    for (const columns of [undefined, 1, 2]) for (const imageFit of [undefined, 'contain', 'cover', 'fill']) {
+      const ui = { version: 1, pages: { gallery: { id: 'cards', type: 'content', source: 'gallery-endings', frame,
+        style: columns === undefined ? {} : { columns }, children: [
+          { id: 'picture', type: 'image', asset: 'ending-card', frame, style: imageFit === undefined ? {} : { imageFit } },
+          { id: 'label', type: 'text', frame, text: { kind: 'data', field: 'label' } },
+        ],
+      } } };
+      expect(readProjectUi({ ui })).toEqual(ui);
+    }
+  });
+  it('rejects invalid column counts, image fits and their use on other node types', () => {
+    const frame = { x: 0, y: 0, width: 640, height: 320 };
+    const check = (node: Record<string, unknown>) => readProjectUi({ ui: { version: 1, pages: { gallery: node } } });
+    const content = { id: 'cards', type: 'content', source: 'gallery-endings', frame };
+    const image = { id: 'picture', type: 'image', asset: 'ending-card', frame };
+    for (const columns of [0, 3, -1, 1.5, '2', true, null]) expect(() => check({ ...content, style: { columns } })).toThrow(/columns/);
+    for (const imageFit of ['', 'scale-down', 'FILL', 1, false, null]) expect(() => check({ ...image, style: { imageFit } })).toThrow(/imageFit/);
+    for (const type of ['container', 'text', 'button', 'tabs']) {
+      expect(() => check({ id: 'node', type, frame, style: { columns: 2 } })).toThrow(/columns.*content/);
+      expect(() => check({ id: 'node', type, frame, style: { imageFit: 'fill' } })).toThrow(/imageFit.*image/);
+    }
+    expect(() => check({ ...image, style: { columns: 2 } })).toThrow(/columns.*content/);
+    expect(() => check({ ...content, style: { imageFit: 'fill' } })).toThrow(/imageFit.*image/);
+  });
   it('exposes locale read/cycling and glossary content without arbitrary preference writes', () => {
     const frame = { x: 0, y: 0, width: 640, height: 200 };
     const ui = { version: 1, pages: { settings: { id: 'locale', type: 'button', frame,
