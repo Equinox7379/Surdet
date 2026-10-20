@@ -13,6 +13,8 @@ const frame={x:0,y:0,width:1280,height:720}, text=value=>({kind:'literal',value}
 config.variables={flag:{type:'flag',initial:false},amount:{type:'number',initial:5},note:{type:'string',initial:'original'}};
 config.player={...config.player,firstRunHint:'U3首次操作提示'}; config.privateMarker='KEEP';
 config.ui={version:1,pages:{title:{id:'original',type:'container',frame,children:[{id:'original-start',type:'button',frame:{x:80,y:80,width:200,height:50},text:text('原始开始'),action:{kind:'start'}}]},gallery:{id:'old-gallery',type:'container',frame}}};
+config.ui.pages.choices={id:'choice-root',type:'container',frame,children:[{id:'choice-rows',type:'content',source:'choices',frame:{x:80,y:100,width:700,height:420},children:[{id:'choice-existing',type:'text',frame:{x:8,y:40,width:400,height:28},text:text('原模板')}]}]};
+config.ui.pages['save-load']={id:'slot-rows',type:'content',source:'save-slots',frame,children:[{id:'slot-existing',type:'text',frame:{x:8,y:40,width:400,height:28},text:text('原槽位模板')}]};
 fs.writeFileSync(file,JSON.stringify(config,null,2));
 const sameImage=JSON.parse(fs.readFileSync(new URL('../../../docs/ui-theme-u3-technical/u3-technical.surdet-ui-theme.json',import.meta.url),'utf8')).assets[0].base64;
 fs.mkdirSync(path.join(root,'content/assets/bg/nested'),{recursive:true});
@@ -38,6 +40,28 @@ try{
   page.on('pageerror',error=>result.errors.push(error.message));
   await page.exposeFunction('__surdetNodeFs',createNodeFsBridge({project:root})); await page.addInitScript(nodeBackedFileSystemInit,{initialRootKey:'project'});
   await page.goto('http://127.0.0.1:18088/'); await load(page);
+  for(const [view,selected,parent,placement] of [['choices','choice-rows','choice-rows','container'],['choices','choice-existing','choice-rows','container'],['save-load','slot-existing','slot-rows','root']]) {
+  await test(`内容模板片段插入：选中${selected}`,async()=>{
+    await page.getByLabel('作品界面页面',{exact:true}).selectOption(view);
+    await page.locator(`.ui-designer-tree [data-ui-node="${selected}"]`).click();
+    const before=await page.evaluate(async()=>{const c=await import('/src/panels/config.ts');return {ui:c.readUiConfigDraft(),history:c.configHistoryDepth()};});
+    const fragment={format:'surdet-ui',version:1,kind:'fragment',variables:{},assets:[],config:{ui:{version:1,pages:{[view]:{id:'row-addon',type:'text',frame:{x:8,y:0,width:400,height:28},text:text('导入的模板行')}}}}};
+    await choose(fragment);
+    const radio=page.locator(`input[name="ui-share-import-placement"][value="${placement}"]`);
+    assert.equal(await radio.count(),1,`没有提供${parent}的插入目标`);await radio.check();
+    await page.locator('[data-ui-share-import-frame][data-ready="true"]').waitFor();
+    const f=await(await page.locator('[data-ui-share-import-frame]').elementHandle()).contentFrame();
+    await f.getByText('导入的模板行',{exact:true}).first().waitFor({state:'visible'});
+    await page.locator('[data-ui-share-import-apply]').click();await page.locator('[data-ui-share-import-dialog]').waitFor({state:'detached'});
+    const after=await page.evaluate(async()=>{const c=await import('/src/panels/config.ts');return {ui:c.readUiConfigDraft(),history:c.configHistoryDepth()};});
+    const find=(node,id)=>node.id===id?node:(node.children??[]).map(child=>find(child,id)).find(Boolean);
+    const beforeRows=find(before.ui.pages[view],parent),afterRows=find(after.ui.pages[view],parent);
+    assert.deepEqual(afterRows.children.slice(0,-1),beforeRows.children);assert.equal(afterRows.children.at(-1).text.value,'导入的模板行');
+    assert.equal(after.history.past,before.history.past+1);assert.deepEqual(JSON.parse(fs.readFileSync(file,'utf8')),config);
+    await page.keyboard.press('Control+z');
+    assert.deepEqual(await page.evaluate(async()=>(await import('/src/panels/config.ts')).readUiConfigDraft()),before.ui);
+  });
+  }
   await test('恢复默认和继续默认的页面说明实际位于预览之上',async()=>{
     await choose(packet);await page.locator('[data-ui-share-import-frame][data-ready="true"]').waitFor();
     for(const view of ['gallery','backlog']) {

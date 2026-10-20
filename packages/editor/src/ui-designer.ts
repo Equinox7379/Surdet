@@ -275,7 +275,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
   const importRequest = (): { page: ProjectUiPageId; containerId?: string } => {
     const pageRoot = options.read()?.pages[selectedPage];
     const found = pageRoot && selectedNodeId ? findNode(pageRoot, selectedNodeId) : null;
-    const containerId = found && ['container', 'scroll', 'tabs'].includes(found.node.type) ? found.node.id : found?.parentId ?? undefined;
+    const containerId = found && ['container', 'scroll', 'tabs', 'content'].includes(found.node.type) ? found.node.id : found?.parentId ?? undefined;
     return { page: selectedPage, ...(containerId ? { containerId } : {}) };
   };
   fileInput.onchange = () => {
