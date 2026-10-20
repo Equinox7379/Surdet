@@ -182,6 +182,16 @@ try {
   await expectDraft(page, 'redo clear', 'title', 'btn_plain', 'states', { pressed: { color: 0x112233 }, disabled: { opacity: 0.5 } });
   await page.locator('.ui-designer-toolbar').getByRole('button', { name: '撤销', exact: true }).click();
   await expectDraft(page, 'undo again', 'title', 'btn_plain', 'states', PLAIN_STATES);
+  // App-wide history shortcuts route directly to configUndo/configRedo, not
+  // through the designer's toolbar callbacks. Keep the same state editor.
+  await control(page, 'state:hover').click();
+  await page.keyboard.press('Control+z');
+  await expectDraft(page, 'global undo disabled opacity', 'title', 'btn_plain', 'states', { hover: PLAIN_STATES.hover, pressed: PLAIN_STATES.pressed });
+  assert.equal(await pressedState(page), 'state:hover', 'global undo keeps the edited state');
+  await page.keyboard.press('Control+y');
+  await expectDraft(page, 'global redo disabled opacity', 'title', 'btn_plain', 'states', PLAIN_STATES);
+  assert.equal(await pressedState(page), 'state:hover', 'global redo keeps the edited state');
+  assert.deepEqual((await draftNode(page, 'title', 'btn_plain')).node.style, normalStyle, 'global history never redirects a state edit to the normal style');
   // Choosing another control returns to 正常; text has no state switch.
   await selectNode(page, 'title', 'btn_start');
   assert.equal(await pressedState(page), 'state:normal');

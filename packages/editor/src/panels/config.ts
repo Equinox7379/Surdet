@@ -14,7 +14,7 @@ import { assetPathForHandle, assertProjectWriteUnlocked, readProjectSourceText, 
 import { editorWorkspaceStatus } from '../editor-workspace.js';
 import { AuthoringOperationError, parseProjectConfigDocument, patchUiDocument, renameConfigReferences, renameGalleryLabel, applyConfigReferenceRename, type UiPatch } from '@surdet/authoring';
 import { commitCharacterTable, commitEndScenes, commitStageConfiguration, commitThemeConfiguration, commitUiConfiguration, parseCharacterVisualsDraft, parseThemeEditorDraft, projectThemeEditorDraft, type CharacterTableEditRow } from '../authoring-project-storage.js';
-import { disposeUiDesigner, renderUiDesigner } from '../ui-designer.js';
+import { disposeUiDesigner, redrawUiDesignerHistory, renderUiDesigner } from '../ui-designer.js';
 import { renderThemeConfigForm } from '../theme-config-form.js';
 import { renderTextCatalogSection, type TextBindingDraft } from './text-catalog.js';
 import { openUiPlayerPreview } from '../ui-player-preview.js';
@@ -886,7 +886,7 @@ function restoreConfigSnapshot(snap: ConfigSnapshot): void {
   textCsvDraft = snap.textCsvDraft;
   textBindingsDraft = clone(snap.textBindingsDraft);
   state.gameConfigText = snap.gameConfigText; // 内存态同步回退（磁盘不回滚，与行模型同语义）
-  rerenderConfig();
+  redrawUiDesignerHistory(rerenderConfig);
 }
 
 function retainHistoryReturnText(returnTo: ConfigSnapshot, destination: ConfigSnapshot): void {

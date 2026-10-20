@@ -25,6 +25,10 @@ let selectedStateOwner: string | null = null;
 // The existing configuration history rebuilds the whole workspace synchronously.
 // That redraw is not closing the designer or switching projects.
 let historyRedraw = false;
+export function redrawUiDesignerHistory(redraw: () => void): void {
+  historyRedraw = true;
+  try { redraw(); } finally { historyRedraw = false; }
+}
 /** The one canvas preview of a page enter/exit; it only moves the canvas layer, never the work or the player. */
 let motionPreview: { controller: ProjectUiMotionController; frame: number; stop(): void } | null = null;
 function stopMotionPreview(): void { const preview = motionPreview; motionPreview = null; preview?.stop(); }
@@ -235,12 +239,8 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
   save.onclick = () => { void options.save().then(() => options.onStatus('界面已保存，重新打开或试玩可查看正式结果。')).catch(error => options.onStatus(`保存失败：${String(error)}`, false)); };
   const preview = element('button', '', '试玩草稿'); preview.type = 'button';
   preview.onclick = () => { void options.preview().catch(error => options.onStatus(`试玩未启动：${String(error)}`, false)); };
-  const moveHistory = (change: () => void): void => {
-    historyRedraw = true;
-    try { change(); } finally { historyRedraw = false; }
-  };
-  const undo = element('button', '', '撤销'); undo.onclick = () => moveHistory(options.undo);
-  const redo = element('button', '', '重做'); redo.onclick = () => moveHistory(options.redo);
+  const undo = element('button', '', '撤销'); undo.onclick = () => options.undo();
+  const redo = element('button', '', '重做'); redo.onclick = () => options.redo();
   const restore = element('button', '', '本页恢复默认');
   restore.onclick = () => apply({ type: 'page.remove', page: selectedPage });
   toolbar.append(pageSelect, save, preview, undo, redo, restore);
