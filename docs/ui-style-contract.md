@@ -29,6 +29,8 @@ Authoring 2.39.0，公开能力仍为 73 项。延续 `game.config.json.ui.versi
 | borderRadius | 0..65535，设计像素 | 0 为直角 |
 | padding | `{top,right,bottom,left}`，四边都必须提供，非负设计像素 | 四个 0 清空作者内边距 |
 | shadows | 最多 4 项 `{x,y,blur,color,opacity}` | `[]` 无框体阴影 |
+| columns | 沿用 #79 的 content 列数：1 或 2 | 省略为单列；只适用于 content |
+| imageFit | 沿用 #79 的图片内容缩放：contain/cover/fill | 省略为 contain；只适用于 image，与装饰背景的 fit 独立 |
 
 RGB 为 0..0xffffff 整数，透明度为 0..1；阴影 x/y 为 -4096..4096，blur 为 0..256。所有数值须有限。padding 各边上限 65535；边框及内边距不能吃掉整个内容框。渐变固定两色，没有任意 stops、CSS 字符串、URL 或脚本。
 
@@ -56,6 +58,7 @@ RGB 为 0..0xffffff 整数，透明度为 0..1；阴影 x/y 为 -4096..4096，bl
 `resolveProjectUiStyle(node,config,explicitPlayerTheme?)` 复用 `resolvePlayerTheme`：引擎默认 → 作品主题 → Player 显式主题字段 → 节点 style。不能用 truthy 判断覆盖：0、null 和 [] 都有明确含义。节点不继承父节点 style；沿用既有节点定位和全局字体角色表。
 
 - 原有默认：文字色 theme.text；字号 theme.uiSize、字体角色 ui；正文行高 1.45；按钮字重 600、surface 底色、1px line 色边框、theme.radius.md 圆角，以及主题 buttonSkin。未指定的新阴影/渐变为空、字距 0。
+- progress 轨道有效值与 Player 既有绘制一致：surface 底色、theme.radius.sm 圆角；作者显式背景色和圆角（包括0）优先。前端不再另造一套轨道默认值。
 - `effectiveStyle` 的 null 字重/行高/内边距保留旧控件行为，不把它硬编码成新的 400/0；本批不擅改旧页面。
 - 玩家文字倍率在作者字号与行内字号确定后应用一次，仍只影响阅读正文/选项，不放大系统页或名字栏。行内样式继续由 Core 解析，不展平成纯文字，不重复执行文字记录中的停顿/动画。
 - U1 没有动画字段，不能从阴影/渐变自行生成动画；已有减少动态设置继续优先于后续前端动效。

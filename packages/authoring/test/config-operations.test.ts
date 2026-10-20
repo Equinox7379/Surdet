@@ -142,6 +142,69 @@ describe('theme configuration validation', () => {
 });
 
 describe('character.ensure', () => {
+  it.each([null, '原始扩展', { name: '伪名字', avatar: 'fake', ghost: { name: '伪角色' } }])('D35 preserves own special character fields across repeated updates: %j', async extension => {
+    const { change } = await open();
+    const config = JSON.parse(baseConfig);
+    config.characters.lynn = JSON.parse('{"name":"凛","avatar":"lynn","__proto__":null,"constructor":{"keep":true},"prototype":{"keep":true}}');
+    config.characters.lynn['__proto__'] = extension;
+    change.record.workingFiles['game.config.json'] = JSON.stringify(config);
+    let current = await charactersFingerprint(config, hasher);
+    for (const [operationId, name, avatar] of [['first', '凛·改', null], ['second', '凛·再改', 'lynn']] as const) {
+      const result = await applyCharacterEnsure(change, { operationId, id: 'lynn', name, avatar, expectedFingerprint: current }, hasher);
+      const parsed = JSON.parse(change.record.workingFiles['game.config.json']!);
+      expect(Object.hasOwn(parsed.characters.lynn, '__proto__')).toBe(true);
+      expect(parsed.characters.lynn).toEqual({
+        name, ...(avatar === null ? {} : { avatar }), ['__proto__']: extension,
+        constructor: { keep: true }, prototype: { keep: true },
+      });
+      expect(Object.keys(parsed.characters)).toEqual(['lynn']);
+      expect(result.created).toBeUndefined();
+      current = result.fingerprint;
+    }
+  });
+
+  it.each(['constructor', 'prototype', 'toString'])('D35 creates and updates the legal special character ID %s as own data', async id => {
+    const { change } = await open();
+    const created = await applyCharacterEnsure(change, {
+      operationId: 'special-create', id, name: '特殊角色', expectedFingerprint: await charactersFingerprint(JSON.parse(baseConfig), hasher),
+    }, hasher);
+    expect(created.created).toBe(true);
+    const updated = await applyCharacterEnsure(change, {
+      operationId: 'special-update', id, name: '特殊角色改名', avatar: 'lynn', expectedFingerprint: created.fingerprint,
+    }, hasher);
+    const parsed = JSON.parse(change.record.workingFiles['game.config.json']!);
+    expect(updated.created).toBeUndefined();
+    expect(Object.hasOwn(parsed.characters, id)).toBe(true);
+    expect(parsed.characters[id]).toEqual({ name: '特殊角色改名', avatar: 'lynn' });
+    expect(parsed.characters.lynn).toEqual(JSON.parse(baseConfig).characters.lynn);
+  });
+
+  it('D35 preserves an existing JSON __proto__ character while ensuring other characters', async () => {
+    const { change } = await open();
+    const config = JSON.parse(baseConfig);
+    const declaration = { name: '原型角色', ghost: { name: '伪角色' } };
+    config.characters = { ...config.characters, ['__proto__']: declaration };
+    change.record.workingFiles['game.config.json'] = JSON.stringify(config);
+    let current = await charactersFingerprint(config, hasher);
+    for (const id of ['lynn', 'nova']) {
+      const result = await applyCharacterEnsure(change, { operationId: id, id, name: `${id}改名`, expectedFingerprint: current }, hasher);
+      const parsed = JSON.parse(change.record.workingFiles['game.config.json']!);
+      expect(Object.hasOwn(parsed.characters, '__proto__')).toBe(true);
+      expect(parsed.characters['__proto__']).toEqual(declaration);
+      expect(Object.hasOwn(parsed.characters, 'ghost')).toBe(false);
+      current = result.fingerprint;
+    }
+  });
+
+  it('D35 keeps the existing ID grammar when rejecting a new __proto__ character without writes', async () => {
+    const { change } = await open();
+    const before = structuredClone(change.record);
+    await expect(applyCharacterEnsure(change, {
+      operationId: 'invalid-special', id: '__proto__', name: '原型角色', expectedFingerprint: await charactersFingerprint(JSON.parse(baseConfig), hasher),
+    }, hasher)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(change.record).toEqual(before);
+  });
+
   it('writes visual definitions with all image dependencies and rejects missing parts/candidate mutation atomically', async () => {
     const { change } = await open();
     change.record.composition = { ...change.record.composition!, mode: 'direct' };

@@ -15,7 +15,13 @@ export interface PlayerContentManifest {
 }
 
 export function contentPlayerProject(manifest: PlayerContentManifest, base: string): PlayerProject {
-  const location = (relative: string) => new URL(relative.split('/').map(encodeURIComponent).join('/'), base).href;
+  const location = (relative: string) => {
+    const segments = relative.split('/');
+    if (/[\\:\u0000-\u001f]/.test(relative) || segments.some(segment => segment === '' || segment === '.' || segment === '..')) {
+      throw new Error(`作品内容必须使用目录内的相对路径：${relative}`);
+    }
+    return new URL(segments.map(encodeURIComponent).join('/'), base).href;
+  };
   const declared = readProjectPlugins(manifest.config);
   return {
     id: manifest.id, config: manifest.config,

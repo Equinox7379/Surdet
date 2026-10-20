@@ -45,6 +45,52 @@ const goodConfig = JSON.stringify({
 });
 
 describe('character validation wiring', () => {
+  it.each(['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty'])('D35 resolves own JSON special character ID and display name: %s', async id => {
+    const snapshot = await loadProjectSnapshot(storageFor({
+      'game.config.json': JSON.stringify({ entryScene: 'agent_probe', characters: { [id]: { name: '特殊角色', avatar: 'lynn' } } }),
+      'content/scenario/agent_probe.gal': ['@scene agent_probe', `${id}：按ID说话。`, '特殊角色：按名字说话。', '@end'].join('\n'),
+    }), hasher);
+    const result = validateSnapshot(snapshot, buildObjectIndex(snapshot), { assetCatalog: catalog });
+    expect(result.issues.filter(issue => ['CHARACTER_INVALID', 'SPEAKER_UNRESOLVED', 'ASSET_UNRESOLVED'].includes(issue.code))).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it('D35 reports malformed own JSON __proto__ character declarations', async () => {
+    const snapshot = await loadProjectSnapshot(storageFor({
+      'game.config.json': '{"characters":{"__proto__":{"avatar":"lynn"}}}',
+    }), hasher);
+    const result = validateSnapshot(snapshot, buildObjectIndex(snapshot));
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'CHARACTER_INVALID', severity: 'error', objectRef: 'character:__proto__' }),
+    ]));
+    expect(result.ok).toBe(false);
+  });
+
+  it('D35 reports the unresolved avatar of an own JSON __proto__ character', async () => {
+    const snapshot = await loadProjectSnapshot(storageFor({
+      'game.config.json': '{"characters":{"__proto__":{"name":"原型角色","avatar":"missing"}}}',
+    }), hasher);
+    const result = validateSnapshot(snapshot, buildObjectIndex(snapshot), { assetCatalog: catalog });
+    expect(result.issues.filter(issue => issue.code === 'ASSET_UNRESOLVED')).toEqual([
+      expect.objectContaining({ objectRef: 'character:__proto__', severity: 'warning' }),
+    ]);
+  });
+
+  it('D35 ignores inherited character declarations instead of resolving ghost speakers', async () => {
+    const snapshot = await loadProjectSnapshot(storageFor({
+      'game.config.json': goodConfig,
+      'content/scenario/agent_probe.gal': ['@scene agent_probe', 'ghost：不应解析。', 'lynn：真实角色。', '@end'].join('\n'),
+    }), hasher);
+    const characters = Object.create({ ghost: { name: '伪角色', avatar: 'missing' } });
+    characters.lynn = { name: '凛', avatar: 'lynn' };
+    snapshot.config['characters'] = characters;
+    const result = validateSnapshot(snapshot, buildObjectIndex(snapshot), { assetCatalog: catalog });
+    const warnings = result.issues.filter(issue => issue.code === 'SPEAKER_UNRESOLVED');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.text).toContain("'ghost'");
+    expect(result.issues.filter(issue => issue.code === 'ASSET_UNRESOLVED' || issue.code === 'CHARACTER_INVALID')).toEqual([]);
+  });
+
   it('does not attach line-one config diagnostics to an unrelated variable', async () => {
     const snapshot = await loadProjectSnapshot(storageFor({
       'game.config.json': JSON.stringify({ entryScene: 'missing', characters: { broken: {} }, variables: { flag: { type: 'number', initial: 0 } } }),

@@ -1,4 +1,5 @@
 import { resolveTimelineDefinition } from '@surdet/core';
+import { assertProjectTargetNamespace, AuthoringOperationError } from '@surdet/authoring';
 import { createObjectCue, timelineActionsForVersion } from '../timeline-model.js';
 import type { TimelineCue, TimelineDefinition, TimelineEasing, TimelineTrack, TimelineTrackKind } from '@surdet/core';
 import { state, h, setStatus } from '../state.js';
@@ -127,15 +128,21 @@ function entryFor(id = state.currentTimeline): (typeof state.timelines)[number] 
 }
 
 export function nextTimelineId(): string {
+  const entries = [...state.timelines, ...state.pendingTimelineDeletes, ...[...state.pendingTimelineRestores.values()].map(restore => restore.entry)];
+  const paths = entries.map(entry => `content/timelines/${entry.file.replace(/^content\/timelines\//, '')}`);
   const reserved = new Set([
-    ...state.timelines.map((entry) => entry.id),
-    ...state.pendingTimelineDeletes.map((entry) => entry.id),
     ...state.pendingTimelineRestores.keys(),
-  ]);
+    ...entries.flatMap(entry => [entry.id, entry.file.replace(/\.json$/i, '')]),
+  ].map(id => id.toLowerCase()));
   let n = state.timelines.length + state.pendingTimelineRestores.size + 1;
-  let id = `timeline_${String(n).padStart(2, '0')}`;
-  while (reserved.has(id)) id = `timeline_${String(++n).padStart(2, '0')}`;
-  return id;
+  for (;; n++) {
+    const id = `timeline_${String(n).padStart(2, '0')}`;
+    if (reserved.has(id.toLowerCase())) continue;
+    try { assertProjectTargetNamespace(`content/timelines/${id}.json`, paths); return id; }
+    catch (error) {
+      if (!(error instanceof AuthoringOperationError) || error.code !== 'OBJECT_PRECONDITION_FAILED') throw error;
+    }
+  }
 }
 
 export function deleteTimeline(timelineId: string): boolean {
@@ -162,7 +169,15 @@ export function deleteTimeline(timelineId: string): boolean {
 
 export function restorePendingTimelineDeletion(timelineId: string): boolean {
   const restore = state.pendingTimelineRestores.get(timelineId);
-  if (!restore || state.timelines.some((entry) => entry.id === timelineId)) return false;
+  if (!restore || state.timelines.some((entry) => entry.id.toLowerCase() === restore.entry.id.toLowerCase()
+    || entry.file.toLowerCase() === restore.entry.file.toLowerCase())) return false;
+  try {
+    assertProjectTargetNamespace(`content/timelines/${restore.entry.file.replace(/^content\/timelines\//, '')}`,
+      state.timelines.map(entry => `content/timelines/${entry.file.replace(/^content\/timelines\//, '')}`));
+  } catch (error) {
+    if (error instanceof AuthoringOperationError && error.code === 'OBJECT_PRECONDITION_FAILED') return false;
+    throw error;
+  }
   state.pendingTimelineDeletes = state.pendingTimelineDeletes.filter((pending) => pending.id !== timelineId);
   const index = Math.max(0, Math.min(restore.index, state.timelines.length));
   state.timelines.splice(index, 0, restore.entry);

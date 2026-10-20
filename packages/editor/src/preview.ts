@@ -131,8 +131,8 @@ let growth: GrowthSystem | null = null;
 let achievements: AchievementSystem | null = null;
 let affection: AffectionSystem | null = null;
 let scheduler: EventScheduler | null = null;
-/** 回合尾事件演出前的挂起点快照（演出场景播完经 sceneEnd 恢复续跑；同 starter 语义） */
-let turnResumeSnap: SaveSnapshot | null = null;
+/** 调度事件演出前的挂起点快照（演出场景播完经 sceneEnd 恢复续跑；同共享 Player） */
+let turnResumeSnap: (() => void) | null = null;
 /** 当前预览存档隔离键与会话起始时间（load 在模块级串行队列中执行）。 */
 let previewProjectKey = 'untitled';
 let sessionStart = Date.now();
@@ -807,6 +807,7 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
     if (controller.backlogOpen) {
       if (e.key === 'l' || e.key === 'L') {
         e.preventDefault();
+        if (e.repeat) return;
         controller.dispatchInput({ type: 'backlog.toggle' });
       } else if (e.key === 'PageUp' || e.key === 'PageDown') {
         e.preventDefault();
@@ -823,7 +824,7 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
       }
       if (/^[1-9]$/.test(e.key)) {
         e.preventDefault();
-        controller.dispatchInput({ type: 'choice.select', index: Number(e.key) - 1 });
+        controller.dispatchInput({ type: 'choice.select-visible', position: Number(e.key) - 1 });
         return;
       }
     }
@@ -859,6 +860,7 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
       return;
     }
 
+    if (e.repeat && ['a', 's', 'x', 'l', 'h'].includes(e.key.toLowerCase())) return;
     switch (e.key.toLowerCase()) {
       case 'a': controller.dispatchInput({ type: 'auto.toggle' }); break;
       case 's':
@@ -880,6 +882,7 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
   });
 
   // ===== system 事件 → 轻宿主驱动（日历可交互；战斗/商店无配置走占位横幅） =====
+  let resumingTurnStart = false;
   bus.on('system', (p) => {
     switch (p.type) {
       case 'calendar': {
@@ -888,6 +891,21 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
           return;
         }
         interp.pauseHost();
+        const playScheduledScene = (scene: string | undefined, atTurnStart: boolean): boolean => {
+          if (!scene || !registry?.has(scene) || !interp) return false;
+          const snap = interp.saveSnapshot();
+          if (!snap) return false;
+          system.hideMap();
+          turnResumeSnap = () => {
+            const current = interp?.saveSnapshot();
+            if (!current || !interp) throw new Error('日程演出结束后没有可恢复的运行状态');
+            resumingTurnStart = atTurnStart;
+            try { interp.loadSnapshot({ ...current, position: snap.position, callStack: snap.callStack }); }
+            finally { resumingTurnStart = false; }
+          };
+          interp.hostJump(scene);
+          return true;
+        };
         const renderMap = (): void => {
           if (!calendar || !interp) return;
           const cal = calendar; // 局部固化：模块级变量在嵌套回调内不收窄
@@ -922,21 +940,14 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
               // 回合尾：先结算回合，再调度优先级事件；演出场景经 sceneEnd 恢复续跑
               calendar.advanceTurn();
               const endEv = store ? scheduler?.dispatch(store) ?? null : null;
-              if (endEv?.scene && registry?.has(endEv.scene)) {
-                system.hideMap();
-                const snap = interp.saveSnapshot(); // 挂起点已越过 @calendar，恢复即续跑
-                if (snap) {
-                  turnResumeSnap = snap;
-                  interp.hostJump(endEv.scene);
-                  return;
-                }
-              }
+              if (playScheduledScene(endEv?.scene, false)) return;
               interp.resumeHost();
             },
           );
         };
-        // 回合头事件：effects 结算（演出留给回合尾，同 starter 语义）
-        if (scheduler && store) scheduler.dispatch(store);
+        // 回合头也即时播放已调度场景，不能消费一次性事件后丢掉演出。
+        const startEv = !resumingTurnStart && scheduler && store ? scheduler.dispatch(store) : null;
+        if (playScheduledScene(startEv?.scene, true)) break;
         renderMap();
         break;
       }
@@ -989,17 +1000,18 @@ async function boot(stageConfig: ProjectStage | null = null, announce = true): P
     }
   });
 
-  // 回合尾事件场景播完 → 恢复挂起点续跑（loadSnapshot 不可在事件回调内直调，延迟到下一 tick）
+  // 调度事件场景播完 → 恢复挂起点续跑（loadSnapshot 不可在事件回调内直调，延迟到下一 tick）
   bus.on('sceneEnd', () => {
     if (!turnResumeSnap && interp?.status === 'ended') {
       schedulePreviewTraceComplete(activePreviewTrace!, 'passed');
     }
     if (!turnResumeSnap || !interp) return;
     const snap = turnResumeSnap;
-    turnResumeSnap = null;
     setTimeout(() => {
+      if (turnResumeSnap !== snap) return;
+      turnResumeSnap = null;
       try {
-        interp?.loadSnapshot(snap);
+        snap();
       } catch (err) {
         showError(`预览恢复失败：${err instanceof Error ? err.message : String(err)}`);
       }

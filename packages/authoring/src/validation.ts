@@ -203,7 +203,7 @@ export function validateSnapshot(
 
   // Stage 6 Wave 3：项目级创作配置——characters 结构、entryScene 存在性、speaker/avatar 引用。
   const charactersValue = snapshot.config['characters'];
-  const characters: Record<string, unknown> = {};
+  let characters: Record<string, unknown> = {};
   if (charactersValue !== undefined) {
     if (typeof charactersValue !== 'object' || charactersValue === null || Array.isArray(charactersValue)) {
       rawIssues.push({
@@ -215,7 +215,7 @@ export function validateSnapshot(
         col: 1,
       });
     } else {
-      Object.assign(characters, charactersValue as Record<string, unknown>);
+      characters = { ...charactersValue as Record<string, unknown> };
     }
   }
   for (const [id, rawDeclaration] of Object.entries(characters)) {

@@ -138,7 +138,10 @@ function readWorkingObject(workingFiles: Readonly<Record<string, string>>, objec
   }
   const fullConfig = parseProjectConfigDocument(workingFiles['game.config.json'] ?? '{}');
   if (objectRef === 'config:stage') return present(fullConfig.stage ?? null);
-  if (objectRef === 'config:theme') return present({ theme: fullConfig.theme ?? null, titleLogo: fullConfig.player !== undefined && typeof fullConfig.player === 'object' && fullConfig.player !== null ? (fullConfig.player as Record<string, unknown>)['titleLogo'] ?? null : null });
+  if (objectRef === 'config:theme') {
+    const player = objectMap(fullConfig.player);
+    return present({ theme: fullConfig.theme ?? null, titleLogo: player.titleLogo ?? null, titleBackground: player.titleBackground ?? null });
+  }
   if (objectRef === 'config:ui') return present(fullConfig.ui ?? null);
   if (objectRef === 'config:textCatalog') return present(fullConfig.textCatalog ?? null);
   if (objectRef === 'config:terminology') return present(workingFiles['content/config/terminology.json'] ?? null);

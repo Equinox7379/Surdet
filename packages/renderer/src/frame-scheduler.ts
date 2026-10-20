@@ -7,6 +7,8 @@ export interface FrameSchedulerOptions {
   onFrame?: (deltaMs: number, updateMs: number) => void;
   /** 可选性能采样器；不参与调度决策，避免诊断影响游戏逻辑。 */
   monitor?: RenderPerformanceMonitor;
+  /** 帧失败时先停机再报告；未设置时继续抛出，后续由正常帧请求恢复。 */
+  onError?: (error: unknown) => void;
 }
 
 /**
@@ -19,18 +21,27 @@ export class FrameScheduler {
   #sources: FrameRequestSource[];
   #onFrame?: FrameSchedulerOptions['onFrame'];
   #monitor?: RenderPerformanceMonitor;
+  #onError?: FrameSchedulerOptions['onError'];
   #disposed = false;
   #wake = (): void => {
     if (!this.#disposed) this.#app.start();
   };
   #tick = (ticker: Ticker): void => {
     if (this.#disposed) return;
-    const started = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    this.#target.update(ticker.deltaMS);
-    const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - started;
-    this.#onFrame?.(ticker.deltaMS, elapsed);
-    this.#monitor?.record(ticker.deltaMS, elapsed);
-    if (!this.#target.needsUpdate) this.#app.stop();
+    try {
+      const started = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      this.#target.update(ticker.deltaMS);
+      const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - started;
+      this.#onFrame?.(ticker.deltaMS, elapsed);
+      this.#monitor?.record(ticker.deltaMS, elapsed);
+      if (!this.#target.needsUpdate) this.#app.stop();
+    } catch (error) {
+      // Pixi only renews RAF after listeners return; a throw otherwise strands
+      // a started ticker with no pending frame, so start() cannot wake it again.
+      this.#app.stop();
+      if (this.#onError) this.#onError(error);
+      else throw error;
+    }
   };
 
   constructor(
@@ -44,6 +55,7 @@ export class FrameScheduler {
     this.#sources = [target, ...sources];
     this.#onFrame = options.onFrame;
     this.#monitor = options.monitor;
+    this.#onError = options.onError;
     for (const source of this.#sources) source.setFrameRequest(this.#wake);
     app.ticker.add(this.#tick);
     if (target.needsUpdate) app.start();

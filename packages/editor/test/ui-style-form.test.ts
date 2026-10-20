@@ -40,6 +40,14 @@ describe('U1 style form writes the whole style', () => {
     expect(inheritStyleKey({ fontSize: 24 }, 'fontSize')).toBeNull();
     expect(inheritStyleKey(undefined, 'fontSize')).toBeNull();
   });
+  it('preserves the existing layout fields when changing or clearing a U1 field', () => {
+    for (const layout of [{ columns: 2 as const }, { imageFit: 'cover' as const }]) {
+      const changed = setStyleKey(layout, 'borderRadius', 8);
+      expect(changed).toEqual({ ...layout, borderRadius: 8 });
+      expect(inheritStyleKey(changed, 'borderRadius')).toEqual(layout);
+      expect(() => validateProjectUiStyle(changed, 'style')).not.toThrow();
+    }
+  });
 
   it('tells explicit clears apart from inherited values', () => {
     expect(isExplicitClear(style, 'shadows')).toBe(true);

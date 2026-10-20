@@ -317,7 +317,7 @@ export async function cmdAudit(dir: string, opts: { noRun?: boolean }): Promise<
   }
 
   // 编译全部场景 + 配置
-  const files = findGalFiles(path.join(dir, 'content/scenario'));
+  const files = findGalFiles(dir);
   const cfgPath = path.join(dir, 'game.config.json');
   let configRaw: Record<string, unknown> = {};
   if (fs.existsSync(cfgPath)) {

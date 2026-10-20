@@ -71,6 +71,10 @@ async function readExportProject(root: string, templates: string) {
   const plugins = readProjectPlugins(config);
   const lint = lintProject(root);
   const issues = lint.issues;
+  for (const [file, bytes] of files) if (file.startsWith('content/assets/') && bytes.subarray(0, 5).toString() === 'SDAT2') {
+    issues.push({ severity: 'error', code: 'EXPORT_ENCRYPTED_SOURCE', file, line: 0, col: 0,
+      text: '素材已是打包后的加密内容，请恢复原始素材再导出；不能重复封装或直接沿用旧包密文。' });
+  }
   // Compile with precisely the generic Player's declared handlers. A historical
   // customInstructions list is not a loader or permission to execute an extension.
   const instructions = plugins.flatMap(plugin => plugin.instructions.map(instruction => instruction.name));

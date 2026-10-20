@@ -56,7 +56,7 @@ export class ImageScope {
     }
   }, { rootMargin: '160px' });
   cancel(host: HTMLElement): void { this.observer?.unobserve(host); this.pending.delete(host); }
-  async image(host: HTMLElement, source: DirAsset | undefined, alt: string, fit: 'cover' | 'contain' = 'contain'): Promise<void> {
+  async image(host: HTMLElement, source: DirAsset | undefined, alt: string, fit: 'cover' | 'contain' | 'fill' = 'contain'): Promise<void> {
     if (this.disposed) return;
     host.dataset.imageState = 'unavailable';
     if (!source || !source.isImage || source.handle === null) {
