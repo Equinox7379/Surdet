@@ -43,6 +43,17 @@ describe('U3 import dialog display model', () => {
     expect(empty[0]!.label).toBe('作为「选项」页的自定义界面');
   });
 
+  it('offers content templates as nested and page-root fragment targets', () => {
+    const content: ProjectUiDocument = { version: 1, pages: {
+      choices: { id: 'choices', type: 'container', frame, children: [{ id: 'rows', type: 'content', source: 'choices', frame, children: [] }] },
+      'save-load': { id: 'slots', type: 'content', source: 'save-slots', frame, children: [] },
+    } };
+    expect(fragmentPlacements('choices', { page: 'choices', containerId: 'rows' }, content).map(item => [item.key, item.parentId]))
+      .toEqual([['container', 'rows'], ['root', 'choices'], ['replace', undefined]]);
+    expect(fragmentPlacements('save-load', { page: 'save-load', containerId: 'slots' }, content).map(item => [item.key, item.parentId]))
+      .toEqual([['root', 'slots'], ['replace', undefined]]);
+  });
+
   it('describes the backend page changes and lists pages returned to the default page', () => {
     const pages = [
       { page: 'title' as const, change: 'replace' as const, before: ['a', 'b'], after: ['c'] },

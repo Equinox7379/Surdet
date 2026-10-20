@@ -11,7 +11,7 @@ export const UI_SHARE_PAGE_NAMES: Record<ProjectUiPageId, string> = {
   dialogue: '对白', choices: '选项', toolbar: '阅读工具栏', hud: '剧情信息栏',
 };
 
-const CONTAINER_TYPES = new Set(['container', 'scroll', 'tabs']);
+const CONTAINER_TYPES = new Set(['container', 'scroll', 'tabs', 'content']);
 
 export interface UiSharePeek { kind: 'theme' | 'fragment' | null; fragmentPage: ProjectUiPageId | null; fragmentRootId: string | null }
 

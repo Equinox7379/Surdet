@@ -567,7 +567,8 @@ try {
   await c.locator('input[name="ui-share-import-placement"][value="replace"]').check();
   info = await settle(c);
   assert.equal(info.pages.title, 'replace');
-  assert.match(info.details.title, new RegExp(`替换自定义页：移除 ${allIds.length} 个组件，加入 ${ids(fragmentExport.share.config.ui.pages.title).length} 个组件`));
+  assert.match(info.details.title, new RegExp(`替换整页，导入后共 ${ids(fragmentExport.share.config.ui.pages.title).length} 个组件`));
+  assert.match(info.details.title, /相同标识的组件也使用导入页中的布局、样式、文字和动作/);
   await c.getByRole('button', { name: '取消', exact: true }).click();
   await dialog(c).waitFor({ state: 'detached' });
   assert.deepEqual((await snapshot(c)).ui, cDraft.ui);
