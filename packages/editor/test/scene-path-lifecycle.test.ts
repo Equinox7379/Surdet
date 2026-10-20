@@ -14,7 +14,7 @@ import {
 } from '../src/panels/flow.js';
 import type { FlowNode } from '../src/graph/build.js';
 import { createScene } from '../src/panels/sidebar.js';
-import { bindProjectIoHooks, workingGameConfigText } from '../src/project-io.js';
+import { bindProjectIoHooks, sceneFileIdentity, workingGameConfigText } from '../src/project-io.js';
 import { createEditorProjectStorage } from '../src/authoring-project-storage.js';
 import { histories, setCurrentText, undo, redo } from '../src/history.js';
 
@@ -245,6 +245,51 @@ describe('场景路径安全生命周期', () => {
     undo();
     expect(state.scenes.get('new')!.text).toBe(fresh);
     expect(histories.has('old')).toBe(false);
+  });
+
+  it.each(['CON', 'nul', 'LPT1', 'COM¹', 'COM²', 'COM³', 'LPT¹', 'LPT²', 'LPT³'])('portable scene creation and rename reject device name %s before editing', async id => {
+    state.scenes.set('old', scene('old', 'old.gal', null));
+    const before = [...state.scenes].map(([key, entry]) => [key, { ...entry }]);
+    await expect(createScene(id)).rejects.toThrow(/Windows 设备名/);
+    await expect(renameSceneAtKey('old', id)).rejects.toThrow(/Windows 设备名/);
+    expect([...state.scenes]).toEqual(before);
+    expect(state.pendingSceneDeletes).toEqual([]);
+  });
+
+  it('portable scene creation refuses a case alias of a nested scene', async () => {
+    state.scenes.set('chapter/old', scene('old', 'chapter/old.gal', null));
+    await expect(createScene('OLD')).rejects.toThrow(/已存在/);
+    expect([...state.scenes.keys()]).toEqual(['chapter/old']);
+  });
+  it('portable scene creation normalizes Unicode before draft identity and collision checks', async () => {
+    await createScene('e\u0301');
+    expect(sceneFileIdentity('content/scenario/e\u0301.gal')).toBe(sceneFileIdentity('é.gal'));
+    expect(state.scenes.get('é')).toMatchObject({ id: 'é', file: 'é.gal', dirty: true });
+    expect(state.scenes.has('e\u0301')).toBe(false);
+    await expect(createScene('e\u0301')).rejects.toThrow(/已存在/);
+    state.scenes.clear();
+    state.scenes.set('chapter/e\u0301', scene('e\u0301', 'chapter/e\u0301.gal', null));
+    await expect(createScene('é')).rejects.toThrow(/已存在/);
+  });
+  it('portable scene rename normalizes its new identity before changing references', async () => {
+    state.scenes.set('old', scene('old', 'old.gal', null));
+    await renameSceneAtKey('old', 'e\u0301');
+    expect(state.scenes.get('é')).toMatchObject({ id: 'é', file: 'é.gal' });
+    expect(state.scenes.has('old')).toBe(false);
+  });
+  it.each([['straße', 'STRASSE'], ['ı', 'I']])('portable scene collision matching follows the writer fold for %s/%s', async (existing, alias) => {
+    state.scenes.set(`chapter/${existing}`, scene(existing, `chapter/${existing}.gal`, null));
+    state.scenes.set('old', scene('old', 'old.gal', null));
+    await expect(createScene(alias)).rejects.toThrow(/已存在/);
+    await expect(renameSceneAtKey('old', alias)).rejects.toThrow(/已存在/);
+    expect(sceneFileIdentity(`${existing}.gal`)).toBe(sceneFileIdentity(`${alias}.gal`));
+  });
+  it('portable scene creation cannot replace an existing directory with a file', async () => {
+    state.scenes.set('foo.gal/bar', scene('bar', 'foo.gal/bar.gal', null));
+    state.scenes.set('old', scene('old', 'old.gal', null));
+    await expect(createScene('foo')).rejects.toThrow(/占用|冲突/);
+    await expect(renameSceneAtKey('old', 'foo')).rejects.toThrow(/存在|冲突/);
+    expect([...state.scenes.keys()]).toEqual(['foo.gal/bar', 'old']);
   });
 
   it('嵌套场景重命名保持目录，改写引用并登记旧文件而不立即删除', async () => {

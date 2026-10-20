@@ -1,12 +1,11 @@
-import { resolvePlayerTheme, resolveProjectUiStyle, type ProjectUiNode, type ProjectUiShadow, type ProjectUiStyle } from '@surdet/core';
-import { projectUiDecorStyle } from '@surdet/renderer';
+import { resolveProjectUiStyle, type ProjectUiNode, type ProjectUiShadow, type ProjectUiStyle } from '@surdet/core';
 
 /**
  * U1 style form: only the fields a node type actually draws, grouped as 文字 / 背景 / 框体与皮肤.
  * Every change returns the node's complete next style (`node.update.patch.style` replaces it whole);
  * "恢复继承" deletes the key, and an empty style becomes `null` so the node inherits everything again.
  */
-export type UiStyleKey = keyof ProjectUiStyle;
+export type UiStyleKey = Exclude<keyof ProjectUiStyle, 'columns' | 'imageFit'>;
 type Effective = ReturnType<typeof resolveProjectUiStyle>;
 type Shadow = ProjectUiShadow;
 
@@ -72,10 +71,9 @@ function make<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string,
   return node;
 }
 
-/** What the Player draws when a field is inherited: Core's values plus the Player's progress track. */
+/** The same effective values the Player draws, including Core's progress-track defaults. */
 export function effectiveUiStyle(node: ProjectUiNode, config: Record<string, unknown>): Effective {
-  const resolve = (source: Record<string, unknown>): Effective => projectUiDecorStyle(node, resolveProjectUiStyle(node, source), resolvePlayerTheme(source));
-  try { return resolve(config); } catch { return resolve({}); }
+  try { return resolveProjectUiStyle(node, config); } catch { return resolveProjectUiStyle(node, {}); }
 }
 
 function describe(key: UiStyleKey, effective: Effective): string {

@@ -333,7 +333,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       item.textContent = '';
       const source = state.dirAssets.find(asset => asset.kind === 'bg' && asset.key === node.asset);
       const picture = element('div', 'ui-canvas-image'); item.appendChild(picture);
-      void activeImages?.image(picture, source, node.asset ?? '项目图片');
+      void activeImages?.image(picture, source, node.asset ?? '项目图片', style?.imageFit ?? 'contain');
     }
     item.title = nodeLabel(node);
     item.onpointerdown = event => {

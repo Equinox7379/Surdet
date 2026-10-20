@@ -600,6 +600,52 @@ describe('inspectSceneAutosaveRecovery（场景路径事务整组恢复）', () 
     }],
   ]);
 
+  it.each(['CON', 'COM¹', 'OLD'])('portable scene autosave refuses a new conflicting identity %s', id => {
+    const operationId = '22222222-2222-4222-8222-222222222222';
+    const built = buildAutosave('proj', new Map([[`fresh/${id}`, {
+      id, file: `fresh/${id}.gal`, text: `@scene ${id}\n`, eol: '\n', dirty: true, pendingCreateOperationId: operationId,
+    }]]), [], 12, 'project');
+    expect(inspectSceneAutosaveRecovery(built, 'project', diskScenes)).toEqual({ status: 'blocked', scenes: [], pendingDeletes: [] });
+  });
+  it.each(['CON', 'COM¹', 'READER'])('portable scene autosave refuses a conflicting rename identity %s', id => {
+    const next = structuredClone(payload);
+    const entry = next.scenes[0]!;
+    entry.id = id; entry.key = `chapter/${id}`; entry.file = `chapter/${id}.gal`; entry.text = `@scene ${id}\n`;
+    next.sceneTransaction.pendingDeletes[0]!.replacementKey = entry.key;
+    next.sceneTransaction.pendingDeletes[0]!.affectedSceneKeys[0] = entry.key;
+    expect(inspectSceneAutosaveRecovery(next, 'project', diskScenes)).toEqual({ status: 'blocked', scenes: [], pendingDeletes: [] });
+  });
+  it('portable scene autosave allows moving the original identity to another folder', () => {
+    const next = structuredClone(payload);
+    const entry = next.scenes[0]!;
+    entry.id = 'old'; entry.key = 'other/old'; entry.file = 'other/old.gal'; entry.text = '@scene old\n';
+    next.sceneTransaction.pendingDeletes[0]!.replacementKey = entry.key;
+    next.sceneTransaction.pendingDeletes[0]!.affectedSceneKeys[0] = entry.key;
+    expect(inspectSceneAutosaveRecovery(next, 'project', diskScenes).status).toBe('recoverable');
+  });
+  it('portable scene autosave retains a path-only move of an existing reserved logical identity', () => {
+    const next = structuredClone(payload), disk = new Map(diskScenes);
+    const source = disk.get('chapter/old')!;
+    disk.delete('chapter/old'); disk.set('chapter/CON', { ...source, id: 'CON', file: 'chapter/CON.gal' });
+    Object.assign(next.scenes[0]!, { id: 'CON', key: 'other/CON', file: 'other/CON.gal', text: '@scene CON\n' });
+    Object.assign(next.sceneTransaction.pendingDeletes[0]!, { id: 'CON', file: 'chapter/CON.gal', replacementKey: 'other/CON' });
+    next.sceneTransaction.pendingDeletes[0]!.affectedSceneKeys[0] = 'other/CON';
+    expect(inspectSceneAutosaveRecovery(next, 'project', disk).status).toBe('recoverable');
+  });
+  it.each([['fresh', 'FRESH'], ['straße', 'STRASSE'], ['ı', 'I']])('portable scene autosave refuses writer-fold aliases %s/%s between pending creates', (left, right) => {
+    const operationId = '22222222-2222-4222-8222-222222222222';
+    const built = buildAutosave('proj', new Map([left, right].map(id => [id, {
+      id, file: `${id}.gal`, text: `@scene ${id}\n`, eol: '\n', dirty: true, pendingCreateOperationId: operationId,
+    }])), [], 12, 'project');
+    expect(inspectSceneAutosaveRecovery(built, 'project', diskScenes).status).toBe('blocked');
+  });
+  it.each(['CON', 'LPT1', 'COM¹'])('portable scene autosave rejects new parent directory %s', directory => {
+    const operationId = '22222222-2222-4222-8222-222222222222';
+    const built = buildAutosave('proj', new Map([[`${directory}/fresh`, {
+      id: 'fresh', file: `${directory}/fresh.gal`, text: '@scene fresh\n', eol: '\n', dirty: true, pendingCreateOperationId: operationId,
+    }]]), [], 12, 'project');
+    expect(inspectSceneAutosaveRecovery(built, 'project', diskScenes).status).toBe('blocked');
+  });
   it('完整成员齐备时同时恢复新场景、引用与待提交计划', () => {
     expect(inspectSceneAutosaveRecovery(payload, 'project', diskScenes)).toEqual({
       status: 'recoverable',

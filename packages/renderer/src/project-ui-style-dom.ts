@@ -1,4 +1,4 @@
-import { projectUiNineSlice, type ProjectUiNode, type ProjectUiShadow, type ProjectUiStyle, type resolveProjectUiStyle } from '@surdet/core';
+import { projectUiNineSlice, type ProjectUiShadow, type ProjectUiStyle, type resolveProjectUiStyle } from '@surdet/core';
 
 /** Values from Core `resolveProjectUiStyle`; this module never invents its own defaults. */
 export type ProjectUiEffectiveStyle = ReturnType<typeof resolveProjectUiStyle>;
@@ -25,17 +25,6 @@ const BOX_KEYS = ['backgroundOpacity', 'backgroundGradient', 'backgroundImage', 
  */
 export function usesProjectUiBox(style: ProjectUiStyle | undefined): boolean {
   return !!style && BOX_KEYS.some(key => style[key] !== undefined);
-}
-
-/**
- * What the decoration paints for one node: Core's effective values, except that a progress bar keeps
- * its pre-U1 track (theme surface colour, small radius) unless the author sets those two fields.
- * Player and Editor canvas both call this, so the two never disagree on the track.
- */
-export function projectUiDecorStyle(node: Pick<ProjectUiNode, 'type' | 'style'>, effective: ProjectUiEffectiveStyle,
-  theme: { colors: { surface: number }; radius: { sm: number } }): ProjectUiEffectiveStyle {
-  if (node.type !== 'progress') return effective;
-  return { ...effective, background: node.style?.background ?? theme.colors.surface, borderRadius: node.style?.borderRadius ?? theme.radius.sm };
 }
 
 /** CSS padding that turns an outer layout box into Core's content box (explicit border + padding). */

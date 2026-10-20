@@ -9,6 +9,7 @@ import { openTextInputDialog } from './text-input-dialog.js';
 import { field } from '../v4/ui.js';
 import { workbenchIcon } from '../shell/icons.js';
 import { sceneTextCharacters } from '../stats.js';
+import { isReservedSceneFileId } from '@surdet/core';
 
 export function renderSidebar(): void {
   hideAssetPreview();
@@ -175,10 +176,11 @@ function assertSceneCreatable(): void {
 async function createSceneUnlocked(input: string, template: number, project: FileSystemDirectoryHandle | null): Promise<void> {
   assertSceneCreatable();
   if (state.dirHandle !== project || state.projectLoading) throw new Error('项目已切换，请重新新建场景');
-  const id = input.trim();
+  const id = input.trim().normalize('NFC');
+  if (isReservedSceneFileId(id)) throw new Error('场景标识不能使用 Windows 设备名');
   if (!/^[^\s.<>:"/\\|?*\u0000-\u001f]+$/u.test(id)) throw new Error('场景标识不能为空，也不能包含空格、点号或文件名保留字符');
-  if ([...state.scenes.values()].some((scene) => scene.id === id)) throw new Error(`场景 '${id}' 已存在`);
-  if (isSceneFilePathReserved(`${id}.gal`)) throw new Error('该场景文件正等待删除，请先保存全部');
+  if ([...state.scenes.values()].some((scene) => scene.id.normalize('NFC').toUpperCase().toLowerCase() === id.toUpperCase().toLowerCase())) throw new Error(`场景 '${id}' 已存在`);
+  if (isSceneFilePathReserved(`${id}.gal`)) throw new Error('目标场景路径已占用或目录名称冲突，请先保存全部或更换名称');
   const tpl = SCENE_TEMPLATES[template] ?? SCENE_TEMPLATES[0]!;
   const pendingCreateOperationId = [...state.scenes.values()].find((scene) => (
     scene.handle === null && !scene.persistedSha256 && scene.pendingCreateOperationId

@@ -24,6 +24,7 @@ export class AssetLoadQueue {
   readonly concurrency: number;
 
   constructor(concurrency = 4) {
+    if (!Number.isFinite(concurrency)) throw new RangeError('素材加载并发数必须是有限数字');
     this.concurrency = Math.max(1, Math.min(8, Math.floor(concurrency)));
   }
 

@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { writeFileAtomic } from './json-file.js';
 
 export interface CrashReportInput {
   error: unknown;
@@ -33,7 +34,7 @@ export function writeCrashReport(rootDir: string, input: CrashReportInput): stri
         extra: {}, truncated: true,
       }, null, 2) + '\n';
     }
-    fs.writeFileSync(file, output);
+    writeFileAtomic(file, output);
     return file;
   } catch { return null; }
 }

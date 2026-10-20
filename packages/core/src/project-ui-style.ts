@@ -21,6 +21,10 @@ export interface ProjectUiStyle {
   borderRadius?: number;
   padding?: ProjectUiInsets;
   shadows?: ProjectUiShadow[];
+  /** Content nodes only; absent keeps the single-column layout. */
+  columns?: 1 | 2;
+  /** Image content only; distinct from decorative backgroundImage.fit. */
+  imageFit?: 'contain' | 'cover' | 'fill';
 }
 
 function object(value: unknown, at: string): Record<string, unknown> {
@@ -54,7 +58,9 @@ function shadows(value: unknown, at: string): void {
 export function validateProjectUiStyle(value: unknown, at: string): void {
   const item = object(value, at);
   keys(item, ['color', 'background', 'opacity', 'backgroundOpacity', 'fontSize', 'align', 'fontRole', 'fontWeight', 'lineHeight',
-    'letterSpacing', 'textShadows', 'backgroundGradient', 'backgroundImage', 'border', 'borderRadius', 'padding', 'shadows'], at);
+    'letterSpacing', 'textShadows', 'backgroundGradient', 'backgroundImage', 'border', 'borderRadius', 'padding', 'shadows', 'columns', 'imageFit'], at);
+  if (item.columns !== undefined && item.columns !== 1 && item.columns !== 2) throw new Error(`${at}.columns 必须为 1 或 2`);
+  if (item.imageFit !== undefined && !['contain', 'cover', 'fill'].includes(item.imageFit as string)) throw new Error(`${at}.imageFit 不受支持`);
   for (const key of ['color', 'background']) if (item[key] !== undefined) number(item[key], 0, 0xffffff, `${at}.${key}`, true);
   if (item.opacity !== undefined) number(item.opacity, 0, 1, `${at}.opacity`);
   if (item.backgroundOpacity !== undefined) number(item.backgroundOpacity, 0, 1, `${at}.backgroundOpacity`);
@@ -99,9 +105,9 @@ export function validateProjectUiStyle(value: unknown, at: string): void {
 
 /** A null font weight/line height/padding means the existing native-control default, not zero. */
 export function resolveProjectUiStyle(node: ProjectUiNode, config: Record<string, unknown>, explicit: PresentationThemeOverrides = {}) {
-  const theme = resolvePlayerTheme(config, explicit), style = node.style ?? {}, button = node.type === 'button';
+  const theme = resolvePlayerTheme(config, explicit), style = node.style ?? {}, button = node.type === 'button', progress = node.type === 'progress';
   return {
-    color: style.color ?? theme.colors.text, background: style.background ?? (button ? theme.colors.surface : null), opacity: style.opacity ?? 1,
+    color: style.color ?? theme.colors.text, background: style.background ?? (button || progress ? theme.colors.surface : null), opacity: style.opacity ?? 1,
     backgroundOpacity: style.backgroundOpacity ?? 1,
     fontSize: style.fontSize ?? theme.typography.uiSize, fontRole: style.fontRole ?? 'ui', align: style.align ?? 'left',
     fontWeight: style.fontWeight ?? (button ? 600 : null), lineHeight: style.lineHeight ?? (node.type === 'text' ? 1.45 : null),
@@ -109,7 +115,7 @@ export function resolveProjectUiStyle(node: ProjectUiNode, config: Record<string
     backgroundGradient: style.backgroundGradient ?? null,
     backgroundImage: style.backgroundImage === undefined ? (button && theme.skins.buttonSkin ? { asset: theme.skins.buttonSkin, fit: 'stretch' as const } : null) : style.backgroundImage,
     border: style.border === undefined ? (button ? { width: 1, color: theme.colors.line, opacity: 1 } : null) : style.border,
-    borderRadius: style.borderRadius ?? (button ? theme.radius.md : 0), padding: style.padding ?? null, shadows: style.shadows ?? [],
+    borderRadius: style.borderRadius ?? (button ? theme.radius.md : progress ? theme.radius.sm : 0), padding: style.padding ?? null, shadows: style.shadows ?? [],
   };
 }
 

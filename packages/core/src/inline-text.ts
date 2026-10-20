@@ -53,7 +53,7 @@ function literalUnits(source: string, offset: number, style: InlineStyle): Inlin
   const positions: { start: number; end: number }[] = [];
   for (let i = 0; i < source.length; i++) {
     const start = i;
-    if (source[i] === '\\' && (source[i + 1] === '<' || source[i + 1] === '\\')) i++;
+    if (source[i] === '\\' && (source[i + 1] === '<' || source[i + 1] === '\\' || source[i + 1] === ':' || source[i + 1] === '：')) i++;
     text += source[i]; positions.push({ start: offset + start, end: offset + i + 1 });
   }
   return Array.from(segmenter.segment(text), ({ segment, index }) => ({
