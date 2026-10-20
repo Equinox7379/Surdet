@@ -116,6 +116,7 @@ export function resolveProjectUiStyle(node: ProjectUiNode, config: Record<string
     backgroundImage: style.backgroundImage === undefined ? (button && theme.skins.buttonSkin ? { asset: theme.skins.buttonSkin, fit: 'stretch' as const } : null) : style.backgroundImage,
     border: style.border === undefined ? (button ? { width: 1, color: theme.colors.line, opacity: 1 } : null) : style.border,
     borderRadius: style.borderRadius ?? (button ? theme.radius.md : progress ? theme.radius.sm : 0), padding: style.padding ?? null, shadows: style.shadows ?? [],
+    columns: style.columns ?? 1, imageFit: style.imageFit ?? 'contain',
   };
 }
 

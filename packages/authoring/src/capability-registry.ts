@@ -555,6 +555,7 @@ const uiStyleSchema = strictObject({
   }, ['asset', 'fit']), nullSchema], description: 'Project background asset key only. Slicing requires stretch and actual source-image bounds; null disables the inherited button skin.' },
   border: { oneOf: [strictObject({ width: { type: 'number', minimum: 0, maximum: 256 }, color: uiColorSchema, opacity: uiOpacitySchema }, ['width', 'color', 'opacity']), nullSchema] },
   borderRadius: { type: 'number', minimum: 0, maximum: 65535 }, padding: strictObject(uiInsetsFields, ['top', 'right', 'bottom', 'left']),
+  columns: { enum: [1, 2] }, imageFit: { enum: ['contain', 'cover', 'fill'] },
 });
 const uiNodeInputSchema: JsonSchema = { ...jsonObjectSchema, properties: { style: uiStyleSchema }, description: 'ProjectUiNode; Core validates node types, children and all nested styles. See docs/ui-style-contract.md.' };
 const uiInspectionSchema = strictObject({

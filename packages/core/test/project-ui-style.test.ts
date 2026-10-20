@@ -60,8 +60,14 @@ describe('U1 finite UI style contract', () => {
       const document = readProjectUi(input)!;
       expect(document.pages.gallery!.style).toEqual({ columns: 2, borderRadius: 8 });
       expect(document.pages.gallery!.children![0]!.style).toEqual({ imageFit, backgroundImage: { asset: 'paper', fit: 'stretch' } });
+      expect(resolveProjectUiStyle(document.pages.gallery!, input)).toMatchObject({ columns: 2 });
+      expect(resolveProjectUiStyle(document.pages.gallery!.children![0]!, input)).toMatchObject({ imageFit });
       expect(projectUiAssetKeys(document)).toEqual(['art', 'paper']);
     }
+  });
+  it('reports the existing single-column and contain defaults when layout fields are omitted', () => {
+    expect(resolveProjectUiStyle({ ...node, type: 'content', source: 'gallery-cgs' }, {})).toMatchObject({ columns: 1 });
+    expect(resolveProjectUiStyle({ ...node, type: 'image', asset: 'art' }, {})).toMatchObject({ imageFit: 'contain' });
   });
   it('slices source pixels exactly and uniformly shrinks borders for small target boxes', () => {
     const patches = projectUiNineSlice({ width: 100, height: 80 }, node.frame, slice);
