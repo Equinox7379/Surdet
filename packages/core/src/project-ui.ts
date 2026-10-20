@@ -243,6 +243,13 @@ function validateNode(value: unknown, config: Record<string, unknown>, ids: Set<
     validateProjectUiStyle(item.style, `${location}.style`);
     const content = projectUiChildrenRect(frame as unknown as ProjectUiRect, type, item.style as ProjectUiStyle);
     if (content.height <= 0) throw new Error(`${location}.style 必须为页签栏和内容留出空间`);
+    const style = record(item.style, `${location}.style`);
+    if (style.columns !== undefined) {
+      if (type !== 'content') throw new Error(`${location}.style.columns 只适用于 content`);
+    }
+    if (style.imageFit !== undefined) {
+      if (type !== 'image') throw new Error(`${location}.style.imageFit 只适用于 image`);
+    }
   }
   if (item.children !== undefined) {
     if (!CHILD_TYPES.has(type) || !Array.isArray(item.children)) throw new Error(`${location}.children 不适用于 ${type}`);

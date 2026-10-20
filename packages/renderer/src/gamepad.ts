@@ -99,7 +99,7 @@ export function diffGamepad(prev: GamepadSnapshot | null, cur: GamepadSnapshot):
  * 无手柄/非浏览器环境时 start() 为无操作。
  */
 export class GamepadPoller {
-  #raf = 0;
+  #raf: number | null = null;
   #prev: GamepadSnapshot | null = null;
   #running = false;
 
@@ -112,24 +112,27 @@ export class GamepadPoller {
     this.#running = true;
     const loop = (): void => {
       if (!this.#running) return;
+      this.#raf = null;
       const pads = navigator.getGamepads();
       const pad = pads && [...pads].find((p) => p && p.connected);
-      if (pad) {
-        const cur = snapshotOf(pad);
-        const actions = diffGamepad(this.#prev, cur);
+      const cur = pad ? snapshotOf(pad) : null;
+      const actions = cur ? diffGamepad(this.#prev, cur) : [];
+      this.#prev = cur;
+      try {
         if (actions.length > 0) this.onActions(actions);
-        this.#prev = cur;
-      } else {
-        this.#prev = null;
+      } finally {
+        // Keep callback errors visible without losing later input. A callback
+        // may stop or restart polling, in which case it owns the next request.
+        if (this.#running && this.#raf === null) this.#raf = requestAnimationFrame(loop);
       }
-      this.#raf = requestAnimationFrame(loop);
     };
     this.#raf = requestAnimationFrame(loop);
   }
 
   stop(): void {
     this.#running = false;
-    if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(this.#raf);
+    if (this.#raf !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(this.#raf);
+    this.#raf = null;
     this.#prev = null;
   }
 }

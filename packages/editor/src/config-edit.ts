@@ -261,8 +261,10 @@ export function collectReferencedVars(scenes: Map<string, CompiledScene>): Map<s
 /** 行模型：文本列 string、勾选列 boolean（统一形状便于通用表格 UI） */
 export type RowMap = Record<string, string | boolean>;
 
-/** 据点指令行保留来源主键，支持 ID 改名时认领原条目；仅为表格内部标记，不写入配置输出。 */
+/** 配置行保留来源主键，支持改名时认领原条目；仅为表格内部标记，不写入配置输出。 */
 const ROW_SOURCE_PRIMARY_KEY = '__sourcePrimaryKey';
+/** 随草稿和撤销快照保存未显示字段，不依赖下一次保存时仍有同名磁盘条目。 */
+export const ROW_EXTRA_FIELDS = '__extraFields';
 
 /** 值 → 行单元格：boolean 保留、对象 JSON 字符串化、其余 String、空值 '' */
 function toCell(v: unknown): string | boolean {
@@ -272,7 +274,7 @@ function toCell(v: unknown): string | boolean {
   return String(v);
 }
 
-/** 列表字段 → 行数组（只取枚举的键；未枚举字段在保存时经原条目合并保留） */
+/** 列表字段 → 行数组；未显示字段也是草稿的一部分，但不显示为表格列。 */
 function listToRows(raw: unknown, field: string, keys: string[], sourcePrimaryKey?: string): RowMap[] {
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const list = Array.isArray(obj[field]) ? obj[field] : [];
@@ -281,6 +283,7 @@ function listToRows(raw: unknown, field: string, keys: string[], sourcePrimaryKe
     .map((e) => {
       const row: RowMap = {};
       for (const k of keys) row[k] = toCell(e[k]);
+      row[ROW_EXTRA_FIELDS] = JSON.stringify(Object.fromEntries(Object.entries(e).filter(([key]) => !keys.includes(key))));
       if (sourcePrimaryKey !== undefined) row[ROW_SOURCE_PRIMARY_KEY] = String(e[sourcePrimaryKey] ?? '');
       return row;
     });
@@ -291,35 +294,49 @@ function origList(raw: unknown, field: string): unknown[] {
   return Array.isArray(obj[field]) ? obj[field] : [];
 }
 
-/** 行数组 → 列表条目：按主键（id/characterId）匹配原条目合并（保留未编辑字段），
- *  避免删行/中间插行时按索引合并导致未知字段错位（M4 批次审阅轮 Major 1 修复）；
- *  新增行（主键无匹配）从空条目起步；由解析器保留来源主键的行在改名时仍认领原条目。
+/** 行数组 → 列表条目：界面行携带未显示字段，改名、重复保存和撤销不串行或丢字段。
+ *  直接传入的普通行继续按主键匹配原条目（不按索引猜测）。
  *  numberKeys 由各配置字段契约显式提供；未列出的非 JSON 列一律按文本保存，
  *  避免标识、场景和表达式等数字样式文本被静默改型。 */
 function applyRowsToList(
   origArr: unknown[], rows: RowMap[], knownKeys: string[], jsonKeys: string[], errors: string[], listLabel: string, primaryKey: string,
   numberKeys: readonly string[] = [],
 ): Record<string, unknown>[] {
-  const claimed = new Set<unknown>(); // 一个原条目最多被一行认领（重复主键时后续行从空起步）
-  const findOrig = (row: RowMap): Record<string, unknown> | null => {
+  const claimed = new Set<unknown>(); // 一个原条目最多被一行认领
+  const sourceKeys = new Set(rows.map(row => String(row[ROW_SOURCE_PRIMARY_KEY] ?? '').trim()));
+  const findOrig = (row: RowMap, index: number): Record<string, unknown> | null => {
     const key = String(row[primaryKey] ?? '').trim();
     const sourceKey = String(row[ROW_SOURCE_PRIMARY_KEY] ?? '').trim();
-    for (const lookupKey of [sourceKey, key]) {
-      if (lookupKey.length === 0) continue;
-      for (const candidate of origArr) {
-        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || claimed.has(candidate)) continue;
-        if (String((candidate as Record<string, unknown>)[primaryKey] ?? '').trim() === lookupKey) {
-          claimed.add(candidate);
-          return { ...(candidate as Record<string, unknown>) };
-        }
+    if (sourceKey !== '') {
+      if (claimed.has(sourceKey)) {
+        errors.push(`${listLabel} 第 ${index + 1} 行来源 '${sourceKey}' 被重复认领`);
+        return null;
       }
+      claimed.add(sourceKey);
+    }
+    if (typeof row[ROW_EXTRA_FIELDS] === 'string') return JSON.parse(row[ROW_EXTRA_FIELDS]);
+    const lookupKey = sourceKey || key;
+    // 无来源的新行不能先占用仍有来源行认领的原条目；其余无来源行维持按主键合并。
+    if (lookupKey.length === 0 || (sourceKey === '' && sourceKeys.has(key))) return null;
+    for (const candidate of origArr) {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+      if (String((candidate as Record<string, unknown>)[primaryKey] ?? '').trim() !== lookupKey) continue;
+      if (claimed.has(candidate)) {
+        if (sourceKey !== '') {
+          errors.push(`${listLabel} 第 ${index + 1} 行来源 '${sourceKey}' 被重复认领`);
+          return null;
+        }
+        continue;
+      }
+      claimed.add(candidate);
+      return { ...(candidate as Record<string, unknown>) };
     }
     return null;
   };
   const out: Record<string, unknown>[] = [];
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]!;
-    const entry: Record<string, unknown> = findOrig(row) ?? {};
+    const entry: Record<string, unknown> = findOrig(row, i) ?? {};
     for (const key of knownKeys) {
       const cell = row[key];
       if (cell === undefined) continue;
@@ -409,19 +426,9 @@ export function parseCalendarRows(raw: unknown): CalendarRows {
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const scalars: Record<string, string> = {};
   for (const k of CALENDAR_SCALAR_KEYS) scalars[k] = String(toCell(obj[k]));
-  // N1：legacy when-only 的历史值在 UI 呈现为 canonical visibleWhen（保存时经
-  // normalizeCalendarSourceNodes 正规化删除 when）；双字段冲突由保存侧 fail-loud。
-  const origNodes = Array.isArray(obj['nodes'])
-    ? (obj['nodes'] as unknown[]).filter((e): e is Record<string, unknown> => !!e && typeof e === 'object' && !Array.isArray(e))
-    : [];
-  const nodes = listToRows(raw, 'nodes', CALENDAR_NODE_KEYS).map((row, i) => {
-    const legacy = origNodes[i];
-    if (legacy !== undefined && String(row['visibleWhen'] ?? '').trim() === ''
-      && typeof legacy['when'] === 'string' && (legacy['when'] as string).trim() !== '') {
-      row['visibleWhen'] = legacy['when'];
-    }
-    return row;
-  });
+  // 沿用既有日历正规化；不要把已退役的 when 留在隐藏字段里再次写回。
+  // 双字段冲突仍由保存时对原文的正规化检查拒绝。
+  const nodes = listToRows({ ...obj, nodes: normalizeCalendarSourceNodes(raw, []) }, 'nodes', CALENDAR_NODE_KEYS, 'id');
   return {
     scalars,
     nodes,
@@ -479,9 +486,9 @@ export interface EventsRows {
 
 export function parseEventsRows(raw: unknown): EventsRows {
   return {
-    profiles: listToRows(raw, 'profiles', EVENT_PROFILE_KEYS),
-    events: listToRows(raw, 'events', EVENT_KEYS),
-    scheduled: listToRows(raw, 'scheduled', EVENT_KEYS),
+    profiles: listToRows(raw, 'profiles', EVENT_PROFILE_KEYS, 'characterId'),
+    events: listToRows(raw, 'events', EVENT_KEYS, 'id'),
+    scheduled: listToRows(raw, 'scheduled', EVENT_KEYS, 'id'),
   };
 }
 
@@ -512,7 +519,7 @@ export function parseGrowthRows(raw: unknown): GrowthRows {
   const curve = (obj.curve && typeof obj.curve === 'object' ? obj.curve : {}) as Record<string, unknown>;
   return {
     scalars: { 'curve.base': String(curve.base ?? ''), 'curve.linear': String(curve.linear ?? '') },
-    profiles: listToRows(raw, 'profiles', GROWTH_PROFILE_KEYS),
+    profiles: listToRows(raw, 'profiles', GROWTH_PROFILE_KEYS, 'characterId'),
   };
 }
 
@@ -566,12 +573,12 @@ export interface GalleryRows {
 export function parseGalleryRows(raw: unknown): GalleryRows {
   return {
     ...((raw as { unlockPolicy?: unknown } | null)?.unlockPolicy === undefined ? {} : { unlockPolicy: structuredClone((raw as GalleryRows).unlockPolicy) }),
-    cgs: listToRows(raw, 'cgs', GALLERY_CG_KEYS),
-    music: listToRows(raw, 'music', GALLERY_CG_KEYS),
-    texts: listToRows(raw, 'texts', GALLERY_TEXT_KEYS),
-    endings: listToRows(raw, 'endings', GALLERY_ENDING_KEYS),
-    profiles: listToRows(raw, 'profiles', GALLERY_PROFILE_KEYS),
-    terms: listToRows(raw, 'terms', GALLERY_TERM_KEYS),
+    cgs: listToRows(raw, 'cgs', GALLERY_CG_KEYS, 'id'),
+    music: listToRows(raw, 'music', GALLERY_CG_KEYS, 'id'),
+    texts: listToRows(raw, 'texts', GALLERY_TEXT_KEYS, 'id'),
+    endings: listToRows(raw, 'endings', GALLERY_ENDING_KEYS, 'id'),
+    profiles: listToRows(raw, 'profiles', GALLERY_PROFILE_KEYS, 'id'),
+    terms: listToRows(raw, 'terms', GALLERY_TERM_KEYS, 'id'),
   };
 }
 
@@ -609,7 +616,7 @@ export interface TerminologyTableRows {
 }
 
 export function parseTerminologyRows(raw: unknown): TerminologyTableRows {
-  return { terms: listToRows(raw, 'terms', TERMINOLOGY_KEYS) };
+  return { terms: listToRows(raw, 'terms', TERMINOLOGY_KEYS, 'canonical') };
 }
 
 /** 行 → { terms: [...] }；校验：规范词唯一、variants 为合法 JSON 数组（与 core parseTerminology 同形状） */

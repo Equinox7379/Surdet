@@ -42,6 +42,27 @@ describe('U1 finite UI style contract', () => {
     expect(() => readProjectUi(config({ padding: { top: 50, bottom: 50, left: 0, right: 0 } }))).toThrow('内容空间');
     expect(() => readProjectUi({ ui: { version: 1, pages: { title: { ...node, type: 'tabs', style: { padding: { top: 40, bottom: 40, left: 0, right: 0 } } } } } })).toThrow('页签');
   });
+  it('reports the Player progress track defaults and keeps explicit zero values', () => {
+    const progress: ProjectUiNode = { id: 'hp', type: 'progress', frame: node.frame, binding: { kind: 'variable', name: 'hp' } };
+    const project = { theme: { colors: { surface: 0x123456 }, radius: { sm: 5 } } };
+    expect(resolveProjectUiStyle(progress, project)).toMatchObject({ background: 0x123456, borderRadius: 5 });
+    expect(resolveProjectUiStyle(progress, project, { colors: { surface: 0xabcdef }, radius: { sm: 7 } }))
+      .toMatchObject({ background: 0xabcdef, borderRadius: 7 });
+    expect(resolveProjectUiStyle({ ...progress, style: { background: 0, borderRadius: 0 } }, project))
+      .toMatchObject({ background: 0, borderRadius: 0 });
+  });
+  it('keeps content columns and content-image fit alongside U1 decorations', () => {
+    for (const imageFit of ['contain', 'cover', 'fill'] as const) {
+      const input = { ui: { version: 1, pages: { gallery: { id: 'rows', type: 'content', source: 'gallery-cgs', frame: node.frame,
+        style: { columns: 2, borderRadius: 8 }, children: [{ id: 'art', type: 'image', asset: 'art', frame: { x: 0, y: 0, width: 50, height: 50 },
+          style: { imageFit, backgroundImage: { asset: 'paper', fit: 'stretch' } } }],
+      } } } };
+      const document = readProjectUi(input)!;
+      expect(document.pages.gallery!.style).toEqual({ columns: 2, borderRadius: 8 });
+      expect(document.pages.gallery!.children![0]!.style).toEqual({ imageFit, backgroundImage: { asset: 'paper', fit: 'stretch' } });
+      expect(projectUiAssetKeys(document)).toEqual(['art', 'paper']);
+    }
+  });
   it('slices source pixels exactly and uniformly shrinks borders for small target boxes', () => {
     const patches = projectUiNineSlice({ width: 100, height: 80 }, node.frame, slice);
     expect(patches).toHaveLength(9);

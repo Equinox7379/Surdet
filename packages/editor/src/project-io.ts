@@ -4,6 +4,7 @@
  * UI 联动（renderAll/runValidate/renderSidebar）经钩子注入，保持模块无环。
  */
 import { state, setStatus } from './state.js';
+import { isReservedSceneFileId } from '@surdet/core';
 import { parseConfigSource, assertConfigSourcesReadable, type ConfigSourceName } from './config-source.js';
 import { beginEditorWorkspaceWrite, finishEditorWorkspaceWrite, publishEditorWorkspaceFile,
   editorWorkspaceStatus } from './editor-workspace.js';
@@ -17,7 +18,7 @@ import {
   type TimelineAutosaveDocument,
   type TimelineAutosaveIdentity,
 } from './timeline-autosave-identity.js';
-import { parseProjectConfigDocument, renameConfigReferences, applyConfigReferenceRename, sceneReferenceConfigPaths, serializeProjectConfigDocument, stableStringify, timelinePathFor } from '@surdet/authoring';
+import { assertProjectTargetNamespace, parseProjectConfigDocument, renameConfigReferences, applyConfigReferenceRename, sceneDirectorySegments, sceneReferenceConfigPaths, serializeProjectConfigDocument, stableStringify, timelinePathFor } from '@surdet/authoring';
 import { kindOfDir, parsePortraitFileName } from './assets.js';
 import type { AssetKind, DirAsset } from './assets.js';
 
@@ -687,7 +688,7 @@ function scenarioPathParts(file: string): string[] {
 
 /** Windows 磁盘身份按大小写不敏感比较；同时复用同一套越级路径校验。 */
 export function sceneFileIdentity(file: string): string {
-  return scenarioPathParts(file).join('/').toLocaleLowerCase('en-US');
+  return scenarioPathParts(file).join('/').normalize('NFC').toUpperCase().toLowerCase();
 }
 
 export function sceneProjectPath(file: string): string {
@@ -827,10 +828,11 @@ export async function prepareSceneConfigRecovery(
 }
 
 export function isSceneFilePathReserved(file: string, ignoredSceneKey?: string): boolean {
-  const identity = sceneFileIdentity(file);
-  return [...state.scenes].some(([key, scene]) => (
-    key !== ignoredSceneKey && sceneFileIdentity(scene.file) === identity
-  )) || state.pendingSceneDeletes.some((pending) => sceneFileIdentity(pending.file) === identity);
+  const target = sceneProjectPath(file);
+  const existing = [...state.scenes].filter(([key]) => key !== ignoredSceneKey).map(([, scene]) => sceneProjectPath(scene.file));
+  existing.push(...state.pendingSceneDeletes.map(pending => sceneProjectPath(pending.file)));
+  try { assertProjectTargetNamespace(target, existing); return false; }
+  catch { return true; }
 }
 
 async function scenarioParentDirectory(
@@ -923,7 +925,7 @@ function classifyTimelineAutosaveEntry(
     };
   }
 
-  const sameFile = state.timelines.find((entry) => entry.file === recovered.file);
+  const sameFile = state.timelines.find((entry) => entry.file.toLowerCase() === recovered.file.toLowerCase());
   if (sameFile && sameFile.id !== recovered.id) {
     return {
       kind: 'conflict',
@@ -932,7 +934,7 @@ function classifyTimelineAutosaveEntry(
       ),
     };
   }
-  const sameId = state.timelines.find((entry) => entry.id === recovered.id);
+  const sameId = state.timelines.find((entry) => entry.id.toLowerCase() === recovered.id.toLowerCase());
   if (sameId && sameId.file !== recovered.file) {
     return {
       kind: 'conflict',
@@ -965,7 +967,7 @@ function classifyTimelineAutosaveEntry(
   }
 
   const definitionCollision = state.timelines.find((entry) => (
-    inspectTimelineAutosaveIdentity(entry).definitionId === recoveredIdentity.definitionId
+    inspectTimelineAutosaveIdentity(entry).definitionId?.toLowerCase() === recoveredIdentity.definitionId?.toLowerCase()
   ));
   if (definitionCollision) {
     return {
@@ -974,6 +976,16 @@ function classifyTimelineAutosaveEntry(
         recovered, recoveredIdentity, 'definition-id-collision', index, definitionCollision,
       ),
     };
+  }
+  // Replacing an existing identity above is not a new filename. Only creation
+  // must satisfy the Windows directory/device-name rules.
+  try {
+    sceneDirectorySegments(recovered.file.includes('/') ? recovered.file.slice(0, recovered.file.lastIndexOf('/')) : '');
+    if (isReservedSceneFileId(recovered.id.split('.')[0]!)) throw new Error('时间轴 ID 不能使用 Windows 设备名');
+    const reserved = [...state.timelines, ...state.pendingTimelineDeletes, ...[...state.pendingTimelineRestores.values()].map(restore => restore.entry)];
+    assertProjectTargetNamespace(`content/timelines/${recovered.file}`, reserved.map(item => `content/timelines/${item.file.replace(/^content\/timelines\//, '')}`));
+  } catch {
+    return { kind: 'conflict', conflict: timelineRestoreConflict(recovered, recoveredIdentity, 'recovered-id-mismatch', index) };
   }
   return { kind: 'insert' };
 }
@@ -1074,27 +1086,32 @@ export function repairTimelineAutosaveConflict(
   let projectPath: string;
   try {
     projectPath = timelinePathFor(newId);
+    if (isReservedSceneFileId(newId.split('.')[0]!)) throw new Error('时间轴 ID 不能使用 Windows 设备名');
+    const reserved = [...state.timelines, ...state.pendingTimelineDeletes, ...[...state.pendingTimelineRestores.values()].map(restore => restore.entry)];
+    assertProjectTargetNamespace(projectPath, reserved.map(entry => `content/timelines/${entry.file.replace(/^content\/timelines\//, '')}`));
   } catch (error) {
     return repairFailure(error instanceof Error ? error.message : String(error));
   }
   const newFile = projectPath.slice('content/timelines/'.length);
+  const sameId = (id: string | null): boolean => id?.toLowerCase() === newId.toLowerCase();
+  const sameFile = (file: string): boolean => file.toLowerCase() === newFile.toLowerCase();
   const currentCollision = state.timelines.some((entry) => (
-    entry.id === newId
-    || entry.file === newFile
-    || timelineDefinitionId(entry) === newId
+    sameId(entry.id)
+    || sameFile(entry.file)
+    || sameId(timelineDefinitionId(entry))
   ));
   if (currentCollision) return repairFailure(`演出标识 或文件已存在：${newId}`);
 
   const deletedCollision = state.pendingTimelineDeletes.some((entry) => (
-    entry.id === newId || entry.file === newFile
+    sameId(entry.id) || sameFile(entry.file)
   ));
   if (deletedCollision) return repairFailure(`演出仍在待删除列表中：${newId}`);
 
   const restoreCollision = [...state.pendingTimelineRestores.entries()].some(([id, restore]) => (
-    id === newId
-    || restore.entry.id === newId
-    || restore.entry.file === newFile
-    || timelineDefinitionId(restore.entry) === newId
+    sameId(id)
+    || sameId(restore.entry.id)
+    || sameFile(restore.entry.file)
+    || sameId(timelineDefinitionId(restore.entry))
   ));
   if (restoreCollision) return repairFailure(`演出仍在可恢复列表中：${newId}`);
 

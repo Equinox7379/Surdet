@@ -1,4 +1,4 @@
-import { compileScene, findChoiceArrow, isValidSceneId, parseInlineInstructions, splitOutsideQuotes } from '@surdet/core';
+import { compileScene, findChoiceArrow, isValidSceneId, isReservedSceneFileId, parseInlineInstructions, splitOutsideQuotes } from '@surdet/core';
 import { AuthoringOperationError, runOperation, type ChangeSession } from './change-session.js';
 import { parseProjectConfigDocument, serializeProjectConfigDocument } from './config-document.js';
 import type { SceneMoveInput, SceneRenameInput, TextHasher } from './contracts.js';
@@ -131,7 +131,7 @@ export async function applySceneRename(change: ChangeSession, input: SceneRename
     throw new AuthoringOperationError('UNSUPPORTED_OPERATION', '跨文件场景改名只支持普通 direct 草稿', { operationApplied: false, operationId: input.operationId });
   }
   return runOperation(change, input, async record => {
-    if (!isValidSceneId(input.sceneId) || !isValidSceneId(input.newSceneId) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(input.newSceneId)) {
+    if (!isValidSceneId(input.sceneId) || !isValidSceneId(input.newSceneId) || isReservedSceneFileId(input.newSceneId)) {
       throw new AuthoringOperationError('INVALID_REQUEST', '场景 ID 必须是可用的字母/数字/下划线/连字符名称');
     }
     if (input.sceneId.toLowerCase() === input.newSceneId.toLowerCase()) throw new AuthoringOperationError('INVALID_REQUEST', '新场景 ID 必须不同，不能仅改变大小写');
@@ -144,6 +144,7 @@ export async function applySceneRename(change: ChangeSession, input: SceneRename
       throw new AuthoringOperationError('OBJECT_PRECONDITION_FAILED', `目标场景已存在：${input.newSceneId}`);
     }
     const path = previousPath.slice(0, previousPath.lastIndexOf('/') + 1) + input.newSceneId + previousPath.slice(-4);
+    assertProjectTargetNamespace(path, Object.keys(record.workingFiles));
     const workingFiles = { ...record.workingFiles };
     for (const file of scenePaths) workingFiles[file] = visitSceneReferences(workingFiles[file]!, input.sceneId, input.newSceneId, file).text;
     workingFiles[path] = renameSceneDefinition(workingFiles[previousPath]!, input.sceneId, input.newSceneId, previousPath);
@@ -171,7 +172,7 @@ export function sceneDirectorySegments(directory: string): string[] {
   const segments = directory === '' ? [] : directory.split('/');
   if (directory.length > 1024 || segments.some(segment => !segment || segment === '.' || segment === '..'
     || /[\\<>:"|?*\u0000-\u001f]/.test(segment) || /[. ]$/.test(segment)
-    || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(segment)
+    || isReservedSceneFileId(segment.split('.')[0]!)
     || /^(?:node_modules|dist|\.git)$/i.test(segment) || /^\.surdet-/i.test(segment))) {
     throw new AuthoringOperationError('INVALID_REQUEST', '章节目录必须是 content/scenario 内可用的相对目录；返回根目录请传空字符串');
   }
@@ -184,6 +185,13 @@ export function sceneMoveTargetPath(previousPath: string, directory: string, exi
   const path = ['content', 'scenario', ...segments, previousPath.slice(previousPath.lastIndexOf('/') + 1)].join('/');
   const fold = (value: string) => value.normalize('NFC').toUpperCase().toLowerCase();
   if (fold(path) === fold(previousPath)) throw new AuthoringOperationError('INVALID_REQUEST', '目标目录必须不同，不能仅改变大小写或 Unicode 表示');
+  assertProjectTargetNamespace(path, existingPaths);
+  return path;
+}
+
+/** Check a new project-relative target against current file and directory spellings. */
+export function assertProjectTargetNamespace(path: string, existingPaths: readonly string[]): void {
+  const fold = (value: string) => value.normalize('NFC').toUpperCase().toLowerCase();
   const targetParts = path.split('/');
   for (const existing of existingPaths) {
     const existingParts = existing.split('/');
@@ -194,7 +202,6 @@ export function sceneMoveTargetPath(previousPath: string, directory: string, exi
       }
     }
   }
-  return path;
 }
 
 /** Chapter folders are organization only: neither script bytes nor scene IDs change. */

@@ -57,7 +57,7 @@ function loadSnapshot(projectDir: string): ProjectSnapshot {
     ? config['customInstructions'].filter((value): value is string => typeof value === 'string')
     : [];
   customInstructions.push(...readProjectPlugins({ plugins: config?.plugins }).flatMap(plugin => plugin.instructions.map(i => i.name)));
-  const sceneFiles = findGalFiles(path.join(projectDir, 'content/scenario'));
+  const sceneFiles = findGalFiles(projectDir);
   const files = sceneFiles.map((fullPath) => {
     const text = fs.readFileSync(fullPath, 'utf8').replace(/^\uFEFF/, '');
     const id = sceneIdFromFile(fullPath);

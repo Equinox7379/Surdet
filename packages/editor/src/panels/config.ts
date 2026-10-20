@@ -27,6 +27,7 @@ import {
   parseGrowthRows, rowsToGrowth,
   parseGalleryRows, rowsToGallery,
   parseTerminologyRows, rowsToTerminology, normalizeTerminologyImport,
+  ROW_EXTRA_FIELDS,
 } from '../config-edit.js';
 import type {
   VariableRow, AchievementRow, RowMap,
@@ -754,6 +755,16 @@ export function prepareConfigSceneRename(from: string, to: string, fallbackEntry
   const rewrite = (snapshot: ConfigSnapshot): ConfigSnapshot => {
     const next = clone(snapshot);
     rewriteHistoryConfigSources(next, rewriteHistoryText);
+    // Base-command scene references live in the hidden row fields; rebase them
+    // alongside visible references in drafts, clean baselines and undo/redo.
+    for (const row of next.calRows?.baseCommands ?? []) {
+      const extra = row[ROW_EXTRA_FIELDS];
+      if (typeof extra !== 'string') continue;
+      const fields = JSON.parse(extra) as Record<string, unknown>;
+      if (fields.eventId !== from) continue;
+      fields.eventId = to;
+      row[ROW_EXTRA_FIELDS] = JSON.stringify(fields);
+    }
     const files: Record<string, string> = { 'game.config.json': next.gameConfigText || '{}' };
     if (next.calRows) files['content/config/calendar.json'] = JSON.stringify(next.calRows);
     if (next.evRows) files['content/config/events.json'] = JSON.stringify(next.evRows);
@@ -1016,7 +1027,7 @@ function renderObjectTable(cols: ColDef[], rows: RowMap[], emptyRow: RowMap, opt
   table.appendChild(tbody);
   wrap.appendChild(wrapConfigTable(table, `${options.label}数据表`));
   const addBtn = h('button', 'config-row-add', `＋ ${options.addLabel}`);
-  addBtn.onclick = () => { pushConfigHistory(false); rows.push({ ...emptyRow }); rerenderConfig(); };
+  addBtn.onclick = () => { pushConfigHistory(false); rows.push({ ...emptyRow, [ROW_EXTRA_FIELDS]: '{}' }); rerenderConfig(); };
   wrap.appendChild(addBtn);
   return wrap;
 }
@@ -1910,7 +1921,7 @@ export async function addTerminologyVariant(canonical: string, variant: string):
       }
       pushConfigHistory(false);
       if (!row) {
-        row = { canonical, variants: '[]' };
+        row = { canonical, variants: '[]', [ROW_EXTRA_FIELDS]: '{}' };
         rows.terms.push(row);
       }
       list.push(variant);

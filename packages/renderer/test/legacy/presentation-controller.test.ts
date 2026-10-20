@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { EventBus, type CoreEventMap } from '@surdet/core';
+import { compileScene, EventBus, Interpreter, SceneRegistry, VariableStore, type CoreEventMap } from '@surdet/core';
 import { Texture } from 'pixi.js';
 import { Backlog } from '../../src/backlog.js';
 import { AdvRenderer } from '../../src/adv-renderer.js';
@@ -412,6 +412,55 @@ describe('PresentationController', () => {
 
     off();
     controller.dispose();
+  });
+
+  it('selects displayed positions without changing script indices or mouse callbacks', () => {
+    const stage = stageHarness(), selected = vi.fn();
+    const controller = controllerFor(stage, { onSelect: selected });
+    const bus = new EventBus<CoreEventMap>();
+    controller.connect(bus);
+    const choices = { options: [{ index: 1, label: '隐藏首项后的第一项' }, { index: 3, label: '隐藏中项后的第二项' }] };
+    try {
+      for (const [position, index] of [[0, 1], [1, 3]]) {
+        bus.emit('choice', choices);
+        expect(controller.dispatchInput({ type: 'choice.select-visible', position: position! })).toBe(true);
+        expect(selected).toHaveBeenLastCalledWith(index);
+      }
+      bus.emit('choice', choices);
+      for (const position of [-1, 2, 9, .5, NaN]) {
+        expect(controller.dispatchInput({ type: 'choice.select-visible', position })).toBe(false);
+        expect(controller.status).toBe('choice');
+      }
+      controller.setPresentationPaused(true);
+      expect(controller.dispatchInput({ type: 'choice.select-visible', position: 0 })).toBe(false);
+      controller.setPresentationPaused(false);
+      expect(controller.dispatchInput({ type: 'choice.select', index: 0 })).toBe(false);
+      expect(controller.dispatchInput({ type: 'choice.select', index: 1 })).toBe(true);
+      expect(selected).toHaveBeenLastCalledWith(1);
+      bus.emit('choice', choices);
+      stage.onSelect!(3);
+      expect(selected).toHaveBeenLastCalledWith(3);
+      bus.emit('stateReset', { reason: 'load' });
+      expect(controller.dispatchInput({ type: 'choice.select-visible', position: 0 })).toBe(false);
+      controller.dispose();
+      expect(controller.dispatchInput({ type: 'choice.select-visible', position: 0 })).toBe(false);
+    } finally { controller.dispose(); }
+  });
+
+  it.each([[0, '第一分支'], [1, '第二分支']] as const)('maps displayed position %s through real conditional choices into Core', (position, text) => {
+    const stage = stageHarness(), bus = new EventBus<CoreEventMap>(), scenes = new SceneRegistry();
+    const interpreter = new Interpreter(new VariableStore([{ name: 'trust', type: 'number', initial: 0 }]), bus, scenes);
+    const controller = controllerFor(stage, { onSelect: (index: number) => interpreter.choose(index) });
+    controller.connect(bus);
+    scenes.register(compileScene('@choice\n  隐藏首项 [if:trust > 5] -> @end\n  第一项 -> @goto first\n  隐藏中项 [if:trust > 5] -> @end\n  第二项 -> @goto second\n@label first\n第一分支\n@end\n@label second\n第二分支\n@end', 'choices.gal', 'choices'));
+    try {
+      interpreter.start('choices');
+      expect(stage.choices.map(choice => choice.index)).toEqual([1, 3]);
+      expect(controller.dispatchInput({ type: 'choice.select-visible', position })).toBe(true);
+      expect(interpreter.status).toBe('awaiting-advance');
+      controller.update(10000);
+      expect(stage.texts.at(-1)).toBe(text);
+    } finally { controller.dispose(); }
   });
 
   it('does not carry all-text skip across a choice into read-only skip', () => {

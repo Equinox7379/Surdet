@@ -23,7 +23,7 @@ import {
   sceneProjectPath,
   workingGameConfigText,
 } from '../project-io.js';
-import { collectConfigSceneRoots, compileScene, type CompiledScene } from '@surdet/core';
+import { collectConfigSceneRoots, compileScene, isReservedSceneFileId, type CompiledScene } from '@surdet/core';
 import { assertTextCatalogTargetRemovable, parseProjectConfigDocument, renameSceneDefinition, sceneMoveTargetPath, visitSceneReferences } from '@surdet/authoring';
 import { buildFlowGraph } from '../graph/build.js';
 import type { FlowGraph, FlowNode, FlowEdge } from '../graph/build.js';
@@ -265,10 +265,11 @@ async function renameSceneAtKeyUnlocked(sceneKey: string, input: string, expecte
   const current = assertSceneRenamable(sceneKey);
   if (expected !== undefined && current !== expected) throw new Error('场景已变化，请关闭后重新打开重命名');
   const sceneId = current.id;
-  const newId = input.trim();
+  const newId = input.trim().normalize('NFC');
   if (newId === sceneId) return;
+  if (isReservedSceneFileId(newId)) throw new Error('场景标识不能使用 Windows 设备名');
   if (!validSceneId(newId)) throw new Error('场景标识不能为空，也不能包含空格、点号或文件名保留字符');
-  if ([...state.scenes.values()].some((scene) => scene.id === newId)) throw new Error(`场景 '${newId}' 已存在`);
+  if ([...state.scenes.values()].some((scene) => scene !== current && scene.id.normalize('NFC').toUpperCase().toLowerCase() === newId.toUpperCase().toLowerCase())) throw new Error(`场景 '${newId}' 已存在`);
   const targetFile = renamedSceneFile(current.file, newId);
   if (sceneFileIdentity(targetFile) === sceneFileIdentity(current.file)) throw new Error('Windows 下不能只改变场景文件名的大小写，请使用不同名称');
   if (isSceneFilePathReserved(targetFile, sceneKey)) throw new Error('目标场景路径已存在或正等待删除，请先保存全部');
@@ -799,8 +800,9 @@ async function applyFlowPlan(plan: FlowEditPlan): Promise<void> {
     const edits: { key: string; text: string }[] = [], created: { id: string; text: string }[] = [];
     for (const file of plan.files) {
       if (file.before === null) {
-        if ([...state.scenes.values()].some(scene => scene.id === file.sceneId)) throw new Error(`场景 '${file.sceneId}' 已存在，请重新预览。`);
-        if (isSceneFilePathReserved(`${file.sceneId}.gal`)) throw new Error('该场景文件正等待删除，请先保存全部。');
+        if (isReservedSceneFileId(file.sceneId)) throw new Error('场景标识不能使用 Windows 设备名');
+        if ([...state.scenes.values()].some(scene => scene.id.normalize('NFC').toUpperCase().toLowerCase() === file.sceneId.toUpperCase().toLowerCase())) throw new Error(`场景 '${file.sceneId}' 已存在，请重新预览。`);
+        if (isSceneFilePathReserved(`${file.sceneId}.gal`)) throw new Error('目标场景路径已占用或目录名称冲突，请先保存全部或更换名称。');
         created.push({ id: file.sceneId, text: file.after });
         continue;
       }
@@ -820,7 +822,10 @@ async function applyFlowPlan(plan: FlowEditPlan): Promise<void> {
   });
   requestValidateHook();
   renderSidebar();
-  setStatus(`${plan.summary}。已应用，可撤销；保存全部后写入项目`, true, 5000);
+  const undoNotice = plan.files.some(file => file.before === null)
+    ? '撤销仅回退连接，新建场景会保留'
+    : '可撤销';
+  setStatus(`${plan.summary}。已应用，${undoNotice}；保存全部后写入项目`, true, 5000);
 }
 
 /** The graph of the text being edited now. Validation is debounced, so its result can trail a quick series of edits;

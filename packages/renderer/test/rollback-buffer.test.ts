@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { RollbackBuffer } from '../src/rollback-buffer.js';
 
 describe('RollbackBuffer', () => {
+  it.each([NaN, Infinity, -Infinity])('rejects an unbounded capacity %s', capacity => {
+    expect(() => new RollbackBuffer(capacity)).toThrow(RangeError);
+  });
+
+  it('keeps finite capacity normalization and newest-frame eviction', () => {
+    for (const capacity of [0, -2, 1.9]) {
+      const buffer = new RollbackBuffer<number>(capacity);
+      for (const snapshot of [1, 2]) buffer.push({ snapshot, presentation: null, audio: { bgm: null, ambience: null } });
+      expect(buffer.size).toBe(1); expect(buffer.pop()?.snapshot).toBe(2);
+    }
+  });
   it('deep-clones frames and preserves LIFO order', () => {
     const source = {
       snapshot: { vars: { trust: 1 } },

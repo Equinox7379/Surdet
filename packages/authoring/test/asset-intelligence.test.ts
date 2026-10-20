@@ -304,6 +304,29 @@ describe('shared asset intelligence projection', () => {
     );
   });
 
+  it.each(['cgs', 'music'] as const)('uses literal persisted %s IDs for direct and inline unlock references', async field => {
+    const command = field === 'cgs' ? 'unlock_cg' : 'unlock_music';
+    const folder = field === 'cgs' ? 'bg' : 'bgm';
+    const extension = field === 'cgs' ? 'png' : 'ogg';
+    for (const id of ['"long id"', "'long id'", 'plain']) {
+      const snapshot = await snapshotFor({
+        'game.config.json': JSON.stringify({ entryScene: 'gallery_probe' }),
+        'content/scenario/gallery_probe.gal': `@scene gallery_probe\n@${command} ${id}\n@choice\n  继续 -> @${command} ${id} @end`,
+      });
+      const real = `content/assets/${folder}/real.${extension}`, decoy = `content/assets/${folder}/decoy.${extension}`;
+      const gallery = { [field]: [{ id, src: 'real' }, { id: id === 'plain' ? 'other' : 'long id', src: 'decoy' }] };
+      const result = buildProjectAssetIntelligence(snapshot, [{ path: real }, { path: decoy }], { gallery });
+      expect(asset(result, real).references.filter(reference => reference.sourceKind === 'scene')).toEqual([
+        expect.objectContaining({ objectRef: 'scene:gallery_probe', line: 2 }),
+        expect.objectContaining({ objectRef: 'scene:gallery_probe', line: 4 }),
+      ]);
+      expect(asset(result, decoy).references.some(reference => reference.sourceKind === 'scene')).toBe(false);
+      // The gallery itself is also a reference, even before a scene unlocks it.
+      expect(asset(result, real).issues).not.toContain('ASSET_UNUSED');
+      expect(asset(result, decoy).issues).not.toContain('ASSET_UNUSED');
+    }
+  });
+
   it('retains every gallery source when duplicate entry ids fan out from one unlock instruction', async () => {
     const snapshot = await snapshotFor({
       'game.config.json': JSON.stringify({ entryScene: 'gallery_probe', characters: {}, variables: {} }),

@@ -204,7 +204,8 @@ export function validateGalleryConfig(input: GalleryValidationInput): LintIssue[
       const section = Object.prototype.hasOwnProperty.call(UNLOCK_TO_SECTION, instruction.name)
         ? UNLOCK_TO_SECTION[instruction.name as UnlockInstruction] : undefined;
       if (section === undefined) continue;
-      const id = instruction.name === 'unlock_profile' || instruction.name === 'unlock_term' ? decodeInstructionArgument(instruction.args[0] ?? '') : instruction.args[0];
+      const id = instruction.name === 'unlock_profile' || instruction.name === 'unlock_term'
+        ? decodeInstructionArgument(instruction.args[0] ?? '') : instruction.args[0];
       if (!nonEmptyString(id) || !ids[section].has(id)) {
         addIssue(
           issues,

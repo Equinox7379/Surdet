@@ -109,6 +109,22 @@ it('keeps unknown U1 nested style strings visible to the opaque-reference blocke
   expect(result.textChanges).toEqual([]);
 });
 
+it.each(['contain', 'cover', 'fill'])('keeps imageFit %s as layout metadata when the asset has that name', async imageFit => {
+  const sourcePath = `content/assets/bg/${imageFit}.png`, targetPath = `content/assets/bg/renamed-${imageFit}.png`;
+  const frame = { x: 0, y: 0, width: 200, height: 100 };
+  const config = { ui: { version: 1, pages: { title: { id: 'root', type: 'container', frame, children: [
+    { id: 'image', type: 'image', frame, asset: imageFit, style: { imageFit } },
+  ] } } } };
+  const options = { files: { 'game.config.json': JSON.stringify(config) }, assets: [{ path: sourcePath, bytes: 1 }], sourcePath, targetPath };
+  for (const result of [await planProjectAssetRelocation(await makeInput(options), hasher),
+    await planProjectAssetRelocationBatch(await makeBatchInput({ ...options, items: [{ itemId: 'image', sourcePath, targetPath }] }), hasher)]) {
+    expect(result.plan.blockers).toEqual([]);
+    const node = JSON.parse(result.textChanges[0]!.afterText).ui.pages.title.children[0];
+    expect(node.asset).toBe(`renamed-${imageFit}`);
+    expect(node.style.imageFit).toBe(imageFit);
+  }
+});
+
 it('does not rename text catalog prose or identities that happen to equal an asset key', async () => {
   const sourcePath = 'content/assets/bg/paper.png', targetPath = 'content/assets/bg/new-paper.png';
   const textCatalog = { version: 1, sourceLocale: 'zh-CN', entries: [{ key: 'paper', source: {

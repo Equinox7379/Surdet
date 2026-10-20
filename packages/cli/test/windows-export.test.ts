@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import * as asar from '@electron/asar';
 import { NtExecutable } from 'resedit';
+import { createDecipheriv } from 'node:crypto';
 import { inspectWindowsExport, exportWindowsGame, type WindowsExportOptions } from '../src/windows-export.js';
 import { checkReleaseManifest } from '../../shell/src/release-service.js';
 const roots: string[] = [];
@@ -47,6 +48,19 @@ it('U1 export preserves style resources and refuses out-of-bounds slices before 
   const archive = path.join(result.directory, 'resources/app.asar');
   expect(JSON.parse(asar.extractFile(archive, path.normalize('game/game.config.json')).toString('utf8')).ui).toEqual(config.ui);
   expect(asar.extractFile(archive, path.normalize('game/content/assets/bg/paper.svg')).toString('utf8')).toBe(image);
+});
+it.each([true, false])('rejects already packaged asset bytes before export (encrypted=%s)', async encrypted => {
+  const { game, root, options } = await project();
+  const asset = path.join(game, 'content/assets/bg/packed.png');
+  await fs.mkdir(path.dirname(asset), { recursive: true });
+  const bytes = Buffer.concat([Buffer.from('SDAT2'), Buffer.alloc(40, 7)]);
+  await fs.writeFile(asset, bytes);
+  expect((await inspectWindowsExport(game, '')).issues).toEqual(expect.arrayContaining([
+    expect.objectContaining({ code: 'EXPORT_ENCRYPTED_SOURCE', severity: 'error', file: 'content/assets/bg/packed.png' }),
+  ]));
+  await expect(exportWindowsGame({ ...options, encrypted })).rejects.toThrow('导出检查未通过');
+  expect(await fs.readdir(root)).toEqual(['project']);
+  expect(await fs.readFile(asset)).toEqual(bytes);
 });
 it('rejects an existing output without touching its content', async () => {
   const { root, options } = await project();
@@ -115,4 +129,36 @@ it.each(['1.2.3', '1.2.3.4'])('exports a %s update manifest the real release rea
   expect(generatedAt).toBeGreaterThanOrEqual(before);
   expect(generatedAt).toBeLessThanOrEqual(Date.now());
   expect((await checkReleaseManifest(manifestFile, version === '1.2.3' ? '1.2.2.9' : '1.2.3.3')).status).toBe('update-available');
+});
+
+it.each([true, false])('shared Windows exporter owns media, notices and metadata without copying the Web dist (encrypted=%s)', async encrypted => {
+  const { root, game, options } = await project();
+  const media = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aONkAAAAASUVORK5CYII=', 'base64');
+  const notice = Buffer.from('\uFEFFCopyright fixture author\r\n许可原文。\r\n');
+  await fs.mkdir(path.join(game, 'content/assets/bg'), { recursive: true });
+  await fs.mkdir(path.join(game, 'content/assets/licenses'), { recursive: true });
+  await fs.mkdir(path.join(game, 'dist/assets'), { recursive: true });
+  await fs.writeFile(path.join(game, 'content/assets/bg/room.png'), media);
+  await fs.writeFile(path.join(game, 'content/assets/licenses/LICENSE-font.txt'), notice);
+  await fs.writeFile(path.join(game, 'dist/assets/room.png'), media);
+  const runtime = path.join(root, 'runtime'), gameRuntime = path.join(root, 'game-runtime');
+  await fs.mkdir(runtime); await fs.mkdir(path.join(gameRuntime, 'game'), { recursive: true });
+  await fs.writeFile(path.join(runtime, 'electron.exe'), Buffer.from(NtExecutable.createEmpty(false).generate()));
+  for (const file of ['main.mjs', 'preload.cjs', 'game/index.html']) await fs.writeFile(path.join(gameRuntime, file), '');
+  const result = await exportWindowsGame({ ...options, encrypted, runtime: { ...options.runtime, directory: runtime, gameRuntime } });
+  const archive = path.join(result.directory, 'resources/app.asar');
+  const read = (file: string) => asar.extractFile(archive, path.normalize(`game/${file}`));
+  const packaged = read('content/assets/bg/room.png');
+  if (encrypted) {
+    expect(packaged.subarray(0, 5).toString()).toBe('SDAT2');
+    const key = Buffer.from(read('.skey').toString(), 'hex');
+    const decipher = createDecipheriv('aes-256-gcm', key, packaged.subarray(5, 17));
+    decipher.setAuthTag(packaged.subarray(17, 33));
+    expect(Buffer.concat([decipher.update(packaged.subarray(33)), decipher.final()])).toEqual(media);
+  } else expect(packaged).toEqual(media);
+  expect(await fs.readFile(path.join(result.directory, 'licenses/project/licenses/LICENSE-font.txt'))).toEqual(notice);
+  expect(await fs.readFile(path.join(game, 'dist/assets/room.png'))).toEqual(media);
+  expect(asar.listPackage(archive, { isPack: false }).some(file => /game[\\/]assets[\\/]room\.png/.test(file))).toBe(false);
+  expect(JSON.parse(read('release/pack-metadata.json').toString())).toMatchObject({ game: result.id, encrypted,
+    assetFiles: ['bg/room.png', 'licenses/LICENSE-font.txt'] });
 });

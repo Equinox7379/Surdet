@@ -72,7 +72,7 @@ async function runCalendarHeadEvent(): Promise<{
     registry,
     calendar,
     scheduler,
-    onTurnResumeSnapshot: (snapshot: unknown) => { resumeSnapshot = snapshot; },
+    onScheduledSceneEnd: (resume: () => void) => { resumeSnapshot = resume; },
   };
   const adapters = createSystemAdapters(options);
   const host = createDefaultHost({ interpreter, renderer, adapters, onError: (error) => { errors.push(error); } });
@@ -138,7 +138,7 @@ describe('Zero public player shell coordination', () => {
     expect(result.fired).toBe(true);
     expect(result.texts).toEqual(['必须显示的一次性演出。']);
     expect(result.maps).toBe(0);
-    expect(result.resumeSnapshot).toMatchObject({ position: { sceneId: 'start' } });
+    expect(result.resumeSnapshot).toBeTypeOf('function');
     expect(result.errors).toEqual([]);
   });
 });

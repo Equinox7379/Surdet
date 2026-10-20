@@ -34,6 +34,8 @@ Core 提供 Calendar、Combat、Affection、Shop、Growth、Achievement、EventS
 
 桌面存档经 `window.surdetSave` 的异步 `invoke` IPC 进入 `FileSaveStore`，文件位于 `userData/saves`，物理槽位文件名按实现编码，不能直接拼接用户槽位 ID。写入采用暂存、替换和失败补偿；本地失败测试不等于断电原子性证明。浏览器使用 localStorage，写入失败必须报告，不能当成成功。
 
+存档对象（包括会一同序列化的扩展字段）不得有循环引用，嵌套最多256层；变量数组不能有空洞。非法输入在写盘前拒绝，原槽位保留。读档从预检到状态提交期间禁止重入推进、跳转或再次读档；`stateReset` 等通知只用于宿主清理。提交结束后重新播放正文时，正常文本事件内推进仍然可用。
+
 `@autosave`/`@savepoint` 由解释器发出完整快照，宿主负责写入。`loadSnapshot` 必须在解释器事件回调之外执行；读档后重新发出 text/choice 等事件。`sceneEnd` 回调允许 `start()`，通过迭代续跑避免递归。
 
 ## 命令与证据

@@ -24,6 +24,41 @@ function makeInterp(variableDecls: VarDeclaration[] = decls) {
 }
 
 describe('Interpreter 存档', () => {
+  it('releases the restore guard after a cleanup error and keeps ordinary text reentry supported', () => {
+    const { registry, interp, bus } = makeInterp();
+    registry.register(compileScene('甲\n乙\n丙', 'main.gal', 'main'));
+    interp.start('main');
+    const saved = interp.saveSnapshot()!;
+    expect(() => interp.loadSnapshot(saved, () => { throw new Error('cleanup refused'); })).toThrow('cleanup refused');
+    const seen: string[] = [];
+    bus.on('text', event => { seen.push(event.value); if (event.value === '乙') interp.advance(); });
+    interp.advance();
+    expect(seen).toEqual(['乙', '丙']);
+  });
+  it.each(['advance', 'start', 'hostJump', 'choose', 'finishWait', 'loadSnapshot'] as const)('blocks %s during the stateReset restore transaction without changing restored progress', action => {
+    const { store, registry, interp, bus } = makeInterp();
+    registry.register(compileScene('甲\n@call sub\n乙\n@end', 'main.gal', 'main'));
+    registry.register(compileScene('子\n@return', 'sub.gal', 'sub'));
+    registry.register(compileScene('@set trust = 99\n错误正文\n@end', 'other.gal', 'other'));
+    const texts: string[] = [], failures: string[] = [];
+    bus.on('text', event => texts.push(event.value));
+    interp.start('main'); interp.advance();
+    const saved = interp.saveSnapshot()!;
+    bus.on('stateReset', () => {
+      try {
+        if (action === 'start' || action === 'hostJump') interp[action]('other');
+        else if (action === 'choose') interp.choose(0);
+        else if (action === 'loadSnapshot') interp.loadSnapshot(saved);
+        else interp[action]();
+      } catch (error) { failures.push(String(error)); }
+    });
+    interp.loadSnapshot(saved);
+    expect(failures).toHaveLength(1); expect(failures[0]).toContain('读档');
+    expect(texts).toEqual(['甲', '子', '子']); expect(store.getNumber('trust')).toBe(0);
+    expect(interp.saveSnapshot()?.callStack?.map(frame => [frame.sceneId, frame.pc])).toEqual(saved.callStack?.map(frame => [frame.sceneId, frame.pc]));
+    interp.advance(); expect(texts.at(-1)).toBe('乙');
+  });
+
   it('A002 合法范围初值经过正文存读档与 reset 保持一致', () => {
     const { store, registry, interp } = makeInterp([{ name: 'score', type: 'number', initial: 5, min: 0, max: 10 }]);
     registry.register(compileScene('当前：{score}', 'bounded.gal', 'bounded'));
@@ -745,6 +780,28 @@ describe('Interpreter 存档', () => {
 
     interp.loadSnapshot(snap);
     expect(order).toEqual(['validate', 'restore', 'saveMigrated']);
+  });
+
+  it('saveMigrated observes the restored variables and location before normal playback resumes', () => {
+    const { bus, store, registry, interp } = makeInterp();
+    registry.register(compileScene('第一句\n第二句', 's.gal', 's1'));
+    interp.start('s1');
+    const snap = interp.saveSnapshot()!;
+    snap.meta = { ...snap.meta, schemaVersion: 1 };
+    const expectedVariables = snap.variables;
+    interp.advance();
+    store.set('trust', 9);
+    let observed: unknown;
+    let reentryError: unknown;
+    bus.on('saveMigrated', () => {
+      const position = interp.saveSnapshot()?.position;
+      observed = { variables: store.snapshot(), sceneId: position?.sceneId, pc: position?.pc };
+      try { interp.advance(); } catch (error) { reentryError = error; }
+    });
+    interp.loadSnapshot(snap);
+    expect(observed).toEqual({ variables: expectedVariables, sceneId: snap.position!.sceneId, pc: snap.position!.pc });
+    expect(String(reentryError)).toContain('读档');
+    expect(interp.status).toBe('awaiting-advance');
   });
 
   it('自定义随机恢复失败时不提前发 saveMigrated', () => {

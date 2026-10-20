@@ -84,6 +84,46 @@ describe('AchievementSystem（成就系统）', () => {
     expect(() => ach.check()).toThrow();
   });
 
+  it('check：后续条件失败不提交前面的解锁，修正条件后仍能完整回执且只触发一次', () => {
+    const store = new VariableStore(decls);
+    const ach = new AchievementSystem([
+      { id: 'prior', name: '已解锁', when: 'undefinedPrior' },
+      { id: 'ready', name: '可解锁', when: 'battleWon' },
+      { id: 'later', name: '后续条件', when: 'cleared && undefinedLater > 0' },
+    ], store);
+    ach.unlock('prior');
+    store.set('battleWon', true);
+    store.set('cleared', true);
+    const before = ach.snapshot();
+
+    expect(() => ach.check()).toThrow(/undefinedLater/);
+    expect(ach.snapshot()).toEqual(before);
+    expect(ach.isUnlocked('ready')).toBe(false);
+
+    store.set('cleared', false);
+    expect(ach.check()).toEqual([{ id: 'ready', def: ach.defOf('ready'), fresh: true }]);
+    expect(ach.unlocked()).toEqual(['prior', 'ready']);
+    expect(ach.check()).toEqual([]);
+    expect(ach.unlock('ready').fresh).toBe(false);
+  });
+
+  it('check：一次成功提交多个成就，保留定义顺序和事件解锁语义', () => {
+    const { store, ach } = makeSystem();
+    ach.unlock('secret');
+    store.set('battleWon', true);
+    store.set('lynn.trust', 60);
+    store.set('cleared', true);
+
+    expect(ach.check().map(({ id, fresh }) => ({ id, fresh }))).toEqual([
+      { id: 'first_battle', fresh: true },
+      { id: 'best_friend', fresh: true },
+      { id: 'clear_game', fresh: true },
+    ]);
+    expect(ach.unlocked()).toEqual(['secret', 'first_battle', 'best_friend', 'clear_game']);
+    expect(ach.check()).toEqual([]);
+    expect(ach.unlock('secret').fresh).toBe(false);
+  });
+
   it('构造防御：成就 ID 重复抛错', () => {
     const store = new VariableStore(decls);
     expect(() => new AchievementSystem(

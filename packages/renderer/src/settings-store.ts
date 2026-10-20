@@ -63,7 +63,7 @@ export function applyReadingSettings(settings: GameSettings, commands: RendererC
 
 export type NumericSettingKey = { [K in keyof GameSettings]: GameSettings[K] extends number | null ? K : never }[keyof GameSettings];
 
-/** 设置面板步进定义：各设置项的标签/步长/范围/格式化（◀ ▶ 步进用） */
+/** 设置面板的标签/步长/滑条范围/格式化；按钮步进使用设置的合法范围。 */
 export const SETTING_STEPS: {
   key: NumericSettingKey;
   label: string;
@@ -82,8 +82,8 @@ export const SETTING_STEPS: {
 
 /** 设置面板步进：按步进定义把某项 +1/-1 步（范围内 clamp，返回新设置对象，不改原对象） */
 export function stepSetting(current: GameSettings, key: NumericSettingKey, dir: -1 | 1, dialogueDefault = DEFAULT_RENDERER_THEME.opacity.panel): GameSettings {
-  const def = SETTING_STEPS.find((d) => d.key === key);
-  if (!def) return { ...current };
+  const def = GAME_SETTING_DEFINITIONS[key];
+  if (!('step' in def)) return { ...current };
   const raw = (current[key] ?? dialogueDefault) + dir * def.step;
   const v = Math.max(def.min, Math.min(def.max, Math.round(raw * 100) / 100));
   return { ...current, [key]: v };

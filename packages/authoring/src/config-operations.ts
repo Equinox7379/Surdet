@@ -315,9 +315,7 @@ export async function applyCharacterEnsure(
       }
     }
 
-    const next: Record<string, unknown> = {};
-    if (existing !== undefined && isRecord(existing)) Object.assign(next, existing);
-    next['name'] = input.name;
+    const next: Record<string, unknown> = { ...existingRecord, name: input.name };
     if (input.avatar === undefined) {
       // 保留原 avatar（新增角色时自然没有）。
     } else if (input.avatar === null) {

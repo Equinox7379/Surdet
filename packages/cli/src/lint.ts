@@ -127,8 +127,7 @@ function makeAuthoringSnapshot(
  *  6. 表达式静态类型检查（@set 类型匹配 / 条件必须 boolean / 运算符操作数类型）
  */
 export function lintProject(root: string, scenarioDir = 'content/scenario'): LintResult {
-  const dir = path.join(root, scenarioDir);
-  const files = findGalFiles(dir);
+  const files = findGalFiles(root, scenarioDir);
   const issues: LintIssue[] = [];
   const scenes = new Map<string, CompiledScene>();
 
