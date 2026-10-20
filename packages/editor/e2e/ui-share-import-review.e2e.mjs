@@ -14,6 +14,9 @@ config.variables={flag:{type:'flag',initial:false},amount:{type:'number',initial
 config.player={...config.player,firstRunHint:'U3首次操作提示'}; config.privateMarker='KEEP';
 config.ui={version:1,pages:{title:{id:'original',type:'container',frame}}};
 fs.writeFileSync(file,JSON.stringify(config,null,2));
+const sameImage=JSON.parse(fs.readFileSync(new URL('../../../docs/ui-theme-u3-technical/u3-technical.surdet-ui-theme.json',import.meta.url),'utf8')).assets[0].base64;
+fs.mkdirSync(path.join(root,'content/assets/bg/nested'),{recursive:true});
+fs.writeFileSync(path.join(root,'content/assets/bg/nested/same.png'),Buffer.from(sameImage,'base64'));
 const packet={format:'surdet-ui',version:1,kind:'theme',variables:{flag:{type:'flag'},amount:{type:'number'},note:{type:'string'}},assets:[],config:{
   theme:{colors:{accent:0x123456}},fonts:{},player:{},ui:{version:1,pages:{
     title:{id:'source',type:'container',frame,children:[{id:'start',type:'button',frame:{x:100,y:100,width:220,height:60},text:text('开始游戏'),action:{kind:'start'}}]},
@@ -44,6 +47,21 @@ try{
     await f.waitForFunction(()=>document.querySelector('[data-ui-node="amount"] input').value==='5');
     const input=f.locator('[data-ui-node="note"] input');await input.fill('changed');await input.dispatchEvent('change');
     await f.waitForFunction(()=>document.querySelector('[data-ui-node="note"] input').value==='original',null,{timeout:1000});
+  });
+  await test('已有子目录同键图片与包内扁平图片只送入试玩一次',async()=>{
+    const imageShare=structuredClone(packet);
+    imageShare.assets=[{path:'content/assets/bg/same.png',base64:sameImage}];
+    imageShare.config.ui.pages.title.style={backgroundImage:{asset:'same',fit:'stretch'}};
+    await choose(imageShare);
+    assert.equal(await page.locator('[data-ui-share-import-resource="content/assets/bg/same.png"]').getAttribute('data-state'),'present');
+    await page.locator('[data-ui-share-import-player]').click();
+    await page.waitForFunction(()=>document.querySelector('.ui-player-preview iframe')||document.querySelector('[data-ui-share-import-note]')?.classList.contains('error'));
+    assert.equal(await page.locator('.ui-player-preview iframe').count(),1,await page.locator('[data-ui-share-import-note]').innerText());
+    const f=await(await page.locator('.ui-player-preview iframe').elementHandle()).contentFrame();
+    await f.getByRole('button',{name:'开始游戏',exact:true}).waitFor({timeout:10000}).catch(async error=>{throw new Error(`${error.message}; Player: ${await f.locator('#surdet-fatal-detail').textContent().catch(()=>f.locator('body').innerText())}`);});
+    assert.equal(await f.locator('[data-ui-node="source"]').count(),1);
+    assert(!fs.existsSync(path.join(root,'content/assets/bg/same.png')));
+    assert.deepEqual(fs.readFileSync(path.join(root,'content/assets/bg/nested/same.png')),Buffer.from(sameImage,'base64'));
   });
   await test('导入试玩关闭后恢复首次操作提示的会话键',async()=>{
     for(const original of [null,'already-seen']) {
