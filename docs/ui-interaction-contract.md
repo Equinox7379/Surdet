@@ -49,9 +49,9 @@ const cancel = motion.play(pageKey, resolveProjectUiMotion(rootNode, 'enter', re
   'enter', pose => paintPagePose(pose), () => finishVisualOnly());
 ```
 
-- `play(key,motion|null,direction,paint,complete?)`立即给起始姿态并返回该次取消函数；同key替换取消旧complete，旧cancel不能取消新播放。null/0时长同步终态和完成，不等待下一帧。
-- `cancel(key)`取消当前key；`cancelAll()`用于换局/读档/上下文切换，均不触发complete。`finishAll()`用于中途开启减少动态：当前有效投影立即到终态。`dispose()`终止全部，之后play报错。
-- 既有ticker在剧情暂停时只推进UI及原菜单投影，不推进世界；结束后休眠。Runtime成功resetSession取消旧播放，dispose和初始化失败释放实例。paint同步关闭/替换/销毁后旧complete无效；绘制失败报告原错误并移除失败任务。
+- `play(key,motion|null,direction,paint,complete?,cancelled?)`立即给起始姿态并返回该次取消函数；同key替换取消旧complete，旧cancel不能取消新播放。null/0时长同步终态和完成，不等待下一帧。
+- `cancel(key)`取消当前key；`cancelAll()`用于换局/读档/上下文切换，均不触发complete。可选`cancelled`在取消、替换或销毁时同步通知该次投影，界面据此稳定开放页面并删除退出残影，不靠驱动空闲推断。取消前先移除旧播放；取消回调不得另建播放或执行业务动作。`finishAll()`用于中途开启减少动态：当前有效投影立即到终态。`dispose()`终止全部，之后play报错。
+- 既有ticker在剧情暂停时只推进UI及原菜单投影，不推进世界；结束后休眠。Runtime成功resetSession取消旧播放，dispose和初始化失败释放实例。paint同步关闭/替换/销毁后旧complete无效；绘制或完成回调失败报告原错误并移除失败任务，保留该失败触发的下一帧请求，让其他UI和世界投影继续，不自动重试失败回调。
 - complete只清理该次视觉投影，绝不能执行剧情推进、保存或解释器恢复；不是业务成功回执。
 
 ## Claude接线边界
