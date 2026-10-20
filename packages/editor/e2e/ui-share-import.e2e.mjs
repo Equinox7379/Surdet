@@ -64,6 +64,28 @@ try {
   assert.deepEqual(await draft(page), initial);
   results.steps.push('只读预览、取消不改草稿或文件，影响范围来自公共投影');
 
+  await page.locator('[data-config-section-target="variables"]').click();
+  await page.getByRole('button', { name: '＋ 新增变量', exact: true }).click();
+  const variableName = page.getByRole('textbox', { name: /^变量名，第/ }).last();
+  const variableInitial = page.getByRole('textbox', { name: /^初始值，第/ }).last();
+  await variableName.fill('u3_pending'); await variableInitial.fill('9');
+  const variableShare = structuredClone(share);
+  variableShare.variables = { u3_pending: { type: 'number' } };
+  variableShare.config.ui.pages.title.children[0].enabledWhen = 'u3_pending > 0';
+  const withVariable = await prepare(page, variableShare);
+  assert.equal(withVariable.preview.config.variables.u3_pending.initial, 9);
+  await variableInitial.fill('10');
+  await assert.rejects(page.evaluate(() => window.proposal.apply()), /草稿已变化/);
+  await prepare(page, variableShare);
+  await page.getByRole('combobox', { name: /^变量类型，第/ }).last().selectOption('string');
+  await assert.rejects(page.evaluate(() => window.proposal.apply()), /草稿已变化/);
+  await assert.rejects(prepare(page, variableShare), /同类型/);
+  await page.getByRole('button', { name: /^删除变量第/ }).last().click();
+  await assert.rejects(prepare(page, variableShare), /同类型/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')), before);
+  results.steps.push('未保存变量可预览，预览后改初值/类型/删除均不能复用旧计划');
+  await page.close(); page = await open();
+
   const imageShare = structuredClone(share);
   imageShare.config.ui.pages.title.children[0].states.hover.backgroundImage = { asset: 'missing', fit: 'stretch' };
   imageShare.assets = [{ path: 'content/assets/bg/missing.png', base64: png.toString('base64') }];
@@ -108,6 +130,19 @@ try {
   await page.evaluate(async () => (await import('/src/panels/config.ts')).configRedo());
   assert.deepEqual((await draft(page)).ui, applied.ui);
   results.steps.push('过期拒绝、预览对象不可篡改实际应用、一次撤销同时回退主题和界面');
+
+  await page.evaluate(async () => (await import('/src/panels/config.ts')).editUiConfigDraft({
+    type: 'node.update', page: 'title', id: 'a_start', patch: { style: { backgroundImage: { asset: 'gone', fit: 'stretch' } } },
+  }));
+  const failed = await page.evaluate(async () => {
+    const config = await import('/src/panels/config.ts'), io = await import('/src/project-io.ts');
+    return io.runProjectWriteOperation(() => config.saveDirtyConfigSections());
+  });
+  assert(failed.failures > 0); assert.equal(failed.saved, 0);
+  assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')), before);
+  assert.deepEqual((await draft(page)).dirty.dirtySections.filter(section => ['theme', 'ui'].includes(section)).sort(), ['theme', 'ui']);
+  await page.evaluate(async () => (await import('/src/panels/config.ts')).configUndo());
+  results.steps.push('界面验证失败时主题和界面均不落盘，两个草稿均保留');
 
   const outcome = await page.evaluate(async () => {
     const config = await import('/src/panels/config.ts'), io = await import('/src/project-io.ts');
