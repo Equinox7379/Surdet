@@ -72,6 +72,17 @@ describe('U3 import dialog display model', () => {
     expect(defaultPreviewView(views, { pages: [] })).toBe('title');
   });
 
+  it('explains whole-page replacement when component ids are retained', () => {
+    const [row] = summarizeUiShareImpact([{ page: 'title', change: 'replace', before: ['root', 'start'], after: ['root', 'start'] }]);
+    expect(row!.change).toBe('replace');
+    expect(row!.detail).toContain('替换整页');
+    expect(row!.detail).toContain('相同标识');
+    expect(row!.detail).not.toContain('移除 0');
+    expect(row!.detail).not.toContain('加入 0');
+    // A retained id is not proof that an individual node changed: the page is replaced as a whole.
+    expect(row).toMatchObject({ added: [], removed: [] });
+  });
+
   it('provides read-only sample content including empty and disabled states', () => {
     const load = uiPreviewSampleContent('save-slots', true, 'load');
     expect(load.every(item => item.empty && item.disabled)).toBe(true);

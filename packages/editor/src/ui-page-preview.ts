@@ -114,7 +114,7 @@ export async function startUiPagePreview(data: UiPagePreviewLoad, signal: AbortS
       return { min: variables[binding.name]?.min ?? 0, max: variables[binding.name]?.max ?? 100, step: 1 };
     },
     content: source => uiPreviewSampleContent(source, view.empty, view.mode),
-    select(_source, item) { readOnly(item.label); return false; },
+    select(_source, item) { readOnly(item.label); return true; },
     action(action) { readOnly(ACTION_NAMES[action.kind] ?? action.kind); },
   });
   let shown: ProjectUiPageId | null = null;

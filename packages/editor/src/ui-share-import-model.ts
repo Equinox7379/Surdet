@@ -92,7 +92,7 @@ export function summarizeUiShareImpact(pages: UiShareImportPreview['pages'], par
   return pages.map(({ page, change, before, after }) => {
     const added = after.filter(id => !before.includes(id)), removed = before.filter(id => !after.includes(id));
     const detail = change === 'add' ? `新增自定义页，${after.length} 个组件。`
-      : change === 'replace' ? `替换自定义页：移除 ${removed.length} 个组件，加入 ${added.length} 个组件。`
+      : change === 'replace' ? `替换整页，导入后共 ${after.length} 个组件；相同标识的组件也使用导入页中的布局、样式、文字和动作。`
         : change === 'insert' ? `加入 ${added.length} 个组件${parentLabel ? `到${parentLabel}` : ''}，其他组件保留。`
           : change === 'remove' ? `移除自定义页，恢复 Player 默认页（${before.length} 个组件移出草稿）。游戏功能不受影响。`
             : before.length ? `保留现有自定义页（${before.length} 个组件）。` : '继续使用默认页。';
