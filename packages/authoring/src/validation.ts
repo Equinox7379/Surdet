@@ -3,6 +3,7 @@ import { validateProjectStageContent } from './stage-validation.js';
 import { decodeStageToken, resolveProjectTheme, resolveProjectTitleLogo, readProjectUi, readTextCatalog, textCatalogEntryText } from '@surdet/core';
 import { validateThemeAssetBindings } from './theme-operations.js';
 import { validateUiAssets } from './ui-operations.js';
+import { validateUiImageBytes } from './ui-image-assets.js';
 import {
   attachHints,
   checkChoiceSuspects,
@@ -46,6 +47,8 @@ export interface ValidationOptions {
   failedScenes?: ReadonlySet<string>;
   /** 只读资源目录（project.inspect/assets 同源）；缺省时不执行资源引用检查。 */
   assetCatalog?: ProjectAssetCatalog;
+  /** Physical-size checks when the host has actual image bytes; static-only callers omit this. */
+  uiImageBytes?: (path: string) => Uint8Array;
   /**
    * Phase 2C（A3）：@timeline 引用完整性检查的显式 scope。
    * - complete（默认）：snapshot 即完整项目，无论 timeline 文件数量都检查引用完整性。
@@ -469,6 +472,7 @@ export function validateSnapshot(
   try {
     const ui = readProjectUi(snapshot.config);
     if (options.assetCatalog) validateUiAssets(ui, options.assetCatalog);
+    if (options.assetCatalog && options.uiImageBytes) validateUiImageBytes(ui, options.assetCatalog, options.uiImageBytes);
   } catch (error) {
     rawIssues.push({ severity: 'error', code: 'UI_INVALID', text: error instanceof Error ? error.message : String(error), file: configPath, line: 1, col: 1 });
   }

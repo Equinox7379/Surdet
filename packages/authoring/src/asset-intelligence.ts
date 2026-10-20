@@ -345,6 +345,12 @@ function referenceTargets(snapshot: ProjectSnapshot, galleryInput?: unknown): Re
       sourceLabel: `界面 ${page} · ${String(item.id ?? '图片')}`, sourcePath: 'game.config.json',
       objectRef: typeof item.id === 'string' ? `ui:${item.id}` : 'config:ui',
     });
+    const backgroundImage = asRecord(asRecord(item.style)?.backgroundImage);
+    if (typeof backgroundImage?.asset === 'string') add('background', backgroundImage.asset, {
+      referenceId: `ui:${String(item.id ?? page)}:style:backgroundImage:asset`, sourceKind: 'config',
+      sourceLabel: `界面 ${page} · ${String(item.id ?? '节点')} 背景`, sourcePath: 'game.config.json',
+      objectRef: typeof item.id === 'string' ? `ui:${item.id}` : 'config:ui',
+    });
     if (Array.isArray(item.children)) item.children.forEach(child => inspectUiNode(page, child));
   };
   for (const [page, root] of Object.entries(uiPages)) inspectUiNode(page, root);

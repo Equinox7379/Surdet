@@ -115,6 +115,38 @@ it('discovers companion licenses in fonts and licenses folders without calling t
   expect(result.summary).toMatchObject({ unusedCount: 0, duplicateCount: 0, unsupportedCount: 0, byKind: { license: { files: 4 } } });
 });
 
+it('tracks U1 nested style backgrounds separately from image content and ignores explicit clears', async () => {
+  const frame = { x: 0, y: 0, width: 200, height: 100 };
+  const slice = { top: 8, right: 6, bottom: 4, left: 2, fillCenter: false };
+  const snapshot = await snapshotFor({ 'game.config.json': JSON.stringify({ ui: { version: 1, pages: { title: {
+    id: 'panel', type: 'container', frame, style: { backgroundImage: { asset: 'paper', fit: 'stretch', slice } }, children: [
+      { id: 'picture', type: 'image', frame, asset: 'art', style: { backgroundImage: { asset: 'paper', fit: 'cover' } } },
+      { id: 'clear', type: 'container', frame, style: { backgroundImage: null } },
+      { id: 'label', type: 'text', frame, text: { kind: 'literal', value: 'unused' } },
+    ],
+  } } } }) });
+  const result = buildProjectAssetIntelligence(snapshot, ['paper', 'art', 'unused'].map(key => ({ path: `content/assets/bg/${key}.png` })));
+  expect(asset(result, 'content/assets/bg/paper.png').references).toEqual([
+    expect.objectContaining({ referenceId: 'ui:panel:style:backgroundImage:asset', objectRef: 'ui:panel', sourceKind: 'config', sourcePath: 'game.config.json' }),
+    expect.objectContaining({ referenceId: 'ui:picture:style:backgroundImage:asset', objectRef: 'ui:picture' }),
+  ]);
+  expect(asset(result, 'content/assets/bg/paper.png').issues).not.toContain('ASSET_UNUSED');
+  expect(asset(result, 'content/assets/bg/art.png').references).toEqual([expect.objectContaining({ referenceId: 'ui:picture:asset' })]);
+  expect(asset(result, 'content/assets/bg/unused.png').issues).toContain('ASSET_UNUSED');
+});
+
+it('reports missing and ambiguous U1 style backgrounds through existing asset issues', async () => {
+  const frame = { x: 0, y: 0, width: 200, height: 100 };
+  const snapshot = await snapshotFor({ 'game.config.json': JSON.stringify({ ui: { version: 1, pages: { hud: {
+    id: 'panel', type: 'container', frame, style: { backgroundImage: { asset: 'paper', fit: 'contain' } }, children: [
+      { id: 'missing', type: 'container', frame, style: { backgroundImage: { asset: 'lost', fit: 'cover' } } },
+    ],
+  } } } }) });
+  const result = buildProjectAssetIntelligence(snapshot, [{ path: 'content/assets/bg/paper.png' }, { path: 'content/assets/bg/alternate/paper.webp' }]);
+  expect(result.items.find(item => item.key === 'lost')).toMatchObject({ physical: false, references: [expect.objectContaining({ objectRef: 'ui:missing' })] });
+  expect(result.items.filter(item => item.key === 'paper').every(item => item.issues.includes('ASSET_KEY_DUPLICATE') && item.references.some(ref => ref.objectRef === 'ui:panel'))).toBe(true);
+});
+
 it('locates a rule used only by a timeline and publishes a real-key screen cue', async () => {
   const snapshot = await snapshotFor({ 'game.config.json': '{}', 'content/timelines/mask.json': JSON.stringify({
     version: 2, id: 'mask', durationMs: 800, tracks: [{ kind: 'screen', cues: [

@@ -86,6 +86,92 @@ async function setTerminalOrStaleStatus(
 }
 
 describe('Surdet Agent Port session and policy contract', () => {
+  it('U1 public UI edits read actual image bounds, preserve rejected records and distinguish working from project', async () => {
+    const root = makeProject('ui-style');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-ui-style-data-')); temporaryRoots.push(data);
+    fs.mkdirSync(path.join(root, 'content/assets/bg'), { recursive: true });
+    const imagePath = path.join(root, 'content/assets/bg/纸框.svg');
+    const image = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"/>';
+    fs.writeFileSync(imagePath, image);
+    const source = fs.readFileSync(path.join(root, 'game.config.json'), 'utf8');
+    const session = await open(root, data, 'apply');
+    const invoke = async (capability: Parameters<typeof session.invoke>[0], input: Record<string, unknown>) => {
+      const response = await session.invoke(capability, input);
+      expect(response, JSON.stringify(response)).toMatchObject({ ok: true });
+      if (!response.ok) throw new Error(response.error.message);
+      return response.result as any;
+    };
+    try {
+      await invoke('change.begin', {});
+      const initial = await invoke('project.ui', { view: 'working' });
+      const rootNode = { id: 'panel', type: 'container', frame: { x: 0, y: 0, width: 400, height: 200 }, style: {
+        opacity: 0, backgroundOpacity: 0, fontWeight: 700, letterSpacing: 0,
+        backgroundImage: { asset: '纸框', fit: 'stretch', slice: { top: 10, right: 10, bottom: 10, left: 10, fillCenter: true } },
+      } };
+      const request = { operationId: crypto.randomUUID(), expectedFingerprint: initial.fingerprint, patch: { type: 'page.set', page: 'title', root: rootNode } };
+      const changed = await invoke('project.ui.patch', request);
+      expect(changed.ui.nodes[0].effectiveStyle).toMatchObject({ opacity: 0, backgroundOpacity: 0, fontWeight: 700 });
+      expect((await invoke('project.ui', { view: 'project' })).value).toBeNull();
+      expect((await invoke('project.ui', { view: 'working' })).value.pages.title).toEqual(rootNode);
+      expectFailure(await session.invoke('project.ui.patch', { ...request, operationId: crypto.randomUUID() }), 'OBJECT_REF_STALE');
+      const before = await invoke('project.ui', { view: 'working' });
+      const oversized = structuredClone(rootNode); oversized.style.backgroundImage.slice.left = 90;
+      expectFailure(await session.invoke('project.ui.patch', { ...request, operationId: crypto.randomUUID(), expectedFingerprint: before.fingerprint,
+        patch: { ...request.patch, root: oversized } }), 'UI_INVALID');
+      expect(await invoke('project.ui', { view: 'working' })).toEqual(before);
+      expect((await invoke('project.validate', {})).ok).toBe(true);
+      fs.writeFileSync(imagePath, '<svg width="10" height="10"/>');
+      const invalid = await invoke('project.validate', {});
+      expect(invalid.ok).toBe(false);
+      expect(invalid.issues.some((issue: any) => issue.code === 'UI_INVALID' && issue.text.includes('九宫格'))).toBe(true);
+      fs.writeFileSync(imagePath, image);
+      expect(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8')).toBe(source);
+    } finally { await session.close(); }
+  });
+  it('U1 merged layout fields survive public page, insert and update operations with effective defaults', async () => {
+    const root = makeProject('ui-layout');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-ui-layout-data-')); temporaryRoots.push(data);
+    fs.mkdirSync(path.join(root, 'content/assets/bg'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'content/assets/bg/art.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"/>');
+    const session = await open(root, data, 'apply');
+    const invoke = async (capability: Parameters<typeof session.invoke>[0], input: Record<string, unknown>) => {
+      const response = await session.invoke(capability, input);
+      expect(response, JSON.stringify(response)).toMatchObject({ ok: true });
+      if (!response.ok) throw new Error(response.error.message);
+      return response.result as any;
+    };
+    const patch = async (value: Record<string, unknown>) => {
+      const current = await invoke('project.ui', { view: 'working' });
+      return invoke('project.ui.patch', { operationId: crypto.randomUUID(), expectedFingerprint: current.fingerprint, patch: value });
+    };
+    try {
+      await invoke('change.begin', {});
+      const page = await patch({ type: 'page.set', page: 'gallery', root: {
+        id: 'rows', type: 'content', source: 'gallery-cgs', frame: { x: 0, y: 0, width: 400, height: 200 },
+        style: { columns: 2, borderRadius: 8 },
+      } });
+      expect(page.ui.nodes[0].effectiveStyle).toMatchObject({ columns: 2, borderRadius: 8 });
+      const inserted = await patch({ type: 'node.insert', page: 'gallery', parentId: 'rows', index: 0, node: {
+        id: 'art', type: 'image', asset: 'art', frame: { x: 0, y: 0, width: 80, height: 60 }, style: { imageFit: 'cover' },
+      } });
+      expect(inserted.ui.nodes[1].effectiveStyle).toMatchObject({ imageFit: 'cover' });
+      await patch({ type: 'node.update', page: 'gallery', id: 'art', patch: { style: { imageFit: 'fill' } } });
+      const selected = await invoke('project.ui', { view: 'working' });
+      expect(selected.nodes[1].effectiveStyle).toMatchObject({ imageFit: 'fill' });
+      expect(selected.value.pages.gallery.children[0].style.imageFit).toBe('fill');
+      for (const [id, style] of [['rows', { columns: 3 }], ['art', { imageFit: 'stretch' }]] as const) {
+        expectFailure(await session.invoke('project.ui.patch', { operationId: crypto.randomUUID(), expectedFingerprint: selected.fingerprint,
+          patch: { type: 'node.update', page: 'gallery', id, patch: { style } } }), 'INVALID_REQUEST');
+      }
+      expect((await invoke('project.ui', { view: 'working' })).value).toEqual(selected.value);
+      await patch({ type: 'node.update', page: 'gallery', id: 'rows', patch: { style: { borderRadius: 8 } } });
+      await patch({ type: 'node.update', page: 'gallery', id: 'art', patch: { style: null } });
+      const inherited = await invoke('project.ui', { view: 'working' });
+      expect(inherited.nodes[0].effectiveStyle).toMatchObject({ columns: 1 });
+      expect(inherited.nodes[1].effectiveStyle).toMatchObject({ imageFit: 'contain' });
+      expect((await invoke('project.ui', { view: 'project' })).value).toBeNull();
+    } finally { await session.close(); }
+  });
   afterEach(() => {
     delete process.env['SURDET_AGENT_DATA_DIR'];
     for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });

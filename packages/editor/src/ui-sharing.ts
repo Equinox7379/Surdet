@@ -1,5 +1,5 @@
 import { projectUiAssetKeys, projectUiVariableNames, readProjectUi, resolveProjectTheme, resolveProjectFontPaths, projectThemeAssetKeys, THEME_TOKEN_GROUPS, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId } from '@surdet/core';
-import { buildAssetCatalog, validateUiAssets } from '@surdet/authoring';
+import { buildAssetCatalog, validateUiAssets, validateUiImageBytes } from '@surdet/authoring';
 
 type Json = Record<string, unknown>;
 export interface UiShare {
@@ -75,6 +75,7 @@ export async function exportUiShare(config: Json, assets: ShareAsset[], fragment
   for (const [path, source] of selected) {
     safePath(path); files.push({ path, base64: encode(new Uint8Array(await (await source.read()).arrayBuffer())) });
   }
+  validateUiImageBytes(readProjectUi(checked), buildAssetCatalog(files.map(file => file.path)), path => decode(files.find(file => file.path === path)!.base64));
   return { format: 'surdet-ui', version: 1, kind: fragment ? 'fragment' : 'theme', config: output, variables, assets: files };
 }
 
@@ -115,6 +116,7 @@ export function readUiShare(text: string, destination: Json): UiShare {
   }
   const catalog = buildAssetCatalog((raw.assets as UiShare['assets']).map(asset => asset.path));
   validateUiAssets(ui, catalog);
+  validateUiImageBytes(ui, catalog, path => decode((raw.assets as UiShare['assets']).find(asset => asset.path === path)!.base64));
   for (const key of neededImages) if (catalog.backgrounds.filter(asset => asset.key === key).length !== 1) throw new Error(`共享图片依赖不完整：${key}`);
   for (const path of neededFonts) if (!paths.has(String(path).toLowerCase())) throw new Error(`共享字体依赖不完整：${path}`);
   return raw as unknown as UiShare;

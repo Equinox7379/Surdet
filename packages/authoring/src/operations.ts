@@ -59,6 +59,7 @@ function sceneCompositionConfig(files: Record<string, string>) {
     galleryText: files['content/config/gallery.json'],
     variables: config.variables as Record<string, unknown> | undefined,
     titleLogo: resolveProjectTitleLogo(config),
+    titleBackground: (config.player as { titleBackground?: string } | undefined)?.titleBackground,
     characters: sceneCharacters(config),
     fontPaths: resolveProjectFontPaths(config),
   };

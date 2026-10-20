@@ -48,6 +48,7 @@ export * from './project-fonts.js';
 export * from './project-plugins.js';
 export * from './project-theme.js';
 export * from './project-ui.js';
+export * from './project-ui-style.js';
 export * from './theme-tokens.js';
 export * from './stage.js';
 export * from './story-filter.js';
