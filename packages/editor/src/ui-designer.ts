@@ -143,6 +143,11 @@ const ACTION_NAMES: Record<NonNullable<ProjectUiNode['action']>['kind'], string>
   auto: '自动播放', skip: '快进', hide: '隐藏界面', 'variable-set': '修改剧情变量',
 };
 const DESIGN_FRAME: ProjectUiRect = { x: 0, y: 0, width: 1280, height: 720 };
+function intersectPreviewRect(a: ProjectUiRect, b: ProjectUiRect): ProjectUiRect {
+  const x = Math.max(a.x, b.x), y = Math.max(a.y, b.y);
+  return { x, y, width: Math.max(0, Math.min(a.x + a.width, b.x + b.width) - x),
+    height: Math.max(0, Math.min(a.y + a.height, b.y + b.height) - y) };
+}
 let selectedPage: ProjectUiPageId = 'title';
 let selectedNodeId: string | null = null;
 
@@ -292,7 +297,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
   }
 
   /** `onSurface`: an ancestor paints a project surface (fill or image) under this node, as the Player does. */
-  function drawCanvas(canvas: HTMLElement, node: ProjectUiNode, parentRect: ProjectUiRect, config: Record<string, unknown>, onSurface = false): void {
+  function drawCanvas(canvas: HTMLElement, node: ProjectUiNode, parentRect: ProjectUiRect, config: Record<string, unknown>, onSurface = false, clipRect = DESIGN_FRAME): void {
     const rect = projectUiRect(parentRect, node.frame);
     const item = element('div', `ui-canvas-node ui-canvas-${node.type}`, node.text?.kind === 'literal' ? node.text.value : node.type === 'container' || node.type === 'tabs' ? '' : TYPE_NAMES[node.type]);
     item.dataset.uiNode = node.id;
@@ -323,6 +328,13 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     // U1 box fields: the same Core values and decoration layer as the Player, scaled to the canvas.
     const boxed = stateful || usesProjectUiBox(style);
     let decor: HTMLDivElement | null = null, focusRing: HTMLSpanElement | null = null;
+    const placeFocusRing = (outer: ProjectUiRect): void => {
+      if (!focusRing) return;
+      const visible = intersectPreviewRect(outer, clipRect);
+      focusRing.hidden = visible.width <= 0 || visible.height <= 0;
+      focusRing.style.left = `${visible.x / 1280 * 100}%`; focusRing.style.top = `${visible.y / 720 * 100}%`;
+      focusRing.style.width = `${visible.width / 1280 * 100}%`; focusRing.style.height = `${visible.height / 720 * 100}%`;
+    };
     let surface = onSurface || (style?.background !== undefined && !boxed);
     if (boxed) {
       try {
@@ -392,7 +404,8 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
           item.style.height = `${Math.max(8, initial.height + dy) / 720 * 100}%`;
         }
         if (decor) { decor.style.transform = item.style.transform; decor.style.width = item.style.width; decor.style.height = item.style.height; }
-        if (focusRing) { focusRing.style.transform = item.style.transform; focusRing.style.width = item.style.width; focusRing.style.height = item.style.height; }
+        placeFocusRing(resize ? { ...rect, width: Math.max(8, initial.width + dx), height: Math.max(8, initial.height + dy) }
+          : { ...rect, x: rect.x + dx, y: rect.y + dy });
       };
       const stop = (next: PointerEvent): void => {
         cleanup();
@@ -420,7 +433,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       ring.dataset.uiFocusPreview = 'true';
       ring.setAttribute('aria-hidden', 'true');
       ring.style.cssText = `position:absolute;pointer-events:none;z-index:2;border-radius:${item.style.borderRadius};outline:${cqw(2)} solid #${theme.colors.accent.toString(16).padStart(6, '0')};outline-offset:${cqw(2)};box-shadow:0 0 0 ${cqw(2)} #${theme.colors.panel.toString(16).padStart(6, '0')}`;
-      for (const key of ['left', 'top', 'width', 'height'] as const) ring.style[key] = item.style[key];
+      placeFocusRing(rect);
     }
     if (stateful && decor) {
       // Match the Player's compositing: author opacity applies once to the whole
@@ -450,7 +463,9 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       item.appendChild(bar);
       children = children.filter(child => (child.tab ?? tabs[0]) === active);
     }
-    children.forEach(child => drawCanvas(canvas, child, projectUiChildrenRect(rect, node.type, node.style), config, surface));
+    const childClip = node.type === 'scroll' || node.type === 'content' || (boxed && (node.type === 'container' || node.type === 'tabs'))
+      ? intersectPreviewRect(clipRect, projectUiContentRect(rect, style)) : clipRect;
+    children.forEach(child => drawCanvas(canvas, child, projectUiChildrenRect(rect, node.type, node.style), config, surface, childClip));
   }
 
   /** U2: 正常 / 悬停 / 焦点 / 按下 / 禁用 for the selected control; switching only changes what the form edits and the canvas shows. */

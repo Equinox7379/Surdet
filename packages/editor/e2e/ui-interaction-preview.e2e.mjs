@@ -36,6 +36,13 @@ try {
     const ui = { version: 1, pages: { title: { id: 'root', type: 'container', frame: frame(0, 0, 1280, 720), children: [
       { id: 'go', type: 'button', frame: frame(120, 120, 320, 80), text: { kind: 'literal', value: '状态预览' }, action: { kind: 'start' },
         style: { background: 0xff0000 }, states: { disabled: { opacity: 0.5 }, focus: { opacity: 0 } } },
+      { id: 'clipped', type: 'container', frame: frame(500, 120, 240, 100), style: { border: { width: 2, color: 0, opacity: 1 }, padding: { top: 8, right: 8, bottom: 8, left: 8 } }, children: [
+        { id: 'edge', type: 'button', frame: frame(-30, 10, 100, 50), text: { kind: 'literal', value: '部分可见' }, states: { focus: {} } },
+        { id: 'outside', type: 'button', frame: frame(-120, 10, 100, 50), text: { kind: 'literal', value: '范围外' }, states: { focus: {} } },
+      ] },
+      { id: 'scroll', type: 'scroll', frame: frame(800, 120, 240, 100), children: [
+        { id: 'scroll_edge', type: 'button', frame: frame(-30, 10, 100, 50), text: { kind: 'literal', value: '滚动边缘' }, states: { focus: {} } },
+      ] },
     ] } } };
     PreviewUi.state.gameConfigText = JSON.stringify({ ui });
     PreviewUi.state.dirAssets = []; PreviewUi.state.dirHandle = null;
@@ -68,6 +75,20 @@ try {
   assert.equal(focus.outside, true); assert.equal(focus.alpha, 1); assert(focus.width > 0);
   assert(focus.position.every(delta => delta < 1), `focus ring follows the control: ${JSON.stringify(focus)}`);
   await page.screenshot({ path: path.join(output, 'focus-at-zero-opacity.png') });
+  for (const [id, x, y] of [['edge', 510, 140], ['scroll_edge', 800, 130]]) {
+    await page.locator(`.ui-designer-tree [data-ui-node="${id}"]`).click();
+    await page.locator('[data-ui-style-control="state:focus"]').click();
+    const crop = await page.evaluate(() => {
+      const canvas = document.querySelector('[data-ui-canvas-page]').getBoundingClientRect();
+      const ring = document.querySelector('[data-ui-focus-preview]').getBoundingClientRect();
+      const scale = canvas.width / 1280;
+      return { x: (ring.x - canvas.x) / scale, y: (ring.y - canvas.y) / scale, width: ring.width / scale, height: ring.height / scale };
+    });
+    for (const [key, expected] of Object.entries({ x, y, width: 70, height: 50 })) assert(Math.abs(crop[key] - expected) < 0.1, `${id} visible focus ${key}: ${JSON.stringify(crop)}`);
+  }
+  await page.locator('.ui-designer-tree [data-ui-node="outside"]').click();
+  await page.locator('[data-ui-style-control="state:focus"]').click();
+  assert.equal(await page.locator('[data-ui-focus-preview]:not([hidden])').count(), 0, 'fully clipped controls have no visible focus preview');
   await page.evaluate(() => { PreviewUi.disposeUiDesigner(); window.mount(); });
   assert.equal(await page.locator('[data-ui-style-key="state"] [aria-pressed="true"]').getAttribute('data-ui-style-control'), 'state:normal');
   assert.deepEqual(errors, []);
