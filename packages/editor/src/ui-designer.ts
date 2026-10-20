@@ -290,7 +290,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     item.style.textAlign = style?.align ?? 'left';
     item.style.opacity = String(style?.opacity ?? 1);
     // U1 box fields: the same Core values and decoration layer as the Player, scaled to the canvas.
-    let decor: HTMLDivElement | null = null, surface = onSurface;
+    let decor: HTMLDivElement | null = null, surface = onSurface || (style?.background !== undefined && !usesProjectUiBox(style));
     if (usesProjectUiBox(style)) {
       try {
         const effective = inherited, content = projectUiContentRect(rect, style);

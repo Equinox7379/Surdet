@@ -50,6 +50,7 @@ const uiDocument = { version: 1, pages: {
     // Children reaching past a boxed parent's content box are clipped there (paint and input); legacy parents are not.
     { id: 'clip_box', type: 'container', frame: frame(480, 400, 300, 160), style: { border: line(2), padding: { top: 16, right: 16, bottom: 16, left: 16 }, background: 0xeeeeee }, children: [
       { id: 'clip_child', type: 'button', frame: frame(-40, 20, 120, 40), text: { kind: 'literal', value: '裁' } },
+      { id: 'edge_focus', type: 'button', frame: frame(0, 80, 264, 44), text: { kind: 'literal', value: '边缘焦点' } },
     ] },
     { id: 'clip_legacy', type: 'container', frame: frame(820, 460, 200, 100), children: [
       { id: 'legacy_child', type: 'button', frame: frame(-40, 20, 120, 40), text: { kind: 'literal', value: '旧' } },
@@ -189,6 +190,29 @@ try {
   assert.equal(await hit(30, 515), null); assert.equal(await hit(45, 515), 'frame:clip_tabs', 'the tabs frame keeps the press, not the child'); assert.equal(await hit(80, 515), 'tab_child');
   assert.equal(await hit(800, 500), 'legacy_child', 'legacy container keeps overflow visible');
   console.log('PASS boxed container/tabs clip children to the content box; legacy container unchanged');
+
+  // A button touching the content-box edges must still show keyboard focus inside the clipped area.
+  const edge = page.locator('[data-ui-node="edge_focus"]');
+  const beforeFocus = (await edge.screenshot()).toString('base64');
+  await page.locator('[data-ui-node="clip_child"]').focus();
+  await page.keyboard.press('Tab');
+  assert.equal(await edge.evaluate(button => button === document.activeElement && button.matches(':focus-visible')), true);
+  const afterFocus = (await edge.screenshot()).toString('base64');
+  const changed = await page.evaluate(async ({ beforeFocus, afterFocus }) => {
+    const pixels = async encoded => { const image = new Image(); image.src = `data:image/png;base64,${encoded}`; await image.decode();
+      const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+      const context = canvas.getContext('2d'); context.drawImage(image, 0, 0); return context.getImageData(0, 0, canvas.width, canvas.height); };
+    const before = await pixels(beforeFocus), after = await pixels(afterFocus);
+    let changed = 0;
+    for (let y = 0; y < before.height; y++) for (let x = 0; x < before.width; x++) {
+      if (x >= 3 && x < before.width - 3 && y >= 3 && y < before.height - 3) continue;
+      const i = (y * before.width + x) * 4;
+      if ([0, 1, 2].some(channel => Math.abs(before.data[i + channel] - after.data[i + channel]) > 16)) changed++;
+    }
+    return changed;
+  }, { beforeFocus, afterFocus });
+  assert(changed > 20, `clipped edge button retains a visible focus ring (${changed} changed edge pixels)`);
+  console.log(`PASS clipped edge button retains keyboard focus (${changed} visible edge pixels)`);
   assert.deepEqual(errors, []);
 } finally {
   await browser.close();
