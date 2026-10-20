@@ -1,9 +1,10 @@
-import { GAME_SETTING_DEFINITIONS, PROJECT_UI_TAB_BAR_HEIGHT, evalExprBoolean, parseInlineText, projectUiChildrenRect, projectUiContentRect, projectUiRect, resolveProjectUiStyle, type InlineStyle, type VarValue, type ProjectUiAction, type ProjectUiBinding, type ProjectUiContentSource, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId, type ProjectUiRect, type ProjectUiText } from '@surdet/core';
+import { GAME_SETTING_DEFINITIONS, PROJECT_UI_TAB_BAR_HEIGHT, evalExprBoolean, parseInlineText, projectUiChildrenRect, projectUiContentRect, projectUiRect, resolveProjectUiInteractionStyle, resolveProjectUiMotion, resolveProjectUiStyle, type InlineStyle, type ProjectUiInteraction, type ProjectUiMotion, type VarValue, type ProjectUiAction, type ProjectUiBinding, type ProjectUiContentSource, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId, type ProjectUiRect, type ProjectUiText } from '@surdet/core';
 import type { RendererTheme } from './theme.js';
 import { SETTING_STEPS } from './settings-store.js';
 import { fontTextDiagnostics, isUiTextClipped, type ReadingDiagnostic } from './reading-diagnostics.js';
 import type { BacklogEntry } from './backlog.js';
-import { applyProjectUiTypography, createProjectUiDecor, createProjectUiImageSizes, projectUiInsetCss, projectUiLineStep, usesProjectUiBox, type ProjectUiDecorImage } from './project-ui-style-dom.js';
+import { applyProjectUiTypography, createProjectUiDecor, createProjectUiImageSizes, projectUiInsetCss, projectUiLineStep, projectUiShadowCss, usesProjectUiBox, type ProjectUiDecorImage } from './project-ui-style-dom.js';
+import type { ProjectUiMotionController, ProjectUiMotionPose } from './project-ui-motion.js';
 
 export interface ProjectUiItem {
   id: string;
@@ -42,6 +43,13 @@ export interface ProjectUiDomOptions {
   titleBackgroundUrl?: string;
   isPageVisible?: (page: ProjectUiPageId) => boolean;
   onError: (error: unknown) => void;
+  /**
+   * The one shared page-motion driver that is also passed to `createRendererRuntime({ projectUiMotion })`.
+   * Runtime wiring only, not a work field; without it pages appear and close at once as before.
+   */
+  motion?: ProjectUiMotionController;
+  /** The player's reduced-motion setting when the UI is created; later changes go through `setReducedMotion`. */
+  reducedMotion?: boolean;
 }
 
 export interface ProjectUiDom {
@@ -53,6 +61,13 @@ export interface ProjectUiDom {
   ownsInput(target: EventTarget | null): boolean;
   showGalleryImage(assetKey: string, label: string): void;
   confirm(message: string): Promise<boolean>;
+  /** Reduced motion on: every running page projection jumps to its end state now; later pages show statically. */
+  setReducedMotion(reduce: boolean): void;
+  /**
+   * A new session (load, new game, replay, rollback): cancel this UI's page projections without their callbacks,
+   * drop every closing page at once and put open pages at their stable pose.
+   */
+  resetMotion(): void;
   dispose(): void;
 }
 
@@ -79,12 +94,33 @@ function isReadingText(page: ProjectUiPageId, node: ProjectUiNode, item?: Projec
 
 interface Display {
   page: ProjectUiPageId;
+  node: ProjectUiNode;
   element: HTMLDivElement;
   context: ProjectUiContext;
   bindings: Array<() => void>;
   contents: Array<{ element: HTMLElement; source: ProjectUiContentSource; template: readonly ProjectUiNode[]; columns: 1 | 2; rect: ProjectUiRect; signature: string; bindings: Array<() => void> }>;
   pending: boolean;
+  /** Set by hide: from then on the page is only a picture (inert, never refreshed or re-enabled). */
+  closed: boolean;
+  /** The page's own keyboard focus marker for state-bearing controls; never part of a node group. */
+  marker: HTMLDivElement | null;
+  /** Transparent stand-in for a modal page while it is still moving in, so nothing reaches the layers below. */
+  blocker: HTMLDivElement | null;
+  /** The last painted page pose; an exit started mid-entry continues from here. */
+  pose: ProjectUiMotionPose;
+  /**
+   * True from the refresh that hid a page that was on screen until the next animation frame, i.e. before the hidden
+   * page was ever painted. The Player Shell commits its session (whose listener refreshes this UI) before it asks the
+   * provider to hide the page, so a page closing normally is already hidden when hide() runs; it is still the picture
+   * on screen and plays its exit.
+   */
+  hiddenThisFrame: boolean;
 }
+
+const STABLE_POSE: ProjectUiMotionPose = { opacity: 1, x: 0, y: 0, scale: 1 };
+const matches = (element: Element, selector: string): boolean => {
+  try { return element.matches(selector); } catch { return selector === ':focus-visible' && element.matches(':focus'); }
+};
 
 /** Runtime projection only. The caller retains every game, save and Shell controller. */
 export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
@@ -105,6 +141,12 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
   let frame = 0;
   let confirmation: { element: HTMLElement; finish(accepted: boolean): void } | null = null;
   let refreshFailure: string | null = null;
+  const motion = options.motion;
+  let reduceMotion = options.reducedMotion === true;
+  /** Closed pages still playing their visual exit, one per page slot. */
+  const ghosts = new Map<ProjectUiPageId, HTMLDivElement>();
+  /** Page slots with a projection on the shared driver (an entering page or a closing ghost). */
+  const running = new Set<ProjectUiPageId>();
 
   const report = (error: unknown): void => { const message = error instanceof Error ? error.message : String(error);
     if (errorStatus.textContent !== message) { errorStatus.textContent = message; options.onError(error); } };
@@ -165,6 +207,9 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     }
     title.append(name, shown);
   };
+  const syncFocusMarkers = (): void => { if (!disposed) for (const display of pages.values()) updateFocusMarker(display); };
+  root.addEventListener('focusin', syncFocusMarkers);
+  root.addEventListener('focusout', syncFocusMarkers);
   root.addEventListener('keydown', event => {
     refresh();
     const active = [...pages].filter(([, display]) => !display.element.hidden).sort(([a], [b]) => PAGE_LEVEL[b] - PAGE_LEVEL[a])[0];
@@ -271,7 +316,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
   const onWheel = (event: WheelEvent): void => {
     for (const [element, scrollBy] of readingScrollers) {
       if (!element.isConnected) { readingScrollers.delete(element); continue; }
-      if (element.closest('[hidden]')) continue;
+      if (element.closest('[hidden],[inert]')) continue;
       const box = element.getBoundingClientRect();
       if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) continue;
       const unit = event.deltaMode === 1 ? projectUiLineStep(element) : event.deltaMode === 2 ? element.clientHeight : 1;
@@ -281,27 +326,29 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
   };
   window.addEventListener('wheel', onWheel, { capture: true, passive: false });
 
-  function applyStyle(element: HTMLElement, node: ProjectUiNode): void {
+  function applyStyle(element: HTMLElement, node: ProjectUiNode, boxed: boolean): void {
     const style = node.style;
     element.style.color = color(style?.color, theme.colors.text);
     element.style.fontFamily = options.fontFamily(style?.fontRole ?? 'ui');
     element.style.fontSize = `${style?.fontSize ?? theme.typography.uiSize}px`;
     element.style.textAlign = style?.align ?? 'left';
     // With U1 box fields the background is painted by the decoration layer instead (see renderNode).
-    if (style?.background !== undefined && !usesProjectUiBox(style)) element.style.backgroundColor = color(style.background, theme.colors.surface);
+    if (style?.background !== undefined && !boxed) element.style.backgroundColor = color(style.background, theme.colors.surface);
   }
 
   /**
    * U1 decoration for a node whose author set a box field: Core resolves the effective values, the
    * layer is painted in the outer layout box, and the node itself keeps only its content box.
    */
-  function renderDecor(node: ProjectUiNode, rect: ProjectUiRect, parentRect: ProjectUiRect): HTMLDivElement {
-    const style = node.style!, effective = resolveProjectUiStyle(node, {}, theme);
+  function renderDecor(node: ProjectUiNode, rect: ProjectUiRect, parentRect: ProjectUiRect, interaction?: ProjectUiInteraction): HTMLDivElement {
+    // U2: a state-bearing control takes Core's whole effective value for its current interaction (0.45 included).
+    const effective = interaction ? resolveProjectUiInteractionStyle(node, {}, interaction, theme) : resolveProjectUiStyle(node, {}, theme);
+    const explicit = new Set([node.style, ...Object.values(node.states ?? {})].flatMap(style => style?.backgroundImage ? [style.backgroundImage.asset] : []));
     const image = (asset: string): ProjectUiDecorImage | null => {
       const url = options.imageUrl(asset);
       if (url) return { url, size: () => imageSizes(url) };
-      // An inherited theme button skin that is not loaded is skipped exactly as before U1.
-      if (style.backgroundImage === undefined) return null;
+      // An inherited theme button skin that is not loaded is skipped exactly as before U1; an author image is reported.
+      if (!explicit.has(asset) && asset === theme.skins.buttonSkin) return null;
       throw new Error(`界面图片未加载：${asset}`);
     };
     const decor = createProjectUiDecor(effective, rect, { unit: px, image, onError: error =>
@@ -332,23 +379,27 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
 
   function renderNode(display: Display, node: ProjectUiNode, parent: HTMLElement, parentRect: ProjectUiRect, item?: ProjectUiItem, bindings = display.bindings): HTMLElement {
     const rect = projectUiRect(parentRect, node.frame);
+    const control = node.type === 'toggle' || node.type === 'slider' || node.type === 'input';
+    // U2: a control with interaction states always draws through the decoration group, so each state can be
+    // repainted whole from Core's effective value. Nodes without states keep their exact previous DOM.
+    const stateful = node.states !== undefined && (node.type === 'button' || control);
     // Drawing, child placement, clipping, scrolling and input all share Core's content box.
-    const boxed = usesProjectUiBox(node.style), content = boxed ? projectUiContentRect(rect, node.style) : rect;
+    const boxed = stateful || usesProjectUiBox(node.style), content = boxed ? projectUiContentRect(rect, node.style) : rect;
     // A decorated node is one group in its outer box: decoration and content are assembled first and the node's
     // opacity (and visibility) apply to that group once, so text is never composited over an already-faded background.
     const group = boxed ? document.createElement('div') : null;
     if (group) { group.dataset.uiGroup = node.id; place(group, rect, parentRect); group.style.pointerEvents = 'none'; }
     const origin = group ? rect : parentRect;
-    const decor = boxed ? renderDecor(node, rect, origin) : null;
+    let decor = boxed ? renderDecor(node, rect, origin) : null;
+    let field: HTMLInputElement | null = null;
     const element = document.createElement(node.type === 'button' ? 'button' : 'div');
     element.dataset.uiNode = node.id;
     if (node.type === 'text' || node.type === 'button') element.dataset.uiReadingRole = node.style?.fontRole ?? 'ui';
     // Buttons and native controls keep their outer hit box; explicit border/padding become transparent
     // CSS insets, so the native control itself fills exactly Core's content box.
-    const control = node.type === 'toggle' || node.type === 'slider' || node.type === 'input';
     place(element, node.type === 'button' || control ? rect : content, origin);
     if (control && boxed) element.style.padding = projectUiInsetCss(rect, content, px);
-    applyStyle(element, node);
+    applyStyle(element, node, boxed);
     const faded = group ?? element;
     faded.style.opacity = String(node.style?.opacity ?? 1);
     if ((node.type === 'text' || node.type === 'button') && isReadingText(display.page, node, item)) {
@@ -364,7 +415,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     if (node.visibleWhen !== undefined) bindings.push(() => { element.hidden = !condition(node.visibleWhen); });
     const acceptsInput = (): boolean => {
       refresh();
-      return element.isConnected && !element.closest('[hidden]') && !item?.disabled && condition(node.enabledWhen);
+      return !display.closed && element.isConnected && !element.closest('[hidden]') && !item?.disabled && condition(node.enabledWhen);
     };
     if (node.type === 'container') element.style.pointerEvents = 'none';
     else element.style.pointerEvents = 'auto';
@@ -372,7 +423,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       const button = element as HTMLButtonElement;
       button.type = 'button';
       if (boxed) {
-        const style = node.style!;
+        const style = node.style ?? {};
         button.style.border = `${style.border?.width ?? 0}px solid transparent`;
         button.style.borderRadius = `${style.borderRadius ?? theme.radius.md}px`;
         button.style.backgroundColor = 'transparent';
@@ -387,7 +438,9 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       button.textContent = visibleText(node.text, display.context, item, `ui:${node.id}`);
       if (node.text) bindings.push(() => { button.textContent = visibleText(node.text, display.context, item, `ui:${node.id}`); });
       bindings.push(() => { button.disabled = Boolean(item?.disabled) || !condition(node.enabledWhen);
-        faded.style.opacity = String((node.style?.opacity ?? 1) * (button.disabled ? 0.45 : 1)); button.style.cursor = button.disabled ? 'not-allowed' : 'pointer'; });
+        // A state-bearing button takes its whole opacity (disabled 0.45 included once) from Core in its state binding.
+        if (!stateful) faded.style.opacity = String((node.style?.opacity ?? 1) * (button.disabled ? 0.45 : 1));
+        button.style.cursor = button.disabled ? 'not-allowed' : 'pointer'; });
       if (!boxed) applyButtonSkin(button);
       button.addEventListener('click', event => {
         event.stopPropagation();
@@ -435,6 +488,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     } else if (node.type === 'toggle' || node.type === 'slider' || node.type === 'input') {
       const binding = node.binding!;
       const input = document.createElement('input');
+      field = input;
       input.type = node.type === 'toggle' ? 'checkbox' : node.type === 'slider' ? 'range' : 'text';
       const label = (): string => node.text ? visibleText(node.text, display.context, item, `ui:${node.id}`) : binding.name;
       input.setAttribute('aria-label', label());
@@ -575,6 +629,48 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       group.append(decor, element);
       parent.appendChild(group);
     } else parent.appendChild(element);
+    if (stateful && group) {
+      // U2: the real pointer, keyboard-focus and disabled state go to Core's interaction algorithm and every change
+      // repaints the node whole (decoration, text colour and shadow, group opacity, native field fill), so nothing of
+      // the previous state survives. Keyboard focus is shown by the page's own marker, outside the node group.
+      const target = field ?? element;
+      const operable = field ?? element as HTMLButtonElement;
+      target.dataset.uiFocusTarget = node.id;
+      target.style.outline = 'none';
+      element.dataset.uiFocusRadius = px(resolveProjectUiStyle(node, {}, theme).borderRadius);
+      element.dataset.uiState = 'normal';
+      let painted = '0000';
+      const repaint = (): void => {
+        if (display.closed || !element.isConnected || !decor) return;
+        const interaction: ProjectUiInteraction = { hovered: matches(element, ':hover'), focused: matches(target, ':focus-visible'),
+          pressed: matches(element, ':active'), disabled: operable.disabled };
+        const signature = [interaction.hovered, interaction.focused, interaction.pressed, interaction.disabled].map(Number).join('');
+        if (signature === painted) return;
+        painted = signature;
+        try {
+          const effective = resolveProjectUiInteractionStyle(node, {}, interaction, theme);
+          const next = renderDecor(node, rect, origin, interaction);
+          next.style.pointerEvents = decor.style.pointerEvents;
+          decor.replaceWith(next);
+          decor = next;
+          element.style.color = hex(effective.color);
+          const shadow = projectUiShadowCss(effective.textShadows, px);
+          element.style.textShadow = shadow;
+          if (node.type === 'input' && field) {
+            field.style.textShadow = shadow;
+            // The native field box gives way only while the current state paints its own fill (as U1 rules).
+            field.style.background = effective.background !== null || effective.backgroundGradient || effective.backgroundImage ? 'transparent' : '';
+          }
+          group.style.opacity = String(effective.opacity);
+          element.dataset.uiState = [interaction.hovered && 'hover', interaction.focused && 'focus', interaction.pressed && 'pressed',
+            interaction.disabled && 'disabled'].filter(Boolean).join(' ') || 'normal';
+        } catch (error) { report(error); }
+      };
+      bindings.push(repaint);
+      for (const type of ['pointerenter', 'pointerleave', 'pointerdown', 'pointerup', 'pointercancel', 'focusin', 'focusout', 'keydown', 'keyup']) {
+        element.addEventListener(type, repaint);
+      }
+    }
     if (node.type !== 'tabs' && node.type !== 'content') node.children?.forEach(child => renderNode(display, child, element, content, item, bindings));
     return element;
   }
@@ -629,7 +725,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       row.setAttribute('role', 'button');
       row.setAttribute('aria-disabled', String(Boolean(item.disabled)));
       const activate = async (restore = false): Promise<void> => {
-        if (item.disabled && !restore) return;
+        if (display.closed || (item.disabled && !restore)) return;
         if (display.pending) return;
         errorStatus.textContent = '';
         try {
@@ -688,12 +784,111 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     }
   }
 
+  /**
+   * Keyboard focus on a state-bearing control: one marker per page, drawn above the page's nodes so author states,
+   * skins, group opacity and container clipping can never hide it. It follows the page's motion pose.
+   */
+  function updateFocusMarker(display: Display): void {
+    const active = document.activeElement;
+    const target = !display.closed && !display.element.hidden && active instanceof HTMLElement && active.dataset.uiFocusTarget !== undefined
+      && display.element.contains(active) && !active.closest('[hidden]') && matches(active, ':focus-visible') ? active.closest<HTMLElement>('[data-ui-node]') : null;
+    const page = target ? display.element.getBoundingClientRect() : null;
+    let left = 0, top = 0, right = 0, bottom = 0;
+    if (target && page && page.width > 0) {
+      ({ left, top, right, bottom } = target.getBoundingClientRect());
+      // Only what a scrolling or clipping ancestor still shows; a control scrolled fully out of view has no marker.
+      for (let parent = target.parentElement; parent && parent !== display.element; parent = parent.parentElement) {
+        const computed = getComputedStyle(parent);
+        if (computed.overflowX === 'visible' && computed.overflowY === 'visible') continue;
+        const box = parent.getBoundingClientRect();
+        left = Math.max(left, box.left); top = Math.max(top, box.top); right = Math.min(right, box.right); bottom = Math.min(bottom, box.bottom);
+      }
+    }
+    if (!target || !page || right - left < 1 || bottom - top < 1) { if (display.marker) display.marker.hidden = true; return; }
+    let marker = display.marker;
+    if (!marker) {
+      marker = display.marker = document.createElement('div');
+      marker.dataset.uiFocusMarker = 'true';
+      marker.setAttribute('aria-hidden', 'true');
+      // Two rings (panel colour inside, accent outside) stay visible on light, dark and accent-coloured skins alike.
+      marker.style.cssText = `position:absolute;z-index:40;box-sizing:border-box;pointer-events:none;outline:2px solid ${hex(theme.colors.accent)};outline-offset:2px;box-shadow:0 0 0 2px ${hex(theme.colors.panel)}`;
+      display.element.appendChild(marker);
+    }
+    const scale = DESIGN_FRAME.width / page.width;
+    marker.hidden = false;
+    marker.dataset.uiFocusFor = target.dataset.uiNode;
+    marker.style.left = px((left - page.left) * scale);
+    marker.style.top = px((top - page.top) * scale);
+    marker.style.width = px((right - left) * scale);
+    marker.style.height = px((bottom - top) * scale);
+    marker.style.borderRadius = target.dataset.uiFocusRadius ?? '0px';
+  }
+
+  /** A closed page is only a picture from now on: no pointer, Tab, refresh or marker can reach it again. */
+  function closeDisplay(display: Display): void {
+    display.closed = true;
+    const element = display.element;
+    element.inert = true;
+    element.setAttribute('aria-hidden', 'true');
+    element.style.pointerEvents = 'none';
+    element.dataset.uiClosing = 'true';
+    if (display.marker) display.marker.hidden = true;
+    display.blocker?.remove(); display.blocker = null;
+  }
+
+  function paintPose(element: HTMLElement, pose: ProjectUiMotionPose): void {
+    element.style.opacity = pose.opacity === 1 ? '' : String(pose.opacity);
+    element.style.transform = pose.x === 0 && pose.y === 0 && pose.scale === 1 ? '' : `translate(${pose.x}px, ${pose.y}px) scale(${pose.scale})`;
+  }
+
+  const motionKey = (page: ProjectUiPageId): string => `project-ui:${page}`;
+  const pageMotion = (node: ProjectUiNode, direction: 'enter' | 'exit'): Required<ProjectUiMotion> | null =>
+    motion ? resolveProjectUiMotion(node, direction, reduceMotion) : null;
+
+  /**
+   * One visual projection on the shared driver. Paint and completion never throw into the Runtime ticker: a failure
+   * is reported here and the page simply stays where it is. A driver already disposed with its Runtime gives the
+   * static end state at once.
+   */
+  function animate(page: ProjectUiPageId, resolved: Required<ProjectUiMotion>, direction: 'enter' | 'exit',
+    paint: (pose: ProjectUiMotionPose) => void, complete: () => void): void {
+    const safePaint = (pose: ProjectUiMotionPose): void => { try { paint(pose); } catch (error) { report(error); } };
+    const safeComplete = (): void => { running.delete(page); try { complete(); } catch (error) { report(error); } };
+    running.add(page);
+    try { motion!.play(motionKey(page), resolved, direction, safePaint, safeComplete); return; } catch { /* disposed driver */ }
+    safePaint(STABLE_POSE); safeComplete();
+  }
+
+  function dropGhost(page: ProjectUiPageId): void {
+    const ghost = ghosts.get(page);
+    if (ghost) { ghosts.delete(page); ghost.remove(); }
+  }
+
+  /** Cancels this UI's projections (no callbacks), removes closing pages and settles open pages at their stable pose. */
+  function settleMotion(): void {
+    for (const page of running) motion?.cancel(motionKey(page));
+    running.clear();
+    for (const page of [...ghosts.keys()]) dropGhost(page);
+    for (const display of pages.values()) {
+      display.blocker?.remove(); display.blocker = null;
+      display.pose = STABLE_POSE; paintPose(display.element, STABLE_POSE);
+    }
+  }
+
   function refresh(): void {
     if (disposed) return;
+    // The driver was reset or disposed behind this UI's back (Runtime resetSession/dispose cancel without callbacks):
+    // nothing may stay half-entered or linger as a closing picture.
+    if (motion && running.size > 0 && !motion.needsUpdate) settleMotion();
     const previousFailure = refreshFailure; refreshFailure = null;
     for (const [page, display] of pages) {
+      const wasHidden = display.element.hidden;
       display.element.hidden = options.isPageVisible?.(page) === false;
-      if (display.element.hidden) continue;
+      if (display.element.hidden) {
+        if (!wasHidden && !display.hiddenThisFrame) { display.hiddenThisFrame = true; window.requestAnimationFrame(() => { display.hiddenThisFrame = false; }); }
+        if (display.marker) display.marker.hidden = true;
+        continue;
+      }
       try {
         display.bindings.forEach(update => update());
         display.contents.forEach(content => { renderContent(display, content); content.bindings.forEach(update => update()); });
@@ -701,6 +896,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
         display.element.hidden = true;
         refreshFailure = error instanceof Error ? error.message : String(error); report(error);
       }
+      updateFocusMarker(display);
     }
     if (previousFailure !== null && refreshFailure === null && errorStatus.textContent === previousFailure) errorStatus.textContent = '';
   }
@@ -751,7 +947,12 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       errorStatus.textContent = '';
       const node = options.document.pages[page];
       if (!node) return;
-      this.hide(page);
+      // Re-showing an open page replaces it at once (no exit picture, no second entry); a page still closing is
+      // dropped. Either way the old projection is cancelled without its callback.
+      const replaced = pages.get(page);
+      if (replaced) { pages.delete(page); closeDisplay(replaced); replaced.element.remove(); }
+      dropGhost(page);
+      if (running.delete(page)) motion?.cancel(motionKey(page));
       const element = document.createElement('div');
       element.dataset.uiPage = page;
       element.style.cssText = `position:absolute;inset:0;z-index:${PAGE_LEVEL[page]};pointer-events:${MODAL_PAGES.has(page) ? 'auto' : 'none'};color:${hex(theme.colors.text)};font-family:${options.fontFamily('ui')}`;
@@ -763,15 +964,61 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
           element.style.backgroundPosition = 'center';
         }
       }
-      const display: Display = { page, element, context, bindings: [], contents: [], pending: false };
+      const display: Display = { page, node, element, context, bindings: [], contents: [], pending: false, closed: false, marker: null, blocker: null, pose: STABLE_POSE, hiddenThisFrame: false };
+      // A page shown while it may not be visible starts hidden, so it never counts as having just left the screen.
+      element.hidden = options.isPageVisible?.(page) === false;
       if (context.mode) element.dataset.uiMode = context.mode;
+      // Nothing addressed to a closed page (even a synthetic event) reaches its controls.
+      for (const type of ['click', 'pointerdown', 'pointerup', 'keydown', 'input', 'change', 'wheel']) {
+        element.addEventListener(type, event => { if (display.closed) { event.stopImmediatePropagation(); if (event.cancelable) event.preventDefault(); } }, true);
+      }
       pages.set(page, display);
       design.appendChild(element);
       renderNode(display, node, element, DESIGN_FRAME);
       refresh(); resize();
+      // The Shell has already given this page the pause and input; the entry is visual only and starts now.
+      const enter = replaced ? null : pageMotion(node, 'enter');
+      if (enter) {
+        if (MODAL_PAGES.has(page)) {
+          // While a modal page is still offset or scaled, the strip it does not cover yet must not reach the stage.
+          const blocker = display.blocker = document.createElement('div');
+          blocker.dataset.uiMotionBlocker = page;
+          blocker.setAttribute('aria-hidden', 'true');
+          blocker.style.cssText = `position:absolute;inset:0;z-index:${PAGE_LEVEL[page]};pointer-events:auto`;
+          design.insertBefore(blocker, element);
+        }
+        animate(page, enter, 'enter', pose => {
+          if (pages.get(page) !== display) return;
+          display.pose = pose; paintPose(element, pose);
+        }, () => {
+          if (pages.get(page) !== display) return;
+          display.blocker?.remove(); display.blocker = null;
+        });
+      }
       if (MODAL_PAGES.has(page)) element.querySelector<HTMLElement>('button,input,[tabindex]')?.focus();
     },
-    hide(page) { errorStatus.textContent = ''; const display = pages.get(page); if (display) { display.element.remove(); pages.delete(page); } },
+    hide(page) {
+      errorStatus.textContent = '';
+      const display = pages.get(page);
+      if (!display) return;
+      // Leaves the active registry synchronously: from here the page takes no pointer, Tab or refresh.
+      pages.delete(page);
+      closeDisplay(display);
+      if (running.delete(page)) motion?.cancel(motionKey(page));
+      dropGhost(page);
+      // Only a page still on screen leaves with its exit; one hidden since an earlier frame simply goes.
+      const onScreen = !display.element.hidden || display.hiddenThisFrame;
+      const exit = disposed || !onScreen ? null : pageMotion(display.node, 'exit');
+      if (!exit) { display.element.remove(); return; }
+      const element = display.element, from = display.pose;
+      element.hidden = false;
+      ghosts.set(page, element);
+      // An exit started mid-entry continues from the pose already on screen instead of jumping.
+      animate(page, exit, 'exit', pose => {
+        if (ghosts.get(page) !== element) return;
+        paintPose(element, { opacity: from.opacity * pose.opacity, x: from.x + pose.x, y: from.y + pose.y, scale: from.scale * pose.scale });
+      }, () => { if (ghosts.get(page) === element) dropGhost(page); });
+    },
     refresh,
     resize,
     ownsInput(target) { return target instanceof Node && root.contains(target); },
@@ -794,6 +1041,16 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
         element.append(label, cancel, accept); design.appendChild(element);
         confirmation = { element, finish }; cancel.focus();
       });
+    },
+    setReducedMotion(reduce) {
+      reduceMotion = reduce;
+      if (!reduce || running.size === 0) return;
+      // Every current projection reaches its end state now (exits remove their pictures), without waiting for a frame.
+      try { motion?.finishAll(); } catch (error) { report(error); }
+      if (running.size > 0) settleMotion();
+    },
+    resetMotion() {
+      if (!disposed) settleMotion();
     },
     showGalleryImage(assetKey, label) {
       const display = pages.get('gallery');
@@ -822,6 +1079,8 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
       if (disposed) return;
       disposed = true;
       confirmation?.finish(false);
+      for (const page of running) motion?.cancel(motionKey(page));
+      running.clear(); ghosts.clear();
       window.cancelAnimationFrame(frame);
       window.removeEventListener('wheel', onWheel, { capture: true });
       readingScrollers.clear();
