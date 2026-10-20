@@ -14,11 +14,12 @@ import { assetPathForHandle, assertProjectWriteUnlocked, readProjectSourceText, 
 import { editorWorkspaceStatus } from '../editor-workspace.js';
 import { AuthoringOperationError, parseProjectConfigDocument, patchUiDocument, renameConfigReferences, renameGalleryLabel, applyConfigReferenceRename, type UiPatch } from '@surdet/authoring';
 import { commitCharacterTable, commitEndScenes, commitStageConfiguration, commitThemeConfiguration, commitUiConfiguration, parseCharacterVisualsDraft, parseThemeEditorDraft, previewUiShareImport, projectThemeEditorDraft, type CharacterTableEditRow, type UiShareImportPreview, type UiShareImportTarget } from '../authoring-project-storage.js';
-import { disposeUiDesigner, redrawUiDesignerHistory, renderUiDesigner } from '../ui-designer.js';
+import { disposeUiDesigner, redrawUiDesignerHistory, renderUiDesigner, selectUiDesignerNode } from '../ui-designer.js';
+import { discardPendingUiShareImport, openUiShareImportDialog, pendingUiShareImport, type UiShareImportDialogOptions } from '../ui-share-import-dialog.js';
 import { renderThemeConfigForm } from '../theme-config-form.js';
 import { renderTextCatalogSection, type TextBindingDraft } from './text-catalog.js';
 import { openUiPlayerPreview } from '../ui-player-preview.js';
-import { copySharedFragment, exportUiShare, missingUiShareAssets, readUiShare, type ShareAsset } from '../ui-sharing.js';
+import { exportUiShare, missingUiShareAssets, type ShareAsset } from '../ui-sharing.js';
 import {
   VAR_TYPES, parseVariablesToRows, rowsToVariables, applyVariablesToConfig,
   parseAchievementsToRows, rowsToAchievements, collectReferencedVars,
@@ -2027,6 +2028,7 @@ function renderThemeSection(): HTMLElement {
   saveBtn.onclick = async () => {
     status.textContent = '正在保存…';
     try {
+      assertThemeAndUiSavedTogether();
       await runProjectWriteOperation(saveThemeConfigDraftUnlocked);
       status.textContent = '主题配置已保存。重新播放后使用新配置。';
     } catch (error) {
@@ -2191,7 +2193,7 @@ function renderUiSection(): HTMLElement {
     edit: editUiConfigDraft,
     replace: replaceUiConfigDraft,
     reload: reloadUiConfigDraft,
-    save: () => runProjectWriteOperation(saveUiConfigDraftUnlocked),
+    save: async () => { assertThemeAndUiSavedTogether(); return runProjectWriteOperation(saveUiConfigDraftUnlocked); },
     preview: previewGalleryDraft,
     exportShare: async fragment => {
       const root = state.dirHandle;
@@ -2203,56 +2205,42 @@ function renderUiSection(): HTMLElement {
       link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
       status.textContent = '已导出界面数据及必要图片/字体，不包含剧情、存档或项目私有字段。片段继承目标作品的主题与字体。';
     },
-    importShare: async (file, target) => {
-      assertProjectWriteUnlocked();
-      if (state.reviewWorkspace || state.reviewPreviewReadOnly || state.projectLoading) throw new Error('当前项目不可导入界面');
-      const root = state.dirHandle, revision = configSessionRevision, sequence = ++uiShareImportSequence;
-      const sourceText = previewUiConfigText(previewThemeConfigText(state.gameConfigText));
-      const config = parseProjectConfigDocument(sourceText);
-      const share = readUiShare(await file.text(), config);
-      const missing = await missingUiShareAssets(share, shareAssets());
-      if (sequence !== uiShareImportSequence) throw new Error('已选择另一个共享文件，本次导入已取消');
-      if (root !== state.dirHandle || revision !== configSessionRevision
-        || sourceText !== previewUiConfigText(previewThemeConfigText(state.gameConfigText))) throw new Error('导入期间项目或草稿已变化，请重试');
-      assertProjectWriteUnlocked();
-      if (state.reviewWorkspace || state.reviewPreviewReadOnly || state.projectLoading) throw new Error('当前项目不可导入界面');
-      if (missing.length) {
-        if (!stageSharedAssetsHook) throw new Error('缺少素材，请先通过现有素材导入工作台导入共享包的图片/字体');
-        stageSharedAssetsHook(missing);
-        setStatus('依赖已加入素材导入待选区；确认导入后，再次导入此共享文件即可生成界面草稿。', true, 10000);
-        return;
-      }
-      if (share.kind === 'fragment') {
-        const source = readProjectUi({ ...share.config, variables: config.variables })!;
-        const page = Object.keys(source.pages)[0];
-        if (page !== target.page) throw new Error('片段页面类型不同，请先切换到对应页面');
-        const node = copySharedFragment(Object.values(source.pages)[0]!, `import_${crypto.randomUUID().replaceAll('-', '')}`);
-        if (target.parentId) {
-          const parent = (function find(current: import('@surdet/core').ProjectUiNode): import('@surdet/core').ProjectUiNode | undefined {
-            return current.id === target.parentId ? current : current.children?.map(find).find(Boolean);
-          })(readUiConfigDraft()!.pages[target.page]!);
-          editUiConfigDraft({ type: 'node.insert', page: target.page, parentId: target.parentId, index: parent?.children?.length ?? 0, node });
-        } else editUiConfigDraft({ type: 'page.set', page: target.page, root: node });
-      } else {
-        const imported = share.config;
-        const nextUi = readProjectUi({ ...imported, variables: config.variables });
-        const player = imported.player as Record<string, unknown> | undefined;
-        const form = JSON.stringify({ theme: imported.theme ?? null, titleLogo: player?.titleLogo ?? null,
-          titleBackground: player?.titleBackground ?? null, font: null, fonts: imported.fonts ?? {} }, null, 2);
-        projectThemeEditorDraft(config, parseThemeEditorDraft(form));
-        if (!window.confirm('将此作品主题和页面放入当前草稿？尚未保存的界面编辑会被替换，可撤销；源文件不会立即改写。')) return;
-        readUiConfigDraft(); readThemeConfigDraft(); pushConfigHistory(false);
-        uiDraft = nextUi; themeDraft = form; configSessionLoaded = true; scheduleConfigDraftStateChanged();
-        rerenderConfig();
-      }
-      setStatus('已生成界面草稿。可试玩、撤销；保存全部后才写回项目。', true, 8000);
-    },
+    // U3: the original immediate apply is replaced by the Editor dialog over the prepared proposal.
+    importShare: (file, request) => openUiShareImportDialog({ file }, request, uiShareImportOptions()),
+    pendingImport: pendingUiShareImport,
+    resumeImport: request => openUiShareImportDialog('pending', request, uiShareImportOptions()),
+    discardImport: () => { discardPendingUiShareImport(); setStatus('已放弃继续导入；已加入素材导入待选区的文件不受影响。', true, 6000); },
     onStatus: (message, ok = true) => { status.textContent = message; setStatus(message, ok, 5000); },
     undo: configUndo,
     redo: configRedo,
   });
   sec.append(designer, status, ops);
   return sec;
+}
+
+/**
+ * A full theme import changes theme and UI drafts as one step. Saving only one of the two would
+ * persist half of it (UI without its theme, fonts or title images, or the reverse), so while both
+ * are dirty the single-section buttons defer to the ordinary 保存全部 boundary.
+ */
+const THEME_AND_UI_SAVED_TOGETHER = '主题和作品界面都有未保存修改（例如刚导入完整主题），需要一起保存：请用“保存全部”（Ctrl+S），避免只写入其中一半。';
+function assertThemeAndUiSavedTogether(): void {
+  const dirty = inspectConfigDraftState().dirtySections;
+  if (dirty.includes('theme') && dirty.includes('ui')) throw new Error(THEME_AND_UI_SAVED_TOGETHER);
+}
+
+function uiShareImportOptions(): UiShareImportDialogOptions {
+  return {
+    prepare: prepareUiShareImportDraft,
+    readDraft: () => { try { return readUiConfigDraft(); } catch { return null; } },
+    onApplied: ({ kind, page, nodeId }) => {
+      if (page) { selectUiDesignerNode(page, nodeId ?? null); rerenderConfig(); }
+      setStatus(kind === 'theme'
+        ? '完整主题已放入草稿，尚未保存。可撤销/重做；用“保存全部”（Ctrl+S）一起写回主题和界面。'
+        : '界面片段已放入草稿，尚未保存。可撤销/重做；用“保存全部”（Ctrl+S）写回项目。', true, 10000);
+    },
+    onStatus: (message, ok = true) => setStatus(message, ok, 10000),
+  };
 }
 
 function shareAssets(): ShareAsset[] {

@@ -90,6 +90,7 @@ import { openProjectSearch } from './shell/project-search.js';
 import { renderAssetInsights, disposeV4SurfaceViews } from './v4/surfaces.js';
 import { disposeUiDesigner } from './ui-designer.js';
 import { disposeUiPlayerPreview } from './ui-player-preview.js';
+import { disposeUiShareImportDialog, resetUiShareImportForProjectChange } from './ui-share-import-dialog.js';
 import '@fontsource-variable/noto-serif-sc';
 import './styles/v4-workbench.css';
 import { clearTimelineViewState, clearTimelineViewStates, renderTimelinePanel, selectTimelineCue, bindTimelineHooks } from './panels/timeline-panel.js';
@@ -327,6 +328,7 @@ function closeCurrentProjectRuntime(): void {
   disposeV4SurfaceViews();
   disposeUiDesigner();
   disposeUiPlayerPreview();
+  resetUiShareImportForProjectChange();
   invalidateAuthoringForProjectChange();
   resetAssetImportRuntime();
 }
@@ -1887,7 +1889,7 @@ bindConfigHooks({
     if (assetImportFileSetLocked()) throw new Error('当前素材导入尚未结束，请完成或取消后重试');
     const added = assetImportWorkspace.addFiles(files);
     for (const item of added) assetImportWorkspace.updateFile(item.itemId, { kind: /\.(?:ttf|otf|woff2)$/i.test(item.fileName) ? 'font' : 'background' });
-    assetImportWorkspace.setMessage('来自界面共享文件的依赖。保持文件名称，完成导入后再次导入该共享文件。');
+    assetImportWorkspace.setMessage('来自界面共享文件的依赖，尚未导入。保持文件名称完成导入后，回到“配置 → 作品界面”点“继续导入”重新预览。');
     assetImportPanelOpen = true; state.mainTab = 'assets'; renderMainArea();
   },
   // 配置保存后重新调度校验（新变量/成就即刻参与 lint）
@@ -2065,6 +2067,7 @@ function renderAll(): void {
   disposeV4SurfaceViews();
   disposeUiDesigner();
   disposeUiPlayerPreview();
+  disposeUiShareImportDialog();
   appEl.innerHTML = '';
   const header = renderProjectBar(projectBarProjection(), {
     onOpenProject: () => { void openProjectSafely(); },
@@ -2145,6 +2148,7 @@ function renderMainArea(): void {
   disposeV4SurfaceViews();
   disposeUiDesigner();
   disposeUiPlayerPreview();
+  disposeUiShareImportDialog();
   if (state.mainTab !== 'assets') {
     disposeAssetCenterPreview();
     disposeAssetCenterThumbnails();

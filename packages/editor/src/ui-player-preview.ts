@@ -6,26 +6,57 @@ import { assetPathForHandle } from './project-io.js';
 let closePreview: (() => void) | null = null;
 export function disposeUiPlayerPreview(): void { closePreview?.(); closePreview = null; }
 
+/** Files a share package brings for a not yet confirmed import: shown in the Player, never written. */
+export interface UiPlayerPreviewOverlay {
+  label: string;
+  /** Project paths under `content/assets/`; images replace existing same-key images, other files replace the same path. */
+  files: ReadonlyArray<{ path: string; blob: Blob }>;
+}
+
+/** The ordinary Player keeps browser saves/settings under its package id (`gameStoragePrefix`). */
+const previewStoragePrefix = (id: string): string => `surdet:game:${encodeURIComponent(id)}:`;
+function clearPreviewStorage(id: string): void {
+  try {
+    const prefix = previewStoragePrefix(id);
+    for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+      const key = localStorage.key(index);
+      if (key?.startsWith(prefix)) localStorage.removeItem(key);
+    }
+  } catch { /* storage unavailable: nothing was written either */ }
+}
+
 /** A real shared Player in its own window context, never the designer's action callbacks. */
-export async function openUiPlayerPreview(configText: string, gallery: unknown = state.configFiles.gallery ?? { cgs: [], music: [] }): Promise<void> {
+export async function openUiPlayerPreview(configText: string, gallery: unknown = state.configFiles.gallery ?? { cgs: [], music: [] }, overlay?: UiPlayerPreviewOverlay): Promise<void> {
   disposeUiPlayerPreview();
   const projectRoot = state.dirHandle;
   const config = parseProjectConfigDocument(configText);
   const sources = [...state.dirAssets];
-  validateUiAssets(readProjectUi(config), buildAssetCatalog(sources.flatMap(asset => asset.sourcePath ? [asset.sourcePath] : [])));
+  const overlayFiles = (overlay?.files ?? []).filter(file => file.path.startsWith('content/assets/'));
+  const overlayImageKeys = new Set(buildAssetCatalog(overlayFiles.map(file => file.path)).backgrounds.map(asset => asset.key));
+  const replacedImagePaths = new Set(buildAssetCatalog(sources.flatMap(asset => asset.sourcePath ? [asset.sourcePath] : [])).backgrounds
+    .filter(asset => overlayImageKeys.has(asset.key)).map(asset => asset.sourcePath));
+  // Shares flatten image directories. Match the authoritative image key, not just the source path,
+  // so an accepted existing bg/sub/skin.png and bundled bg/skin.png do not become two Player assets.
+  const previewSources = sources.filter(asset => asset.sourcePath === undefined || !replacedImagePaths.has(asset.sourcePath));
+  const paths = new Set([...previewSources.flatMap(asset => asset.sourcePath ? [asset.sourcePath] : []), ...overlayFiles.map(file => file.path)]);
+  validateUiAssets(readProjectUi(config), buildAssetCatalog([...paths]));
+  const id = `${overlay ? 'editor-ui-import-preview' : 'editor-ui-preview'}-${crypto.randomUUID()}`;
   const sceneTexts = Object.fromEntries([...state.scenes.values()].map(scene => [scene.file, scene.text]));
   const timelines = Object.fromEntries(state.timelines.map(timeline => [timeline.file, JSON.parse(timeline.text)]));
   const terminology = state.configFiles.terminology;
   const dialog = document.createElement('dialog');
-  dialog.className = 'ui-player-preview'; dialog.setAttribute('aria-label', '试玩界面草稿');
+  dialog.className = 'ui-player-preview'; dialog.setAttribute('aria-label', overlay?.label ?? '试玩界面草稿');
   const heading = document.createElement('div'); heading.className = 'ui-player-preview-heading';
-  const label = document.createElement('span'); label.textContent = '试玩草稿 · 独立测试进度';
+  const label = document.createElement('span'); label.textContent = overlay?.label ?? '试玩草稿 · 独立测试进度';
   const close = document.createElement('button'); close.textContent = '关闭试玩'; close.type = 'button';
   heading.append(label, close);
   const frame = document.createElement('iframe'); frame.title = '作品界面试玩';
   frame.src = './ui-preview.html';
   dialog.append(heading, frame);
   const urls: string[] = [];
+  let controlsSeen: string | null | undefined;
+  try { controlsSeen = sessionStorage.getItem('surdet:controls-seen'); sessionStorage.removeItem('surdet:controls-seen'); }
+  catch { /* Session storage may be unavailable in the current host. */ }
   let disposed = false;
   let ready = false;
   let payload: unknown;
@@ -44,19 +75,36 @@ export async function openUiPlayerPreview(configText: string, gallery: unknown =
     frame.contentWindow?.dispatchEvent(new Event('surdet-ui-preview-close'));
     frame.src = 'about:blank'; frame.remove();
     for (const url of urls) URL.revokeObjectURL(url);
+    clearPreviewStorage(id);
+    if (controlsSeen !== undefined) {
+      try {
+        if (controlsSeen === null) sessionStorage.removeItem('surdet:controls-seen');
+        else sessionStorage.setItem('surdet:controls-seen', controlsSeen);
+      } catch { /* Session storage is unavailable. */ }
+    }
     dialog.close(); dialog.remove();
     if (closePreview === cleanup) closePreview = null;
   };
   closePreview = cleanup;
   close.onclick = cleanup;
+  // This sibling modal is outside the import dialog: its keys must not edit/save the workspace behind it.
+  dialog.addEventListener('keydown', event => {
+    event.stopPropagation();
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') event.preventDefault();
+  });
   dialog.oncancel = event => { event.preventDefault(); cleanup(); };
   window.addEventListener('message', onMessage);
   document.body.appendChild(dialog); dialog.showModal();
   try {
     const assetFiles: Record<string, string> = {};
-    for (const asset of sources) {
+    for (const file of overlayFiles) {
+      const url = URL.createObjectURL(file.blob); urls.push(url);
+      const path = file.path.slice('content/assets/'.length);
+      assetFiles[path] = `${url}#${path.split('/').at(-1)}`;
+    }
+    for (const asset of previewSources) {
       const sourcePath = asset.sourcePath ?? (asset.handle ? assetPathForHandle(asset.handle) : undefined);
-      if (!asset.handle || !sourcePath?.startsWith('content/assets/')) continue;
+      if (!asset.handle || !sourcePath?.startsWith('content/assets/') || assetFiles[sourcePath.slice('content/assets/'.length)]) continue;
       const file = await asset.handle.getFile();
       if (disposed || state.dirHandle !== projectRoot) { cleanup(); return; }
       const url = URL.createObjectURL(file); urls.push(url);
@@ -74,7 +122,7 @@ export async function openUiPlayerPreview(configText: string, gallery: unknown =
       if (disposed || state.dirHandle !== projectRoot) { cleanup(); return; }
       const url = URL.createObjectURL(file); urls.push(url); fontFiles[path] = `${url}#${filename}`;
     }
-    payload = { type: 'surdet-ui-player-load', id: `editor-ui-preview-${crypto.randomUUID()}`, config, sceneTexts, timelineFiles: timelines, assetFiles, fontFiles, gallery, terminology };
+    payload = { type: 'surdet-ui-player-load', id, config, sceneTexts, timelineFiles: timelines, assetFiles, fontFiles, gallery, terminology };
     publish();
   } catch (error) { cleanup(); throw error; }
 }
