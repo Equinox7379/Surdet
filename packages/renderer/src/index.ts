@@ -34,6 +34,7 @@ export * from './loading-progress.js';
 export * from './theme.js';
 export * from './project-ui-dom.js';
 export * from './project-ui-style-dom.js';
+export * from './project-ui-motion.js';
 export * from './loading-layer.js';
 export * from './rollback-buffer.js';
 export * from './transition-registry.js';

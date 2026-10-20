@@ -846,41 +846,65 @@ function configRewrite(
           reference: reference('config', file.path, `界面 ${page} 图片 ${String(node.id)}`, 'ui', `ui:${String(node.id)}:asset`) });
       }
     }
-    if (isRecord(node.style)) {
-      const stylePath: JsonPath = [...nodePath, 'style'];
+    const styles: Array<{ value: Record<string, unknown>; path: JsonPath }> = [];
+    if (isRecord(node.style)) styles.push({ value: node.style, path: [...nodePath, 'style'] });
+    if (isRecord(node.states)) {
+      knownPaths.add(`key:${pathKey([...nodePath, 'states'])}`);
+      for (const state of ['hover', 'focus', 'pressed', 'disabled']) {
+        if (!(state in node.states)) continue;
+        const statePath: JsonPath = [...nodePath, 'states', state];
+        knownPaths.add(`key:${pathKey(statePath)}`);
+        const value = node.states[state];
+        if (isRecord(value)) styles.push({ value, path: statePath });
+      }
+    }
+    if (isRecord(node.transition)) {
+      knownPaths.add(`key:${pathKey([...nodePath, 'transition'])}`);
+      for (const direction of ['enter', 'exit']) {
+        if (!(direction in node.transition)) continue;
+        const motionPath: JsonPath = [...nodePath, 'transition', direction];
+        knownPaths.add(`key:${pathKey(motionPath)}`);
+        const value = node.transition[direction];
+        if (isRecord(value)) for (const key of ['durationMs', 'opacity', 'x', 'y', 'scale', 'easing']) {
+          if (key in value) knownPaths.add(`key:${pathKey([...motionPath, key])}`);
+          if (key === 'easing' && typeof value[key] === 'string') knownPaths.add(pathKey([...motionPath, key]));
+        }
+      }
+    }
+    for (const { value: style, path: stylePath } of styles) {
       for (const key of ['color', 'background', 'opacity', 'backgroundOpacity', 'fontSize', 'align', 'fontRole', 'fontWeight', 'lineHeight',
-        'letterSpacing', 'textShadows', 'backgroundGradient', 'backgroundImage', 'border', 'borderRadius', 'padding', 'shadows']) {
-        if (key in node.style) knownPaths.add(`key:${pathKey([...stylePath, key])}`);
+        'letterSpacing', 'textShadows', 'backgroundGradient', 'backgroundImage', 'border', 'borderRadius', 'padding', 'shadows', 'columns', 'imageFit']) {
+        if (key in style) knownPaths.add(`key:${pathKey([...stylePath, key])}`);
       }
       for (const [field, fields] of [
         ['padding', ['top', 'right', 'bottom', 'left']], ['border', ['width', 'color', 'opacity']], ['backgroundGradient', ['from', 'to', 'angle']],
       ] as const) {
-        const value = node.style[field];
+        const value = style[field];
         if (isRecord(value)) for (const key of fields) if (key in value) knownPaths.add(`key:${pathKey([...stylePath, field, key])}`);
       }
       for (const field of ['textShadows', 'shadows']) {
-        const values = node.style[field];
+        const values = style[field];
         if (Array.isArray(values)) values.forEach((value, index) => {
           if (isRecord(value)) for (const key of ['x', 'y', 'blur', 'color', 'opacity']) {
             if (key in value) knownPaths.add(`key:${pathKey([...stylePath, field, index, key])}`);
           }
         });
       }
-    }
-    const backgroundPath: JsonPath = [...nodePath, 'style', 'backgroundImage'];
-    const backgroundImage = isRecord(node.style) && isRecord(node.style.backgroundImage) ? node.style.backgroundImage : null;
-    if (backgroundImage) {
-      for (const key of ['asset', 'fit', 'slice']) if (key in backgroundImage) knownPaths.add(`key:${pathKey([...backgroundPath, key])}`);
-      if (isRecord(backgroundImage.slice)) for (const key of ['top', 'right', 'bottom', 'left', 'fillCenter']) {
-        if (key in backgroundImage.slice) knownPaths.add(`key:${pathKey([...backgroundPath, 'slice', key])}`);
-      }
-      if (typeof backgroundImage.fit === 'string') knownPaths.add(pathKey([...backgroundPath, 'fit']));
-      if (typeof backgroundImage.asset === 'string') {
-        const path: JsonPath = [...backgroundPath, 'asset'];
-        knownPaths.add(pathKey(path));
-        if (source.kind === 'background' && backgroundImage.asset === source.key && target.key !== source.key) {
-          replacements.push({ path, before: source.key, after: target.key,
-            reference: reference('config', file.path, `界面 ${page} 背景 ${String(node.id)}`, 'ui.style.backgroundImage', `ui:${String(node.id)}:style:backgroundImage:asset`) });
+      const backgroundPath: JsonPath = [...stylePath, 'backgroundImage'];
+      const backgroundImage = isRecord(style.backgroundImage) ? style.backgroundImage : null;
+      if (backgroundImage) {
+        for (const key of ['asset', 'fit', 'slice']) if (key in backgroundImage) knownPaths.add(`key:${pathKey([...backgroundPath, key])}`);
+        if (isRecord(backgroundImage.slice)) for (const key of ['top', 'right', 'bottom', 'left', 'fillCenter']) {
+          if (key in backgroundImage.slice) knownPaths.add(`key:${pathKey([...backgroundPath, 'slice', key])}`);
+        }
+        if (typeof backgroundImage.fit === 'string') knownPaths.add(pathKey([...backgroundPath, 'fit']));
+        if (typeof backgroundImage.asset === 'string') {
+          const path: JsonPath = [...backgroundPath, 'asset'];
+          knownPaths.add(pathKey(path));
+          if (source.kind === 'background' && backgroundImage.asset === source.key && target.key !== source.key) {
+            replacements.push({ path, before: source.key, after: target.key,
+              reference: reference('config', file.path, `界面 ${page} 背景 ${String(node.id)}`, 'ui.style.backgroundImage', `ui:${String(node.id)}:${stylePath.slice(nodePath.length).join(':')}:backgroundImage:asset`) });
+          }
         }
       }
     }

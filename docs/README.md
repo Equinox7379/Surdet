@@ -11,7 +11,8 @@
 旧画面溶解后端及Claude转场表单接入：[演出合同](presentation-effects-contract.md)。
 项目插件后端及Claude信任/预览接入：[项目插件合同](project-plugins-contract.md)。
 Windows免安装导出后端及Claude导出界面接入：[Windows导出合同](windows-game-export-contract.md)。
-U1有限样式、九宫格数据及后续前端接入：[作品界面样式合同](ui-style-contract.md)（本批仅后端与接口）。
+U1有限样式与九宫格：[作品界面样式合同](ui-style-contract.md)（前后端已随#58/#80合入）。
+U2交互状态、根页面进出场和共用动画驱动：[界面交互合同](ui-interaction-contract.md)（后端接口，待前端接线）。
 U1前端可操作示例（技术示例，非最终美术，未用于默认外观，待Owner确认）：[U1界面示例](ui-style-u1-example.md)。
 
 | 需要做什么 | 阅读入口 |

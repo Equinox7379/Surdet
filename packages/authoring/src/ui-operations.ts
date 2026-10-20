@@ -1,4 +1,4 @@
-import { PROJECT_UI_PAGES, projectUiAssetKeys, projectUiRect, projectUiChildrenRect, resolveProjectUiStyle, readProjectUi, type ProjectUiRect, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId } from '@surdet/core';
+import { PROJECT_UI_PAGES, projectUiAssetKeys, projectUiRect, projectUiChildrenRect, resolveProjectUiStyle, resolveProjectUiInteractionStyle, resolveProjectUiMotion, readProjectUi, type ProjectUiRect, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId } from '@surdet/core';
 import { readUiImageFiles, validateUiImageBytes, type UiAssetReader } from './ui-image-assets.js';
 import { AuthoringOperationError, runOperation, stableStringify, type ChangeSession } from './change-session.js';
 import { parseProjectConfigDocument, serializeProjectConfigDocument } from './config-document.js';
@@ -11,7 +11,7 @@ export type UiPatch =
   | { type: 'page.set'; page: ProjectUiPageId; root: ProjectUiNode }
   | { type: 'page.remove'; page: ProjectUiPageId }
   | { type: 'node.insert'; page: ProjectUiPageId; parentId: string; index: number; node: ProjectUiNode }
-  | { type: 'node.update'; page: ProjectUiPageId; id: string; patch: Partial<Omit<ProjectUiNode, 'id' | 'type' | 'children' | 'visibleWhen' | 'enabledWhen' | 'style'>> & { visibleWhen?: string | null; enabledWhen?: string | null; style?: ProjectUiNode['style'] | null } }
+  | { type: 'node.update'; page: ProjectUiPageId; id: string; patch: Partial<Omit<ProjectUiNode, 'id' | 'type' | 'children' | 'visibleWhen' | 'enabledWhen' | 'style' | 'states' | 'transition'>> & { visibleWhen?: string | null; enabledWhen?: string | null; style?: ProjectUiNode['style'] | null; states?: ProjectUiNode['states'] | null; transition?: ProjectUiNode['transition'] | null } }
   | { type: 'node.remove'; page: ProjectUiPageId; id: string }
   | { type: 'node.copy'; page: ProjectUiPageId; id: string; newId: string; index?: number }
   | { type: 'node.reorder'; page: ProjectUiPageId; id: string; index: number };
@@ -23,7 +23,10 @@ export interface UiInspection {
   value: ProjectUiDocument | null;
   defaultPages: ProjectUiPageId[];
   nodes: Array<{ page: ProjectUiPageId; id: string; type: ProjectUiNode['type']; parentId: string | null;
-    effectiveStyle: ReturnType<typeof resolveProjectUiStyle>; rect: ProjectUiRect; contentRect: ProjectUiRect }>;
+    effectiveStyle: ReturnType<typeof resolveProjectUiStyle>;
+    effectiveStates?: Record<'hover' | 'focus' | 'pressed' | 'disabled', ReturnType<typeof resolveProjectUiStyle>>;
+    effectiveTransition?: Record<'enter' | 'exit', ReturnType<typeof resolveProjectUiMotion>>;
+    rect: ProjectUiRect; contentRect: ProjectUiRect }>;
   fingerprint: string;
 }
 
@@ -37,7 +40,13 @@ export async function inspectUi(config: Record<string, unknown>, hasher: TextHas
   const nodes: UiInspection['nodes'] = [];
   const visit = (page: ProjectUiPageId, node: ProjectUiNode, parentId: string | null, parentRect: ProjectUiRect): void => {
     const rect = projectUiRect(parentRect, node.frame), contentRect = projectUiChildrenRect(rect, node.type, node.style);
-    nodes.push({ page, id: node.id, type: node.type, parentId, effectiveStyle: resolveProjectUiStyle(node, config), rect, contentRect });
+    nodes.push({ page, id: node.id, type: node.type, parentId, effectiveStyle: resolveProjectUiStyle(node, config), rect, contentRect,
+      ...(['button', 'toggle', 'slider', 'input'].includes(node.type) ? { effectiveStates: {
+        hover: resolveProjectUiInteractionStyle(node, config, { hovered: true }), focus: resolveProjectUiInteractionStyle(node, config, { focused: true }),
+        pressed: resolveProjectUiInteractionStyle(node, config, { pressed: true }), disabled: resolveProjectUiInteractionStyle(node, config, { disabled: true }),
+      } } : {}),
+      ...(parentId === null ? { effectiveTransition: { enter: resolveProjectUiMotion(node, 'enter', false), exit: resolveProjectUiMotion(node, 'exit', false) } } : {}),
+    });
     node.children?.forEach(child => visit(page, child, node.id, contentRect));
   };
   try {
@@ -103,7 +112,7 @@ export function patchUiDocument(current: ProjectUiDocument | null, config: Recor
       } else if (patch.type === 'node.update') {
         const found = findNode(root, patch.id);
         if (!found) throw new AuthoringOperationError('INVALID_REQUEST', `UI 节点不存在：${patch.id}`);
-        const allowed = new Set(['frame', 'text', 'binding', 'visibleWhen', 'enabledWhen', 'action', 'asset', 'source', 'tab', 'style']);
+        const allowed = new Set(['frame', 'text', 'binding', 'visibleWhen', 'enabledWhen', 'action', 'asset', 'source', 'tab', 'style', 'states', 'transition']);
         for (const [key, value] of Object.entries(patch.patch ?? {})) {
           if (!allowed.has(key)) throw new AuthoringOperationError('INVALID_REQUEST', `UI 节点字段不可修改：${key}`);
           if (value === null) delete (found.node as unknown as Record<string, unknown>)[key];
