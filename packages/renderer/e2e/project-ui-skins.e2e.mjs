@@ -256,7 +256,8 @@ try {
     window.gridSelections = [];
     const document_ = { version: 1, pages: { gallery: { id: 'grid-page', type: 'container', frame: frame(0, 0, 1280, 720), children: [
       { id: 'grid-tabs', type: 'tabs', frame: frame(40, 40, 1000, 500), children: [
-        { id: 'ending-grid', type: 'content', source: 'gallery-endings', tab: '结局', frame: frame(0, 0, 1000, 420), style: { columns: 2 }, children: [card('ending-card')] },
+        { id: 'ending-grid', type: 'content', source: 'gallery-endings', tab: '结局', frame: frame(0, 0, 1000, 420),
+          style: { columns: 2, border: { width: 2, color: 0x446688, opacity: 1 }, padding: { top: 10, right: 10, bottom: 10, left: 10 } }, children: [card('ending-card')] },
         { id: 'cg-grid', type: 'content', source: 'gallery-cgs', tab: '图片', frame: frame(0, 0, 1000, 420), style: { columns: 2 }, children: [card('cg-card')] },
       ] },
       { id: 'default-fit', type: 'image', asset: 'card', frame: frame(1080, 80, 144, 96) },
@@ -278,7 +279,7 @@ try {
   const grid = gridPage.locator('[data-ui-node="ending-grid"]');
   const layout = await grid.evaluate(element => {
     const bounds = element.getBoundingClientRect(), css = getComputedStyle(element);
-    return { display: css.display, columns: css.gridTemplateColumns, gap: css.gap, width: element.clientWidth, scrollWidth: element.scrollWidth,
+    return { display: css.display, columns: css.gridTemplateColumns, gap: css.gap, outerWidth: bounds.width, outerHeight: bounds.height, width: element.clientWidth, scrollWidth: element.scrollWidth,
       height: element.clientHeight, scrollHeight: element.scrollHeight,
       rows: [...element.children].map(row => {
         const box = row.getBoundingClientRect();
@@ -297,6 +298,8 @@ try {
   await fs.writeFile(path.join(output, 'grid-layout.json'), JSON.stringify(layout, null, 2));
   await gridPage.screenshot({ path: path.join(output, 'grid-cards.png') });
   assert.equal(layout.display, 'grid');
+  assert.equal(layout.outerWidth, 976, 'U1 border and padding are removed once before laying out the two columns');
+  assert.equal(layout.outerHeight, 396);
   assert.equal(layout.columns.split(' ').length, 2);
   assert.equal(layout.gap, '16px');
   assert.equal(layout.rows.length, 8);
