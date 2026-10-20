@@ -172,6 +172,202 @@ describe('Surdet Agent Port session and policy contract', () => {
       expect((await invoke('project.ui', { view: 'project' })).value).toBeNull();
     } finally { await session.close(); }
   });
+  it('U2 public page, insert and update operations preserve authored states and expose single-state and motion results', async () => {
+    const root = makeProject('ui-interaction');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-ui-interaction-data-')); temporaryRoots.push(data);
+    const source = fs.readFileSync(path.join(root, 'game.config.json'), 'utf8');
+    const session = await open(root, data, 'apply');
+    const invoke = async (capability: Parameters<typeof session.invoke>[0], input: Record<string, unknown>) => {
+      const response = await session.invoke(capability, input);
+      expect(response, JSON.stringify(response)).toMatchObject({ ok: true });
+      if (!response.ok) throw new Error(response.error.message);
+      return response.result as any;
+    };
+    const patch = async (value: Record<string, unknown>) => {
+      const current = await invoke('project.ui', { view: 'working' });
+      return invoke('project.ui.patch', { operationId: crypto.randomUUID(), expectedFingerprint: current.fingerprint, patch: value });
+    };
+    try {
+      await invoke('change.begin', {});
+      const frame = { x: 0, y: 0, width: 400, height: 200 };
+      const title = { id: 'title-button', type: 'button', frame, style: {
+        color: 7, background: 8, opacity: 0.8, backgroundOpacity: 0.6,
+        backgroundGradient: { from: 1, to: 2, angle: 90 }, textShadows: [{ x: 1, y: 1, blur: 2, color: 0, opacity: 1 }],
+      }, states: {
+        hover: { color: 0, opacity: 0, backgroundOpacity: 0, backgroundGradient: null, backgroundImage: null, textShadows: [], shadows: [] },
+        focus: { color: 9 }, pressed: { color: 10 }, disabled: { color: 11, opacity: 0.4 },
+      }, transition: { enter: { durationMs: 250 }, exit: { durationMs: 0, opacity: 0 } } };
+      const page = await patch({ type: 'page.set', page: 'title', root: title });
+      expect(page.ui.value).toEqual({ version: 1, pages: { title } });
+      expect(page.ui.nodes[0].effectiveStyle).toMatchObject({ color: 7, opacity: 0.8, backgroundOpacity: 0.6 });
+      expect(page.ui.nodes[0].effectiveStates).toMatchObject({
+        hover: { color: 0, opacity: 0, backgroundOpacity: 0, backgroundGradient: null, backgroundImage: null, textShadows: [], shadows: [] },
+        focus: { color: 9, opacity: 0.8, backgroundOpacity: 0.6, backgroundGradient: title.style.backgroundGradient },
+        pressed: { color: 10, opacity: 0.8, backgroundOpacity: 0.6 }, disabled: { color: 11, opacity: 0.4 * 0.45 },
+      });
+      expect(page.ui.nodes[0].effectiveTransition).toEqual({
+        enter: { durationMs: 250, opacity: 1, x: 0, y: 0, scale: 1, easing: 'ease-out' }, exit: null,
+      });
+      expect((await invoke('project.ui', { view: 'working' })).value.pages.title).toEqual(title);
+
+      const panel = { id: 'panel', type: 'container', frame };
+      const plain = await patch({ type: 'page.set', page: 'settings', root: panel });
+      const panelView = plain.ui.nodes.find((entry: any) => entry.id === 'panel');
+      expect(panelView.effectiveTransition).toEqual({ enter: null, exit: null });
+      expect(panelView).not.toHaveProperty('effectiveStates');
+      const button = { id: 'child', type: 'button', frame, style: { color: 12, opacity: 0.6 }, states: {
+        hover: { color: 0 }, focus: { opacity: 0 }, pressed: { background: 0 }, disabled: {},
+      } };
+      const inserted = await patch({ type: 'node.insert', page: 'settings', parentId: 'panel', index: 0, node: button });
+      expect(inserted.ui.value.pages.settings).toEqual({ ...panel, children: [button] });
+      const childView = inserted.ui.nodes.find((entry: any) => entry.id === 'child');
+      expect(childView.effectiveStates).toMatchObject({ hover: { color: 0, opacity: 0.6 }, focus: { color: 12, opacity: 0 },
+        pressed: { color: 12, background: 0, opacity: 0.6 }, disabled: { color: 12, opacity: 0.6 * 0.45 } });
+      expect(childView).not.toHaveProperty('effectiveTransition');
+
+      const states = { hover: { background: 0 }, focus: { color: 0 }, pressed: { opacity: 0 }, disabled: { opacity: 0 } };
+      const transition = { enter: { durationMs: 200, opacity: 0, x: 0, y: 0, scale: 1, easing: 'linear' },
+        exit: { durationMs: 300, opacity: 0.2, x: -8, y: 16, scale: 0.9, easing: 'ease-in-out' } };
+      const updated = await patch({ type: 'node.update', page: 'title', id: title.id, patch: { states, transition } });
+      const updatedView = updated.ui.nodes.find((entry: any) => entry.id === title.id);
+      expect(updated.ui.value.pages.title).toEqual({ ...title, states, transition });
+      expect(updatedView.effectiveStates).toMatchObject({ hover: { color: 7, background: 0, opacity: 0.8 }, focus: { color: 0, opacity: 0.8 },
+        pressed: { color: 7, opacity: 0 }, disabled: { color: 7, opacity: 0 } });
+      expect(updatedView.effectiveTransition).toEqual(transition);
+      const selected = await invoke('project.ui', { view: 'working' });
+      expect(selected.value).toEqual(updated.ui.value);
+      expect(selected.nodes).toEqual(updated.ui.nodes);
+
+      await patch({ type: 'node.update', page: 'title', id: title.id, patch: { states: null, transition: null } });
+      await patch({ type: 'node.update', page: 'settings', id: button.id, patch: { states: null } });
+      const cleared = await invoke('project.ui', { view: 'working' });
+      expect(cleared.value.pages.title).toEqual({ id: title.id, type: title.type, frame, style: title.style });
+      expect(cleared.value.pages.settings.children[0]).toEqual({ id: button.id, type: button.type, frame, style: button.style });
+      for (const id of [title.id, button.id]) {
+        const inspected = cleared.nodes.find((entry: any) => entry.id === id);
+        for (const state of ['hover', 'focus', 'pressed']) expect(inspected.effectiveStates[state]).toEqual(inspected.effectiveStyle);
+        expect(inspected.effectiveStates.disabled).toEqual({ ...inspected.effectiveStyle, opacity: inspected.effectiveStyle.opacity * 0.45 });
+      }
+      expect(cleared.nodes.find((entry: any) => entry.id === title.id).effectiveTransition).toEqual({ enter: null, exit: null });
+      expect((await invoke('project.ui', { view: 'project' })).value).toBeNull();
+      expect(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8')).toBe(source);
+    } finally { await session.close(); }
+  });
+  it('U2 hover image dependencies use real SVG bounds and invalid state or transition writes leave working value unchanged', async () => {
+    const root = makeProject('ui-interaction-assets');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-ui-interaction-assets-data-')); temporaryRoots.push(data);
+    fs.mkdirSync(path.join(root, 'content/assets/bg'), { recursive: true });
+    const imagePath = path.join(root, 'content/assets/bg/hover.svg');
+    fs.writeFileSync(imagePath, '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16"/>');
+    const source = fs.readFileSync(path.join(root, 'game.config.json'), 'utf8');
+    const session = await open(root, data, 'apply');
+    const invoke = async (capability: Parameters<typeof session.invoke>[0], input: Record<string, unknown>) => {
+      const response = await session.invoke(capability, input);
+      expect(response, JSON.stringify(response)).toMatchObject({ ok: true });
+      if (!response.ok) throw new Error(response.error.message);
+      return response.result as any;
+    };
+    const patch = async (value: Record<string, unknown>) => {
+      const current = await invoke('project.ui', { view: 'working' });
+      return invoke('project.ui.patch', { operationId: crypto.randomUUID(), expectedFingerprint: current.fingerprint, patch: value });
+    };
+    const reject = async (value: Record<string, unknown>, code: string, message?: string) => {
+      const before = await invoke('project.ui', { view: 'working' });
+      const response = await session.invoke('project.ui.patch', { operationId: crypto.randomUUID(), expectedFingerprint: before.fingerprint, patch: value });
+      expectFailure(response, code);
+      if (message) {
+        if (response.ok) throw new Error('expected rejected UI patch');
+        expect(response.error.message).toContain(message);
+      }
+      expect((await invoke('project.ui', { view: 'working' })).value).toEqual(before.value);
+    };
+    try {
+      await invoke('change.begin', {});
+      const frame = { x: 0, y: 0, width: 400, height: 200 };
+      const panel = { id: 'panel', type: 'container', frame };
+      await patch({ type: 'page.set', page: 'title', root: panel });
+      const button = { id: 'hover-button', type: 'button', frame, states: { hover: { backgroundImage: {
+        asset: 'hover', fit: 'stretch', slice: { top: 4, right: 12, bottom: 4, left: 12, fillCenter: true },
+      } } } };
+      const insert = { type: 'node.insert', page: 'title', parentId: panel.id, index: 0, node: button };
+      await reject(insert, 'UI_INVALID', '九宫格');
+      fs.writeFileSync(imagePath, '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"/>');
+      const inserted = await patch(insert);
+      expect(inserted.ui.value.pages.title).toEqual({ ...panel, children: [button] });
+      expect(inserted.ui.nodes.find((entry: any) => entry.id === button.id).effectiveStates.hover.backgroundImage)
+        .toEqual(button.states.hover.backgroundImage);
+      const assets = await invoke('project.assets', { view: 'working' });
+      expect(assets.backgrounds).toContainEqual(expect.objectContaining({ key: 'hover', resolved: true }));
+      expect(assets.intelligence.items.find((item: any) => item.kind === 'background' && item.key === 'hover')?.references)
+        .toContainEqual(expect.objectContaining({ referenceId: `ui:${button.id}:states:hover:backgroundImage:asset`,
+          sourceKind: 'config', sourcePath: 'game.config.json', objectRef: `ui:${button.id}` }));
+      const uiObject = await invoke('object.inspect', { view: 'working', objectRef: `ui:${button.id}` });
+      expect(uiObject.references).toContain('asset:bg:hover');
+      const imageObject = await invoke('object.inspect', { view: 'working', objectRef: 'asset:bg:hover' });
+      expect(imageObject.referencedBy).toContain(`ui:${button.id}`);
+      await reject({ type: 'node.update', page: 'title', id: button.id,
+        patch: { states: { hover: { backgroundImage: { asset: 'missing-hover', fit: 'cover' } } } } }, 'UI_INVALID', 'missing-hover');
+
+      for (const stateStyle of [{ fontSize: 18 }, { padding: { top: 1, right: 1, bottom: 1, left: 1 } },
+        { action: { kind: 'start' } }, { visibleWhen: 'true' }, { css: 'outline:none' }]) {
+        await reject({ type: 'node.update', page: 'title', id: button.id, patch: { states: { hover: stateStyle } } }, 'INVALID_REQUEST');
+      }
+      await reject({ type: 'node.update', page: 'title', id: panel.id, patch: { states: { focus: { color: 0 } } } }, 'UI_INVALID');
+      const transition = { enter: { durationMs: 100, opacity: 0 } };
+      await reject({ ...insert, node: { ...button, id: 'nested-motion', transition } }, 'UI_INVALID');
+      await reject({ type: 'node.update', page: 'title', id: button.id, patch: { transition } }, 'UI_INVALID');
+      await reject({ type: 'page.set', page: 'title', root: { ...panel, children: [{ ...button, transition }] } }, 'UI_INVALID');
+
+      for (const field of ['states', 'transition']) {
+        await reject({ type: 'page.set', page: 'title', root: { ...panel, type: 'button', [field]: null } }, 'INVALID_REQUEST');
+        await reject({ ...insert, node: { ...button, id: 'stored-null', [field]: null } }, 'INVALID_REQUEST');
+        await reject({ type: 'page.set', page: 'title', root: { ...panel, children: [{ ...button, [field]: null }] } }, 'UI_INVALID');
+      }
+      await reject({ type: 'node.update', page: 'title', id: button.id, patch: { states: { hover: null } } }, 'INVALID_REQUEST');
+      await reject({ type: 'node.update', page: 'title', id: panel.id, patch: { transition: { enter: null } } }, 'INVALID_REQUEST');
+      expect((await invoke('project.ui', { view: 'working' })).value).toEqual(inserted.ui.value);
+      expect((await invoke('project.ui', { view: 'project' })).value).toBeNull();
+      expect(fs.readFileSync(path.join(root, 'game.config.json'), 'utf8')).toBe(source);
+    } finally { await session.close(); }
+  });
+  it('U2 asset relocation rewrites every state image without rewriting state or motion metadata', async () => {
+    const root = makeProject('ui-state-relocation');
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-ui-state-relocation-')); temporaryRoots.push(data);
+    process.env['SURDET_AGENT_DATA_DIR'] = data;
+    fs.mkdirSync(path.join(root, 'content/assets/bg'), { recursive: true });
+    const image = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"/>';
+    fs.writeFileSync(path.join(root, 'content/assets/bg/hover.svg'), image);
+    const configPath = path.join(root, 'game.config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    config.ui = { version: 1, pages: { title: { id: 'hover', type: 'button', frame: { x: 0, y: 0, width: 200, height: 60 },
+      text: { kind: 'literal', value: 'hover' }, transition: { enter: { durationMs: 100, easing: 'linear' } },
+      states: { hover: { backgroundImage: { asset: 'hover', fit: 'cover' } },
+        disabled: { backgroundImage: { asset: 'hover', fit: 'stretch', slice: { top: 10, right: 10, bottom: 10, left: 10, fillCenter: true } } } },
+    } } };
+    fs.writeFileSync(configPath, JSON.stringify(config));
+    const session = await openAgentPortSession({ projectRoot: root, policy: 'apply', assetImportDataRoot: path.join(data, 'assets') });
+    const invoke = async (capability: Parameters<typeof session.invoke>[0], input: Record<string, unknown>) => {
+      const response = await session.invoke(capability, input);
+      expect(response, JSON.stringify(response)).toMatchObject({ ok: true });
+      if (!response.ok) throw new Error(response.error.message);
+      return response.result as any;
+    };
+    try {
+      const operationId = crypto.randomUUID();
+      const plan = await invoke('asset.relocation.plan', { operationId, moves: [{ sourcePath: 'content/assets/bg/hover.svg', targetPath: 'content/assets/bg/selected.svg' }] });
+      await invoke('asset.relocation.commit', { operationId, planFingerprint: plan.plan.planFingerprint });
+      const saved = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      const expected = structuredClone(config);
+      expected.ui.pages.title.states.hover.backgroundImage.asset = 'selected';
+      expected.ui.pages.title.states.disabled.backgroundImage.asset = 'selected';
+      expect(saved).toEqual(expected);
+      expect(fs.readFileSync(path.join(root, 'content/assets/bg/selected.svg'), 'utf8')).toBe(image);
+      expect(fs.existsSync(path.join(root, 'content/assets/bg/hover.svg'))).toBe(false);
+      const ui = await invoke('project.ui', { view: 'project' });
+      expect(ui.nodes[0].effectiveStates.hover.backgroundImage.asset).toBe('selected');
+      expect(ui.nodes[0].effectiveStates.disabled.backgroundImage.asset).toBe('selected');
+    } finally { await session.close(); }
+  });
   afterEach(() => {
     delete process.env['SURDET_AGENT_DATA_DIR'];
     for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });

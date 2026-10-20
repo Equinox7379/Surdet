@@ -7,6 +7,7 @@ import { RenderPerformanceMonitor } from '../src/performance.js';
 import { RendererError } from '../src/api/renderer-errors.js';
 import { RendererStageHost } from '../src/pixi-stage-host.js';
 import { createRendererRuntime } from '../src/runtime/create-renderer-runtime.js';
+import { ProjectUiMotionController } from '../src/project-ui-motion.js';
 
 class FakeTicker {
   listener: ((ticker: { deltaMS: number }) => void) | null = null;
@@ -126,6 +127,32 @@ describe('FrameScheduler with the real Pixi Ticker RAF chain', () => {
     now += 16;
     callback(now);
   }
+
+  it('drives U2 pages on the existing ticker while paused, then sleeps and cancels on reset/dispose', async () => {
+    const app = appWithRealTicker();
+    vi.spyOn(RendererStageHost.prototype, 'init').mockImplementation(async function (this: RendererStageHost) {
+      this.app = { ...app, canvas: {}, destroy: () => app.ticker.stop() } as never;
+    });
+    const effects = vi.spyOn(RendererStageHost.prototype, 'updateEffects');
+    const motion = new ProjectUiMotionController(), complete = vi.fn(), paint = vi.fn();
+    const preset = { durationMs: 32, opacity: 0, x: 12, y: 0, scale: 1, easing: 'linear' as const };
+    const runtime = await createRendererRuntime({ projectUiMotion: motion });
+    try {
+      runtime.controller.setPresentationPaused?.(true);
+      motion.play('settings', preset, 'enter', paint, complete);
+      for (let i = 0; i < 4 && pending.size; i++) runNextFrame();
+      expect(complete).toHaveBeenCalledOnce(); expect(paint).toHaveBeenLastCalledWith({ opacity: 1, x: 0, y: 0, scale: 1 });
+      expect(effects).not.toHaveBeenCalled(); expect(app.ticker.started).toBe(false); expect(pending.size).toBe(0);
+      motion.play('settings', preset, 'exit', paint, complete);
+      runtime.resetSession();
+      for (let i = 0; i < 4 && pending.size; i++) runNextFrame();
+      expect(complete).toHaveBeenCalledOnce(); expect(motion.needsUpdate).toBe(false);
+      motion.play('settings', preset, 'enter', paint, complete);
+      runtime.dispose();
+      expect(motion.needsUpdate).toBe(false); expect(pending.size).toBe(0);
+      expect(() => motion.play('settings', preset, 'enter', paint, complete)).toThrow('disposed');
+    } finally { runtime.dispose(); }
+  });
 
   it('reports a failed update, stops the ticker, then recovers only on a new frame request', () => {
     const app = appWithRealTicker();

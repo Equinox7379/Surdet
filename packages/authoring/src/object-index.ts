@@ -420,7 +420,7 @@ function addUiObjects(snapshot: ProjectSnapshot, objects: AuthoringObject[], can
     addObject(objects, { kind: 'ui-node', semanticId: ref, objectRef: ref, parentRef,
       source: sourceOf('game.config.json', 1, nodeRaw), fingerprint: fingerprint(nodeRaw),
       references: [], referencedBy: [], childRefs: [], details: { page, node } }, candidates);
-    for (const asset of new Set([node.asset, node.style?.backgroundImage?.asset])) {
+    for (const asset of new Set([node.asset, node.style?.backgroundImage?.asset, ...Object.values(node.states ?? {}).map(style => style.backgroundImage?.asset)])) {
       if (!asset) continue;
       const assetRef = `asset:bg:${asset}`;
       ensureAsset(assetRef, nodeRaw);

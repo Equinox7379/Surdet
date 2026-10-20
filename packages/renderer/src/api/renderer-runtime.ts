@@ -10,6 +10,7 @@ import type { RendererInputAction } from './renderer-input.js';
 import type { RendererError } from './renderer-errors.js';
 import type { RendererCommands } from './renderer-commands.js';
 import type { RendererQueries } from './renderer-queries.js';
+import type { ProjectUiMotionController } from '../project-ui-motion.js';
 
 export interface ResetSessionOptions {
   /** Rollback keeps current history until the replacement snapshot has passed preflight. */
@@ -92,4 +93,6 @@ export interface RendererRuntimeOptions {
   /** Called synchronously by Dialogue UI handlers before their host callback. */
   onPointerConsumed?: () => void;
   performanceMonitor?: RenderPerformanceMonitor;
+  /** Optional work-UI animation driver. Runtime owns its reset/disposal; it shares the existing ticker. */
+  projectUiMotion?: ProjectUiMotionController;
 }

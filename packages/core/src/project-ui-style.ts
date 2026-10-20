@@ -27,6 +27,33 @@ export interface ProjectUiStyle {
   imageFit?: 'contain' | 'cover' | 'fill';
 }
 
+export type ProjectUiStateStyle = Pick<ProjectUiStyle,
+  'color' | 'background' | 'opacity' | 'backgroundOpacity' | 'backgroundGradient' | 'backgroundImage' | 'textShadows' | 'shadows'>;
+export interface ProjectUiStates {
+  hover?: ProjectUiStateStyle;
+  focus?: ProjectUiStateStyle;
+  pressed?: ProjectUiStateStyle;
+  disabled?: ProjectUiStateStyle;
+}
+export interface ProjectUiInteraction {
+  hovered?: boolean;
+  focused?: boolean;
+  pressed?: boolean;
+  disabled?: boolean;
+}
+export interface ProjectUiMotion {
+  durationMs: number;
+  opacity?: number;
+  x?: number;
+  y?: number;
+  scale?: number;
+  easing?: 'linear' | 'ease-out' | 'ease-in-out';
+}
+export interface ProjectUiTransitions {
+  enter?: ProjectUiMotion;
+  exit?: ProjectUiMotion;
+}
+
 function object(value: unknown, at: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${at} 必须是对象`);
   return value as Record<string, unknown>;
@@ -103,6 +130,31 @@ export function validateProjectUiStyle(value: unknown, at: string): void {
   }
 }
 
+/** Interaction states can change decoration only; normal styling stays in node.style. */
+export function validateProjectUiStates(value: unknown, at: string): void {
+  const item = object(value, at);
+  keys(item, ['hover', 'focus', 'pressed', 'disabled'], at);
+  for (const [state, value] of Object.entries(item)) {
+    const location = `${at}.${state}`, style = object(value, location);
+    keys(style, ['color', 'background', 'opacity', 'backgroundOpacity', 'backgroundGradient', 'backgroundImage', 'textShadows', 'shadows'], location);
+    validateProjectUiStyle(style, location);
+  }
+}
+
+export function validateProjectUiTransitions(value: unknown, at: string): void {
+  const item = object(value, at);
+  keys(item, ['enter', 'exit'], at);
+  for (const [direction, value] of Object.entries(item)) {
+    const location = `${at}.${direction}`, motion = object(value, location);
+    keys(motion, ['durationMs', 'opacity', 'x', 'y', 'scale', 'easing'], location);
+    number(motion.durationMs, 0, 1000, `${location}.durationMs`);
+    if (motion.opacity !== undefined) number(motion.opacity, 0, 1, `${location}.opacity`);
+    for (const key of ['x', 'y']) if (motion[key] !== undefined) number(motion[key], -128, 128, `${location}.${key}`);
+    if (motion.scale !== undefined) number(motion.scale, 0.8, 1.2, `${location}.scale`);
+    if (motion.easing !== undefined && !['linear', 'ease-out', 'ease-in-out'].includes(motion.easing as string)) throw new Error(`${location}.easing 不受支持`);
+  }
+}
+
 /** A null font weight/line height/padding means the existing native-control default, not zero. */
 export function resolveProjectUiStyle(node: ProjectUiNode, config: Record<string, unknown>, explicit: PresentationThemeOverrides = {}) {
   const theme = resolvePlayerTheme(config, explicit), style = node.style ?? {}, button = node.type === 'button', progress = node.type === 'progress';
@@ -118,6 +170,30 @@ export function resolveProjectUiStyle(node: ProjectUiNode, config: Record<string
     borderRadius: style.borderRadius ?? (button ? theme.radius.md : progress ? theme.radius.sm : 0), padding: style.padding ?? null, shadows: style.shadows ?? [],
     columns: style.columns ?? 1, imageFit: style.imageFit ?? 'contain',
   };
+}
+
+/** Focus decoration also applies when disabled; callers keep a separate visible focus marker. */
+export function resolveProjectUiInteractionStyle(node: ProjectUiNode, config: Record<string, unknown>, interaction: ProjectUiInteraction,
+  explicitTheme: PresentationThemeOverrides = {}) {
+  const states = node.states;
+  const style: ProjectUiStyle = {
+    ...node.style,
+    ...(!interaction.disabled && interaction.hovered ? states?.hover : undefined),
+    ...(interaction.focused ? states?.focus : undefined),
+    ...(!interaction.disabled && interaction.pressed ? states?.pressed : undefined),
+    ...(interaction.disabled ? states?.disabled : undefined),
+  };
+  const effective = resolveProjectUiStyle({ ...node, style }, config, explicitTheme);
+  if (interaction.disabled) effective.opacity *= 0.45;
+  return effective;
+}
+
+/** Enter runs from these values to 1/0/0/1; exit runs from that stable pose to these values. */
+export function resolveProjectUiMotion(rootNode: ProjectUiNode, direction: 'enter' | 'exit', reduceMotion: boolean): Required<ProjectUiMotion> | null {
+  const motion = rootNode.transition?.[direction];
+  if (reduceMotion || !motion || motion.durationMs === 0) return null;
+  return { durationMs: motion.durationMs, opacity: motion.opacity ?? 1, x: motion.x ?? 0, y: motion.y ?? 0,
+    scale: motion.scale ?? 1, easing: motion.easing ?? 'ease-out' };
 }
 
 /** Explicit author insets inside the layout/hit box. Decoration never enlarges the hit box. */
