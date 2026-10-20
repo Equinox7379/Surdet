@@ -23,11 +23,14 @@ export class FrameScheduler {
   #monitor?: RenderPerformanceMonitor;
   #onError?: FrameSchedulerOptions['onError'];
   #disposed = false;
+  #requestedDuringFrame = false;
   #wake = (): void => {
+    this.#requestedDuringFrame = true;
     if (!this.#disposed) this.#app.start();
   };
   #tick = (ticker: Ticker): void => {
     if (this.#disposed) return;
+    this.#requestedDuringFrame = false;
     try {
       const started = typeof performance !== 'undefined' ? performance.now() : Date.now();
       this.#target.update(ticker.deltaMS);
@@ -39,8 +42,14 @@ export class FrameScheduler {
       // Pixi only renews RAF after listeners return; a throw otherwise strands
       // a started ticker with no pending frame, so start() cannot wake it again.
       this.#app.stop();
-      if (this.#onError) this.#onError(error);
-      else throw error;
+      try {
+        if (this.#onError) this.#onError(error);
+        else throw error;
+      } finally {
+        // A source may already have requested a replacement frame before the
+        // failure reached us. Preserve that request, not arbitrary failed work.
+        if (!this.#disposed && this.#requestedDuringFrame) this.#app.start();
+      }
     }
   };
 

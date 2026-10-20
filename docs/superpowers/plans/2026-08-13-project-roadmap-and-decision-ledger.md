@@ -27,6 +27,7 @@
 
 ### U2后端（2026-10-20，进行中）
 
+- #81复审4321525219已本机返修：UI绘制/完成回调失败仍报原错误，保存失败期间已发出的新帧请求，不重试坏回调；其余UI和世界投影继续。真实Pixi Ticker新病例修前无下一帧而失败，修后正常完成/休眠。play增加可选cancelled视觉通知，reset/替换/销毁同步通知、不调用complete，前端改接通知后不再猜驱动空闲。驱动/调度定向20项、Renderer类型/构建通过；GPU初始化替身的旧集成证据继续有效，不等于Windows完整前端验收。Claude前端已代开#82，仍草稿，当前本机复核中。
 - Authoring2.40.0保持73项能力：有限states、根页面transition、单态有效值和动效缺省；状态不能改动作/布局。所有状态图进入用途/索引/切片验证/改名及原分享导出链；没有新校验机制或兼容层。
 - Renderer提供ProjectUiMotionController并接入现有ticker，剧情暂停仍推进UI，结束休眠；同页替换/过期取消/重置/销毁不执行旧complete。可见DOM与设计器由Claude按合同接入，不把纯数据与调度测试说成已看到动画。
 - Core定向30项、真实Agent Port3项（含状态素材改名且不改同名文字/状态键）、状态图片导出检查/归档1项通过；Renderer动效/调度与相邻runtime合计30通过、1项既有主题唤醒计数失败，移除本次runtime改动的对照仍同处失败，原断言和失败日志保留。Core/Authoring/Renderer构建及CLI/Renderer/Editor含desktop类型通过。不是全仓、CI或完整U2视觉验收。

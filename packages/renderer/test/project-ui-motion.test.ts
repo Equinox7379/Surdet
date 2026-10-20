@@ -53,4 +53,19 @@ describe('work UI motion lifecycle', () => {
     expect(() => driver.play('bad', motion, 'enter', () => { throw new Error('draw failed'); })).toThrow('draw failed');
     driver.update(100); expect(done).toHaveBeenCalledOnce(); expect(driver.needsUpdate).toBe(false);
   });
+  it('notifies cancellation synchronously without completing old pages or cancelling replacements', () => {
+    const driver = new ProjectUiMotionController(), done = vi.fn(), oldCancelled = vi.fn(), newCancelled = vi.fn();
+    const stale = driver.play('menu', motion, 'enter', () => {}, done, oldCancelled);
+    driver.update(25);
+    driver.play('menu', motion, 'exit', () => {}, done, newCancelled);
+    expect(oldCancelled).toHaveBeenCalledOnce();
+    stale(); expect(newCancelled).not.toHaveBeenCalled();
+    driver.cancelAll();
+    expect(newCancelled).toHaveBeenCalledOnce(); expect(done).not.toHaveBeenCalled();
+    expect(driver.needsUpdate).toBe(false);
+    driver.cancelAll(); expect(newCancelled).toHaveBeenCalledOnce();
+    driver.play('menu', motion, 'enter', () => {}, done, newCancelled);
+    driver.dispose(); expect(newCancelled).toHaveBeenCalledTimes(2);
+    driver.update(100); expect(done).not.toHaveBeenCalled();
+  });
 });
