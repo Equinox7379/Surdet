@@ -9,7 +9,7 @@ export function disposeUiPlayerPreview(): void { closePreview?.(); closePreview 
 /** Files a share package brings for a not yet confirmed import: shown in the Player, never written. */
 export interface UiPlayerPreviewOverlay {
   label: string;
-  /** Project paths under `content/assets/`; they take precedence over same-path project files. */
+  /** Project paths under `content/assets/`; images replace existing same-key images, other files replace the same path. */
   files: ReadonlyArray<{ path: string; blob: Blob }>;
 }
 
@@ -32,7 +32,13 @@ export async function openUiPlayerPreview(configText: string, gallery: unknown =
   const config = parseProjectConfigDocument(configText);
   const sources = [...state.dirAssets];
   const overlayFiles = (overlay?.files ?? []).filter(file => file.path.startsWith('content/assets/'));
-  const paths = new Set([...sources.flatMap(asset => asset.sourcePath ? [asset.sourcePath] : []), ...overlayFiles.map(file => file.path)]);
+  const overlayImageKeys = new Set(buildAssetCatalog(overlayFiles.map(file => file.path)).backgrounds.map(asset => asset.key));
+  const replacedImagePaths = new Set(buildAssetCatalog(sources.flatMap(asset => asset.sourcePath ? [asset.sourcePath] : [])).backgrounds
+    .filter(asset => overlayImageKeys.has(asset.key)).map(asset => asset.sourcePath));
+  // Shares flatten image directories. Match the authoritative image key, not just the source path,
+  // so an accepted existing bg/sub/skin.png and bundled bg/skin.png do not become two Player assets.
+  const previewSources = sources.filter(asset => asset.sourcePath === undefined || !replacedImagePaths.has(asset.sourcePath));
+  const paths = new Set([...previewSources.flatMap(asset => asset.sourcePath ? [asset.sourcePath] : []), ...overlayFiles.map(file => file.path)]);
   validateUiAssets(readProjectUi(config), buildAssetCatalog([...paths]));
   const id = `${overlay ? 'editor-ui-import-preview' : 'editor-ui-preview'}-${crypto.randomUUID()}`;
   const sceneTexts = Object.fromEntries([...state.scenes.values()].map(scene => [scene.file, scene.text]));
@@ -96,7 +102,7 @@ export async function openUiPlayerPreview(configText: string, gallery: unknown =
       const path = file.path.slice('content/assets/'.length);
       assetFiles[path] = `${url}#${path.split('/').at(-1)}`;
     }
-    for (const asset of sources) {
+    for (const asset of previewSources) {
       const sourcePath = asset.sourcePath ?? (asset.handle ? assetPathForHandle(asset.handle) : undefined);
       if (!asset.handle || !sourcePath?.startsWith('content/assets/') || assetFiles[sourcePath.slice('content/assets/'.length)]) continue;
       const file = await asset.handle.getFile();
