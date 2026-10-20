@@ -72,6 +72,7 @@ import {
   RenderPerformanceMonitor,
   createRendererRuntime,
   createProjectUiDom,
+  ProjectUiMotionController,
   createRendererTheme,
   AssetLoadQueue,
   actionForKeyboardEvent,
@@ -313,6 +314,8 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
   let playerShell: PlayerShellController | null = null;
   const performanceMonitor = new RenderPerformanceMonitor();
   const pluginFrames = new RendererPluginHost();
+  // One page-motion driver shared by the Runtime ticker (which advances it even while the story is paused) and the work UI.
+  const uiMotion = new ProjectUiMotionController();
   const runtime = await createRendererRuntime({
     stage: readProjectStage(gameConfig),
     audio,
@@ -320,6 +323,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     backlog,
     performanceMonitor,
     pluginHost: pluginFrames,
+    projectUiMotion: uiMotion,
     onError: (error) => { console.error('[starter] Renderer failed:', error); if (galleryReplay) scheduleReplayReturn(error); },
     onAdvance: () => interp.advance(),
     onSelect: (i) => interp.choose(i),
@@ -827,7 +831,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     session.restoring = true;
     try {
       playerShell!.commands.reset(session.base);
-      host.reset(); runtime.resetSession();
+      host.reset(); runtime.resetSession(); uiDom?.resetMotion();
       runtime.controller.setPresentationPaused?.(false);
       if (renderer.autoPlay) renderer.dispatchInput({ type: 'auto.toggle' });
       interp.loadSnapshot(structuredClone(session.snapshot));
@@ -871,7 +875,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       if (base === 'title') { original.position = null; original.callStack = []; }
       galleryReplay = { snapshot: structuredClone(original), base, history: backlog.entries(), startedAt: Date.now(), auto: renderer.autoPlay, restoring: false };
       replayExit.textContent = '结束回想'; replayExit.hidden = false;
-      playerShell!.commands.reset('game'); clearRollback(); host.reset(); runtime.resetSession();
+      playerShell!.commands.reset('game'); clearRollback(); host.reset(); runtime.resetSession(); uiDom?.resetMotion();
       if (renderer.autoPlay) renderer.dispatchInput({ type: 'auto.toggle' });
       presentation.clear(); menu.hideTitle(); backlog.clear();
       interp.loadSnapshot(replay);
@@ -1368,6 +1372,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         clearRollback();
         host.reset();
         runtime.resetSession();
+        uiDom?.resetMotion();
         presentation.clear();
         menu.hideTitle();
         store.reset();
@@ -1580,6 +1585,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       clearRollback();
       sessionStart = Date.now() - Math.max(0, snap.meta.playTimeSec ?? 0) * 1000;
       playerShell!.commands.completeOperation({ base: 'game', overlay: 'none' });
+      uiDom?.resetMotion();
       activeSaveLoad = null;
       menu.hideTitle();
       refreshCommandRail();
@@ -1600,6 +1606,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     clearRollback();
     sessionStart = Date.now() - Math.max(0, snap.meta.playTimeSec ?? 0) * 1000;
     playerShell!.commands.completeOperation({ base: 'game', overlay: 'none' });
+    uiDom?.resetMotion();
     menu.hideTitle();
     activeSaveLoad = null;
     clearCountedThisSession = false;
@@ -1735,7 +1742,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
         const issues = projectTexts.diagnostics(textLocale);
         if (issues.length) { console.warn('[文本目录]', ...issues); dialogue.showBanner('部分译文未确认，暂时显示原文', 'tip'); }
       }
-      refreshSettingsPanel(); uiDom?.refresh();
+      refreshSettingsPanel(); uiDom?.setReducedMotion(confirmed.reducedMotion); uiDom?.refresh();
     },
     onError: error => dialogue.showBanner(`设置保存失败，已保留原设置：${error instanceof Error ? error.message : String(error)}`, 'tip'),
   });
@@ -2134,6 +2141,8 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       imageUrl: key => backgroundUrls.get(key),
       titleBackgroundUrl: backgroundUrls.get(playerConfig.titleBackground),
       isPageVisible: workPageVisible,
+      motion: uiMotion,
+      reducedMotion: settings.settings.reducedMotion,
       onError: error => { console.error('[starter] 作品 UI 操作失败:', error); dialogue.showBanner(error instanceof Error ? error.message : String(error), 'tip'); },
     });
     commands.projectUi.setDefaultSuppression(Object.fromEntries(Object.keys(workUi.pages).map(page => [page, true])));
@@ -2144,7 +2153,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       if (event.choices) currentChoiceOptions = event.choices.options.map(option => ({ ...option }));
       uiDom?.refresh();
     });
-    bus.on('stateReset', () => { currentChoiceOptions = []; hideWorkPage('choices'); });
+    bus.on('stateReset', () => { currentChoiceOptions = []; hideWorkPage('choices'); uiDom?.resetMotion(); });
   }
   dialogue.showCommandRail([], onCommandRailSelect);
   refreshCommandRail();

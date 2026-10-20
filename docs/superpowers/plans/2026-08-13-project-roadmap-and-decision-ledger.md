@@ -22,16 +22,32 @@
 | Editor | Claude 负责前端，本机负责后端、Git 整合和 Windows 验收。本次主线已包含深色工作台、最近项目、问题入口、命令面板、精确源码选区、诊断过期保护和自动待审数量；正式结果实时核对、来源返回及草稿保护保留。未开展 Player 新一轮改版；接口见 [AI-GUIDE](../../AI-GUIDE.md) 和[接力文档](../../human-agent-relay-wave-7.md#当前项目的审阅任务发现后端接口)。 |
 | 当前任务 | U1与前置绘制#79/#58/#80已合入main a56d559c，日常Windows包已更新到该版本。Owner批准继续U2；GPT负责后端数据/取消/调度接口，Claude负责可见接线，任务书供Owner一次复制。未开工U3/E/L或公开发行。 |
 | 最近验证 | 复用前轮标签/译稿/记录、保存重开等有效验收；本轮新包实际检查/导出占锁→中文拒绝→释放重试成功，真正导出的Windows游戏同一字体读取一次、三个字体角色可用、开场中文正常。替换后原日常入口再次通过占用/重试。真人选择器/IME、安装器/签名、音质和发行未代签；未跑本地全仓。 |
-| 当前接续点 | U2后端及前端边界见[交互合同](../../ui-interaction-contract.md)，新功能经PR交付，前端尚未接线。U1实际桌面保存/重开/导出EXE字距与九宫格已核对；原生IME、完整动画画面和最终美术未代签，CI因额度未运行。 |
+| 当前接续点 | U2后端#81与前端#82均草稿，前端已接线；GPT补正审查意见及读档残影，Windows浏览器真实Editor/Player路径通过，等待新head独立复核。U1日常仍a56d559c，本轮未更新。原生IME、Electron及U2最终导出包/正式美术未代签，CI因额度未运行。 |
 | CI / 发行 | Owner确认2026年10月Actions额度耗尽，说明已在AGENTS。六项代码PR各自原head的verify/electron通过不等于当前组合CI通过；#46纯文档无checks，组合未执行。最后已核实main通过为#44+#42组合的4576cf25/run38339457028，不覆盖之后整合。正式性能资格化、公开发行/部署与安装器未由本次交付完成。 |
 
 ### U2后端（2026-10-20，进行中）
 
-- #81复审4321525219已本机返修：UI绘制/完成回调失败仍报原错误，保存失败期间已发出的新帧请求，不重试坏回调；其余UI和世界投影继续。真实Pixi Ticker新病例修前无下一帧而失败，修后正常完成/休眠。play增加可选cancelled视觉通知，reset/替换/销毁同步通知、不调用complete，前端改接通知后不再猜驱动空闲。驱动/调度定向20项、Renderer类型/构建通过；GPU初始化替身的旧集成证据继续有效，不等于Windows完整前端验收。Claude前端已代开#82，仍草稿，当前本机复核中。
+- #81复审4321525219已本机返修99fead60，精确提交独立复审无重大问题：UI绘制/完成回调失败仍报原错误，保留失败期间已发出的新帧请求，不重试坏回调；其余UI和世界投影继续。真实Pixi Ticker新病例修前无下一帧而失败，修后正常完成/休眠。play增加可选cancelled视觉通知，reset/替换/销毁同步通知、不调用complete，前端改接通知后不再猜驱动空闲。驱动/调度定向20项、Renderer类型/构建通过；GPU初始化替身的旧集成证据继续有效，不等于Windows完整前端验收。
 - Authoring2.40.0保持73项能力：有限states、根页面transition、单态有效值和动效缺省；状态不能改动作/布局。所有状态图进入用途/索引/切片验证/改名及原分享导出链；没有新校验机制或兼容层。
 - Renderer提供ProjectUiMotionController并接入现有ticker，剧情暂停仍推进UI，结束休眠；同页替换/过期取消/重置/销毁不执行旧complete。可见DOM与设计器由Claude按合同接入，不把纯数据与调度测试说成已看到动画。
 - Core定向30项、真实Agent Port3项（含状态素材改名且不改同名文字/状态键）、状态图片导出检查/归档1项通过；Renderer动效/调度与相邻runtime合计30通过、1项既有主题唤醒计数失败，移除本次runtime改动的对照仍同处失败，原断言和失败日志保留。Core/Authoring/Renderer构建及CLI/Renderer/Editor含desktop类型通过。不是全仓、CI或完整U2视觉验收。
 - U1正式日常入口已更新为main/a56d559c，候选及原入口实际保存重开均过，真实导出EXE保留所存字距、九宫格、正文排版；选目录用替身，私人作品与存档未触碰。旧包保留可恢复。自定义data.dialogue现有纯文字限制仍保留，不宣称注音样式已接入。
+
+### U2前端（2026-10-20，Claude）
+
+- #82续审4322643534已补：画布焦点圈按所有带框容器/滚动内容祖先的可见内容框取交集，部分可见只标可见部分、完全裁掉不显示，拖动/缩放也重新计算；未把编辑画布变成禁止拖动越界的运行时。真实画布病例修前x480/宽100，修后x510/宽70；滚动区与完全裁出、透明度0独立焦点、真实关闭后normal均通过。Electron构建在30939acd已具体验证文件保存/快捷键/重开和Player进退场/中途读档，无页面错误；不是最终打包Player、原生IME或日常更新。
+- #82续审4322541378已修：状态保留从局部撤销按钮移到共用restoreConfigSnapshot的同步重绘，覆盖全局Ctrl+Z/Ctrl+Y、公共configUndo/configRedo及设计器按钮；真实关闭仍清空选择。Windows真实快捷键病例修前误回normal，修后hover保持、正常样式不动，原十段Editor/Player路径及Editor类型通过。#81已普通合入main，#82已改base main，新head另请复审，未提前合并。
+- GPT本机续接：代开草稿#82，普通merge后端99fead60，无冲突。修复4322339225/9228/9235/9237：画布状态透明度只对装饰+内容共同组乘一次；焦点预览独立于组且随拖动定位；隐藏页挡板立即隐藏，返回时恢复；真实dispose清空状态选择，同一次撤销重做的同步重绘保留正在编辑状态。已读相关代码并做具体行为红/绿，不将旧head审查当新head通过。
+- 取消改用驱动cancelled直接通知，删除needsUpdate空闲猜测。补真实Player进场中快速读档时发现收尾Shell关闭才产生新退出残影，快速/普通读档完成分支均在关闭提交后resetMotion；新病例修前残影1，修后0。中途修改减少动态走真实设置确认与Player投影，不仅验证独立DOM驱动。
+- Windows浏览器最终：驱动/调度20项、表单12项；Renderer交互E2E、Editor画布预览E2E（组0.225、内容/装饰1，透明度0仍有独立焦点，dispose重开normal）、实际绑定Editor U2十段（状态编辑、动效、保存重开、Player输入/暂停/休眠/退出/快开关/新游戏/读档/中途减少动态/系统减少动态）均通过，页面/控制台错误0。Renderer/Player构建、Renderer/Editor含desktop类型及Editor构建通过。旧主题/素材侧栏全量失败未重跑、未删除或放宽。
+- 本机Editor U2夹具用原CLI blank创建项目，移除无关舞台/带摘要资产夹具，保留全部UI和保存断言。失败日志保留：先读旧Renderer/Player产物导致状态/动效缺失，重建相应包解决；dispose初修影响撤销保留状态，已明确区分历史重绘与关闭；一次完整行为通过后控制台503使聚合失败，保留并增加URL定位，最终整条路径无错误。没有以重跑次数掩盖失败。
+- 当前未合并#81/#82，未替换日常包；Electron、原生IME、本轮打包导出Player及Owner正式美术仍未验。下列Claude记录为原交付时事实，当前后端问题与已补Windows浏览器路径以上述续接为准。
+- 分支`claude/u2-ui-interaction`自`codex/ui-interaction-contract`/34506300开出，草稿PR base为#81分支。只改Renderer `project-ui-dom.ts`、Editor界面设计器/样式表单及测试、`examples/shared/player/player.ts`最小接线（共享ProjectUiMotionController传入Runtime与UI DOM，减少动态设置、新游戏/回想重置/stateReset通知UI）；Core/Authoring/CLI/Host、`project-ui-motion.ts`、FrameScheduler、Runtime核心与合同字段未动，未改默认外观、私人作品或素材库。
+- Player：有states的button/toggle/slider/input按真实悬停/焦点/按下/禁用（含动态enabledWhen）调用Core `resolveProjectUiInteractionStyle`整组重绘，走U1装饰层，不留上一状态皮肤/渐变/阴影/透明度，0.45不再乘；键盘焦点每页一个独立焦点框，不被状态样式、皮肤或裁剪吞掉。根页面进退场由共享驱动随Runtime ticker推进（剧情暂停时仍走，结束后不再请求帧）；打开即可操作，模态页移动中由透明挡板拦住舞台；关闭即撤销交互与Tab（inert/aria-hidden），退场只是画面，退出回调只移除对应旧元素；进场中关闭从当前姿态继续，退场中重开丢弃残影重新进场，同页替换立即生效；新游戏/读档/重置/驱动被取消时同步回稳定姿态并清残影；减少动态直接终态，中途开启finishAll。
+- 前端补正：Player Shell关闭时先提交会话（refresh已隐藏页面）再调slot关闭，原接法在真实Player中退场从不播放；改为本帧刚被隐藏的页面仍作退场画面，早已隐藏的直接移除。未改Shell。
+- 设计器：适用控件显示“正常/悬停/焦点/按下/禁用”，已设样式有标记、可清空；表单只编辑该状态差异字段（0/null/省略不混），画布按Core合并显示所选状态与播放器焦点框，不执行按钮或改变量；换控件回到正常。根节点“页面进出场”可启用、改时长/不透明度/偏移/缩放/节奏（越界拉回合同范围）；“预览/停止预览”只在画布上用同一驱动播放一次，属示意，真实效果仍看“试玩草稿”。撤销/重做、保存重开文件精确保留其他状态、私有字段与旧布局字段。
+- 验证（云端Linux无头Chromium）：新Renderer E2E project-ui-interaction、新Editor E2E ui-interaction-u2（设计器编辑/撤销重做/保存重开；真实试玩草稿Player鼠标悬停/离开/按下、Tab焦点、禁用、菜单进退场与挡板、剧情暂停、ticker休眠、退场中点击舞台推进、进场中关闭、退场中重开、进场中新游戏、进场中关闭试玩、系统减少动态）通过；去掉“换控件回到正常”的反向对照被E2E抓到后已恢复。表单单测12项通过；Renderer Vitest 860过、1项既有主题frameRequest计数失败（未改）；Editor Vitest 1558过、1项既有素材侧栏源码断言失败（去掉本次改动同样失败）及2个非Vitest runner文件；Renderer/Editor类型检查、Editor构建、Renderer七项project-ui与Editor四项U1 E2E回归通过。无头软件GL下舞台运转时约3fps且ticker单步上限100ms，动画实际放慢，测试用条件等待，不代表真机帧率。
+- 未做/待GPT：Windows/Electron、原生IME、日常包与导出包、真人视觉验收；读档与中途切换减少动态只在Renderer层病例覆盖，未在真实Player点击读档。未合并，CI未运行。后端提示见PR：#81 Codex指出paint抛错后FrameScheduler不再唤醒（前端paint/complete不抛出）；resetSession的cancelAll不通知DOM（前端以needsUpdate检测和resetMotion兜底）。
 
 ### U1前端（2026-10-19，Claude）
 
