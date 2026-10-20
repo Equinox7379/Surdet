@@ -1,6 +1,6 @@
 # U2：作品界面状态与进出场合同
 
-Authoring **2.40.0**，仍为73项能力、`ui.version:1`和原`project.ui`/`project.ui.patch`事务。后端#81与前端#82分别交付数据/调度和Editor/Player接线，当前均未合入main。Windows浏览器已验证编辑保存重开及真实Player交互/进退场/重置/读档/减少动态；Electron、原生IME和本轮最终导出包尚未验。U1基础样式前端已随#80合入，不更换默认外观。
+Authoring **2.40.0**，仍为73项能力、`ui.version:1`和原`project.ui`/`project.ui.patch`事务。后端#81与前端#82已普通合入main（821a1400）。Windows浏览器已验证编辑保存重开及真实Player交互/进退场/重置/读档/减少动态；30939acd的Electron构建与真实导出EXE已验证保存重开、状态颜色及进场中读档无残影，最后的Editor焦点裁切补正有独立浏览器病例。原生IME未验，日常包仍为U1，不更换默认外观。
 
 ## 控件状态
 

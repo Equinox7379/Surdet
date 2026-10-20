@@ -1,4 +1,4 @@
-import { projectPortraitOverrides, readProjectStage, readProjectUi, resolvePlayerTheme, resolveProjectFontPaths, stagePinnedSourcePaths, THEME_TOKEN_GROUPS, type CharacterVisuals, type ProjectUiDocument } from '@surdet/core';
+import { PROJECT_UI_PAGES, projectPortraitOverrides, readProjectStage, readProjectUi, resolvePlayerTheme, resolveProjectFontPaths, stagePinnedSourcePaths, THEME_TOKEN_GROUPS, type CharacterVisuals, type ProjectUiDocument, type ProjectUiNode, type ProjectUiPageId } from '@surdet/core';
 import { inspectStageConfig, applyStageConfigPatch, inspectThemeConfig, applyThemeConfigPatch, inspectUi, applyUiDocument, inspectPlayerConfig, applyPlayerConfigPatch, type PlayerConfigPatchInput, parseProjectConfigDocument } from '@surdet/authoring';
 import {
   AuthoringOperationError,
@@ -13,6 +13,7 @@ import {
   loadProjectSnapshot,
   recordValidation,
   stableStringify,
+  patchUiDocument,
   validateSnapshot,
   type ChangeSession,
   type ChangeRecord,
@@ -21,7 +22,9 @@ import {
   type ProjectWriteStorage,
   type SpeakerMigrationImpact,
   type TextHasher,
+  type UiPatch,
 } from '@surdet/authoring';
+import { copySharedFragment, readUiShare, type UiShare } from './ui-sharing.js';
 import { state, type SceneEntry, type TimelineEntry } from './state.js';
 import { applyTextCatalogPatch, type TextCatalogPatchInput } from '@surdet/authoring';
 import { assertConfigSourcesReadable } from './config-source.js';
@@ -491,9 +494,54 @@ export function projectThemeEditorDraft(config: Record<string, unknown>, draft: 
   return projected;
 }
 
+export interface UiShareImportTarget { page: ProjectUiPageId; parentId?: string; prefix: string }
+export interface UiShareImportPreview {
+  share: UiShare;
+  config: Record<string, unknown>;
+  value: ProjectUiDocument | null;
+  themeForm: string | null;
+  patch: UiPatch | null;
+  pages: Array<{ page: ProjectUiPageId; change: 'unchanged' | 'add' | 'remove' | 'replace' | 'insert'; before: string[]; after: string[] }>;
+}
+
+/** Read-only projection of the existing share format. No draft, asset or disk writes. */
+export function previewUiShareImport(text: string, destination: Record<string, unknown>, target?: UiShareImportTarget): UiShareImportPreview {
+  const share = readUiShare(text, destination);
+  const before = readProjectUi(destination);
+  let projected = structuredClone(destination), value: ProjectUiDocument | null, themeForm: string | null = null, patch: UiPatch | null = null;
+  if (share.kind === 'theme') {
+    const player = share.config.player as Record<string, unknown> | undefined;
+    themeForm = JSON.stringify({ theme: share.config.theme ?? {}, titleLogo: player?.titleLogo ?? null,
+      titleBackground: player?.titleBackground ?? null, font: null, fonts: share.config.fonts ?? {} }, null, 2);
+    projected = projectThemeEditorDraft(projected, parseThemeEditorDraft(themeForm));
+    value = readProjectUi({ ...share.config, variables: destination.variables });
+  } else {
+    if (!target) throw new Error('请选择片段要应用的页面和位置');
+    const source = readProjectUi({ ...share.config, variables: destination.variables })!;
+    if (!source.pages[target.page]) throw new Error('片段页面类型不同，请先切换到对应页面');
+    const node = copySharedFragment(source.pages[target.page]!, target.prefix);
+    if (target.parentId !== undefined) {
+      const find = (current: ProjectUiNode): ProjectUiNode | undefined => current.id === target.parentId ? current : current.children?.map(find).find(Boolean);
+      const root = before?.pages[target.page], parent = root && find(root);
+      if (!parent) throw new Error('片段的目标父组件已不存在');
+      patch = { type: 'node.insert', page: target.page, parentId: target.parentId, index: parent.children?.length ?? 0, node };
+    } else patch = { type: 'page.set', page: target.page, root: node };
+    value = patchUiDocument(before, projected, patch);
+  }
+  if (value) projected.ui = value; else delete projected.ui;
+  const ids = (node: ProjectUiNode | undefined): string[] => node ? [node.id, ...(node.children ?? []).flatMap(ids)] : [];
+  const pages = PROJECT_UI_PAGES.map(page => {
+    const a = before?.pages[page], b = value?.pages[page];
+    const change: UiShareImportPreview['pages'][number]['change'] = stableStringify(a ?? null) === stableStringify(b ?? null) ? 'unchanged'
+      : !a ? 'add' : !b ? 'remove' : share.kind === 'fragment' && patch?.type === 'node.insert' ? 'insert' : 'replace';
+    return { page, change, before: ids(a), after: ids(b) };
+  });
+  return { share, config: projected, value, themeForm, patch, pages };
+}
+
 /** Narrow theme writer: translate a complete Editor form to shared field patches
  * in one direct transaction, preserving unrelated project fields. */
-export async function commitThemeConfiguration(themeValue: Record<string, unknown> | null, titleLogo: string | null | undefined, expectedConfigText: string, playerConfig: ThemeEditorDraft['playerConfig'] = {}): Promise<{ text: string; before: unknown; after: unknown }> {
+export async function commitThemeConfiguration(themeValue: Record<string, unknown> | null, titleLogo: string | null | undefined, expectedConfigText: string, playerConfig: ThemeEditorDraft['playerConfig'] = {}, ui?: { value: ProjectUiDocument | null }): Promise<{ text: string; before: unknown; after: unknown }> {
   const root = state.dirHandle, handle = state.handles.gameConfig;
   const name = state.dirName;
   if (!root || !handle || state.reviewWorkspace !== null || state.reviewPreviewReadOnly || state.projectLoading)
@@ -548,7 +596,19 @@ export async function commitThemeConfiguration(themeValue: Record<string, unknow
     result = await applyThemeConfigPatch(session,
       { operationId: crypto.randomUUID(), expectedFingerprint: current.fingerprint, patch: nextTheme === null ? null : patch }, editorStorage, catalog);
   }
-  if (!result && !playerChanged) return { text: expectedConfigText, before: before.value, after: before.value };
+  if (ui) {
+    const current = parseProjectConfigDocument(session.record.workingFiles['game.config.json'] ?? expectedConfigText);
+    const fingerprint = (await inspectUi(current, editorStorage)).fingerprint;
+    await applyUiDocument(session, { operationId: crypto.randomUUID(), expectedFingerprint: fingerprint, value: ui.value }, editorStorage, catalog, async path => {
+      const asset = state.dirAssets.find(item => (item.sourcePath ?? (item.handle ? assetPathForHandle(item.handle) : undefined)) === path);
+      if (!asset?.handle) throw new Error(`无法读取九宫格图片：${path}`);
+      const bytes = new Uint8Array(await (await asset.handle.getFile()).arrayBuffer());
+      if (state.dirHandle !== root || state.handles.gameConfig !== handle || state.gameConfigText !== expectedConfigText)
+        throw new Error('界面图片读取期间项目已变化。');
+      return bytes;
+    });
+  }
+  if (!result && !playerChanged && !ui) return { text: expectedConfigText, before: before.value, after: before.value };
   const afterTheme = result ? result.themeConfig.value : before.value;
   const text = session.record.workingFiles['game.config.json']!;
   const validationStorage: ProjectStorage = { ...editorStorage,
