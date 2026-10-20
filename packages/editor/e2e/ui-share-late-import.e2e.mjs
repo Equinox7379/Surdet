@@ -7,6 +7,9 @@ import { startDevProject } from '../scripts/dev-project.mjs';
 import { createNodeFsBridge, nodeBackedFileSystemInit } from './asset-import-authority.e2e.mjs';
 import { createStageFixture } from './support/stage-fixture.mjs';
 
+// U3 dialog semantics: a chosen share file is read and prepared inside the import dialog. A read
+// that finishes late never reaches a dialog that was cancelled, a newer file or a reopened project,
+// and nothing changes the draft or the asset workbench before an explicit 应用到草稿 / 加入素材导入.
 const base = os.tmpdir();
 const output = fs.mkdtempSync(path.join(base, 'surdet-ui-share-late-import-'));
 const share = (text) => JSON.stringify({ format: 'surdet-ui', version: 1, kind: 'fragment', variables: {}, assets: [],
@@ -19,11 +22,26 @@ const assetShare = (name) => {
   value.assets.push({ path: `content/assets/bg/${name}.png`, base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jw4kAAAAASUVORK5CYII=' });
   return JSON.stringify(value);
 };
+const snapshot = page => page.evaluate(async () => {
+  const config = await import('/src/panels/config.ts');
+  return { ui: config.readUiConfigDraft(), dirty: config.inspectConfigDraftState(), history: config.configHistoryDepth(),
+    files: window.surdetEditorDebug.state.assetImportWorkspace.draftItems.map(item => item.fileName) };
+});
+const dialogState = page => page.evaluate(() => {
+  const dialog = document.querySelector('[data-ui-share-import-dialog]');
+  if (!dialog) return null;
+  return { file: dialog.querySelector('.ui-share-import-file')?.textContent, status: dialog.querySelector('.ui-share-import-status')?.textContent,
+    error: dialog.querySelector('[data-ui-share-import-error]')?.innerText ?? null, applyDisabled: dialog.querySelector('[data-ui-share-import-apply]').disabled,
+    resources: [...dialog.querySelectorAll('[data-ui-share-import-resource]')].map(item => `${item.dataset.uiShareImportResource}:${item.dataset.state}`),
+    impact: [...dialog.querySelectorAll('[data-ui-share-import-page]')].map(item => item.innerText).join('\n') };
+});
+const ready = page => page.waitForFunction(() => document.querySelector('[data-ui-share-import-dialog] .ui-share-import-status')?.textContent?.includes('预览已就绪'));
+const loaded = page => page.waitForFunction(() => !window.surdetEditorDebug.state.projectLoading && window.surdetEditorDebug.state.assetIntelligenceState === 'ready');
 const results = [], errors = [];
 let server, browser;
 try {
   browser = await chromium.launch({ headless: true });
-  for (const mode of ['editing', 'new-file', 'missing-assets', 'unchanged']) {
+  for (const mode of ['cancel-then-edit', 'new-file', 'missing-assets', 'project-reopen', 'unchanged']) {
     const fixture = createStageFixture(path.join(output, mode, 'project'));
     const configPath = path.join(fixture.root, 'game.config.json');
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8')); delete config.ui;
@@ -39,10 +57,13 @@ try {
       await page.addInitScript(nodeBackedFileSystemInit, { initialRootKey: 'project' });
       await page.goto('http://127.0.0.1:18080/index.html');
       await page.locator('[data-action="open-project"]').click();
-      await page.waitForFunction(() => !window.surdetEditorDebug.state.projectLoading && window.surdetEditorDebug.state.assetIntelligenceState === 'ready');
-      await page.locator('[data-editor-mode="config"]').click();
-      await page.locator('[data-config-section-target="ui"]').click();
-      await page.locator('[data-ui-designer="true"]').waitFor({ state: 'visible' });
+      await loaded(page);
+      const toDesigner = async () => {
+        await page.locator('[data-editor-mode="config"]').click();
+        await page.locator('[data-config-section-target="ui"]').click();
+        await page.locator('[data-ui-designer="true"]').waitFor({ state: 'visible' });
+      };
+      await toDesigner();
       await page.evaluate(() => {
         const original = File.prototype.text;
         File.prototype.text = function () {
@@ -51,43 +72,67 @@ try {
           return new Promise(resolve => { window.__releaseShare = async () => resolve(await original.call(this)); });
         };
       });
+      const initial = await snapshot(page);
       const upload = page.locator('.ui-designer input[type="file"]');
       await upload.setInputFiles({ name: 'delayed-fragment.json', mimeType: 'application/json', buffer: Buffer.from(mode === 'missing-assets' ? assetShare('old_a') : share('旧文件A')) });
       await page.waitForFunction(() => window.__shareReading === true);
-      if (mode === 'editing') {
+      const reading = await dialogState(page);
+      assert.equal(reading.status, '正在读取文件…'); assert.equal(reading.applyDisabled, true);
+      assert.deepEqual(await snapshot(page), initial, 'choosing a file changes nothing');
+      const chooseInDialog = async (name, text) => {
+        const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: '选择其他文件…', exact: true }).click()]);
+        await chooser.setFiles({ name, mimeType: 'application/json', buffer: Buffer.from(text) });
+        await ready(page);
+      };
+      if (mode === 'cancel-then-edit') {
+        await page.keyboard.press('Escape');
+        await page.locator('[data-ui-share-import-dialog]').waitFor({ state: 'detached' });
         await page.getByRole('button', { name: '添加组件', exact: true }).click();
         await page.getByLabel('新增组件类型', { exact: true }).selectOption('text');
         await page.getByRole('button', { name: '添加组件', exact: true }).click();
         await page.getByLabel('文字或数据字段', { exact: true }).fill('读取期间的新组件');
         await page.getByLabel('文字或数据字段', { exact: true }).press('Tab');
       } else if (mode === 'new-file') {
-        await upload.setInputFiles({ name: 'new-fragment.json', mimeType: 'application/json', buffer: Buffer.from(share('后选文件B')) });
-        await page.waitForFunction(async () => JSON.stringify((await import('/src/panels/config.ts')).readUiConfigDraft()).includes('后选文件B'));
+        await chooseInDialog('new-fragment.json', share('后选文件B'));
       } else if (mode === 'missing-assets') {
-        await upload.setInputFiles({ name: 'new-fragment.json', mimeType: 'application/json', buffer: Buffer.from(assetShare('new_b')) });
-        await page.waitForFunction(() => window.surdetEditorDebug.state.assetImportWorkspace.draftItems.some(item => item.fileName === 'new_b.png'));
+        await chooseInDialog('new-fragment.json', assetShare('new_b'));
+      } else if (mode === 'project-reopen') {
+        await page.evaluate(() => document.querySelector('[data-action="open-project"]').click());
+        await page.locator('[data-ui-share-import-dialog]').waitFor({ state: 'detached' });
+        await loaded(page); await toDesigner();
       }
-      const before = await page.evaluate(async () => { const config = await import('/src/panels/config.ts'); return { ui: config.readUiConfigDraft(), dirty: config.inspectConfigDraftState(), history: config.configHistoryDepth(), files: window.surdetEditorDebug.state.assetImportWorkspace.draftItems.map(item => item.fileName) }; });
+      const before = { draft: await snapshot(page), dialog: await dialogState(page) };
       await page.evaluate(() => window.__releaseShare());
-      await page.waitForFunction(async () => /导入期间|另一个共享文件/.test(document.getElementById('status')?.textContent ?? '')
-        || JSON.stringify((await import('/src/panels/config.ts')).readUiConfigDraft()).includes('旧文件A')
-        || window.surdetEditorDebug.state.assetImportWorkspace.draftItems.some(item => item.fileName === 'old_a.png'));
-      const after = await page.evaluate(async () => { const config = await import('/src/panels/config.ts'); return { ui: config.readUiConfigDraft(), dirty: config.inspectConfigDraftState(), history: config.configHistoryDepth(), files: window.surdetEditorDebug.state.assetImportWorkspace.draftItems.map(item => item.fileName) }; });
-      const status = await page.locator('#status').innerText();
-      results.push({ mode, before, after, status });
+      if (mode === 'unchanged') await ready(page); else await page.waitForTimeout(800);
+      const after = { draft: await snapshot(page), dialog: await dialogState(page) };
+      if (mode === 'unchanged') {
+        assert.deepEqual(after.draft, initial, 'a ready preview is not an apply');
+        assert.match(after.dialog.impact, /标题/);
+      } else assert.deepEqual(after, before, `${mode}: the late read must not reach the dialog or the draft`);
+      if (mode === 'cancel-then-edit') assert(JSON.stringify(after.draft.ui).includes('读取期间的新组件'));
+      if (mode === 'new-file') assert.equal(after.dialog.file, '文件：new-fragment.json');
+      if (mode === 'missing-assets') {
+        assert.deepEqual(after.dialog.resources, ['content/assets/bg/new_b.png:missing']);
+        await page.locator('[data-ui-share-import-stage-assets]').click();
+        await page.waitForFunction(() => window.surdetEditorDebug.state.assetImportWorkspace.draftItems.length > 0);
+        assert.deepEqual((await snapshot(page)).files, ['new_b.png'], 'only the newer file\'s assets are staged');
+      }
+      if (mode === 'project-reopen') assert.equal(after.dialog, null);
+      if (mode === 'new-file' || mode === 'unchanged') {
+        await page.locator('[data-ui-share-import-apply]').click();
+        await page.locator('[data-ui-share-import-dialog]').waitFor({ state: 'detached' });
+        const applied = JSON.stringify((await snapshot(page)).ui);
+        assert(applied.includes(mode === 'new-file' ? '后选文件B' : '旧文件A'), applied);
+        assert(!applied.includes(mode === 'new-file' ? '旧文件A' : '后选文件B'), applied);
+      }
+      results.push({ mode, before, after, status: await page.locator('#status').innerText() });
       assert.deepEqual(fs.readFileSync(configPath), originalConfig, 'import must remain a draft');
     } finally { await page.close(); await server.close(); server = undefined; }
   }
   fs.writeFileSync(path.join(output, 'result.json'), JSON.stringify({ results, errors }, null, 2));
-  console.log(JSON.stringify({ output, results, errors }, null, 2));
-  const missing = results.find(result => result.mode === 'missing-assets');
-  assert.deepEqual(missing.after, missing.before, 'a newer pending resource share must supersede the old read even without a UI draft change');
-  for (const result of results) {
-    if (result.mode === 'unchanged') assert(JSON.stringify(result.after.ui).includes('旧文件A'));
-    else assert.deepEqual(result.after, result.before, result.mode + ' must not be overwritten by the old read');
-  }
+  console.log(JSON.stringify({ output, modes: results.map(result => result.mode), errors }, null, 2));
   assert.deepEqual(errors, []);
 } catch (error) {
-  console.log(JSON.stringify({ output, errors, failure: String(error) }));
+  console.log(JSON.stringify({ output, errors, failure: String(error.stack ?? error) }));
   throw error;
 } finally { await browser?.close(); await server?.close(); }
