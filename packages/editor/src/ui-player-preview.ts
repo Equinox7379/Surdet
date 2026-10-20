@@ -48,6 +48,9 @@ export async function openUiPlayerPreview(configText: string, gallery: unknown =
   frame.src = './ui-preview.html';
   dialog.append(heading, frame);
   const urls: string[] = [];
+  let controlsSeen: string | null | undefined;
+  try { controlsSeen = sessionStorage.getItem('surdet:controls-seen'); sessionStorage.removeItem('surdet:controls-seen'); }
+  catch { /* Session storage may be unavailable in the current host. */ }
   let disposed = false;
   let ready = false;
   let payload: unknown;
@@ -67,11 +70,22 @@ export async function openUiPlayerPreview(configText: string, gallery: unknown =
     frame.src = 'about:blank'; frame.remove();
     for (const url of urls) URL.revokeObjectURL(url);
     clearPreviewStorage(id);
+    if (controlsSeen !== undefined) {
+      try {
+        if (controlsSeen === null) sessionStorage.removeItem('surdet:controls-seen');
+        else sessionStorage.setItem('surdet:controls-seen', controlsSeen);
+      } catch { /* Session storage is unavailable. */ }
+    }
     dialog.close(); dialog.remove();
     if (closePreview === cleanup) closePreview = null;
   };
   closePreview = cleanup;
   close.onclick = cleanup;
+  // This sibling modal is outside the import dialog: its keys must not edit/save the workspace behind it.
+  dialog.addEventListener('keydown', event => {
+    event.stopPropagation();
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') event.preventDefault();
+  });
   dialog.oncancel = event => { event.preventDefault(); cleanup(); };
   window.addEventListener('message', onMessage);
   document.body.appendChild(dialog); dialog.showModal();

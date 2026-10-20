@@ -250,7 +250,7 @@ Player 的显式主题字段只覆盖相应项目字段，不会因只显式设�
 
 ### 作品界面与人类接管
 
-不定制时沿用默认 UI。需要定制时，先用 `project.ui({view:"working"})`（MCP：`surdet_project_ui`）读取 value/defaultPages/nodes/fingerprint，再用 `project.ui.patch`（MCP：`surdet_project_ui_patch`）修改。文档位于 `game.config.json.ui`，结构 `{version:1,pages:{...}}`；省略页面即使用默认界面。2.39.0新增effectiveStyle/rect/contentRect的U1前后端已合入；有限样式和图片检查见[U1合同](ui-style-contract.md)。2.40.0新增effectiveStates/effectiveTransition，U2可见状态及动画已随#81/#82合入。Editor的主题/片段预览与确认应用数据端口见[U3共享导入合同](ui-sharing-import-contract.md)，不是新增Agent能力，可见预览仍待前端。
+不定制时沿用默认 UI。需要定制时，先用 `project.ui({view:"working"})`（MCP：`surdet_project_ui`）读取 value/defaultPages/nodes/fingerprint，再用 `project.ui.patch`（MCP：`surdet_project_ui_patch`）修改。文档位于 `game.config.json.ui`，结构 `{version:1,pages:{...}}`；省略页面即使用默认界面。2.39.0新增effectiveStyle/rect/contentRect的U1前后端已合入；有限样式和图片检查见[U1合同](ui-style-contract.md)。2.40.0新增effectiveStates/effectiveTransition，U2可见状态及动画已随#81/#82合入。Editor的主题/片段预览、确认应用与前端接线见[U3共享导入合同](ui-sharing-import-contract.md)，#83/#84已交、待组合复核，不是新增Agent能力。
 
 页面：title、system-menu、save-load、settings、gallery、backlog、dialogue、choices、toolbar、hud。固定组件：container、image、text、button、toggle、slider、progress、input、scroll、tabs、content。每个节点有全作品唯一的 id、type 和 `frame:{x,y,width,height,anchorX?,anchorY?}`。设计坐标为 1280×720，节点原点＝父级原点＋x/y－anchor×本节点宽高；锚点范围0..1，默认0，尺寸须为正。兄弟顺序即叠放顺序；tabs 子项用 tab 命名分组。
 
