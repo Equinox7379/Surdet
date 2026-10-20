@@ -596,6 +596,27 @@ export async function saveUiConfigDraftUnlocked() {
   return result;
 }
 
+/** Theme and UI of the same import validate in one authoring session and commit once. */
+async function saveThemeAndUiDraftsUnlocked(): Promise<void> {
+  assertProjectWriteUnlocked();
+  assertConfigSaveReady('gameConfig');
+  const submittedTheme = readThemeConfigDraft(), submittedUi = readUiConfigDraft(), revision = configSessionRevision;
+  const config = parseConfigObj();
+  if (JSON.stringify(themeFormValue(config)) !== themeSourceBaseline || JSON.stringify(readProjectUi(config)) !== uiSourceBaseline)
+    throw new Error('主题或界面来源配置已经变化，请保留草稿并重新核对。');
+  const draft = parseThemeEditorDraft(submittedTheme);
+  const result = await commitThemeConfiguration(draft.theme, draft.titleLogo, state.gameConfigText, draft.playerConfig, { value: submittedUi });
+  if (revision === configSessionRevision) {
+    const after = parseProjectConfigDocument(result.text);
+    themeSourceBaseline = JSON.stringify(themeFormValue(after));
+    uiSourceBaseline = JSON.stringify(readProjectUi(after));
+    markConfigSectionSaved('theme', submittedTheme, revision);
+    markConfigSectionSaved('ui', submittedUi, revision);
+    for (const snapshot of [...configHist.past, ...configHist.future]) snapshot.gameConfigText = result.text;
+    requestValidateHook();
+  }
+}
+
 /** 打开配置页时从盘上重读源文件；失败保持显式错误，不冒充旧值仍有效。 */
 async function refreshConfigSources(revision: number): Promise<boolean> {
   const gameConfigHandle = state.handles.gameConfig;
@@ -2103,18 +2124,30 @@ export interface PreparedUiShareImport {
   apply(): Promise<void>;
 }
 
+function uiShareConfigText(): string {
+  let source = state.gameConfigText;
+  if (varRows !== null && configBaselines.variables !== JSON.stringify(varRows)) {
+    const { variables, errors } = rowsToVariables(varRows);
+    if (errors.length) throw new Error(`变量草稿无效：${errors.join('；')}`);
+    source = applyVariablesToConfig(source, variables);
+  }
+  return previewUiConfigText(previewThemeConfigText(previewStageConfigText(source)));
+}
+
 /** Prepare only; each explicit action rechecks the original project/draft and resources. */
 export async function prepareUiShareImportDraft(text: string, target?: UiShareImportTarget): Promise<PreparedUiShareImport> {
   assertProjectWriteUnlocked();
   if (state.reviewWorkspace || state.reviewPreviewReadOnly || state.projectLoading) throw new Error('当前项目不可导入界面');
   const root = state.dirHandle, revision = configSessionRevision, sequence = ++uiShareImportSequence;
-  const currentText = (): string => previewUiConfigText(previewThemeConfigText(state.gameConfigText));
+  const currentText = uiShareConfigText;
+  const draftState = (): string => JSON.stringify(CONFIG_SECTIONS.map(section => serializeConfigSection(section.id)));
+  const sourceDraft = draftState();
   const sourceText = currentText();
   const plan = previewUiShareImport(text, parseProjectConfigDocument(sourceText), target);
   let applied = false;
   const assertCurrent = (): void => {
     if (applied) throw new Error('这次界面导入已经应用');
-    if (sequence !== uiShareImportSequence || root !== state.dirHandle || revision !== configSessionRevision || sourceText !== currentText())
+    if (sequence !== uiShareImportSequence || root !== state.dirHandle || revision !== configSessionRevision || sourceDraft !== draftState() || sourceText !== currentText())
       throw new Error('导入预览期间项目或草稿已变化，请重新预览');
     assertProjectWriteUnlocked();
     if (state.reviewWorkspace || state.reviewPreviewReadOnly || state.projectLoading) throw new Error('当前项目不可导入界面');
@@ -2162,7 +2195,7 @@ function renderUiSection(): HTMLElement {
     preview: previewGalleryDraft,
     exportShare: async fragment => {
       const root = state.dirHandle;
-      const config = parseProjectConfigDocument(previewUiConfigText(previewThemeConfigText(state.gameConfigText)));
+      const config = parseProjectConfigDocument(uiShareConfigText());
       const share = await exportUiShare(config, shareAssets(), fragment);
       if (state.dirHandle !== root) throw new Error('导出期间项目已切换');
       const url = URL.createObjectURL(new Blob([JSON.stringify(share, null, 2)], { type: 'application/json' }));
@@ -2317,9 +2350,18 @@ export async function saveDirtyConfigSections(): Promise<ConfigSaveOutcome> {
     return { saved, failures, remainingDirty: inspectConfigDraftState().dirty };
   }
   const dirtySections = inspectConfigDraftState().dirtySections;
+  const saveThemeAndUi = dirtySections.includes('theme') && dirtySections.includes('ui');
+  let savedThemeAndUi = false;
   let saved = 0;
   let failures = 0;
   for (const section of dirtySections) {
+    if (saveThemeAndUi && (section === 'theme' || section === 'ui')) {
+      if (savedThemeAndUi) continue;
+      savedThemeAndUi = true;
+      try { await saveThemeAndUiDraftsUnlocked(); saved += 2; }
+      catch (error) { failures++; setStatus(`主题和界面未保存：${error instanceof Error ? error.message : String(error)}`, false, 6000); }
+      continue;
+    }
     let ok = false;
     try {
       switch (section) {

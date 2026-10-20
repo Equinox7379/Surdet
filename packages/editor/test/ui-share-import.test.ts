@@ -21,6 +21,12 @@ const destination = () => ({ title: 'B', entryScene: 'start', privateField: 'KEE
     settings: { id: 'settings', type: 'container' as const, frame } } } });
 
 describe('U3 read-only UI share import projection', () => {
+  it('does not replace pages whose object fields were only reordered', async () => {
+    const share = await exportUiShare(source, assets), b = destination();
+    b.ui = structuredClone(share.config.ui) as typeof b.ui;
+    b.ui.pages.title.frame = { height: 720, width: 1280, y: 0, x: 0 };
+    expect(previewUiShareImport(JSON.stringify(share), b).pages.every(page => page.change === 'unchanged')).toBe(true);
+  });
   it('projects a full U1/U2 theme without writing B or copying non-presentation source data', async () => {
     const share = await exportUiShare(source, assets), b = destination(), original = structuredClone(b);
     const preview = previewUiShareImport(JSON.stringify(share), b);
