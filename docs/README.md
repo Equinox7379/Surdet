@@ -12,7 +12,8 @@
 项目插件后端及Claude信任/预览接入：[项目插件合同](project-plugins-contract.md)。
 Windows免安装导出后端及Claude导出界面接入：[Windows导出合同](windows-game-export-contract.md)。
 U1有限样式与九宫格：[作品界面样式合同](ui-style-contract.md)（前后端已随#58/#80合入）。
-U2交互状态、根页面进出场和共用动画驱动：[界面交互合同](ui-interaction-contract.md)（后端接口，待前端接线）。
+U2交互状态、根页面进出场和共用动画驱动：[界面交互合同](ui-interaction-contract.md)（#81/#82已合入）。
+U3现有主题/界面片段的只读预览与确认应用：[共享导入合同](ui-sharing-import-contract.md)（数据端口已交，等待可见接线）。
 U1前端可操作示例（技术示例，非最终美术，未用于默认外观，待Owner确认）：[U1界面示例](ui-style-u1-example.md)。
 
 | 需要做什么 | 阅读入口 |

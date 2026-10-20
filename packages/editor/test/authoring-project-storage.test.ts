@@ -35,6 +35,27 @@ afterEach(() => {
 });
 
 describe('editor authoring project storage', () => {
+  it('saves a theme and UI together once, refusing failed UI validation before any write', async () => {
+    let disk = JSON.stringify({ entryScene: 'intro', variables: {}, future: 'keep', theme: { colors: { accent: 1 } } }), writes = 0;
+    const handle = { getFile: async () => new File([disk], 'game.config.json'), createWritable: async () => ({
+      write: async (text: unknown) => { disk = String(text); writes++; }, close: async () => {},
+    }) } as unknown as FileSystemFileHandle;
+    Object.assign(state, { dirName: 'u3-save', dirHandle: { name: 'u3-save' }, handles: { ...state.handles, gameConfig: handle }, gameConfigText: disk,
+      scenes: new Map([['intro', { id: 'intro', file: 'intro.gal', text: '@scene intro\n@end\n', eol: '\n', dirty: false, handle: null }]]), timelines: [],
+      configFiles: { events: null, growth: null, calendar: null, achievements: null, gallery: null, terminology: null }, configReadErrors: {},
+      dirAssets: [], reviewWorkspace: null, reviewPreviewReadOnly: false, projectLoading: false });
+    const ui: ProjectUiDocument = { version: 1, pages: { title: { id: 'title', type: 'container', frame: { x: 0, y: 0, width: 1280, height: 720 },
+      style: { backgroundImage: { asset: 'missing', fit: 'stretch' } } } } };
+    const initial = disk;
+    await expect(commitThemeConfiguration({ colors: { accent: 2 } }, null, initial, {}, { value: ui })).rejects.toThrow('missing');
+    expect(disk).toBe(initial); expect(state.gameConfigText).toBe(initial); expect(writes).toBe(0);
+    delete ui.pages.title!.style;
+    await commitThemeConfiguration({ colors: { accent: 2 } }, null, initial, {}, { value: ui });
+    expect(writes).toBe(1); expect(JSON.parse(disk)).toMatchObject({ future: 'keep', theme: { colors: { accent: 2 } }, ui });
+    const saved = disk;
+    await commitThemeConfiguration({ colors: { accent: 2 } }, null, saved, {}, { value: null });
+    expect(writes).toBe(2); expect(JSON.parse(disk).ui).toBeUndefined();
+  });
   it('U1 UI save reads the real file and rejects invalid slices without writing config', async () => {
     let disk = JSON.stringify({ entryScene: 'intro', variables: {}, future: 'keep' }), writes = 0;
     let image = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"/>';
