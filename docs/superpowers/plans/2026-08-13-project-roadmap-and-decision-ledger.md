@@ -35,6 +35,7 @@
 
 ### U2前端（2026-10-20，Claude）
 
+- #82续审4322541378已修：状态保留从局部撤销按钮移到共用restoreConfigSnapshot的同步重绘，覆盖全局Ctrl+Z/Ctrl+Y、公共configUndo/configRedo及设计器按钮；真实关闭仍清空选择。Windows真实快捷键病例修前误回normal，修后hover保持、正常样式不动，原十段Editor/Player路径及Editor类型通过。#81已普通合入main，#82已改base main，新head另请复审，未提前合并。
 - GPT本机续接：代开草稿#82，普通merge后端99fead60，无冲突。修复4322339225/9228/9235/9237：画布状态透明度只对装饰+内容共同组乘一次；焦点预览独立于组且随拖动定位；隐藏页挡板立即隐藏，返回时恢复；真实dispose清空状态选择，同一次撤销重做的同步重绘保留正在编辑状态。已读相关代码并做具体行为红/绿，不将旧head审查当新head通过。
 - 取消改用驱动cancelled直接通知，删除needsUpdate空闲猜测。补真实Player进场中快速读档时发现收尾Shell关闭才产生新退出残影，快速/普通读档完成分支均在关闭提交后resetMotion；新病例修前残影1，修后0。中途修改减少动态走真实设置确认与Player投影，不仅验证独立DOM驱动。
 - Windows浏览器最终：驱动/调度20项、表单12项；Renderer交互E2E、Editor画布预览E2E（组0.225、内容/装饰1，透明度0仍有独立焦点，dispose重开normal）、实际绑定Editor U2十段（状态编辑、动效、保存重开、Player输入/暂停/休眠/退出/快开关/新游戏/读档/中途减少动态/系统减少动态）均通过，页面/控制台错误0。Renderer/Player构建、Renderer/Editor含desktop类型及Editor构建通过。旧主题/素材侧栏全量失败未重跑、未删除或放宽。
