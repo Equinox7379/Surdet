@@ -20,6 +20,7 @@
 
 ### U1前端（2026-10-19，Claude）
 
+- 2026-10-20 GPT第三轮复核：a4e9bb34的分组透明度/内容框裁剪在Windows控件E2E通过（像素117,78,45，禁用0.225），新增贴边按钮真实Tab与框内焦点像素病例通过；未改焦点产品逻辑。另发现仍有b183e4cf评论4316431304遗漏：仅旧background的节点/父节点未标作品底面，文字误用Editor色；定向真实画布与Player复现后，局部补判断，黑色0、父底面、显式字色、空白/全透明画布均通过，未改Core或合同。新画布病例不接保存/舞台，不冒称完整Editor集成；原带SHA夹具的全流程仍未本地运行。Renderer构建/类型、Editor含desktop类型通过，未合并/CI/打包或最终美术验收。
 - 2026-10-20 GPT本机补正80-REV-05（Owner授权直接修）：Windows原样控件E2E发现checkbox的inline baseline偏移，合法4px内容框可偏17px；仅对boxed原生input设块级布局，未设U1样式的旧控件不变。新增小内容框开关/滑块精确坐标病例，Windows真实Chromium控件E2E全部通过，Renderer构建与类型检查通过；证据和原失败在#80本机评论及任务台账。此项无需Claude重复返修；不代表整个U1/原生IME/打包Player/组合版本验收，未合并或触发CI。
 - 按精修规划U1前端，分支`claude/u1-ui-style`自`codex/ui-style-contract`/654d3a79开出；云端令牌创建PR和评论返回403，草稿PR #80由GPT开启（base `codex/ui-style-contract`）。未合并、未rebase/强推、未merge main或#79；合并顺序#79→#58→#80。只改Renderer绘制与Editor界面设计器；Core/Authoring/CLI/Host/存档/权限及合同字段未动，未开U2/U3/E1/E2。
 - 界面设计器属性区按“文字、背景、框体与皮肤”分组，只显示该组件类型可用的属性，中文标签与单位；每项显示有效值和来源，可“恢复继承”或显式清空（`null`/空数组；内边距以四边0表示清空）。提交仍是现有`node.update`整份`patch.style`，保留未改键。画布与Player共用Core有效值、内容区和九宫格几何；`project-ui-style-dom.ts`绘制背景/边框/阴影/九宫格，素材缺失按组件报中文错误。
