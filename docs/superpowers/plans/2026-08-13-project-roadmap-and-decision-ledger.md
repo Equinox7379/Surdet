@@ -27,6 +27,7 @@
 
 ### U1后端与接口（2026-10-14）
 
+- 2026-10-20 继续处理#58新审查：补Agent Port严格style schema的columns/imageFit，Core有效样式返回对应作者值及默认1/contain。真实Agent Port用例在修前被INVALID_REQUEST拒绝，Core显式/默认两例也红；修后Core相关16项、Agent Port两条真实项目路径通过（29项未执行），覆盖新建页面/插节点/更新、非法值拒绝且草稿不变、清空后默认值、working与磁盘区分。Core/Authoring构建及CLI类型检查通过；无新增校验机制、无CI或全仓回归，待新head独立复审。
 - 2026-10-20 整合#79主线到#58：保留imageFit/columns并纳入U1有限样式验证，合并两份测试的新增病例而非取单边；progress轨道有效默认值统一为surface/radius.sm，保留作者显式0。按Owner本次限定例外，补齐现有config:theme记录的titleBackground（场景/时间轴生产、基线与工作态读取一致），没有新校验机制；最初两个定向病例修前失败，修后通过，再补移除背景的空值病例。Core样式/布局15项通过；其他整合验证与未验边界见#58评论及既有本机台账。本段不是整个U1或Windows打包验收，CI仍未运行。
 - 按Owner持续目标补合#53/#54/#55，普通merge分别4e5cca61/b345c383/d46cb0c5；不改历史、不重跑无runner的CI。新分支codex/ui-style-contract仅接U1数据/几何/读写/素材链，不把此前本机接手审计前端返修扩大成新UI重做。
 - 合同2.39.0：既有UI文档增加有限文字、背景、框体、九宫格字段；公开读取含有效值和作者内容坐标，现有direct事务在写入前校验真实图片尺寸。素材用处/索引/改名、候选依赖、现有分享、Editor共享保存和Windows导出前检查同步消费；未增加新哈希、兼容层或通用框架。
