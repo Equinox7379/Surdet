@@ -2,7 +2,7 @@ import {
   applySceneCreate, applyScenePatch, beginChange, buildObjectIndex, InMemoryChangeRepository, parseSceneStructure, splitInstruction,
   type ChangeSession, type ObjectIndex, type ProjectSnapshot, type SceneBlockInput, type SceneChoiceOptionInput, type ScenePatchOperation,
 } from '@surdet/authoring';
-import { findChoiceArrow } from '@surdet/core';
+import { findChoiceArrow, findChoiceCondition } from '@surdet/core';
 import { storySnapshot } from './story-check.js';
 
 /**
@@ -137,8 +137,8 @@ function optionInput(raw: string): SceneChoiceOptionInput {
   if (!arrow) throw new Error('这个选项没有 -> 连接');
   let label = trimmed.slice(0, arrow.index).trim();
   let when: string | null = null;
-  const condition = /\[if:(.+?)\]\s*$/.exec(label);
-  if (condition) { when = condition[1]!; label = label.slice(0, condition.index).trim(); }
+  const condition = findChoiceCondition(label);
+  if (condition) { when = condition.value; label = label.slice(0, condition.index).trim(); }
   const commands: { name: string; args: string[] }[] = [];
   for (const token of trimmed.slice(arrow.end).trim().split(/\s+/).filter(Boolean)) {
     if (token.startsWith('@')) commands.push({ name: token.slice(1), args: [] });

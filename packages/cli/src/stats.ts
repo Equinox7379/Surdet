@@ -18,7 +18,7 @@ function readConfig(projectDir: string): { entryScene: string; customInstruction
 
 export async function statsCommand(projectDir: string, options: { json?: boolean } = {}): Promise<number> {
   try {
-    const files = findGalFiles(path.join(projectDir, 'content/scenario'))
+    const files = findGalFiles(projectDir)
       .sort((a, b) => a.localeCompare(b));
     if (files.length === 0) throw new Error('未找到 content/scenario 下的 .gal 场景');
     const config = readConfig(projectDir);

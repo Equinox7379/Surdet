@@ -2,7 +2,7 @@
  * M5 支柱4：CJK 断行禁则测试（失败用例先行：裸断行会让标点挂行首/拆省略号，wrapCjk 必须避免）。
  */
 import { describe, expect, it } from 'vitest';
-import { wrapCjk, wrapCjkMeasure } from '../src/text-wrap.js';
+import { wrapCjk, wrapCjkMeasure, wrapCjkUnits } from '../src/text-wrap.js';
 
 const NO_START = ['，', '。', '！', '？', '：', '；', '、', '）', '」', '】', '》', '”', '…', '—'];
 const NO_END = ['（', '「', '【', '《', '“'];
@@ -189,5 +189,95 @@ describe('wrapCjk Unicode 与边界输入安全', () => {
     expect(() => wrapCjk('\n', Number.NaN)).toThrow(/perLine/);
     expect(() => wrapCjkMeasure('\n', Number.NaN, () => 0)).toThrow(/maxWidth/);
     expect(() => wrapCjkMeasure('甲', Number.NaN, () => 10)).toThrow(/maxWidth/);
+  });
+});
+
+const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+const splitGraphemes = (text: string): string[] => Array.from(segmenter.segment(text), item => item.segment);
+const wrapPaths = [
+  { name: 'count', wrap: wrapCjk },
+  { name: 'measure', wrap: (text: string, width: number) => wrapCjkMeasure(text, width * 10, value => splitGraphemes(value).length * 10) },
+  { name: 'styled', wrap: (text: string, width: number) => wrapCjkUnits(splitGraphemes(text), width, unit => unit, units => units.length).map(line => line.join('')) },
+];
+
+describe.each(wrapPaths.slice(0, 2))('D13 $name 有界悬挂', ({ wrap }) => {
+  it('满行之后的 30 个逗号最多悬挂两字素，其余必须继续分行', () => {
+    const text = '甲'.repeat(12) + '，'.repeat(30) + '乙';
+    const lines = wrap(text, 12);
+    expect(lines[0]).toBe('甲'.repeat(12) + '，，');
+    expect(lines.join('')).toBe(text);
+    for (const line of lines) expect(splitGraphemes(line).length).toBeLessThanOrEqual(14);
+  });
+
+  it.each([1, 12])('纯标点在容量 %i 下也有界分行、无空行且无损', width => {
+    const text = '，'.repeat(30);
+    const lines = wrap(text, width);
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.join('')).toBe(text);
+    for (const line of lines) {
+      expect(splitGraphemes(line).length).toBeGreaterThan(0);
+      expect(splitGraphemes(line).length).toBeLessThanOrEqual(width + 2);
+    }
+  });
+
+  it('悬挂额度按字素计算，并保留常规的双省略号和破折号', () => {
+    for (const punctuation of ['，，', '……', '——']) {
+      const text = 'e\u0301👩‍👩‍👧‍👦' + punctuation + '乙';
+      expect(wrap(text, 2)).toEqual(['e\u0301👩‍👩‍👧‍👦' + punctuation, '乙']);
+    }
+  });
+});
+
+describe.each(wrapPaths)('D14 $name 连续开括号', ({ wrap }) => {
+  it.each(['“「', '（【《', '([{'])('断点前的 %s 全部退到下一行', opening => {
+    const text = '甲乙' + opening + '丙丁';
+    const lines = wrap(text, 2 + opening.length);
+    expect(lines[0]).toBe('甲乙');
+    expect(lines.join('')).toBe(text);
+    for (const line of lines.slice(0, -1)) expect(['“', '「', '（', '【', '《', '(', '[', '{']).not.toContain(line.at(-1));
+  });
+
+  it.each([1, 2, 4])('容量 %i 放不下连续开括号时仍保留至少一个不可分单位', width => {
+    const text = '甲' + '（'.repeat(8) + '乙';
+    const lines = wrap(text, width);
+    expect(lines.join('')).toBe(text);
+    for (const line of lines) {
+      expect(line.length).toBeGreaterThan(0);
+      expect(line.length).toBeLessThanOrEqual(width);
+      if (line.endsWith('（')) expect(line).toBe('（');
+    }
+  });
+});
+
+describe('styled units 的现有边界', () => {
+  it('无法避免行首标点的长串按可用宽度折行，不退化成逐字竖列', () => {
+    const units = Array.from('读' + '，'.repeat(25));
+    const lines = wrapCjkUnits(units, 8, unit => unit, line => line.length);
+    expect(lines.map(line => line.join(''))).toEqual(['读' + '，'.repeat(7), '，'.repeat(8), '，'.repeat(8), '，，']);
+  });
+  it('大字闭标点仍移入下一行，长标点串不越过 mask', () => {
+    const units = Array.from('甲乙丙丁，戊' + '，'.repeat(30), text => ({ text, width: 20 }));
+    const measure = (line: readonly (typeof units)[number][]): number => line.reduce((sum, unit) => sum + unit.width, 0);
+    const lines = wrapCjkUnits(units, 80, unit => unit.text, measure);
+    expect(lines[0]!.map(unit => unit.text).join('')).toBe('甲乙丙');
+    expect(lines[1]![0]!.text).toBe('丁');
+    expect(lines.flat()).toEqual(units);
+    for (const line of lines) {
+      expect(line.length).toBeGreaterThan(0);
+      expect(measure(line)).toBeLessThanOrEqual(80);
+    }
+  });
+
+  it('退让不拆 ruby/组合字素，超宽 ruby 单独前进，Latin 单词沿原边界换行', () => {
+    const ruby = { text: '世界', width: 30, ruby: 'せかい' };
+    const units = [{ text: 'e\u0301', width: 10 }, ruby, { text: '“', width: 10 }, { text: '「', width: 10 }, { text: '👩‍👩‍👧‍👦', width: 10 }];
+    const measure = (line: readonly { width: number }[]): number => line.reduce((sum, unit) => sum + unit.width, 0);
+    const lines = wrapCjkUnits(units, 60, unit => unit.text, measure);
+    expect(lines[0]).toEqual([units[0], ruby]);
+    expect(lines.flat()).toEqual(units);
+    expect(lines[0]![1]).toBe(ruby);
+    expect(wrapCjkUnits([ruby, units[4]!], 20, unit => unit.text, measure)).toEqual([[ruby], [units[4]]]);
+    const latin = splitGraphemes('Hello world here');
+    expect(wrapCjkUnits(latin, 9, unit => unit, line => line.length).map(line => line.join(''))).toEqual(['Hello ', 'world ', 'here']);
   });
 });

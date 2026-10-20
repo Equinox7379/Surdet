@@ -2,7 +2,7 @@ import { state, h, setStatus, type SceneEntry } from '../state.js';
 import { setCurrentText } from '../history.js';
 import { parseScript, splitInstr, type LineModel } from '../model.js';
 import { decodeInstructionArgument, parseProjectConfigDocument } from '@surdet/authoring';
-import { inlinePlainText, type SourceRange } from '@surdet/core';
+import { findChoiceArrow, findChoiceCondition, inlinePlainText, type SourceRange } from '@surdet/core';
 import { dialogueRangeOffsets, sourceRangeOffsets } from './source-range.js';
 import { attachInlineField } from './inline-field.js';
 import { attachSourceMarkup } from './source-markup.js';
@@ -1118,7 +1118,7 @@ export class ScriptWorkbench {
         const labels = new Set(this.lines().filter((line): line is Extract<LineModel, { kind: 'label' }> => line.kind === 'label').map((line) => line.name));
         let n = 1; while (['a', 'b', 'end'].some((part) => labels.has(`branch_${n}_${part}`))) n++;
         const base = `branch_${n}`;
-        const labelsText = values.map((value) => { if (!value.trim() || /[\r\n]|\s->|\[if:/.test(value)) throw new Error('请填写不含控制语法的选项文字'); return value; });
+        const labelsText = values.map((value) => { if (!value.trim() || /[\r\n]/.test(value) || findChoiceArrow(value) || findChoiceCondition(value)) throw new Error('请填写不含控制语法的选项文字'); return value; });
         rows = ['@choice', `  ${labelsText[0]} -> @goto ${base}_a`, `  ${labelsText[1]} -> @goto ${base}_b`, `@label ${base}_a`, '在这里续写第一条分支。', `@goto ${base}_end`, `@label ${base}_b`, '在这里续写第二条分支。', `@label ${base}_end`];
       } else if (type.value === 'set') {
         if (!/^[^\s@]+$/.test(values[0] ?? '') || /[\r\n]/.test(values[1] ?? '')) throw new Error('请填写单行变量名与表达式');

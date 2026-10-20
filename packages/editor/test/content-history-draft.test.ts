@@ -16,9 +16,48 @@ function diff(path: string, before: string | null, after: string): ContentHistor
   baseline.files = before === null ? [] : [{ path, sha256: hash(before) }];
   return { path, currentText: before, historicalText: after, currentSha256: before === null ? null : hash(before), historicalSha256: hash(after) };
 }
-beforeEach(() => { state.scenes.clear(); state.timelines = []; histories.clear(); clearTimelineHistories(); baseline.files = []; });
+beforeEach(() => { state.scenes.clear(); state.timelines = []; state.pendingSceneDeletes = []; state.pendingTimelineDeletes = []; state.pendingTimelineRestores.clear(); histories.clear(); clearTimelineHistories(); baseline.files = []; });
 
 describe('Editor selected historical file draft', () => {
+  it.each([['é', 'e\u0301', false], ['e\u0301', 'e\u0301', true], ['é', 'é', true]] as const)('portable historical timeline parent namespace %s -> %s', async (existing, requested, accepted) => {
+    state.timelines.push({ id: 'bar', file: `${existing}/bar.json`, text: 'kept', eol: '\n', dirty: false, handle: null });
+    const text = '{"version":1,"id":"foo","durationMs":100,"tracks":[{"kind":"camera","cues":[]}]}';
+    const pending = prepareHistoryFileDraft(diff(`content/timelines/${requested}/foo.json`, null, text));
+    if (accepted) { (await pending)(); expect(state.timelines[1]).toMatchObject({ id: 'foo', file: `${requested}/foo.json` }); }
+    else { await expect(pending).rejects.toThrow(/别名|冲突/); expect(state.timelines).toHaveLength(1); }
+    expect(state.timelines[0]!.text).toBe('kept');
+  });
+  it.each(['CON', 'LPT1', 'COM¹', 'folder.'])('portable historical restores reject unusable parent directory %s', async directory => {
+    await expect(prepareHistoryFileDraft(diff(`content/scenario/${directory}/foo.gal`, null, '@scene foo\n@end'))).rejects.toThrow(/目录/);
+    const text = '{"version":1,"id":"foo","durationMs":100,"tracks":[{"kind":"camera","cues":[]}]}';
+    await expect(prepareHistoryFileDraft(diff(`content/timelines/${directory}/foo.json`, null, text))).rejects.toThrow(/目录/);
+    expect(state.scenes.size).toBe(0); expect(state.timelines).toEqual([]);
+  });
+  it.each(['scene', 'timeline'])('portable historical %s restore refuses a case alias without editing', async kind => {
+    state.scenes.set('chapter/FOO', { id: 'FOO', file: 'chapter/FOO.gal', text: 'kept', eol: '\n', dirty: false, handle: null });
+    state.timelines.push({ id: 'FOO', file: 'FOO.json', text: 'kept', eol: '\n', dirty: false, handle: null });
+    const path = kind === 'scene' ? 'content/scenario/foo.gal' : 'content/timelines/foo.json';
+    const historical = kind === 'scene' ? '@scene foo\n@end' : '{"version":1,"id":"foo","durationMs":100,"tracks":[{"kind":"camera","cues":[]}]}';
+    await expect(prepareHistoryFileDraft(diff(path, null, historical))).rejects.toThrow(/同名|冲突/);
+    expect([...state.scenes.keys()]).toEqual(['chapter/FOO']);
+    expect(state.timelines.map(entry => entry.id)).toEqual(['FOO']);
+  });
+  it.each(['CON', 'COM¹'])('portable historical scene restore refuses device name %s', async id => {
+    await expect(prepareHistoryFileDraft(diff(`content/scenario/${id}.gal`, null, `@scene ${id}\n@end`))).rejects.toThrow(/设备名/);
+    expect(state.scenes.size).toBe(0);
+  });
+  it('portable historical timeline restore preserves an uppercase extension identity', async () => {
+    const text = '{"version":1,"id":"foo.JSON","durationMs":100,"tracks":[{"kind":"camera","cues":[]}]}';
+    (await prepareHistoryFileDraft(diff('content/timelines/foo.JSON', null, text)))();
+    expect(state.timelines[0]).toMatchObject({ id: 'foo.JSON', file: 'foo.JSON', text });
+  });
+  it('portable historical scene restore refuses a decomposed new filename before mutation', async () => {
+    await expect(prepareHistoryFileDraft(diff('content/scenario/e\u0301.gal', null, '@scene e\u0301\n@end'))).rejects.toThrow(/规范化/);
+    expect(state.scenes.size).toBe(0);
+    state.scenes.set('chapter/e\u0301', { id: 'e\u0301', file: 'chapter/e\u0301.gal', text: 'kept', eol: '\n', dirty: false, handle: null });
+    await expect(prepareHistoryFileDraft(diff('content/scenario/é.gal', null, '@scene é\n@end'))).rejects.toThrow(/同名/);
+    expect([...state.scenes.keys()]).toEqual(['chapter/e\u0301']);
+  });
   it('restores an existing nested scene exactly, preserves other scenes and records ordinary undo', async () => {
     const current = '@scene start\r\n旁白：现在\r\n@end\r\n', old = '@scene start\r\n旁白：以前\r\n@end\r\n';
     state.scenes.set('chapter/start', { id: 'start', file: 'chapter/start.gal', text: current, eol: '\r\n', dirty: false, handle: null });

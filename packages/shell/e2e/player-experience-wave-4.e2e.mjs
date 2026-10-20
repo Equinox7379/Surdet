@@ -229,6 +229,19 @@ async function launchSession(caseId) {
       await this.waitForPresentedFrame(label);
     },
     async clickTarget(targetId) {
+      const galleryLabel = {
+        'gallery:music': '音乐',
+        'gallery:text': '文本',
+        'gallery:cg': '图片',
+        'gallery:close': '关闭',
+      }[targetId];
+      if (galleryLabel) {
+        const bounds = await page.getByRole('button', { name: galleryLabel, exact: true }).boundingBox();
+        if (!bounds) throw new Error(`找不到 Gallery 可访问控件：${galleryLabel}`);
+        await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+        await this.waitForPresentedFrame(targetId);
+        return;
+      }
       const target = await page.evaluate((id) => {
         const target = window.__surdetDebug?.interactionTargets?.find((item) => item.id === id);
         const canvas = document.querySelector('canvas');
@@ -1203,7 +1216,7 @@ async function runCase(caseId) {
     assertions.cgBeforeMusic = cgBeforeMusic;
     const cgTargets = (await session.snapshot())?.interactionTargets ?? [];
     assertions.cgVisibleStructure = cgTargets.map((target) => target.id);
-    await session.clickLogical(206, 43, 'gallery-music-visible-text');
+    await session.clickTarget('gallery:music');
     await session.waitOverlay('gallery:music');
     const musicSnapshot = await session.snapshot();
     const musicCanvas = await session.captureCanvas('gallery-music-after-click');
@@ -1214,7 +1227,7 @@ async function runCase(caseId) {
     if (musicCanvas.pixelHash === cgBeforeMusic.pixelHash) {
       throw new Error(`音乐标签切换后画布未刷新：pixelHash=${musicCanvas.pixelHash}`);
     }
-    await session.clickLogical(270, 43, 'gallery-text-visible-text');
+    await session.clickTarget('gallery:text');
     await session.waitOverlay('gallery:text');
     const textSnapshot = await session.snapshot();
     const textCanvas = await session.captureCanvas('gallery-text-after-click');
@@ -1225,7 +1238,7 @@ async function runCase(caseId) {
     if (textCanvas.pixelHash === musicCanvas.pixelHash) {
       throw new Error(`文本标签切换后画布未刷新：pixelHash=${textCanvas.pixelHash}`);
     }
-    await session.clickLogical(108, 43, 'gallery-cg-visible-text');
+    await session.clickTarget('gallery:cg');
     await session.waitOverlay('gallery:cg');
     const cgAfterTextSnapshot = await session.snapshot();
     const cgAfterText = await session.captureCanvas('gallery-cg-after-text');
@@ -1236,7 +1249,7 @@ async function runCase(caseId) {
     if (cgAfterText.pixelHash !== cgBeforeMusic.pixelHash) {
       throw new Error(`CG 标签切换后画布未恢复：${cgAfterText.pixelHash} != ${cgBeforeMusic.pixelHash}`);
     }
-    await session.clickLogical(1130, 43, 'gallery-close-visible-text');
+    await session.clickTarget('gallery:close');
     await session.waitTitle();
     const finalSnapshot = await session.snapshot();
     if (finalSnapshot?.uiSession?.base !== 'title' || finalSnapshot?.activeOverlay !== 'title') {

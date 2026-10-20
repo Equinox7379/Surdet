@@ -11,6 +11,12 @@ function lintDeclaration(name: string, decl: unknown): { valid: boolean; issues:
 }
 
 describe('scene-lint 变量声明校验', () => {
+  it('reports check references/types and nonnumeric mod targets before running', () => {
+    const scene = compileScene('@check absent > 1\n@check 1\n@mod text 2\n@mod score 2\n@check score > 0', 'checks.gal', 'checks');
+    const issues: LintIssue[] = [];
+    validateSceneVariables(scene, new Set(['text', 'score']), new Map([['text', 'string'], ['score', 'number']]), new Set(), issues, true);
+    expect(issues.map(issue => [issue.code, issue.line])).toEqual([['V002', 1], ['T002', 2], ['T001', 3]]);
+  });
   it('accepts every shared builtin transition and rejects an unknown one', () => {
     const scene = compileScene(BUILTIN_TRANSITION_NAMES.map(name => `@transition ${name} 800${name === 'rule' ? ' @rule=mask' : ''}`).join('\n') + '\n@transition unknown', 'scene.gal', 'scene');
     const issues: LintIssue[] = []; validateTransitionInstructions(scene, issues);

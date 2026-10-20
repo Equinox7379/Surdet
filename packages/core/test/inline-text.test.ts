@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { containsInlineTag, escapeInlineText, inlinePlainText, inlineStaticText, inlineTextLength, interpolateInlineText, parseInlineText } from '../src/inline-text.js';
 
 describe('固定行内标签合同', () => {
+  it('renders escaped colon punctuation and keeps physical source ranges', () => {
+    const source = '记录\\：23\\:15';
+    const doc = parseInlineText(source);
+    expect(doc.plainText).toBe('记录：23:15');
+    expect(doc.issues).toEqual([]);
+    const colon = doc.units.find(unit => unit.text === '：')!;
+    expect(source.slice(colon.start, colon.end)).toBe('\\：');
+    expect(inlinePlainText(escapeInlineText('原文\\:路径\\：'))).toBe('原文\\:路径\\：');
+  });
   it('parses emphasis/effects and final no-wait while removing motion/timing from static history', () => {
     const source = '<em><wave>甲</wave></em><speed=2><b>乙</b></speed><w=5><nw>';
     const doc = parseInlineText(source); expect(doc.issues).toEqual([]);

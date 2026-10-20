@@ -12,7 +12,8 @@ import { stableStringify } from '../src/change-session.js';
 import { buildCompositionManifest } from '../src/composition-manifest.js';
 import type { SceneBlockInput } from '../src/contracts.js';
 import { buildReplayStateBaseObjects } from '../src/composition-object-facts.js';
-import { buildSceneOperationCompositionDraft } from '../src/operation-composition-facts.js';
+import { buildSceneOperationCompositionDraft, buildTimelineOperationCompositionDraft } from '../src/operation-composition-facts.js';
+import { fingerprintWorkingObjectValue } from '../src/working-object-fingerprint.js';
 
 const hasher = { sha256: async (text: string) => createHash('sha256').update(text).digest('hex') };
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -31,7 +32,7 @@ async function seal(change: ChangeSession, objectFacts?: Parameters<typeof build
         { objectRef: 'config:characters', expectedFingerprint: sha('{}') },
         { objectRef: 'config:fonts', expectedFingerprint: sha('{}') },
         { objectRef: 'config:stage', expectedFingerprint: sha('null') },
-        { objectRef: 'config:theme', expectedFingerprint: sha('{"theme":null,"titleLogo":null}') },
+        { objectRef: 'config:theme', expectedFingerprint: sha('{"theme":null,"titleBackground":null,"titleLogo":null}') },
         { objectRef: 'config:ui', expectedFingerprint: sha('null') },
       { objectRef: 'config:textCatalog', expectedFingerprint: sha('null') },
       { objectRef: 'config:terminology', expectedFingerprint: sha('null') },
@@ -76,6 +77,27 @@ async function insert(change: ChangeSession, operationId: string, sceneId: strin
 }
 
 describe('candidate operation-time facts', () => {
+  it.each([[undefined, 'new-title-art'], ['title-art', 'new-title-art'], ['title-art', undefined]])('tracks title background changes consistently in scene, timeline and replay state (%s → %s)', async (titleBackground, nextTitleBackground) => {
+    const config = { entryScene: 'A', variables: {}, characters: {}, player: { titleBackground } };
+    const files = { 'game.config.json': JSON.stringify(config), 'content/scenario/A.gal': '@scene A\n@end\n' };
+    const snapshot = await loadProjectSnapshot({ rootIdentity: 'u1-title-background',
+      listFiles: async () => Object.keys(files), exists: async path => path in files,
+      readText: async path => { const text = files[path as keyof typeof files]; return { path, text, bytes: text.length, sha256: sha(text) }; },
+    }, hasher);
+    const scene = await buildSceneOperationCompositionDraft({ capabilityId: 'scene.create', sceneId: 'B', path: 'content/scenario/B.gal',
+      afterText: '@scene B\n@end\n', characters: {}, fontPaths: {}, titleBackground, hasher });
+    const timeline = await buildTimelineOperationCompositionDraft({ capabilityId: 'timeline.create', timelineId: 'intro',
+      afterDefinition: { version: 1, id: 'intro', durationMs: 0, tracks: [] }, config, hasher });
+    const captured = (await buildReplayStateBaseObjects(snapshot, hasher)).find(item => item.objectRef === 'config:theme')!;
+    const current = await fingerprintWorkingObjectValue(files, 'config:theme', hasher);
+    expect(captured.expectedFingerprint).toBe(current);
+    for (const draft of [scene, timeline]) expect(draft.replayStatePreconditions?.find(item => item.objectRef === 'config:theme')).toEqual(captured);
+    const changedFiles = { ...files, 'game.config.json': JSON.stringify({ ...config, player: { titleBackground: nextTitleBackground } }) };
+    const changed = await fingerprintWorkingObjectValue(changedFiles, 'config:theme', hasher);
+    expect(changed).not.toBe(current);
+    expect(resolveReplayStateRequirementsAtSequence({ sequence: 0, preconditions: [captured],
+      baseReplayStates: [{ objectRef: 'config:theme', expectedFingerprint: changed! }], priorOperations: [] }).ok).toBe(false);
+  });
   it('includes the existing title background in U1 scene drafts and guards actual timeline persistence', async () => {
     const draft = await buildSceneOperationCompositionDraft({ capabilityId: 'scene.create', sceneId: 'B', path: 'content/scenario/B.gal',
       afterText: '@scene B\n@end\n', characters: {}, fontPaths: {}, titleBackground: 'title-art', hasher,
@@ -497,7 +519,7 @@ describe('candidate operation-time facts', () => {
       { objectRef: 'timeline:authoring_timeline', expectedFingerprint: created.fingerprint },
       { objectRef: 'config:stage', expectedFingerprint: sha('null') },
       { objectRef: 'config:fonts', expectedFingerprint: sha('{}') },
-      { objectRef: 'config:theme', expectedFingerprint: sha('{"theme":null,"titleLogo":null}') },
+      { objectRef: 'config:theme', expectedFingerprint: sha('{"theme":null,"titleBackground":null,"titleLogo":null}') },
       { objectRef: 'config:ui', expectedFingerprint: sha('null') },
       { objectRef: 'config:textCatalog', expectedFingerprint: sha('null') },
       { objectRef: 'config:terminology', expectedFingerprint: sha('null') },
@@ -517,7 +539,7 @@ describe('candidate operation-time facts', () => {
       { objectRef: 'config:stage', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'config:terminology', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'config:textCatalog', source: 'base', expectedFingerprint: sha('null') },
-      { objectRef: 'config:theme', source: 'base', expectedFingerprint: sha('{"theme":null,"titleLogo":null}') },
+      { objectRef: 'config:theme', source: 'base', expectedFingerprint: sha('{"theme":null,"titleBackground":null,"titleLogo":null}') },
       { objectRef: 'config:ui', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'timeline:authoring_timeline', source: 'candidate', candidateOperationSequence: 0, expectedFingerprint: created.fingerprint },
     ]);
@@ -525,7 +547,7 @@ describe('candidate operation-time facts', () => {
       { objectRef: 'timeline:authoring_timeline', expectedFingerprint: durationPatch.fingerprint },
       { objectRef: 'config:stage', expectedFingerprint: sha('null') },
       { objectRef: 'config:fonts', expectedFingerprint: sha('{}') },
-      { objectRef: 'config:theme', expectedFingerprint: sha('{"theme":null,"titleLogo":null}') },
+      { objectRef: 'config:theme', expectedFingerprint: sha('{"theme":null,"titleBackground":null,"titleLogo":null}') },
       { objectRef: 'config:ui', expectedFingerprint: sha('null') },
       { objectRef: 'config:textCatalog', expectedFingerprint: sha('null') },
       { objectRef: 'config:terminology', expectedFingerprint: sha('null') },
@@ -545,7 +567,7 @@ describe('candidate operation-time facts', () => {
       { objectRef: 'config:stage', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'config:terminology', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'config:textCatalog', source: 'base', expectedFingerprint: sha('null') },
-      { objectRef: 'config:theme', source: 'base', expectedFingerprint: sha('{"theme":null,"titleLogo":null}') },
+      { objectRef: 'config:theme', source: 'base', expectedFingerprint: sha('{"theme":null,"titleBackground":null,"titleLogo":null}') },
       { objectRef: 'config:ui', source: 'base', expectedFingerprint: sha('null') },
       { objectRef: 'timeline:authoring_timeline', source: 'candidate', candidateOperationSequence: 1, expectedFingerprint: durationPatch.fingerprint },
     ]);

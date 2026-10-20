@@ -2794,6 +2794,7 @@ async function tryAutosaveRecover(
     const normalized = pending.file.replaceAll('\\', '/').replace(/^content\/scenario\//, '');
     const sourceKey = normalized.replace(/\.gal$/i, '');
     state.scenes.delete(sourceKey);
+    histories.delete(sourceKey);
   }
   for (const e of recoverable) {
     const sc = state.scenes.get(e.key);
