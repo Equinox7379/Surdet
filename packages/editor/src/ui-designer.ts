@@ -112,7 +112,12 @@ interface UiDesignerOptions {
   save(): Promise<unknown>;
   preview(): Promise<void>;
   exportShare(fragment?: { page: ProjectUiPageId; node: ProjectUiNode }): Promise<void>;
-  importShare(file: File, target: { page: ProjectUiPageId; parentId?: string }): Promise<void>;
+  /** Opens the import dialog; nothing changes until the author confirms there. */
+  importShare(file: File, request: { page: ProjectUiPageId; containerId?: string }): void;
+  /** A share whose missing files were staged for the asset workbench, ready to preview again. */
+  pendingImport?(): { name: string } | null;
+  resumeImport?(request: { page: ProjectUiPageId; containerId?: string }): void;
+  discardImport?(): void;
   undo(): void;
   redo(): void;
   onStatus(message: string, ok?: boolean): void;
@@ -150,6 +155,8 @@ function intersectPreviewRect(a: ProjectUiRect, b: ProjectUiRect): ProjectUiRect
 }
 let selectedPage: ProjectUiPageId = 'title';
 let selectedNodeId: string | null = null;
+/** After an import: show the page it changed and select its component on the next draw. */
+export function selectUiDesignerNode(page: ProjectUiPageId, nodeId: string | null): void { selectedPage = page; selectedNodeId = nodeId; }
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, label?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -241,7 +248,8 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
   pageSelect.value = selectedPage;
   pageSelect.onchange = () => { selectedPage = pageSelect.value as ProjectUiPageId; selectedNodeId = null; draw(); };
   const save = element('button', '', '保存界面'); save.type = 'button';
-  save.onclick = () => { void options.save().then(() => options.onStatus('界面已保存，重新打开或试玩可查看正式结果。')).catch(error => options.onStatus(`保存失败：${String(error)}`, false)); };
+  save.title = '只保存界面；主题和界面都有修改时请用“保存全部”（Ctrl+S）';
+  save.onclick = () => { void options.save().then(() => options.onStatus('界面已保存，重新打开或试玩可查看正式结果。')).catch(error => options.onStatus(`保存失败：${error instanceof Error ? error.message : String(error)}`, false)); };
   const preview = element('button', '', '试玩草稿'); preview.type = 'button';
   preview.onclick = () => { void options.preview().catch(error => options.onStatus(`试玩未启动：${String(error)}`, false)); };
   const undo = element('button', '', '撤销'); undo.onclick = () => options.undo();
@@ -258,18 +266,35 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     if (!node) { options.onStatus('请先选择要分享的组件。', false); return; }
     void options.exportShare({ page: selectedPage, node }).catch(error => options.onStatus(String(error), false));
   };
-  const importButton = element('button', '', '导入主题或片段');
+  const importButton = element('button', '', '导入主题或片段'); importButton.type = 'button';
+  importButton.dataset.uiShareImport = 'true';
+  importButton.title = '选择共享文件，先预览效果和影响范围，确认后才放入草稿';
   const fileInput = element('input'); fileInput.type = 'file'; fileInput.accept = '.json'; fileInput.hidden = true;
   importButton.onclick = () => fileInput.click();
+  // The designer's current page and container (the selected one, else the selected node's parent).
+  const importRequest = (): { page: ProjectUiPageId; containerId?: string } => {
+    const pageRoot = options.read()?.pages[selectedPage];
+    const found = pageRoot && selectedNodeId ? findNode(pageRoot, selectedNodeId) : null;
+    const containerId = found && ['container', 'scroll', 'tabs'].includes(found.node.type) ? found.node.id : found?.parentId ?? undefined;
+    return { page: selectedPage, ...(containerId ? { containerId } : {}) };
+  };
   fileInput.onchange = () => {
     const file = fileInput.files?.[0]; fileInput.value = '';
     if (!file) return;
-    const pageRoot = options.read()?.pages[selectedPage];
-    const found = pageRoot && selectedNodeId ? findNode(pageRoot, selectedNodeId) : null;
-    const parentId = found && ['container', 'scroll', 'tabs', 'content'].includes(found.node.type) ? found.node.id : found?.parentId ?? pageRoot?.id;
-    void options.importShare(file, { page: selectedPage, ...(parentId ? { parentId } : {}) }).then(() => { if (root.isConnected) draw(); }).catch(error => options.onStatus(String(error), false));
+    try { options.importShare(file, importRequest()); } catch (error) { options.onStatus(error instanceof Error ? error.message : String(error), false); }
   };
   toolbar.append(exportTheme, exportFragment, importButton, fileInput);
+  const pendingImport = options.pendingImport?.();
+  if (pendingImport && options.resumeImport) {
+    const resume = element('button', 'primary', `继续导入「${pendingImport.name}」`); resume.type = 'button';
+    resume.dataset.uiShareImportResume = 'true';
+    resume.title = '素材导入完成后重新预览这个共享文件，确认后才放入草稿';
+    resume.onclick = () => options.resumeImport!(importRequest());
+    const discard = element('button', '', '放弃继续导入'); discard.type = 'button';
+    discard.dataset.uiShareImportDiscard = 'true';
+    discard.onclick = () => { options.discardImport?.(); resume.remove(); discard.remove(); importButton.focus(); };
+    toolbar.append(resume, discard);
+  }
   root.appendChild(toolbar);
   const body = element('div', 'ui-designer-body'); root.appendChild(body);
 

@@ -951,3 +951,53 @@
 #config-view .text-catalog .text-catalog-tag { display: inline-block; margin: 0 1px; padding: 0 4px; border-radius: var(--surdet-radius-tight); background: color-mix(in srgb, var(--surdet-action-primary) 14%, transparent); color: var(--surdet-text-secondary); font: 11px/1.7 var(--surdet-font-mono); vertical-align: 1px; }
 #config-view .text-catalog .text-catalog-note { display: block; color: var(--surdet-state-warning); }
 #config-view .text-catalog .text-catalog-step > .config-field { margin-top: 16px; }
+/* U3 import dialog: read-only preview first, one explicit apply to the draft. */
+.ui-designer button.primary { color:var(--surdet-text-on-accent); background:var(--surdet-action-primary); border-color:var(--surdet-action-primary); }
+.ui-share-import { width:min(1280px,96vw); max-width:96vw; height:min(880px,94vh); max-height:94vh; padding:0; border:0; border-radius:6px; background:var(--surdet-surface-panel); color:var(--surdet-text-primary); font:13px/1.5 var(--surdet-font-ui); }
+.ui-share-import[open] { display:flex; flex-direction:column; }
+.ui-share-import::backdrop { background:color-mix(in srgb,var(--surdet-text-primary) 50%,transparent); }
+.ui-share-import > header { padding:14px 20px 8px; border-bottom:1px solid var(--surdet-border-default); }
+.ui-share-import h2 { margin:0; font-size:16px; }
+.ui-share-import h2:focus { outline:none; }
+.ui-share-import h2:focus-visible { outline:var(--surdet-focus-width,2px) solid var(--surdet-focus-ring); outline-offset:2px; }
+.ui-share-import h3 { margin:0 0 4px; font-size:13px; }
+.ui-share-import-file { margin:2px 0 0; color:var(--surdet-text-secondary); overflow-wrap:anywhere; }
+.ui-share-import-body { flex:1; min-height:0; display:grid; grid-template-columns:minmax(300px,380px) minmax(0,1fr); }
+.ui-share-import-info { overflow:auto; padding:12px 20px; border-right:1px solid var(--surdet-border-default); display:flex; flex-direction:column; gap:14px; }
+.ui-share-import-info p { margin:0; }
+.ui-share-import-info ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+.ui-share-import-info li { padding:6px 8px; border:1px solid var(--surdet-border-default); border-radius:var(--surdet-radius-tight); }
+.ui-share-import-info li > div { display:flex; justify-content:space-between; gap:8px; }
+.ui-share-import-info li.change-unchanged { color:var(--surdet-text-secondary); }
+.ui-share-import-info li.change-remove { border-color:var(--surdet-state-warning); }
+.ui-share-import-info li.missing { border-color:var(--surdet-state-warning); }
+.ui-share-import-info code { font:12px/1.4 var(--surdet-font-mono); overflow-wrap:anywhere; display:block; }
+.ui-share-import-info details p { color:var(--surdet-text-secondary); overflow-wrap:anywhere; }
+.ui-share-import-badge { flex:none; font-size:12px; padding:0 6px; border-radius:var(--surdet-radius-tight); background:var(--surdet-surface-subtle); }
+.change-add .ui-share-import-badge, .change-insert .ui-share-import-badge, .change-replace .ui-share-import-badge { color:var(--surdet-text-on-accent); background:var(--surdet-action-primary); }
+.change-remove .ui-share-import-badge { color:var(--surdet-text-on-accent); background:var(--surdet-state-warning); }
+.ui-share-import-status { color:var(--surdet-text-secondary); min-height:1.5em; }
+.ui-share-import-error { padding:8px 10px; border:1px solid var(--surdet-state-danger); border-radius:var(--surdet-radius-tight); color:var(--surdet-state-danger); overflow-wrap:anywhere; }
+.ui-share-import-error p { color:var(--surdet-text-primary); }
+.ui-share-import-callout { padding:6px 8px; border:1px solid var(--surdet-state-warning); border-radius:var(--surdet-radius-tight); background:var(--surdet-surface-subtle); }
+.ui-share-import-placement { border:1px solid var(--surdet-border-default); border-radius:var(--surdet-radius-tight); padding:8px 10px; margin:0; display:flex; flex-direction:column; gap:6px; }
+.ui-share-import-choice { display:flex; gap:8px; align-items:flex-start; cursor:pointer; }
+.ui-share-import-choice span { display:flex; flex-direction:column; }
+.ui-share-import-choice small { color:var(--surdet-text-secondary); }
+.ui-share-import-preview { min-width:0; padding:12px 20px; display:flex; flex-direction:column; gap:8px; }
+.ui-share-import-preview-controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+.ui-share-import-preview-controls label { display:flex; gap:6px; align-items:center; }
+.ui-share-import-screen { position:relative; width:100%; aspect-ratio:16/9; max-height:calc(100% - 80px); background:var(--surdet-surface-stage); border-radius:var(--surdet-radius-tight); overflow:hidden; }
+.ui-share-import-screen iframe { position:absolute; inset:0; width:100%; height:100%; border:0; display:block; }
+.ui-share-import-placeholder { position:absolute; inset:auto 12px 12px; margin:0; padding:8px 10px; border-radius:var(--surdet-radius-tight); color:var(--surdet-shell-chrome-text); background:var(--surdet-shell-chrome-bg); }
+.ui-share-import-note { margin:0; color:var(--surdet-text-secondary); }
+.ui-share-import-note.error { color:var(--surdet-state-danger); }
+.ui-share-import > footer { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:10px 20px; border-top:1px solid var(--surdet-border-default); }
+.ui-share-import-footnote { margin:0; color:var(--surdet-text-secondary); }
+.ui-share-import-actions { display:flex; gap:8px; flex:none; }
+.ui-share-import button, .ui-share-import select { font:500 12.5px/1.4 var(--surdet-font-ui); color:inherit; border:1px solid var(--surdet-border-default); border-radius:var(--surdet-radius-tight); padding:5px 10px; background:var(--surdet-surface-subtle); cursor:pointer; }
+.ui-share-import button:hover:not(:disabled) { background:var(--surdet-surface-raised); border-color:var(--surdet-border-strong); }
+.ui-share-import button.primary { color:var(--surdet-text-on-accent); background:var(--surdet-action-primary); border-color:var(--surdet-action-primary); }
+.ui-share-import button:disabled, .ui-share-import select:disabled { opacity:.45; cursor:default; }
+.ui-share-import :is(button,select,input,summary):focus-visible { outline:var(--surdet-focus-width,2px) solid var(--surdet-focus-ring); outline-offset:2px; }
+@media (max-width: 900px) { .ui-share-import-body { grid-template-columns:1fr; overflow:auto; } .ui-share-import-info { border-right:0; overflow:visible; } }
