@@ -557,13 +557,23 @@ const uiStyleSchema = strictObject({
   borderRadius: { type: 'number', minimum: 0, maximum: 65535 }, padding: strictObject(uiInsetsFields, ['top', 'right', 'bottom', 'left']),
   columns: { enum: [1, 2] }, imageFit: { enum: ['contain', 'cover', 'fill'] },
 });
-const uiNodeInputSchema: JsonSchema = { ...jsonObjectSchema, properties: { style: uiStyleSchema }, description: 'ProjectUiNode; Core validates node types, children and all nested styles. See docs/ui-style-contract.md.' };
+const uiStateStyleSchema = strictObject(Object.fromEntries(
+  ['color', 'background', 'opacity', 'backgroundOpacity', 'backgroundGradient', 'backgroundImage', 'textShadows', 'shadows']
+    .map(key => [key, (uiStyleSchema.properties as SchemaProperties)[key]!]),
+));
+const uiStatesSchema = strictObject(Object.fromEntries(['hover', 'focus', 'pressed', 'disabled'].map(key => [key, uiStateStyleSchema])));
+const uiMotionSchema = strictObject({ durationMs: { type: 'number', minimum: 0, maximum: 1000 }, opacity: uiOpacitySchema,
+  x: { type: 'number', minimum: -128, maximum: 128 }, y: { type: 'number', minimum: -128, maximum: 128 },
+  scale: { type: 'number', minimum: 0.8, maximum: 1.2 }, easing: { enum: ['linear', 'ease-out', 'ease-in-out'] } }, ['durationMs']);
+const uiTransitionSchema = strictObject({ enter: uiMotionSchema, exit: uiMotionSchema });
+const uiNodeInputSchema: JsonSchema = { ...jsonObjectSchema, properties: { style: uiStyleSchema, states: uiStatesSchema, transition: uiTransitionSchema }, description: 'ProjectUiNode; Core validates node types, root-only transition, children and all nested styles. See docs/ui-style-contract.md and docs/ui-interaction-contract.md.' };
 const uiInspectionSchema = strictObject({
   view: readViewSchema,
   value: { oneOf: [jsonObjectSchema, nullSchema] },
   defaultPages: stringArraySchema,
   nodes: arrayOf(strictObject({ page: stringSchema, id: stringSchema, type: stringSchema, parentId: { type: ['string', 'null'] },
-    effectiveStyle: jsonObjectSchema, rect: jsonObjectSchema, contentRect: jsonObjectSchema }, ['page', 'id', 'type', 'parentId', 'effectiveStyle', 'rect', 'contentRect'])),
+    effectiveStyle: jsonObjectSchema, effectiveStates: jsonObjectSchema, effectiveTransition: jsonObjectSchema,
+    rect: jsonObjectSchema, contentRect: jsonObjectSchema }, ['page', 'id', 'type', 'parentId', 'effectiveStyle', 'rect', 'contentRect'])),
   fingerprint: stringSchema,
 }, ['value', 'defaultPages', 'nodes', 'fingerprint']);
 
@@ -1426,7 +1436,9 @@ const definitions = {
         strictObject({ type: { const: 'page.set' }, page: stringSchema, root: uiNodeInputSchema }, ['type', 'page', 'root']),
         strictObject({ type: { const: 'page.remove' }, page: stringSchema }, ['type', 'page']),
         strictObject({ type: { const: 'node.insert' }, page: stringSchema, parentId: stringSchema, index: integerSchema, node: uiNodeInputSchema }, ['type', 'page', 'parentId', 'index', 'node']),
-        strictObject({ type: { const: 'node.update' }, page: stringSchema, id: stringSchema, patch: { ...jsonObjectSchema, properties: { style: { oneOf: [uiStyleSchema, nullSchema] } } } }, ['type', 'page', 'id', 'patch']),
+        strictObject({ type: { const: 'node.update' }, page: stringSchema, id: stringSchema, patch: { ...jsonObjectSchema, properties: {
+          style: { oneOf: [uiStyleSchema, nullSchema] }, states: { oneOf: [uiStatesSchema, nullSchema] }, transition: { oneOf: [uiTransitionSchema, nullSchema] },
+        } } }, ['type', 'page', 'id', 'patch']),
         strictObject({ type: { const: 'node.remove' }, page: stringSchema, id: stringSchema }, ['type', 'page', 'id']),
         strictObject({ type: { const: 'node.copy' }, page: stringSchema, id: stringSchema, newId: stringSchema, index: integerSchema }, ['type', 'page', 'id', 'newId']),
         strictObject({ type: { const: 'node.reorder' }, page: stringSchema, id: stringSchema, index: integerSchema }, ['type', 'page', 'id', 'index']),

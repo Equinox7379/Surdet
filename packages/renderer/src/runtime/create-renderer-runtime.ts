@@ -23,6 +23,8 @@ import {
 import type { RendererResourceSnapshot } from '../diagnostics/renderer-baseline.js';
 import type { DialogueProjectionPort, GalleryProjectionPort, MenuProjectionPort, SystemPanelProjectionPort, WorldProjectionPort } from '../api/renderer-commands.js';
 import type { RendererProjectionSnapshot } from '../api/renderer-queries.js';
+import type { ProjectUiMotionController } from '../project-ui-motion.js';
+import type { FrameLoopTarget } from '../types.js';
 
 export type { RendererControllerPort, RendererStagePort } from './renderer-facade.js';
 
@@ -42,6 +44,7 @@ export interface RendererRuntimeInternals {
   readonly systemPanelLayer?: SystemPanelProjectionPort;
   readonly worldLayer?: WorldProjectionPort;
   readonly projectionSnapshot?: () => RendererProjectionSnapshot;
+  readonly projectUiMotion?: ProjectUiMotionController;
 }
 
 interface CleanupParts {
@@ -52,6 +55,7 @@ interface CleanupParts {
   readonly lifecycle?: RenderLifecycle;
   readonly facade?: { markDisposed(): void };
   readonly detachPlugin?: () => void;
+  readonly projectUiMotion?: ProjectUiMotionController;
 }
 
 interface CleanupAction {
@@ -61,6 +65,7 @@ interface CleanupAction {
 
 function cleanupActions(parts: CleanupParts): CleanupAction[] {
   const actions: CleanupAction[] = [];
+  if (parts.projectUiMotion) actions.push({ name: 'project-ui-motion', run: () => parts.projectUiMotion!.dispose() });
   if (parts.lifecycle) {
     if (parts.scheduler) {
       actions.push({
@@ -151,7 +156,7 @@ export async function createRendererRuntimeFromInternals(
       queries: facade.queries,
       controller: internals.controller as RuntimePresentationController,
       resize: () => facade!.resize(),
-      resetSession: (options) => facade!.resetSession(options),
+      resetSession: (options) => { facade!.resetSession(options); internals.projectUiMotion?.cancelAll(); },
       dispose: () => {
         if (disposed) return;
         disposed = true;
@@ -257,7 +262,13 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
     // WorldLayer/DialogueLayer/MenuLayer update work. Registering WorldLayer
     // separately duplicates its wake-up path (WorldLayer also calls the Stage
     // callback), so keep one production scheduler source.
-    scheduler = new FrameScheduler(stage.app!, controller, [stage], {
+    const motion = options.projectUiMotion, activeController = controller;
+    const frameTarget: FrameLoopTarget = motion ? {
+      get needsUpdate() { return activeController.needsUpdate || motion.needsUpdate; },
+      update(deltaMs) { activeController.update(deltaMs); motion.update(deltaMs); },
+      setFrameRequest(handler) { activeController.setFrameRequest(handler); },
+    } : controller;
+    scheduler = new FrameScheduler(stage.app!, frameTarget, motion ? [stage, motion] : [stage], {
       monitor,
       ...(options.onError ? {
         onError: (cause: unknown) => options.onError!(cause instanceof RendererError ? cause : new RendererError('Renderer frame update failed', {
@@ -275,6 +286,7 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
       controller,
       scheduler,
       monitor,
+      projectUiMotion: options.projectUiMotion,
       assetRegistry,
       lifecycle,
       resourceSnapshot: () => lifecycle.snapshot(),
@@ -295,6 +307,7 @@ export async function createRendererRuntime(options: RendererRuntimeOptions = {}
         stage,
         assetRegistry,
         lifecycle,
+        projectUiMotion: options.projectUiMotion,
         detachPlugin: options.pluginHost ? () => options.pluginHost!.detach() : undefined,
       });
     throw notifyRuntimeError(options, initializationFailure(cause, cleanupFailures));
