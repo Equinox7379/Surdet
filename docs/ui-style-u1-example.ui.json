@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "pages": {
+    "title": {
+      "id": "u1_title_root", "type": "container", "frame": { "x": 0, "y": 0, "width": 1280, "height": 720 },
+      "children": [
+        {
+          "id": "u1_title_card", "type": "container", "frame": { "x": 96, "y": 132, "width": 520, "height": 456 },
+          "style": {
+            "background": 15988984, "backgroundOpacity": 0.92,
+            "border": { "width": 1, "color": 14477803, "opacity": 1 }, "borderRadius": 14,
+            "padding": { "top": 32, "right": 36, "bottom": 28, "left": 36 },
+            "shadows": [{ "x": 0, "y": 18, "blur": 48, "color": 2243914, "opacity": 0.18 }]
+          },
+          "children": [
+            { "id": "u1_title_name", "type": "text", "frame": { "x": 0, "y": 0, "width": 446, "height": 76 },
+              "text": { "kind": "data", "field": "title" },
+              "style": { "fontRole": "title", "fontSize": 52, "fontWeight": 700, "letterSpacing": 4, "color": 2243914,
+                "textShadows": [{ "x": 0, "y": 2, "blur": 0, "color": 16777215, "opacity": 0.9 }] } },
+            { "id": "u1_title_subtitle", "type": "text", "frame": { "x": 0, "y": 82, "width": 446, "height": 34 },
+              "text": { "kind": "data", "field": "subtitle" },
+              "style": { "fontSize": 20, "letterSpacing": 2, "color": 4684421, "lineHeight": 1.4 } },
+            { "id": "u1_title_start", "type": "button", "frame": { "x": 0, "y": 142, "width": 280, "height": 48 },
+              "text": { "kind": "literal", "value": "开始阅读" }, "action": { "kind": "start" },
+              "style": { "color": 16777215, "fontSize": 22, "fontWeight": 600, "letterSpacing": 2, "align": "left",
+                "backgroundGradient": { "from": 4684421, "to": 3104619, "angle": 90 },
+                "border": { "width": 1, "color": 2243914, "opacity": 0.35 }, "borderRadius": 8,
+                "padding": { "top": 0, "right": 20, "bottom": 0, "left": 20 },
+                "shadows": [{ "x": 0, "y": 6, "blur": 14, "color": 2243914, "opacity": 0.22 }] } },
+            { "id": "u1_title_continue", "type": "button", "frame": { "x": 0, "y": 202, "width": 280, "height": 44 },
+              "text": { "kind": "literal", "value": "继续" }, "action": { "kind": "continue" },
+              "style": { "color": 2243914, "fontSize": 20, "letterSpacing": 2, "align": "left", "background": 16777215, "backgroundOpacity": 0.72,
+                "border": { "width": 1, "color": 4684421, "opacity": 0.55 }, "borderRadius": 8, "backgroundImage": null,
+                "padding": { "top": 0, "right": 20, "bottom": 0, "left": 20 } } },
+            { "id": "u1_title_load", "type": "button", "frame": { "x": 0, "y": 256, "width": 280, "height": 44 },
+              "text": { "kind": "literal", "value": "读取进度" }, "action": { "kind": "open", "page": "save-load", "mode": "load" },
+              "style": { "color": 2243914, "fontSize": 20, "letterSpacing": 2, "align": "left", "background": 16777215, "backgroundOpacity": 0.72,
+                "border": { "width": 1, "color": 4684421, "opacity": 0.55 }, "borderRadius": 8, "backgroundImage": null,
+                "padding": { "top": 0, "right": 20, "bottom": 0, "left": 20 } } },
+            { "id": "u1_title_settings", "type": "button", "frame": { "x": 0, "y": 310, "width": 280, "height": 44 },
+              "text": { "kind": "literal", "value": "阅读设置" }, "action": { "kind": "open", "page": "settings" },
+              "style": { "color": 2243914, "fontSize": 20, "letterSpacing": 2, "align": "left", "background": 16777215, "backgroundOpacity": 0.72,
+                "border": { "width": 1, "color": 4684421, "opacity": 0.55 }, "borderRadius": 8, "backgroundImage": null,
+                "padding": { "top": 0, "right": 20, "bottom": 0, "left": 20 } } },
+            { "id": "u1_title_note", "type": "text", "frame": { "x": 0, "y": 370, "width": 446, "height": 24 },
+              "text": { "kind": "literal", "value": "U1 样式示例 · 非最终美术 · 未用于默认外观" },
+              "style": { "fontSize": 14, "color": 4684421, "opacity": 0.85, "letterSpacing": 1 } }
+          ]
+        }
+      ]
+    },
+    "dialogue": {
+      "id": "u1_dialogue_root", "type": "container", "frame": { "x": 0, "y": 0, "width": 1280, "height": 720 },
+      "children": [
+        {
+          "id": "u1_dialogue_box", "type": "container", "frame": { "x": 120, "y": 488, "width": 1040, "height": 208 },
+          "style": {
+            "background": 16777215, "backgroundOpacity": 0.94,
+            "backgroundGradient": { "from": 16777215, "to": 15134961, "angle": 180 },
+            "border": { "width": 1, "color": 14477803, "opacity": 1 }, "borderRadius": 12,
+            "padding": { "top": 18, "right": 36, "bottom": 18, "left": 36 },
+            "shadows": [{ "x": 0, "y": 12, "blur": 32, "color": 2243914, "opacity": 0.22 }]
+          },
+          "children": [
+            { "id": "u1_dialogue_speaker", "type": "text", "frame": { "x": 0, "y": 0, "width": 360, "height": 32 },
+              "text": { "kind": "data", "field": "speaker" },
+              "style": { "fontSize": 22, "fontWeight": 700, "letterSpacing": 2, "color": 4684421 } },
+            { "id": "u1_dialogue_body", "type": "text", "frame": { "x": 0, "y": 40, "width": 966, "height": 130 },
+              "text": { "kind": "data", "field": "dialogue" },
+              "style": { "fontRole": "body", "fontSize": 26, "lineHeight": 1.7, "letterSpacing": 0.5, "color": 2243914 } }
+          ]
+        }
+      ]
+    },
+    "choices": {
+      "id": "u1_choices_root", "type": "container", "frame": { "x": 0, "y": 0, "width": 1280, "height": 720 },
+      "children": [
+        {
+          "id": "u1_choices_list", "type": "content", "source": "choices", "frame": { "x": 340, "y": 168, "width": 600, "height": 372 },
+          "children": [
+            { "id": "u1_choice_option", "type": "button", "frame": { "x": 0, "y": 0, "width": 576, "height": 56 },
+              "text": { "kind": "data", "field": "label" }, "action": { "kind": "choice" },
+              "style": { "fontRole": "body", "fontSize": 24, "align": "center", "color": 2243914, "letterSpacing": 1,
+                "background": 16777215, "backgroundOpacity": 0.9, "backgroundImage": null,
+                "border": { "width": 1, "color": 4684421, "opacity": 0.5 }, "borderRadius": 10,
+                "shadows": [{ "x": 0, "y": 6, "blur": 16, "color": 2243914, "opacity": 0.16 }] } }
+          ]
+        }
+      ]
+    },
+    "backlog": {
+      "id": "u1_backlog_root", "type": "container", "frame": { "x": 0, "y": 0, "width": 1280, "height": 720 },
+      "children": [
+        {
+          "id": "u1_backlog_panel", "type": "container", "frame": { "x": 160, "y": 56, "width": 960, "height": 608 },
+          "style": {
+            "background": 15988984, "backgroundOpacity": 0.97,
+            "border": { "width": 2, "color": 14477803, "opacity": 1 }, "borderRadius": 16,
+            "padding": { "top": 24, "right": 28, "bottom": 24, "left": 28 },
+            "shadows": [{ "x": 0, "y": 20, "blur": 56, "color": 2243914, "opacity": 0.2 }]
+          },
+          "children": [
+            { "id": "u1_backlog_heading", "type": "text", "frame": { "x": 0, "y": 0, "width": 420, "height": 42 },
+              "text": { "kind": "literal", "value": "文字记录" },
+              "style": { "fontRole": "title", "fontSize": 30, "fontWeight": 600, "letterSpacing": 3, "color": 2243914 } },
+            { "id": "u1_backlog_list", "type": "content", "source": "backlog", "frame": { "x": 0, "y": 56, "width": 900, "height": 436 },
+              "style": { "fontRole": "body", "fontSize": 22, "lineHeight": 1.6, "letterSpacing": 0.5,
+                "border": { "width": 1, "color": 14477803, "opacity": 1 }, "borderRadius": 8 } },
+            { "id": "u1_backlog_close", "type": "button", "frame": { "x": 720, "y": 508, "width": 180, "height": 44 },
+              "text": { "kind": "literal", "value": "返回" }, "action": { "kind": "close" },
+              "style": { "color": 16777215, "fontSize": 20, "fontWeight": 600, "letterSpacing": 2, "align": "center",
+                "backgroundGradient": { "from": 4684421, "to": 3104619, "angle": 90 }, "backgroundImage": null,
+                "border": { "width": 1, "color": 2243914, "opacity": 0.35 }, "borderRadius": 8 } }
+          ]
+        }
+      ]
+    }
+  }
+}
