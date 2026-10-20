@@ -833,7 +833,7 @@ function configRewrite(
     for (const key of ['id', 'type', 'tab', 'source']) if (typeof node[key] === 'string') knownPaths.add(pathKey([...nodePath, key]));
     for (const [field, keys] of [
       ['text', ['kind', 'value', 'name', 'field']], ['binding', ['kind', 'name']],
-      ['action', ['kind', 'page', 'mode', 'id', 'name']], ['style', ['fontRole', 'align']],
+      ['action', ['kind', 'page', 'mode', 'id', 'name']], ['style', ['fontRole', 'align', 'imageFit']],
     ] as const) {
       const value = node[field];
       if (isRecord(value)) for (const key of keys) if (typeof value[key] === 'string') knownPaths.add(pathKey([...nodePath, field, key]));
