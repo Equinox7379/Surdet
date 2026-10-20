@@ -32,6 +32,15 @@
 - Core定向30项、真实Agent Port3项（含状态素材改名且不改同名文字/状态键）、状态图片导出检查/归档1项通过；Renderer动效/调度与相邻runtime合计30通过、1项既有主题唤醒计数失败，移除本次runtime改动的对照仍同处失败，原断言和失败日志保留。Core/Authoring/Renderer构建及CLI/Renderer/Editor含desktop类型通过。不是全仓、CI或完整U2视觉验收。
 - U1正式日常入口已更新为main/a56d559c，候选及原入口实际保存重开均过，真实导出EXE保留所存字距、九宫格、正文排版；选目录用替身，私人作品与存档未触碰。旧包保留可恢复。自定义data.dialogue现有纯文字限制仍保留，不宣称注音样式已接入。
 
+### U2前端（2026-10-20，Claude）
+
+- 分支`claude/u2-ui-interaction`自`codex/ui-interaction-contract`/34506300开出，草稿PR base为#81分支。只改Renderer `project-ui-dom.ts`、Editor界面设计器/样式表单及测试、`examples/shared/player/player.ts`最小接线（共享ProjectUiMotionController传入Runtime与UI DOM，减少动态设置、新游戏/回想重置/stateReset通知UI）；Core/Authoring/CLI/Host、`project-ui-motion.ts`、FrameScheduler、Runtime核心与合同字段未动，未改默认外观、私人作品或素材库。
+- Player：有states的button/toggle/slider/input按真实悬停/焦点/按下/禁用（含动态enabledWhen）调用Core `resolveProjectUiInteractionStyle`整组重绘，走U1装饰层，不留上一状态皮肤/渐变/阴影/透明度，0.45不再乘；键盘焦点每页一个独立焦点框，不被状态样式、皮肤或裁剪吞掉。根页面进退场由共享驱动随Runtime ticker推进（剧情暂停时仍走，结束后不再请求帧）；打开即可操作，模态页移动中由透明挡板拦住舞台；关闭即撤销交互与Tab（inert/aria-hidden），退场只是画面，退出回调只移除对应旧元素；进场中关闭从当前姿态继续，退场中重开丢弃残影重新进场，同页替换立即生效；新游戏/读档/重置/驱动被取消时同步回稳定姿态并清残影；减少动态直接终态，中途开启finishAll。
+- 前端补正：Player Shell关闭时先提交会话（refresh已隐藏页面）再调slot关闭，原接法在真实Player中退场从不播放；改为本帧刚被隐藏的页面仍作退场画面，早已隐藏的直接移除。未改Shell。
+- 设计器：适用控件显示“正常/悬停/焦点/按下/禁用”，已设样式有标记、可清空；表单只编辑该状态差异字段（0/null/省略不混），画布按Core合并显示所选状态与播放器焦点框，不执行按钮或改变量；换控件回到正常。根节点“页面进出场”可启用、改时长/不透明度/偏移/缩放/节奏（越界拉回合同范围）；“预览/停止预览”只在画布上用同一驱动播放一次，属示意，真实效果仍看“试玩草稿”。撤销/重做、保存重开文件精确保留其他状态、私有字段与旧布局字段。
+- 验证（云端Linux无头Chromium）：新Renderer E2E project-ui-interaction、新Editor E2E ui-interaction-u2（设计器编辑/撤销重做/保存重开；真实试玩草稿Player鼠标悬停/离开/按下、Tab焦点、禁用、菜单进退场与挡板、剧情暂停、ticker休眠、退场中点击舞台推进、进场中关闭、退场中重开、进场中新游戏、进场中关闭试玩、系统减少动态）通过；去掉“换控件回到正常”的反向对照被E2E抓到后已恢复。表单单测12项通过；Renderer Vitest 860过、1项既有主题frameRequest计数失败（未改）；Editor Vitest 1558过、1项既有素材侧栏源码断言失败（去掉本次改动同样失败）及2个非Vitest runner文件；Renderer/Editor类型检查、Editor构建、Renderer七项project-ui与Editor四项U1 E2E回归通过。无头软件GL下舞台运转时约3fps且ticker单步上限100ms，动画实际放慢，测试用条件等待，不代表真机帧率。
+- 未做/待GPT：Windows/Electron、原生IME、日常包与导出包、真人视觉验收；读档与中途切换减少动态只在Renderer层病例覆盖，未在真实Player点击读档。未合并，CI未运行。后端提示见PR：#81 Codex指出paint抛错后FrameScheduler不再唤醒（前端paint/complete不抛出）；resetSession的cancelAll不通知DOM（前端以needsUpdate检测和resetMotion兜底）。
+
 ### U1前端（2026-10-19，Claude）
 
 - 2026-10-20 #79已合并后，将更新后的#58（00bff5e7）普通整合入前端：保留U1透明度组/内容框与#79两列、imageFit、精确滑条、辅助按钮字色；未设U1的按钮才走主题skin，显式图片/null不被覆盖。progress直接读取Core统一默认值，删除前端临时修正helper；表单只编辑U1字段但完整保留columns/imageFit。Windows组合控件、皮肤/两列（新增带边框内边距尺寸）、画布文字色、设计器imageFit四项定向E2E通过，表单9项及Renderer/Editor含desktop类型通过。完整Editor保存/预览链路仍仅有此前云端证据，不以本机绘制病例冒充；CI、原生IME、最终分发包及美术认可未补验。独立审查及合并进度见#58/#80与本机台账。
