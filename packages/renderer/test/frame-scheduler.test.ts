@@ -134,7 +134,7 @@ describe('FrameScheduler with the real Pixi Ticker RAF chain', () => {
       this.app = { ...app, canvas: {}, destroy: () => app.ticker.stop() } as never;
     });
     const effects = vi.spyOn(RendererStageHost.prototype, 'updateEffects');
-    const motion = new ProjectUiMotionController(), complete = vi.fn(), paint = vi.fn();
+    const motion = new ProjectUiMotionController(), complete = vi.fn(), paint = vi.fn(), cancelled = vi.fn();
     const preset = { durationMs: 32, opacity: 0, x: 12, y: 0, scale: 1, easing: 'linear' as const };
     const runtime = await createRendererRuntime({ projectUiMotion: motion });
     try {
@@ -143,12 +143,14 @@ describe('FrameScheduler with the real Pixi Ticker RAF chain', () => {
       for (let i = 0; i < 4 && pending.size; i++) runNextFrame();
       expect(complete).toHaveBeenCalledOnce(); expect(paint).toHaveBeenLastCalledWith({ opacity: 1, x: 0, y: 0, scale: 1 });
       expect(effects).not.toHaveBeenCalled(); expect(app.ticker.started).toBe(false); expect(pending.size).toBe(0);
-      motion.play('settings', preset, 'exit', paint, complete);
+      motion.play('settings', preset, 'exit', paint, complete, cancelled);
       runtime.resetSession();
+      expect(cancelled).toHaveBeenCalledOnce();
       for (let i = 0; i < 4 && pending.size; i++) runNextFrame();
       expect(complete).toHaveBeenCalledOnce(); expect(motion.needsUpdate).toBe(false);
-      motion.play('settings', preset, 'enter', paint, complete);
+      motion.play('settings', preset, 'enter', paint, complete, cancelled);
       runtime.dispose();
+      expect(cancelled).toHaveBeenCalledTimes(2);
       expect(motion.needsUpdate).toBe(false); expect(pending.size).toBe(0);
       expect(() => motion.play('settings', preset, 'enter', paint, complete)).toThrow('disposed');
     } finally { runtime.dispose(); }
@@ -182,6 +184,60 @@ describe('FrameScheduler with the real Pixi Ticker RAF chain', () => {
     expect(onFrame).toHaveBeenCalledTimes(1);
     expect(monitor.snapshot().frames).toBe(1);
     expect(pending.size).toBe(1);
+  });
+
+  it('reports a failed U2 drawing without stranding the other motion or world frames', () => {
+    const app = appWithRealTicker();
+    const motion = new ProjectUiMotionController();
+    const world = new FakeTarget();
+    world.active = true;
+    const failure = new Error('UI drawing failed');
+    const errors = vi.fn();
+    const complete = vi.fn();
+    const painted = vi.fn();
+    const preset = { durationMs: 48, opacity: 0, x: 0, y: 0, scale: 1, easing: 'linear' as const };
+    const target: FrameLoopTarget = {
+      get needsUpdate() { return world.active || motion.needsUpdate; },
+      setFrameRequest: handler => world.setFrameRequest(handler),
+      update(deltaMs) { world.update(deltaMs); motion.update(deltaMs); },
+    };
+    const scheduler = new FrameScheduler(app, target, [motion], { onError: errors });
+    schedulers.push(scheduler);
+    motion.play('bad', preset, 'enter', pose => { if (pose.opacity > 0) throw failure; });
+    motion.play('good', preset, 'enter', painted, complete);
+    runNextFrame();
+    expect(errors).toHaveBeenCalledExactlyOnceWith(failure);
+    expect(pending.size).toBe(1);
+    for (let i = 0; i < 4 && !complete.mock.calls.length; i++) runNextFrame();
+    expect(complete).toHaveBeenCalledOnce();
+    expect(painted).toHaveBeenLastCalledWith({ opacity: 1, x: 0, y: 0, scale: 1 });
+    expect(world.updates.length).toBeGreaterThan(1);
+    world.active = false;
+    runNextFrame();
+    expect(pending.size).toBe(0);
+    expect(app.ticker.started).toBe(false);
+  });
+
+  it('keeps a U2 completion error visible while the surviving world still receives its next frame', () => {
+    const app = appWithRealTicker();
+    const motion = new ProjectUiMotionController();
+    const world = new FakeTarget();
+    world.active = true;
+    const failure = new Error('UI completion failed');
+    const target: FrameLoopTarget = {
+      get needsUpdate() { return world.active || motion.needsUpdate; },
+      setFrameRequest: handler => world.setFrameRequest(handler),
+      update(deltaMs) { world.update(deltaMs); motion.update(deltaMs); },
+    };
+    schedulers.push(new FrameScheduler(app, target, [motion]));
+    motion.play('only-ui', { durationMs: 1, opacity: 0, x: 0, y: 0, scale: 1, easing: 'linear' }, 'enter', () => {}, () => { throw failure; });
+    expect(runNextFrame).toThrow(failure);
+    expect(motion.needsUpdate).toBe(false);
+    expect(pending.size).toBe(1);
+    world.active = false;
+    runNextFrame();
+    expect(world.updates).toHaveLength(2);
+    expect(pending.size).toBe(0);
   });
 
   it('keeps an unhandled update error visible and still allows a later wake-up', () => {
