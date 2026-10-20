@@ -989,7 +989,7 @@
 .ui-share-import-preview-controls label { display:flex; gap:6px; align-items:center; }
 .ui-share-import-screen { position:relative; width:100%; aspect-ratio:16/9; max-height:calc(100% - 80px); background:var(--surdet-surface-stage); border-radius:var(--surdet-radius-tight); overflow:hidden; }
 .ui-share-import-screen iframe { position:absolute; inset:0; width:100%; height:100%; border:0; display:block; }
-.ui-share-import-placeholder { position:absolute; inset:auto 12px 12px; margin:0; padding:8px 10px; border-radius:var(--surdet-radius-tight); color:var(--surdet-shell-chrome-text); background:var(--surdet-shell-chrome-bg); }
+.ui-share-import-placeholder { position:absolute; z-index:1; inset:auto 12px 12px; margin:0; padding:8px 10px; border-radius:var(--surdet-radius-tight); color:var(--surdet-shell-chrome-text); background:var(--surdet-shell-chrome-bg); }
 .ui-share-import-note { margin:0; color:var(--surdet-text-secondary); }
 .ui-share-import-note.error { color:var(--surdet-state-danger); }
 .ui-share-import > footer { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:10px 20px; border-top:1px solid var(--surdet-border-default); }

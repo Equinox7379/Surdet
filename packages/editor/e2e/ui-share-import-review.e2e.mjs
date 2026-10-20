@@ -12,7 +12,7 @@ const file=path.join(root,'game.config.json'), config=JSON.parse(fs.readFileSync
 const frame={x:0,y:0,width:1280,height:720}, text=value=>({kind:'literal',value});
 config.variables={flag:{type:'flag',initial:false},amount:{type:'number',initial:5},note:{type:'string',initial:'original'}};
 config.player={...config.player,firstRunHint:'U3首次操作提示'}; config.privateMarker='KEEP';
-config.ui={version:1,pages:{title:{id:'original',type:'container',frame}}};
+config.ui={version:1,pages:{title:{id:'original',type:'container',frame,children:[{id:'original-start',type:'button',frame:{x:80,y:80,width:200,height:50},text:text('原始开始'),action:{kind:'start'}}]},gallery:{id:'old-gallery',type:'container',frame}}};
 fs.writeFileSync(file,JSON.stringify(config,null,2));
 const sameImage=JSON.parse(fs.readFileSync(new URL('../../../docs/ui-theme-u3-technical/u3-technical.surdet-ui-theme.json',import.meta.url),'utf8')).assets[0].base64;
 fs.mkdirSync(path.join(root,'content/assets/bg/nested'),{recursive:true});
@@ -38,6 +38,51 @@ try{
   page.on('pageerror',error=>result.errors.push(error.message));
   await page.exposeFunction('__surdetNodeFs',createNodeFsBridge({project:root})); await page.addInitScript(nodeBackedFileSystemInit,{initialRootKey:'project'});
   await page.goto('http://127.0.0.1:18088/'); await load(page);
+  await test('恢复默认和继续默认的页面说明实际位于预览之上',async()=>{
+    await choose(packet);await page.locator('[data-ui-share-import-frame][data-ready="true"]').waitFor();
+    for(const view of ['gallery','backlog']) {
+      await page.locator('[data-ui-share-import-view]').selectOption(view);
+      const placeholder=page.locator('[data-ui-share-import-placeholder]');await placeholder.waitFor({state:'visible'});
+      assert.match(await placeholder.innerText(),/使用 Player 默认页/);
+      const top=await placeholder.evaluate(node=>{const r=node.getBoundingClientRect();const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return hit===node||node.contains(hit);});
+      await page.screenshot({path:path.join(output,`default-${view}.png`)});
+      assert.equal(top,true,'默认页说明被iframe遮住');
+    }
+    await page.locator('[data-ui-share-import-view]').selectOption('title');
+    assert.equal(await page.locator('[data-ui-share-import-placeholder]').isHidden(),true);
+    const f=await(await page.locator('[data-ui-share-import-frame]').elementHandle()).contentFrame();
+    await f.getByRole('button',{name:'开始游戏',exact:true}).waitFor({state:'visible'});
+  });
+  await test('只读存档选项鉴赏条目不会显示操作失败',async()=>{
+    const sample=structuredClone(packet);
+    for(const [view,source] of [['save-load','save-slots'],['choices','choices'],['gallery','gallery-cgs']]) {
+      sample.config.ui.pages[view]={id:`sample-${view}`,type:'container',frame,children:[{id:`rows-${view}`,type:'content',source,frame:{x:100,y:80,width:600,height:400}}]};
+    }
+    await choose(sample);await page.locator('[data-ui-share-import-frame][data-ready="true"]').waitFor();
+    const f=await(await page.locator('[data-ui-share-import-frame]').elementHandle()).contentFrame();
+    for(const [view,id] of [['save-load:load','save-load'],['choices','choices'],['gallery','gallery']]) {
+      await page.locator('[data-ui-share-import-view]').selectOption(view);
+      await f.locator(`[data-ui-node="rows-${id}"] [data-ui-item][aria-disabled="false"]`).first().click();
+      await page.waitForFunction(()=>document.querySelector('[data-ui-share-import-note]')?.textContent?.includes('预览只读：未执行'));
+      assert.equal(await f.locator('[data-ui-error]').count(),0,`${view}不应标记失败`);
+      assert(!await f.locator('body').innerText().then(value=>value.includes('操作未完成')));
+      assert(!await page.locator('[data-ui-share-import-note]').evaluate(node=>node.classList.contains('error')));
+    }
+    assert.deepEqual(JSON.parse(fs.readFileSync(file,'utf8')),config);
+  });
+  await test('同ID组件的真实布局文字修改显示为整页替换',async()=>{
+    const revised=structuredClone(packet);
+    revised.config.ui.pages.title={id:'original',type:'container',frame,children:[{id:'original-start',type:'button',frame:{x:170,y:130,width:260,height:60},text:text('更新后的开始'),style:{background:0x663311},action:{kind:'start'}}]};
+    await choose(revised);
+    const row=page.locator('[data-ui-share-import-page="title"]');
+    assert.equal(await row.getAttribute('data-change'),'replace');
+    assert.match(await row.innerText(),/替换整页/);
+    assert.match(await row.innerText(),/相同标识/);
+    assert.doesNotMatch(await row.innerText(),/移除 0|加入 0/);
+    const f=await(await page.locator('[data-ui-share-import-frame]').elementHandle()).contentFrame();
+    await f.getByRole('button',{name:'更新后的开始',exact:true}).waitFor({state:'visible'});
+    assert.deepEqual(JSON.parse(fs.readFileSync(file,'utf8')),config);
+  });
   await test('原生只读控件在拒绝写入后恢复样本值',async()=>{
     await choose(packet); await page.locator('[data-ui-share-import-view]').selectOption('settings');
     const f=await (await page.locator('[data-ui-share-import-frame]').elementHandle()).contentFrame();
