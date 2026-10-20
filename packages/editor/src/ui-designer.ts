@@ -1,9 +1,9 @@
-import { PROJECT_UI_NODE_TYPES, PROJECT_UI_PAGES, PROJECT_UI_TAB_BAR_HEIGHT, projectUiChildrenRect, projectUiContentRect, projectUiRect, resolveProjectFontPaths, type ProjectFontRole, type ProjectUiDocument, type ProjectUiNode, type ProjectUiNodeType, type ProjectUiPageId, type ProjectUiRect } from '@surdet/core';
+import { PROJECT_UI_NODE_TYPES, PROJECT_UI_PAGES, PROJECT_UI_TAB_BAR_HEIGHT, projectUiChildrenRect, projectUiContentRect, projectUiRect, resolveProjectFontPaths, resolvePlayerTheme, resolveProjectUiInteractionStyle, resolveProjectUiMotion, type ProjectFontRole, type ProjectUiDocument, type ProjectUiInteraction, type ProjectUiMotion, type ProjectUiNode, type ProjectUiNodeType, type ProjectUiPageId, type ProjectUiRect, type ProjectUiStyle } from '@surdet/core';
 import { buildAssetCatalog, parseProjectConfigDocument, type UiPatch } from '@surdet/authoring';
-import { DEFAULT_RENDERER_FONT_FAMILIES, applyProjectUiTypography, createProjectUiDecor, createProjectUiImageSizes, projectUiInsetCss, usesProjectUiBox, type ProjectUiDecorImage } from '@surdet/renderer';
+import { DEFAULT_RENDERER_FONT_FAMILIES, ProjectUiMotionController, applyProjectUiTypography, createProjectUiDecor, createProjectUiImageSizes, projectUiInsetCss, usesProjectUiBox, type ProjectUiDecorImage, type ProjectUiMotionPose } from '@surdet/renderer';
 import type { DirAsset } from './assets.js';
 import { state } from './state.js';
-import { effectiveUiStyle, renderUiStyleForm } from './ui-style-form.js';
+import { UI_MOTION_DEFAULTS, UI_STATE_LABELS, UI_STATE_NAMES, effectiveUiStyle, isUiStateNode, renderUiStyleForm, withUiMotion, withUiState, type UiMotionDirection, type UiStateName } from './ui-style-form.js';
 import { ImageScope } from './v4/ui.js';
 import { SETTING_LABELS, bindableSettings, isSwitchSetting, steppableSettings } from './ui-settings.js';
 
@@ -19,8 +19,23 @@ const roleFonts = new Map<string, { family: string; face?: FontFace }>();
 let designerGeneration = 0;
 const openStyleGroups = new Set<string>(['text']);
 let styleFocus: string | null = null;
+/** U2: which interaction state the style form edits and the canvas shows for the selected control. */
+let selectedState: UiStateName | 'normal' = 'normal';
+let selectedStateOwner: string | null = null;
+// The existing configuration history rebuilds the whole workspace synchronously.
+// That redraw is not closing the designer or switching projects.
+let historyRedraw = false;
+export function redrawUiDesignerHistory(redraw: () => void): void {
+  historyRedraw = true;
+  try { redraw(); } finally { historyRedraw = false; }
+}
+/** The one canvas preview of a page enter/exit; it only moves the canvas layer, never the work or the player. */
+let motionPreview: { controller: ProjectUiMotionController; frame: number; stop(): void } | null = null;
+function stopMotionPreview(): void { const preview = motionPreview; motionPreview = null; preview?.stop(); }
 export function disposeUiDesigner(): void {
   designerGeneration += 1;
+  stopMotionPreview();
+  if (!historyRedraw) { selectedState = 'normal'; selectedStateOwner = null; styleFocus = null; }
   dragCleanup?.(); dragCleanup = null;
   activeImages?.dispose(); activeImages = null;
   for (const url of styleImageUrls) URL.revokeObjectURL(url);
@@ -81,6 +96,13 @@ function roleFontFamily(role: ProjectFontRole, config: Record<string, unknown>, 
 }
 
 const cqw = (px: number): string => `${px / 1280 * 100}cqw`;
+/** Core's effective value of a control in one interaction state, as the Player draws it. */
+function interactionStyle(node: ProjectUiNode, config: Record<string, unknown>, interaction: ProjectUiInteraction): ReturnType<typeof effectiveUiStyle> {
+  try { return resolveProjectUiInteractionStyle(node, config, interaction); } catch { return resolveProjectUiInteractionStyle(node, {}, interaction); }
+}
+
+const MOTION_NAMES: Record<UiMotionDirection, string> = { enter: '进场', exit: '退场' };
+const EASING_NAMES: Record<NonNullable<ProjectUiMotion['easing']>, string> = { 'ease-out': '先快后慢（默认）', linear: '匀速', 'ease-in-out': '慢—快—慢' };
 
 interface UiDesignerOptions {
   read(): ProjectUiDocument | null;
@@ -121,6 +143,11 @@ const ACTION_NAMES: Record<NonNullable<ProjectUiNode['action']>['kind'], string>
   auto: '自动播放', skip: '快进', hide: '隐藏界面', 'variable-set': '修改剧情变量',
 };
 const DESIGN_FRAME: ProjectUiRect = { x: 0, y: 0, width: 1280, height: 720 };
+function intersectPreviewRect(a: ProjectUiRect, b: ProjectUiRect): ProjectUiRect {
+  const x = Math.max(a.x, b.x), y = Math.max(a.y, b.y);
+  return { x, y, width: Math.max(0, Math.min(a.x + a.width, b.x + b.width) - x),
+    height: Math.max(0, Math.min(a.y + a.height, b.y + b.height) - y) };
+}
 let selectedPage: ProjectUiPageId = 'title';
 let selectedNodeId: string | null = null;
 
@@ -270,7 +297,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
   }
 
   /** `onSurface`: an ancestor paints a project surface (fill or image) under this node, as the Player does. */
-  function drawCanvas(canvas: HTMLElement, node: ProjectUiNode, parentRect: ProjectUiRect, config: Record<string, unknown>, onSurface = false): void {
+  function drawCanvas(canvas: HTMLElement, node: ProjectUiNode, parentRect: ProjectUiRect, config: Record<string, unknown>, onSurface = false, clipRect = DESIGN_FRAME): void {
     const rect = projectUiRect(parentRect, node.frame);
     const item = element('div', `ui-canvas-node ui-canvas-${node.type}`, node.text?.kind === 'literal' ? node.text.value : node.type === 'container' || node.type === 'tabs' ? '' : TYPE_NAMES[node.type]);
     item.dataset.uiNode = node.id;
@@ -280,6 +307,15 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     item.style.width = `${rect.width / 1280 * 100}%`;
     item.style.height = `${rect.height / 720 * 100}%`;
     const style = node.style;
+    // U2: a control with interaction states draws through the decoration layer, as in the Player; the selected control
+    // shows the state chosen in the inspector (that state alone over the normal style, Core's merge and 0.45 included).
+    // A control previewing a state draws as the Player draws a control with states, even before its first state is set.
+    const shownState = isUiStateNode(node) && selectedNodeId === node.id && selectedState !== 'normal' ? selectedState : null;
+    const stateful = isUiStateNode(node) && (node.states !== undefined || shownState !== null);
+    const interaction: ProjectUiInteraction | null = stateful
+      ? { hovered: shownState === 'hover', focused: shownState === 'focus', pressed: shownState === 'pressed', disabled: shownState === 'disabled' } : null;
+    const look: ProjectUiStyle | undefined = shownState ? { ...style, ...node.states?.[shownState] } : style;
+    if (shownState) item.dataset.uiPreviewState = shownState;
     if (style?.color !== undefined) item.style.color = `#${style.color.toString(16).padStart(6, '0')}`;
     if (style?.background !== undefined) item.style.backgroundColor = `#${style.background.toString(16).padStart(6, '0')}`;
     // Inherited size comes from the work's theme (Core), the same value the Player draws.
@@ -290,14 +326,29 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     item.style.textAlign = style?.align ?? 'left';
     item.style.opacity = String(style?.opacity ?? 1);
     // U1 box fields: the same Core values and decoration layer as the Player, scaled to the canvas.
-    let decor: HTMLDivElement | null = null, surface = onSurface || (style?.background !== undefined && !usesProjectUiBox(style));
-    if (usesProjectUiBox(style)) {
+    const boxed = stateful || usesProjectUiBox(style);
+    let decor: HTMLDivElement | null = null, focusRing: HTMLSpanElement | null = null;
+    const placeFocusRing = (outer: ProjectUiRect): void => {
+      if (!focusRing) return;
+      const visible = intersectPreviewRect(outer, clipRect);
+      focusRing.hidden = visible.width <= 0 || visible.height <= 0;
+      focusRing.style.left = `${visible.x / 1280 * 100}%`; focusRing.style.top = `${visible.y / 720 * 100}%`;
+      focusRing.style.width = `${visible.width / 1280 * 100}%`; focusRing.style.height = `${visible.height / 720 * 100}%`;
+    };
+    let surface = onSurface || (style?.background !== undefined && !boxed);
+    if (boxed) {
       try {
-        const effective = inherited, content = projectUiContentRect(rect, style);
+        const effective = interaction ? interactionStyle(node, config, interaction) : inherited, content = projectUiContentRect(rect, style);
+        // Images the author chose (normal style or any state) are reported when missing; only the theme skin stays silent.
+        const explicit = new Set([style, ...Object.values(node.states ?? {})].flatMap(item => item?.backgroundImage ? [item.backgroundImage.asset] : []));
+        if (stateful) {
+          item.style.color = `#${effective.color.toString(16).padStart(6, '0')}`;
+          item.style.opacity = String(effective.opacity);
+        }
         decor = createProjectUiDecor(effective, rect, {
           unit: cqw,
           // An inherited theme button skin that is missing stays silent, as in the Player.
-          image: asset => style!.backgroundImage === undefined ? styleImage(asset).catch(() => null) : styleImage(asset),
+          image: asset => explicit.has(asset) ? styleImage(asset) : styleImage(asset).catch(() => null),
           onError: error => { if (decor?.isConnected) options.onStatus(`${nodeLabel(node)} 的背景无法绘制：${error instanceof Error ? error.message : String(error)}`, false); },
         });
         decor.className = 'ui-canvas-decor';
@@ -305,7 +356,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
         decor.style.opacity = item.style.opacity;
         // An input keeps its native field box in the Player unless the author replaces its fill; show that field
         // inside the content box, as the Player does, instead of hiding it.
-        if (node.type === 'input' && style!.background === undefined && !style!.backgroundGradient && !style!.backgroundImage) item.style.backgroundClip = 'content-box';
+        if (node.type === 'input' && look?.background === undefined && !look?.backgroundGradient && !look?.backgroundImage) item.style.backgroundClip = 'content-box';
         else item.style.background = 'transparent';
         item.style.borderRadius = cqw(effective.borderRadius);
         item.style.padding = projectUiInsetCss(rect, content, cqw);
@@ -320,12 +371,12 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     }
     // Over a surface the work paints itself, text takes the Player's colour (Core's effective value: own colour or
     // the theme text colour); over the bare canvas it keeps the Editor's readable default.
-    if (style?.color === undefined && surface) item.style.color = `#${inherited.color.toString(16).padStart(6, '0')}`;
+    if (style?.color === undefined && surface && !stateful) item.style.color = `#${inherited.color.toString(16).padStart(6, '0')}`;
     if (node.type === 'text' || node.type === 'button' || node.type === 'input' || (node.type === 'content' && !node.children?.length)) {
       // Core's effective line height (text 1.45, otherwise the native `normal`), not the Editor panel's, so wrapping
       // and the label's vertical position match the Player.
       item.style.lineHeight = inherited.lineHeight === null ? 'normal' : String(inherited.lineHeight);
-      applyProjectUiTypography(item, style, cqw);
+      applyProjectUiTypography(item, look, cqw);
       // Buttons inherit the theme's button weight in the Player; show the same weight here.
       if (node.type === 'button' && style?.fontWeight === undefined && inherited.fontWeight !== null) item.style.fontWeight = String(inherited.fontWeight);
     }
@@ -353,6 +404,8 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
           item.style.height = `${Math.max(8, initial.height + dy) / 720 * 100}%`;
         }
         if (decor) { decor.style.transform = item.style.transform; decor.style.width = item.style.width; decor.style.height = item.style.height; }
+        placeFocusRing(resize ? { ...rect, width: Math.max(8, initial.width + dx), height: Math.max(8, initial.height + dy) }
+          : { ...rect, x: rect.x + dx, y: rect.y + dy });
       };
       const stop = (next: PointerEvent): void => {
         cleanup();
@@ -373,8 +426,27 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       const handle = element('span', 'ui-resize-handle'); handle.dataset.resize = 'true';
       handle.title = '拖动调整尺寸'; item.appendChild(handle);
     }
-    if (decor) canvas.appendChild(decor);
-    canvas.appendChild(item);
+    if (shownState === 'focus') {
+      // The Player's own keyboard focus marker (accent ring over a panel-coloured ring), drawn outside the node's style.
+      const theme = (() => { try { return resolvePlayerTheme(config); } catch { return resolvePlayerTheme({}); } })();
+      const ring = focusRing = element('span');
+      ring.dataset.uiFocusPreview = 'true';
+      ring.setAttribute('aria-hidden', 'true');
+      ring.style.cssText = `position:absolute;pointer-events:none;z-index:2;border-radius:${item.style.borderRadius};outline:${cqw(2)} solid #${theme.colors.accent.toString(16).padStart(6, '0')};outline-offset:${cqw(2)};box-shadow:0 0 0 ${cqw(2)} #${theme.colors.panel.toString(16).padStart(6, '0')}`;
+      placeFocusRing(rect);
+    }
+    if (stateful && decor) {
+      // Match the Player's compositing: author opacity applies once to the whole
+      // control, while its focus preview stays outside that transparent group.
+      const group = element('div'); group.dataset.uiCanvasGroup = node.id;
+      group.style.cssText = `position:absolute;inset:0;pointer-events:none;opacity:${item.style.opacity}`;
+      item.style.opacity = '1'; decor.style.opacity = '1'; item.style.pointerEvents = 'auto';
+      group.append(decor, item); canvas.appendChild(group);
+    } else {
+      if (decor) canvas.appendChild(decor);
+      canvas.appendChild(item);
+    }
+    if (focusRing) canvas.appendChild(focusRing);
     let children = node.children ?? [];
     if (node.type === 'tabs' && children.length) {
       const tabChildren = children;
@@ -391,7 +463,145 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       item.appendChild(bar);
       children = children.filter(child => (child.tab ?? tabs[0]) === active);
     }
-    children.forEach(child => drawCanvas(canvas, child, projectUiChildrenRect(rect, node.type, node.style), config, surface));
+    const childClip = node.type === 'scroll' || node.type === 'content' || (boxed && (node.type === 'container' || node.type === 'tabs'))
+      ? intersectPreviewRect(clipRect, projectUiContentRect(rect, style)) : clipRect;
+    children.forEach(child => drawCanvas(canvas, child, projectUiChildrenRect(rect, node.type, node.style), config, surface, childClip));
+  }
+
+  /** U2: 正常 / 悬停 / 焦点 / 按下 / 禁用 for the selected control; switching only changes what the form edits and the canvas shows. */
+  function drawStates(parent: HTMLElement, node: ProjectUiNode, editing: UiStateName | null): void {
+    const wrap = element('div', 'ui-property-actions');
+    wrap.dataset.uiStyleKey = 'state';
+    wrap.setAttribute('role', 'group');
+    wrap.setAttribute('aria-label', '交互状态');
+    wrap.appendChild(element('span', '', '交互状态'));
+    for (const name of ['normal', ...UI_STATE_NAMES] as const) {
+      const set = name !== 'normal' && node.states?.[name] !== undefined;
+      const button = element('button', '', `${name === 'normal' ? '正常' : UI_STATE_LABELS[name]}${set ? ' •' : ''}`);
+      button.type = 'button';
+      button.dataset.uiStyleControl = `state:${name}`;
+      button.setAttribute('aria-pressed', String((editing ?? 'normal') === name));
+      if (set) button.title = '此状态已有样式';
+      button.onclick = () => { selectedState = name; styleFocus = `state:${name}`; draw(); };
+      wrap.appendChild(button);
+    }
+    parent.appendChild(wrap);
+    const hint = element('p', 'ui-style-hint', editing
+      ? '画布显示这个状态单独叠加在正常样式上的效果。玩家同时满足多个状态时按 悬停 → 焦点 → 按下 → 禁用 依次叠加；禁用时悬停和按下不生效。键盘焦点另有播放器焦点框，不受这里的样式影响。'
+      : '选择一个状态后，只为它填写与正常状态不同的颜色、背景、阴影或不透明度。');
+    parent.appendChild(hint);
+    if (editing && node.states?.[editing]) {
+      const clear = element('button', '', `清空${UI_STATE_LABELS[editing]}样式`); clear.type = 'button';
+      clear.dataset.uiStyleControl = `state:${editing}:clear`;
+      clear.onclick = () => { styleFocus = `state:${editing}`; apply({ type: 'node.update', page: selectedPage, id: node.id, patch: { states: withUiState(node.states, editing, null) } }); };
+      parent.appendChild(clear);
+    }
+  }
+
+  /** U2: the page root's enter/exit fields, plus a one-off canvas preview that moves only the canvas. */
+  function drawMotion(parent: HTMLElement, node: ProjectUiNode): void {
+    const section = element('details', 'ui-style-group');
+    section.dataset.uiStyleGroup = 'motion';
+    section.dataset.uiStyleKey = 'transition';
+    section.open = openStyleGroups.has('motion');
+    section.ontoggle = () => { if (section.open) openStyleGroups.add('motion'); else openStyleGroups.delete('motion'); };
+    section.appendChild(element('summary', '', '页面进出场'));
+    const commit = (direction: UiMotionDirection, motion: ProjectUiMotion | null, control: string): void => {
+      styleFocus = control;
+      apply({ type: 'node.update', page: selectedPage, id: node.id, patch: { transition: withUiMotion(node.transition, direction, motion) } });
+    };
+    for (const direction of ['enter', 'exit'] as const) {
+      const motion = node.transition?.[direction];
+      const block = element('div', 'ui-style-field');
+      block.dataset.uiStyleKey = `transition.${direction}`;
+      const head = element('label', 'ui-style-check');
+      const enabled = element('input'); enabled.type = 'checkbox'; enabled.checked = motion !== undefined;
+      enabled.dataset.uiStyleControl = `transition.${direction}.enabled`;
+      enabled.onchange = () => commit(direction, enabled.checked ? { ...UI_MOTION_DEFAULTS[direction] } : null, `transition.${direction}.enabled`);
+      head.append(enabled, document.createTextNode(`${MOTION_NAMES[direction]}动画`));
+      block.appendChild(head);
+      if (motion) {
+        const update = (patch: Partial<ProjectUiMotion>, control: string): void => {
+          const next: Record<string, unknown> = { ...motion, ...patch };
+          for (const [key, value] of Object.entries(next)) if (value === undefined) delete next[key];
+          commit(direction, next as unknown as ProjectUiMotion, control);
+        };
+        const number = (key: 'durationMs' | 'opacity' | 'x' | 'y' | 'scale', label: string, limits: { min: number; max: number; step: number; unit: string; scale?: number }, fallback: number): void => {
+          const scale = limits.scale ?? 1, control = `transition.${direction}.${key}`;
+          const input = element('input'); input.type = 'number';
+          input.min = String(limits.min * scale); input.max = String(limits.max * scale); input.step = String(limits.step);
+          const value = motion[key];
+          if (value !== undefined) input.value = String(Math.round(value * scale * 1000) / 1000);
+          input.placeholder = String(Math.round(fallback * scale * 1000) / 1000);
+          input.dataset.uiStyleControl = control;
+          const name = `${MOTION_NAMES[direction]}${label}（${limits.unit}）`;
+          input.setAttribute('aria-label', name);
+          // Typing outside the contract range is pulled back into it; an empty optional field returns to its default.
+          input.onchange = () => {
+            const raw = input.value.trim();
+            const parsed = raw === '' || !Number.isFinite(Number(raw)) ? null : Math.max(limits.min, Math.min(limits.max, Number(raw) / scale));
+            update({ [key]: parsed === null ? (key === 'durationMs' ? fallback : undefined) : key === 'durationMs' ? Math.round(parsed) : parsed }, control);
+          };
+          const wrap = element('label', 'ui-style-input', name); wrap.appendChild(input); block.appendChild(wrap);
+        };
+        number('durationMs', '时长', { min: 0, max: 1000, step: 10, unit: '毫秒' }, UI_MOTION_DEFAULTS[direction].durationMs);
+        number('opacity', direction === 'enter' ? '起始不透明度' : '结束不透明度', { min: 0, max: 1, step: 5, unit: '%', scale: 100 }, 1);
+        number('x', direction === 'enter' ? '起始横向偏移' : '结束横向偏移', { min: -128, max: 128, step: 1, unit: '像素' }, 0);
+        number('y', direction === 'enter' ? '起始纵向偏移' : '结束纵向偏移', { min: -128, max: 128, step: 1, unit: '像素' }, 0);
+        number('scale', direction === 'enter' ? '起始缩放' : '结束缩放', { min: 0.8, max: 1.2, step: 1, unit: '%', scale: 100 }, 1);
+        const easing = element('select');
+        for (const [value, label] of Object.entries(EASING_NAMES)) easing.appendChild(option(value, label));
+        easing.value = motion.easing ?? 'ease-out';
+        easing.dataset.uiStyleControl = `transition.${direction}.easing`;
+        easing.setAttribute('aria-label', `${MOTION_NAMES[direction]}节奏`);
+        easing.onchange = () => update({ easing: easing.value === 'ease-out' && motion.easing === undefined ? undefined : easing.value as 'linear' }, `transition.${direction}.easing`);
+        const wrap = element('label', 'ui-style-input', `${MOTION_NAMES[direction]}节奏`); wrap.appendChild(easing); block.appendChild(wrap);
+        if (motion.durationMs === 0) block.appendChild(element('p', 'ui-style-hint', '时长为 0 时直接显示，不播放动画。'));
+        const play = element('button', '', `预览${MOTION_NAMES[direction]}`); play.type = 'button';
+        play.dataset.uiStyleControl = `transition.${direction}.preview`;
+        play.onclick = () => previewMotion(node, direction);
+        block.appendChild(play);
+      }
+      section.appendChild(block);
+    }
+    const stop = element('button', '', '停止预览'); stop.type = 'button';
+    stop.dataset.uiStyleControl = 'transition.stop';
+    stop.dataset.uiMotionStop = 'true';
+    stop.disabled = motionPreview === null;
+    stop.onclick = () => { stopMotionPreview(); };
+    section.appendChild(stop);
+    section.appendChild(element('p', 'ui-style-hint', '进出场只是画面表现：页面打开时立刻可以操作，关闭时立刻交还操作；玩家开启「减少动态」后直接显示。预览只移动设计画布一次，不保存、不触发任何按钮；在「试玩草稿」中可看到真实播放器效果。'));
+    parent.appendChild(section);
+  }
+
+  /**
+   * Plays one direction once on the canvas with the Player's own motion driver and easing, then returns the canvas to
+   * its normal pose. Any redraw, page switch, closing the designer or 停止预览 ends it.
+   */
+  function previewMotion(node: ProjectUiNode, direction: UiMotionDirection): void {
+    stopMotionPreview();
+    const resolved = resolveProjectUiMotion(node, direction, false);
+    const layer = body.querySelector<HTMLElement>('[data-ui-canvas-page]');
+    if (!resolved || !layer) { options.onStatus(`${MOTION_NAMES[direction]}时长为 0，页面会直接显示。`); return; }
+    const controller = new ProjectUiMotionController();
+    const paint = (pose: ProjectUiMotionPose): void => {
+      layer.style.opacity = pose.opacity === 1 ? '' : String(pose.opacity);
+      layer.style.transform = pose.x === 0 && pose.y === 0 && pose.scale === 1 ? '' : `translate(${cqw(pose.x)}, ${cqw(pose.y)}) scale(${pose.scale})`;
+    };
+    const preview = { controller, frame: 0, stop: () => { window.cancelAnimationFrame(preview.frame); controller.dispose(); paint({ opacity: 1, x: 0, y: 0, scale: 1 }); layer.dataset.uiMotionPreview = ''; delete layer.dataset.uiMotionPreview; syncStop(); } };
+    const syncStop = (): void => { const stop = body.querySelector<HTMLButtonElement>('[data-ui-motion-stop]'); if (stop) stop.disabled = motionPreview === null; };
+    motionPreview = preview;
+    layer.dataset.uiMotionPreview = direction;
+    controller.play('designer-preview', resolved, direction, paint, () => { if (motionPreview === preview) stopMotionPreview(); });
+    syncStop();
+    let last = performance.now();
+    const tick = (now: number): void => {
+      if (motionPreview !== preview) return;
+      if (!layer.isConnected) { stopMotionPreview(); return; }
+      controller.update(now - last); last = now;
+      if (motionPreview === preview) preview.frame = window.requestAnimationFrame(tick);
+    };
+    preview.frame = window.requestAnimationFrame(tick);
   }
 
   function drawProperties(parent: HTMLElement, rootNode: ProjectUiNode, config: Record<string, unknown>): void {
@@ -427,10 +637,17 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
       align.appendChild(button);
     }
     parent.appendChild(align);
+    if (parentId === null) drawMotion(parent, node);
+    const interactive = isUiStateNode(node);
+    const editing: UiStateName | null = interactive && selectedState !== 'normal' ? selectedState : null;
+    if (interactive) drawStates(parent, node, editing);
     parent.appendChild(renderUiStyleForm({
-      node, config, assets: availableAssets(), open: openStyleGroups,
+      node, config, assets: availableAssets(), open: openStyleGroups, ...(editing ? { state: editing } : {}),
       onToggle: (group, open) => { if (open) openStyleGroups.add(group); else openStyleGroups.delete(group); },
-      apply: (style, control) => { styleFocus = control; apply({ type: 'node.update', page: selectedPage, id: node.id, patch: { style } }); },
+      apply: (style, control) => {
+        styleFocus = control;
+        apply({ type: 'node.update', page: selectedPage, id: node.id, patch: editing ? { states: withUiState(node.states, editing, style) } : { style } });
+      },
     }));
     if (node.text) {
       const kind = element('select');
@@ -567,6 +784,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
   }
 
   function draw(): void {
+    stopMotionPreview();
     activeImages?.dispose(); activeImages = new ImageScope();
     body.replaceChildren();
     let config: Record<string, unknown> = {};
@@ -574,6 +792,9 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     const ui = options.read();
     const pageRoot = ui?.pages[selectedPage];
     if (selectedNodeId && pageRoot && !findNode(pageRoot, selectedNodeId)) selectedNodeId = null;
+    // The state being edited belongs to one control: choosing another control (or none) returns to 正常.
+    const stateOwner = selectedNodeId === null ? null : `${selectedPage}/${selectedNodeId}`;
+    if (stateOwner !== selectedStateOwner) { selectedState = 'normal'; selectedStateOwner = stateOwner; }
     const tree = element('aside', 'ui-designer-tree'); tree.appendChild(element('h3', '', '层级'));
     if (pageRoot) drawTree(tree, pageRoot, 0);
     else tree.appendChild(element('p', 'ui-empty', '本页使用默认界面。'));
@@ -600,7 +821,10 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     const center = element('div', 'ui-designer-center');
     const canvas = element('div', 'ui-designer-canvas');
     canvas.setAttribute('aria-label', `${PAGE_NAMES[selectedPage]}设计画布`);
-    if (pageRoot) drawCanvas(canvas, pageRoot, DESIGN_FRAME, config);
+    // The page's nodes sit in one layer covering the canvas, so a motion preview moves the page as the Player does.
+    const pageLayer = element('div'); pageLayer.dataset.uiCanvasPage = selectedPage;
+    pageLayer.style.cssText = 'position:absolute;inset:0';
+    if (pageRoot) { canvas.appendChild(pageLayer); drawCanvas(pageLayer, pageRoot, DESIGN_FRAME, config); }
     else canvas.appendChild(element('p', 'ui-empty', '添加页面后可在画布选择与拖动组件。'));
     center.appendChild(canvas);
     const properties = element('aside', 'ui-designer-properties'); properties.appendChild(element('h3', '', '属性'));

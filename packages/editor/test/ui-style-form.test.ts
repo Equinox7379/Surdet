@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { validateProjectUiStyle, type ProjectUiStyle } from '@surdet/core';
-import { effectiveUiStyle, inheritStyleKey, isExplicitClear, setStyleKey, uiStyleFields } from '../src/ui-style-form.js';
+import { validateProjectUiStates, validateProjectUiStyle, validateProjectUiTransitions, type ProjectUiStyle } from '@surdet/core';
+import { UI_MOTION_DEFAULTS, effectiveUiStyle, inheritStyleKey, isExplicitClear, isUiStateNode, setStyleKey, uiStateFields, uiStyleFields, withUiMotion, withUiState } from '../src/ui-style-form.js';
 
 const BOX = ['background', 'backgroundOpacity', 'backgroundGradient', 'backgroundImage', 'border', 'borderRadius', 'padding', 'shadows', 'opacity'];
 const TEXT = ['fontRole', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'color', 'align', 'textShadows'];
@@ -79,5 +79,44 @@ describe('U1 style form shows the values the Player draws', () => {
     const effective = effectiveUiStyle(progress({ background: 0xffffff, borderRadius: 0 }), config);
     expect(effective.background).toBe(0xffffff);
     expect(effective.borderRadius).toBe(0);
+  });
+});
+
+describe('U2 state form edits only what a state may change', () => {
+  it('offers the state keys a control draws, never frame, border, radius, padding or typography', () => {
+    expect([...uiStateFields({ type: 'button' })].sort()).toEqual(['background', 'backgroundGradient', 'backgroundImage', 'backgroundOpacity', 'color', 'opacity', 'shadows', 'textShadows']);
+    expect([...uiStateFields({ type: 'input' })].sort()).toEqual(['background', 'backgroundGradient', 'backgroundImage', 'backgroundOpacity', 'color', 'opacity', 'shadows', 'textShadows']);
+    for (const type of ['toggle', 'slider'] as const) expect([...uiStateFields({ type })].sort()).toEqual(['background', 'backgroundGradient', 'backgroundImage', 'backgroundOpacity', 'opacity', 'shadows']);
+    expect(['button', 'toggle', 'slider', 'input'].every(type => isUiStateNode({ type: type as 'button' }))).toBe(true);
+    expect(['container', 'text', 'image', 'progress', 'scroll', 'tabs', 'content'].some(type => isUiStateNode({ type: type as 'text' }))).toBe(false);
+  });
+
+  it('writes the whole states object, keeps the other states, drops an emptied one and sends null when none is left', () => {
+    const states = { hover: { background: 0x0000ff }, disabled: { opacity: 0.8 } };
+    const next = withUiState(states, 'pressed', setStyleKey(undefined, 'background', 0xff0000));
+    expect(next).toEqual({ hover: { background: 0x0000ff }, pressed: { background: 0xff0000 }, disabled: { opacity: 0.8 } });
+    expect(Object.keys(next!)).toEqual(['hover', 'pressed', 'disabled']);
+    expect(states).toEqual({ hover: { background: 0x0000ff }, disabled: { opacity: 0.8 } });
+    expect(() => validateProjectUiStates(next, 'states')).not.toThrow();
+    expect(withUiState(next!, 'pressed', inheritStyleKey(next!.pressed, 'background'))).toEqual(states);
+    expect(withUiState({ hover: { background: 1 } }, 'hover', null)).toBeNull();
+    expect(withUiState(undefined, 'focus', {})).toBeNull();
+    // Explicit clears inside a state stay what they are (null image, no shadows) and Core accepts them.
+    const cleared = withUiState(undefined, 'hover', { backgroundImage: null, shadows: [], backgroundGradient: null });
+    expect(cleared).toEqual({ hover: { backgroundImage: null, shadows: [], backgroundGradient: null } });
+    expect(() => validateProjectUiStates(cleared, 'states')).not.toThrow();
+  });
+});
+
+describe('U2 page motion writes the whole transition', () => {
+  it('starts each direction from defaults Core accepts and keeps the other direction', () => {
+    expect(() => validateProjectUiTransitions({ ...UI_MOTION_DEFAULTS }, 'transition')).not.toThrow();
+    const enter = withUiMotion(undefined, 'enter', { ...UI_MOTION_DEFAULTS.enter });
+    expect(enter).toEqual({ enter: UI_MOTION_DEFAULTS.enter });
+    const both = withUiMotion(enter!, 'exit', { durationMs: 300, scale: 0.9, easing: 'linear' });
+    expect(both).toEqual({ enter: UI_MOTION_DEFAULTS.enter, exit: { durationMs: 300, scale: 0.9, easing: 'linear' } });
+    expect(() => validateProjectUiTransitions(both, 'transition')).not.toThrow();
+    expect(withUiMotion(both!, 'enter', null)).toEqual({ exit: { durationMs: 300, scale: 0.9, easing: 'linear' } });
+    expect(withUiMotion({ exit: { durationMs: 1 } }, 'exit', null)).toBeNull();
   });
 });

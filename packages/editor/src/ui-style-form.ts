@@ -1,4 +1,4 @@
-import { resolveProjectUiStyle, type ProjectUiNode, type ProjectUiShadow, type ProjectUiStyle } from '@surdet/core';
+import { resolveProjectUiInteractionStyle, resolveProjectUiStyle, type ProjectUiMotion, type ProjectUiNode, type ProjectUiShadow, type ProjectUiStates, type ProjectUiStyle } from '@surdet/core';
 
 /**
  * U1 style form: only the fields a node type actually draws, grouped as 文字 / 背景 / 框体与皮肤.
@@ -25,6 +25,32 @@ export function uiStyleFields(node: Pick<ProjectUiNode, 'type' | 'children'>): S
   return new Set<UiStyleKey>([...text, ...BOX_KEYS]);
 }
 
+/** U2 interaction states, in Core's merge order (hover → focus → pressed → disabled). */
+export type UiStateName = keyof ProjectUiStates;
+export const UI_STATE_NAMES: readonly UiStateName[] = ['hover', 'focus', 'pressed', 'disabled'];
+export const UI_STATE_LABELS: Record<UiStateName, string> = { hover: '悬停', focus: '焦点', pressed: '按下', disabled: '禁用' };
+/** The only keys a state may override; frame, border, radius, padding and typography always come from the normal state. */
+export const UI_STATE_KEYS: ReadonlySet<UiStyleKey> = new Set<UiStyleKey>(['color', 'background', 'opacity', 'backgroundOpacity', 'backgroundGradient', 'backgroundImage', 'textShadows', 'shadows']);
+export const isUiStateNode = (node: Pick<ProjectUiNode, 'type'>): boolean => ['button', 'toggle', 'slider', 'input'].includes(node.type);
+
+/** Fields one state of this node can change: what the node draws, limited to the state keys. */
+export function uiStateFields(node: Pick<ProjectUiNode, 'type' | 'children'>): Set<UiStyleKey> {
+  return new Set([...uiStyleFields(node)].filter(key => UI_STATE_KEYS.has(key)));
+}
+
+/**
+ * The node's complete next `states` after one state's style changed (`patch.states` replaces the object whole):
+ * the other states are kept as they are, an emptied state is removed and no state left becomes `null`.
+ */
+export function withUiState(states: ProjectUiStates | undefined, state: UiStateName, style: ProjectUiStyle | null): ProjectUiStates | null {
+  const next: ProjectUiStates = {};
+  for (const name of UI_STATE_NAMES) {
+    const value = name === state ? style : states?.[name];
+    if (value && Object.keys(value).length > 0) next[name] = value as NonNullable<ProjectUiStates[UiStateName]>;
+  }
+  return Object.keys(next).length > 0 ? next : null;
+}
+
 export function setStyleKey<K extends UiStyleKey>(style: ProjectUiStyle | undefined, key: K, value: ProjectUiStyle[K]): ProjectUiStyle {
   return { ...style, [key]: value };
 }
@@ -45,6 +71,21 @@ export function isExplicitClear(style: ProjectUiStyle | undefined, key: UiStyleK
   return false;
 }
 
+/** U2 page enter/exit, edited on the page root only. */
+export type UiMotionDirection = 'enter' | 'exit';
+/** Defaults written when a direction is first switched on: a short fade with a small slide, inside the contract ranges. */
+export const UI_MOTION_DEFAULTS: Record<UiMotionDirection, ProjectUiMotion> = { enter: { durationMs: 200, opacity: 0, y: 16 }, exit: { durationMs: 160, opacity: 0 } };
+
+/** The page root's complete next `transition` (`patch.transition` replaces it whole); no direction left becomes `null`. */
+export function withUiMotion(transition: ProjectUiNode['transition'], direction: UiMotionDirection, motion: ProjectUiMotion | null): ProjectUiNode['transition'] | null {
+  const next: NonNullable<ProjectUiNode['transition']> = {};
+  for (const name of ['enter', 'exit'] as const) {
+    const value = name === direction ? motion : transition?.[name];
+    if (value) next[name] = value;
+  }
+  return Object.keys(next).length > 0 ? next : null;
+}
+
 export interface UiStyleFormOptions {
   node: ProjectUiNode;
   /** Parsed game.config.json, for the effective (inherited) values. */
@@ -52,6 +93,11 @@ export interface UiStyleFormOptions {
   assets: readonly string[];
   open: ReadonlySet<string>;
   onToggle(group: string, open: boolean): void;
+  /**
+   * U2: edit one interaction state's own style instead of the normal style. The form then shows only the state keys,
+   * "继承" means the value this state falls back to (the normal state), and `apply` returns that state's style.
+   */
+  state?: UiStateName;
   /** `control` identifies the edited control so focus can return to it after the redraw. */
   apply(style: ProjectUiStyle | null, control: string): void;
 }
@@ -76,7 +122,7 @@ export function effectiveUiStyle(node: ProjectUiNode, config: Record<string, unk
   try { return resolveProjectUiStyle(node, config); } catch { return resolveProjectUiStyle(node, {}); }
 }
 
-function describe(key: UiStyleKey, effective: Effective): string {
+function describe(key: UiStyleKey, effective: Effective, imageSource = '主题按钮皮肤'): string {
   const shadows = (list: readonly Shadow[]): string => list.length ? `${list.length} 层` : '无';
   switch (key) {
     case 'fontRole': return ROLE_NAMES[effective.fontRole];
@@ -90,7 +136,7 @@ function describe(key: UiStyleKey, effective: Effective): string {
     case 'background': return effective.background === null ? '无底色' : hex(effective.background);
     case 'backgroundOpacity': return percent(effective.backgroundOpacity);
     case 'backgroundGradient': return effective.backgroundGradient ? `${hex(effective.backgroundGradient.from)} → ${hex(effective.backgroundGradient.to)}` : '无渐变';
-    case 'backgroundImage': return effective.backgroundImage ? `主题按钮皮肤 ${effective.backgroundImage.asset}` : '无图片';
+    case 'backgroundImage': return effective.backgroundImage ? `${imageSource} ${effective.backgroundImage.asset}` : '无图片';
     case 'border': return effective.border ? `${effective.border.width} 像素 ${hex(effective.border.color)}` : '无边框';
     case 'borderRadius': return `${effective.borderRadius} 像素`;
     case 'padding': return effective.padding === null ? '控件默认' : SIDES.map(([side]) => effective.padding![side]).join(' / ');
@@ -100,10 +146,19 @@ function describe(key: UiStyleKey, effective: Effective): string {
 }
 
 export function renderUiStyleForm(options: UiStyleFormOptions): HTMLElement {
-  const { node } = options, style = node.style, fields = uiStyleFields(node);
-  const effective = effectiveUiStyle(node, options.config);
+  const { node, state } = options;
+  const style: ProjectUiStyle | undefined = state ? node.states?.[state] : node.style;
+  const fields = state ? uiStateFields(node) : uiStyleFields(node);
+  // In a state, an unset key shows what the state falls back to: the normal style (then the theme).
+  const effective = state ? effectiveUiStyle({ ...node, style: { ...node.style, ...style } }, options.config) : effectiveUiStyle(node, options.config);
+  // Where an inherited picture comes from: the theme's button skin, or (inside a state) the normal state's own image.
+  const imageSource = state && node.style?.backgroundImage ? '正常状态图片' : '主题按钮皮肤';
   const root = make('div', 'ui-style-form');
   root.dataset.uiStyleForm = node.id;
+  if (state) {
+    root.dataset.uiStyleState = state;
+    root.appendChild(make('p', 'ui-style-hint', `正在编辑「${UI_STATE_LABELS[state]}」状态：只填写与正常状态不同的项，未设置的项沿用正常状态。边框、圆角、内边距和字体始终来自正常状态。`));
+  }
   const commit = (control: string, next: ProjectUiStyle | null): void => options.apply(next, control);
   const set = <K extends UiStyleKey>(key: K, value: ProjectUiStyle[K], control: string = key): void => commit(control, setStyleKey(style, key, value));
 
@@ -122,9 +177,9 @@ export function renderUiStyleForm(options: UiStyleFormOptions): HTMLElement {
     wrap.dataset.uiStyleKey = key;
     const head = make('div', 'ui-style-field-head');
     const inherited = style?.[key] === undefined;
-    const state = make('span', 'ui-style-state', inherited ? `继承：${describe(key, effective)}` : isExplicitClear(style, key) ? '已明确清空' : '已设置');
-    state.dataset.state = inherited ? 'inherited' : isExplicitClear(style, key) ? 'cleared' : 'set';
-    head.append(make('span', 'ui-style-label', label), state);
+    const status = make('span', 'ui-style-state', inherited ? `${state ? '沿用正常状态' : '继承'}：${describe(key, effective, imageSource)}` : isExplicitClear(style, key) ? '已明确清空' : '已设置');
+    status.dataset.state = inherited ? 'inherited' : isExplicitClear(style, key) ? 'cleared' : 'set';
+    head.append(make('span', 'ui-style-label', label), status);
     const restore = make('button', '', '恢复继承'); restore.type = 'button';
     restore.dataset.uiStyleControl = `${key}:inherit`;
     restore.disabled = inherited;
@@ -311,7 +366,7 @@ export function renderUiStyleForm(options: UiStyleFormOptions): HTMLElement {
 
   // —— 框体与皮肤 ——
   const box = group('box', '框体与皮肤');
-  {
+  if (fields.has('border')) {
     const controls = field(box, 'border', '边框', [['无边框', () => null]]);
     const border = style?.border ?? effective.border;
     if (border) {
@@ -326,8 +381,8 @@ export function renderUiStyleForm(options: UiStyleFormOptions): HTMLElement {
       controls.appendChild(add);
     }
   }
-  scalar(box, 'borderRadius', '圆角', { min: 0, max: 65535, step: 1, unit: '像素' }, [['直角', () => 0]]);
-  {
+  if (fields.has('borderRadius')) scalar(box, 'borderRadius', '圆角', { min: 0, max: 65535, step: 1, unit: '像素' }, [['直角', () => 0]]);
+  if (fields.has('padding')) {
     const controls = field(box, 'padding', '内边距', [['清空内边距', () => ({ top: 0, right: 0, bottom: 0, left: 0 })]]);
     const padding = style?.padding ?? effective.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
     for (const [side, name] of SIDES) {
@@ -366,6 +421,13 @@ export function renderUiStyleForm(options: UiStyleFormOptions): HTMLElement {
     const controls = field(box, 'opacity', '整体不透明度');
     number(controls, 'opacity', '整体不透明度', style?.opacity, { min: 0, max: 1, step: 5, unit: '%', scale: 100 },
       value => value === null ? commit('opacity', inheritStyleKey(style, 'opacity')) : set('opacity', value), effective.opacity);
+    if (state === 'disabled') {
+      // Core multiplies the disabled state's opacity by 0.45 once, on the whole node; show the result the Player draws.
+      const final = (() => { try { return resolveProjectUiInteractionStyle(node, options.config, { disabled: true }).opacity; } catch { return effective.opacity * 0.45; } })();
+      const hint = make('p', 'ui-style-hint', `禁用时播放器再乘 45%：最终整体不透明度 ${percent(final)}。`);
+      hint.dataset.uiDisabledOpacity = String(final);
+      controls.appendChild(hint);
+    }
   }
   root.appendChild(box);
   return root;
