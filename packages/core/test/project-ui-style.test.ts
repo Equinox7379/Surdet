@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readProjectUi, projectUiAssetKeys, projectUiChildrenRect, type ProjectUiNode } from '../src/project-ui.js';
-import { projectUiNineSlice, resolveProjectUiStyle, type ProjectUiStyle } from '../src/project-ui-style.js';
+import { projectUiNineSlice, resolveProjectUiInteractionStyle, resolveProjectUiMotion, resolveProjectUiStyle,
+  validateProjectUiStates, validateProjectUiTransitions, type ProjectUiMotion, type ProjectUiStates, type ProjectUiStyle } from '../src/project-ui-style.js';
 
 const node: ProjectUiNode = { id: 'start', type: 'button', frame: { x: 0, y: 0, width: 200, height: 100 } };
 const config = (style: unknown) => ({ ui: { version: 1, pages: { title: { ...node, style } } } });
@@ -78,5 +79,191 @@ describe('U1 finite UI style contract', () => {
     expect(small[0]!.target).toEqual({ x: 5, y: 7, width: 20, height: 5 });
     for (const patch of small) { expect(patch.target.width).toBeGreaterThanOrEqual(0); expect(patch.target.height).toBeGreaterThanOrEqual(0); }
     expect(() => projectUiNineSlice({ width: 60, height: 80 }, node.frame, slice)).toThrow('原图尺寸');
+  });
+});
+
+describe('U2 interaction and page motion contract', () => {
+  const readNode = (value: unknown) => readProjectUi({ ui: { version: 1, pages: { title: value } } });
+
+  it('keeps old documents and effective styles unchanged when interaction fields are absent', () => {
+    const input = config(style);
+    expect(readProjectUi(input)).toEqual(input.ui);
+    expect(input.ui.pages.title).not.toHaveProperty('states');
+    expect(input.ui.pages.title).not.toHaveProperty('transition');
+    const project = { theme: { colors: { text: 123 }, buttonSkin: 'paper' } };
+    for (const current of [node, { ...node, style }]) {
+      const normal = resolveProjectUiStyle(current, project, { colors: { text: 456 } });
+      expect(resolveProjectUiInteractionStyle(current, project, {}, { colors: { text: 456 } })).toEqual(normal);
+      expect(resolveProjectUiInteractionStyle(current, project, { hovered: true, focused: true, pressed: true }, { colors: { text: 456 } })).toEqual(normal);
+      expect(resolveProjectUiInteractionStyle(current, project, { disabled: true }, { colors: { text: 456 } }))
+        .toEqual({ ...normal, opacity: normal.opacity * 0.45 });
+    }
+    expect(resolveProjectUiMotion(node, 'enter', false)).toBeNull();
+    expect(projectUiAssetKeys(null)).toEqual([]);
+  });
+
+  it('overlays base, hover, focus and pressed in that order without changing the node', () => {
+    const current: ProjectUiNode = { ...node, style: { color: 1, background: 2, opacity: 0.8, fontSize: 24 }, states: {
+      hover: { color: 3, backgroundOpacity: 0.5 }, focus: { color: 4, background: 5 }, pressed: { color: 6, opacity: 0.6 },
+    } };
+    const original = structuredClone(current);
+    expect(resolveProjectUiInteractionStyle(current, {}, {})).toMatchObject({ color: 1, background: 2, opacity: 0.8 });
+    expect(resolveProjectUiInteractionStyle(current, {}, { hovered: true })).toMatchObject({ color: 3, background: 2, backgroundOpacity: 0.5 });
+    expect(resolveProjectUiInteractionStyle(current, {}, { hovered: true, focused: true })).toMatchObject({ color: 4, background: 5, opacity: 0.8, backgroundOpacity: 0.5 });
+    expect(resolveProjectUiInteractionStyle(current, {}, { hovered: true, focused: true, pressed: true }))
+      .toMatchObject({ color: 6, background: 5, opacity: 0.6, backgroundOpacity: 0.5, fontSize: 24 });
+    expect(current).toEqual(original);
+  });
+
+  it('skips hover and pressed while disabled, keeps focus, then applies disabled opacity once', () => {
+    const current: ProjectUiNode = { ...node, style: { color: 1, background: 2, opacity: 0.8, backgroundOpacity: 1 }, states: {
+      hover: { background: 3, backgroundOpacity: 0.3 }, focus: { color: 4, opacity: 0.6 },
+      pressed: { color: 5, backgroundOpacity: 0.2 }, disabled: { color: 6 },
+    } };
+    const interaction = { hovered: true, focused: true, pressed: true, disabled: true };
+    expect(resolveProjectUiInteractionStyle(current, {}, interaction))
+      .toMatchObject({ color: 6, background: 2, opacity: 0.6 * 0.45, backgroundOpacity: 1 });
+    expect(resolveProjectUiInteractionStyle({ ...current, states: { ...current.states, disabled: { opacity: 0.4 } } }, {}, interaction))
+      .toMatchObject({ color: 4, opacity: 0.4 * 0.45 });
+    expect(resolveProjectUiInteractionStyle({ ...current, states: { focus: { color: 4 } } }, {}, interaction))
+      .toMatchObject({ color: 4, opacity: 0.8 * 0.45 });
+    expect(resolveProjectUiInteractionStyle(node, {}, { disabled: true }).opacity).toBe(0.45);
+  });
+
+  it('preserves zero and U1 clearing semantics over theme skins and authored decorations', () => {
+    const current: ProjectUiNode = { ...node, style: { ...style, opacity: 0.8 }, states: { hover: {
+      color: 0, background: 0, opacity: 0, backgroundOpacity: 0, backgroundGradient: null, backgroundImage: null, textShadows: [], shadows: [],
+    } } };
+    expect(readNode(current)?.pages.title?.states).toEqual(current.states);
+    const project = { theme: { buttonSkin: 'paper' } };
+    expect(resolveProjectUiInteractionStyle(current, project, { hovered: true })).toMatchObject({
+      color: 0, background: 0, opacity: 0, backgroundOpacity: 0, backgroundGradient: null, backgroundImage: null, textShadows: [], shadows: [],
+    });
+    expect(resolveProjectUiInteractionStyle({ ...node, states: current.states }, project, { hovered: true }).backgroundImage).toBeNull();
+    expect(resolveProjectUiInteractionStyle({ ...node, states: { disabled: { opacity: 0 } } }, {}, { disabled: true }).opacity).toBe(0);
+  });
+
+  it('accepts states on all four interactive controls and exports reusable validation', () => {
+    const states: ProjectUiStates = { hover: { backgroundImage: style.backgroundImage }, focus: { textShadows: style.textShadows },
+      pressed: { backgroundGradient: style.backgroundGradient }, disabled: { shadows: style.textShadows } };
+    expect(() => validateProjectUiStates(states, 'states')).not.toThrow();
+    const variables = { flag: { type: 'flag', initial: false }, count: { type: 'number', initial: 0 }, name: { type: 'string', initial: '' } };
+    for (const [type, name] of [['button', undefined], ['toggle', 'flag'], ['slider', 'count'], ['input', 'name']] as const) {
+      const current = { ...node, type, states, ...(name ? { binding: { kind: 'variable', name } } : {}) };
+      expect(readProjectUi({ variables, ui: { version: 1, pages: { title: current } } })?.pages.title?.states).toEqual(states);
+    }
+  });
+
+  it('rejects state styles that alter layout, typography, behavior, expressions or arbitrary CSS', () => {
+    const forbidden = { fontSize: 20, align: 'center', fontRole: 'title', fontWeight: 700, lineHeight: 1.5, letterSpacing: 1,
+      border: null, borderRadius: 4, padding: { top: 0, right: 0, bottom: 0, left: 0 }, columns: 2, imageFit: 'cover',
+      frame: node.frame, action: { kind: 'start' }, visibleWhen: 'true', enabledWhen: 'true', transform: 'scale(2)', css: 'outline:none' };
+    for (const [key, value] of Object.entries(forbidden)) {
+      expect(() => readNode({ ...node, states: { hover: { [key]: value } } })).toThrow(`states.hover.${key}`);
+    }
+    for (const states of [null, [], { normal: {} }, { hover: null }, { focus: [] }, { pressed: 'red' }, { disabled: null }]) {
+      expect(() => readNode({ ...node, states })).toThrow('states');
+    }
+  });
+
+  it('reuses U1 field bounds and nested validation for every interaction state', () => {
+    const invalidStyles = [
+      { color: -1 }, { color: 0x1000000 }, { background: 0.5 }, { opacity: null }, { opacity: NaN }, { opacity: 1.1 },
+      { backgroundOpacity: -0.1 }, { backgroundOpacity: Infinity }, { textShadows: null }, { shadows: Array(5).fill(style.textShadows![0]) },
+      { shadows: [{ ...style.textShadows![0], css: 'none' }] }, { textShadows: [{ ...style.textShadows![0], blur: 257 }] },
+      { backgroundGradient: { from: 0, to: 0, angle: 361 } }, { backgroundGradient: { from: 0, to: 0, angle: 0, stops: [] } },
+      { backgroundImage: { asset: 'https://example.com/x', fit: 'stretch' } },
+      { backgroundImage: { asset: 'paper', fit: 'cover', slice } },
+      { backgroundImage: { asset: 'paper', fit: 'stretch', slice: { ...slice, top: 0.5 } } },
+    ];
+    for (const state of ['hover', 'focus', 'pressed', 'disabled']) for (const invalid of invalidStyles) {
+      expect(() => readNode({ ...node, states: { [state]: invalid } })).toThrow(`states.${state}`);
+    }
+  });
+
+  it('rejects states on noninteractive nodes, including empty state maps', () => {
+    for (const current of [
+      { type: 'container' }, { type: 'image', asset: 'art' }, { type: 'text' }, { type: 'scroll' }, { type: 'tabs' },
+      { type: 'progress', binding: { kind: 'variable', name: 'count' } }, { type: 'content', source: 'gallery-cgs' },
+    ]) for (const states of [{}, { focus: { color: 0 } }]) {
+      expect(() => readProjectUi({ variables: { count: { type: 'number', initial: 0 } },
+        ui: { version: 1, pages: { gallery: { ...node, ...current, states } } } })).toThrow('states');
+    }
+  });
+
+  it('collects background images from every state, including inactive descendants, without duplicates', () => {
+    const current: ProjectUiNode = { id: 'root', type: 'container', frame: node.frame, children: [
+      { ...node, style: { backgroundImage: { asset: 'paper', fit: 'stretch' } }, states: {
+        hover: { backgroundImage: { asset: 'hover', fit: 'contain' } }, focus: { backgroundImage: { asset: 'focus', fit: 'cover' } },
+        pressed: { backgroundImage: { asset: 'paper', fit: 'stretch' } }, disabled: { backgroundImage: { asset: 'disabled', fit: 'stretch', slice } },
+      } },
+      { id: 'nested', type: 'container', frame: node.frame, children: [
+        { ...node, id: 'deep', states: { pressed: { backgroundImage: { asset: 'pressed', fit: 'stretch' } }, hover: { backgroundImage: null } } },
+        { id: 'art', type: 'image', asset: 'art', frame: node.frame },
+      ] },
+    ] };
+    expect(projectUiAssetKeys(readNode(current))).toEqual(['paper', 'hover', 'focus', 'disabled', 'pressed', 'art']);
+  });
+
+  it('accepts transitions on page roots and preserves their stored representation', () => {
+    const enter: ProjectUiMotion = { durationMs: 1000, opacity: 0, x: -128, y: 128, scale: 0.8, easing: 'linear' };
+    const exit: ProjectUiMotion = { durationMs: 0, opacity: 1, x: 128, y: -128, scale: 1.2, easing: 'ease-in-out' };
+    const transition = { enter, exit };
+    expect(() => validateProjectUiTransitions(transition, 'transition')).not.toThrow();
+    expect(() => validateProjectUiTransitions({ enter: { durationMs: 0.5, easing: 'ease-out' } }, 'transition')).not.toThrow();
+    const current: ProjectUiNode = { ...node, transition };
+    expect(readNode(current)?.pages.title).toEqual(current);
+    expect(readNode({ id: 'root', type: 'container', frame: node.frame, transition: {} })?.pages.title?.transition).toEqual({});
+  });
+
+  it('rejects transitions on children at every depth even when IDs look like roots', () => {
+    for (const transition of [{}, { enter: { durationMs: 100 } }, { exit: { durationMs: 100 } }]) {
+      const child = { ...node, id: 'title', transition };
+      const nested = { id: 'nested', type: 'container', frame: node.frame, children: [child] };
+      for (const children of [[child], [nested]]) {
+        expect(() => readNode({ id: 'root', type: 'container', frame: node.frame, children })).toThrow(/transition.*根节点/);
+      }
+    }
+  });
+
+  it('rejects malformed motion, unsupported keys, null storage and values outside finite bounds', () => {
+    const invalidMotions = [null, [], {}, { durationMs: -1 }, { durationMs: 1001 }, { durationMs: Infinity }, { durationMs: '100' },
+      { durationMs: null }, { durationMs: 1, opacity: -0.01 }, { durationMs: 1, opacity: 1.01 }, { durationMs: 1, opacity: null },
+      { durationMs: 1, x: -129 }, { durationMs: 1, x: 129 }, { durationMs: 1, y: -129 }, { durationMs: 1, y: 129 },
+      { durationMs: 1, x: NaN }, { durationMs: 1, y: Infinity }, { durationMs: 1, scale: 0.79 }, { durationMs: 1, scale: 1.21 },
+      { durationMs: 1, easing: 'ease-in' }, { durationMs: 1, easing: null }, { durationMs: 1, action: { kind: 'close' } },
+      { durationMs: 1, css: 'translateX(1px)' }];
+    for (const direction of ['enter', 'exit']) for (const motion of invalidMotions) {
+      expect(() => readNode({ ...node, transition: { [direction]: motion } })).toThrow(`transition.${direction}`);
+    }
+    for (const transition of [null, [], { normal: { durationMs: 1 } }, { durationMs: 1 }]) {
+      expect(() => readNode({ ...node, transition })).toThrow('transition');
+    }
+  });
+
+  it('resolves each direction to a fresh complete motion without storing defaults', () => {
+    const current: ProjectUiNode = { ...node, transition: {
+      enter: { durationMs: 200 }, exit: { durationMs: 300, opacity: 0, x: -128, y: 128, scale: 0.8, easing: 'ease-in-out' },
+    } };
+    const original = structuredClone(current);
+    const enter = resolveProjectUiMotion(current, 'enter', false);
+    expect(enter).toEqual({ durationMs: 200, opacity: 1, x: 0, y: 0, scale: 1, easing: 'ease-out' });
+    expect(resolveProjectUiMotion(current, 'exit', false)).toEqual(current.transition!.exit);
+    expect(resolveProjectUiMotion(current, 'exit', false)).not.toBe(current.transition!.exit);
+    expect(resolveProjectUiMotion(current, 'enter', false)).not.toBe(enter);
+    if (enter) enter.x = 64;
+    expect(current).toEqual(original);
+    expect(resolveProjectUiMotion({ ...node, transition: { enter: { durationMs: 1, opacity: 0, x: 0, y: 0, scale: 1, easing: 'linear' } } }, 'enter', false))
+      .toEqual({ durationMs: 1, opacity: 0, x: 0, y: 0, scale: 1, easing: 'linear' });
+  });
+
+  it('treats missing directions, reduced motion and zero duration as static', () => {
+    expect(resolveProjectUiMotion({ ...node, transition: {} }, 'enter', false)).toBeNull();
+    for (const direction of ['enter', 'exit'] as const) {
+      const current: ProjectUiNode = { ...node, transition: { [direction]: { durationMs: 200, opacity: 0, x: 20 } } };
+      expect(resolveProjectUiMotion(current, direction, true)).toBeNull();
+      expect(resolveProjectUiMotion(current, direction === 'enter' ? 'exit' : 'enter', false)).toBeNull();
+      expect(resolveProjectUiMotion({ ...current, transition: { [direction]: { durationMs: 0, opacity: 0, x: 20 } } }, direction, false)).toBeNull();
+    }
   });
 });

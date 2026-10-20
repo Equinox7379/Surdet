@@ -2,7 +2,8 @@
 import { collectVars, parseExpr } from './dsl/expr-parser.js';
 import { checkExprOperands } from './scene-lint.js';
 import { GAME_SETTING_DEFINITIONS } from './game-settings.js';
-import { projectUiContentRect, validateProjectUiStyle, type ProjectUiStyle } from './project-ui-style.js';
+import { projectUiContentRect, validateProjectUiStates, validateProjectUiStyle, validateProjectUiTransitions,
+  type ProjectUiStates, type ProjectUiStyle, type ProjectUiTransitions } from './project-ui-style.js';
 
 export const PROJECT_UI_PAGES = [
   'title', 'system-menu', 'save-load', 'settings', 'gallery', 'backlog',
@@ -49,6 +50,8 @@ export interface ProjectUiNode {
   source?: ProjectUiContentSource;
   tab?: string;
   style?: ProjectUiStyle;
+  states?: ProjectUiStates;
+  transition?: ProjectUiTransitions;
   children?: ProjectUiNode[];
 }
 
@@ -199,15 +202,23 @@ function validateCondition(value: unknown, config: Record<string, unknown>, loca
   checkExprOperands({ kind: 'unary', op: '!', operand: ast }, types, (_code, message) => { throw new Error(`${location}：${message}`); });
 }
 
-function validateNode(value: unknown, config: Record<string, unknown>, ids: Set<string>, location: string, page: ProjectUiPageId, contentSource?: ProjectUiContentSource): ProjectUiNode {
+function validateNode(value: unknown, config: Record<string, unknown>, ids: Set<string>, location: string, page: ProjectUiPageId, root: boolean, contentSource?: ProjectUiContentSource): ProjectUiNode {
   const item = record(value, location);
-  onlyKeys(item, ['id', 'type', 'frame', 'text', 'binding', 'visibleWhen', 'enabledWhen', 'action', 'asset', 'source', 'tab', 'style', 'children'], location);
+  onlyKeys(item, ['id', 'type', 'frame', 'text', 'binding', 'visibleWhen', 'enabledWhen', 'action', 'asset', 'source', 'tab', 'style', 'states', 'transition', 'children'], location);
   const id = nonempty(item.id, `${location}.id`);
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(id)) throw new Error(`${location}.id 非法`);
   if (ids.has(id)) throw new Error(`UI 节点 ID 重复：${id}`);
   ids.add(id);
   if (!TYPE_SET.has(String(item.type))) throw new Error(`${location}.type 不受支持`);
   const type = item.type as ProjectUiNodeType;
+  if (item.states !== undefined) {
+    if (!['button', 'toggle', 'slider', 'input'].includes(type)) throw new Error(`${location}.states 只适用于交互控件`);
+    validateProjectUiStates(item.states, `${location}.states`);
+  }
+  if (item.transition !== undefined) {
+    if (!root) throw new Error(`${location}.transition 只适用于页面根节点`);
+    validateProjectUiTransitions(item.transition, `${location}.transition`);
+  }
   if (item.visibleWhen !== undefined) validateCondition(item.visibleWhen, config, `${location}.visibleWhen`);
   if (item.enabledWhen !== undefined) {
     if (!['button', 'toggle', 'slider', 'input'].includes(type)) throw new Error(`${location}.enabledWhen 只适用于交互控件`);
@@ -253,7 +264,7 @@ function validateNode(value: unknown, config: Record<string, unknown>, ids: Set<
   }
   if (item.children !== undefined) {
     if (!CHILD_TYPES.has(type) || !Array.isArray(item.children)) throw new Error(`${location}.children 不适用于 ${type}`);
-    item.children.forEach((child, index) => validateNode(child, config, ids, `${location}.children[${index}]`, page, type === 'content' ? item.source as ProjectUiContentSource : contentSource));
+    item.children.forEach((child, index) => validateNode(child, config, ids, `${location}.children[${index}]`, page, false, type === 'content' ? item.source as ProjectUiContentSource : contentSource));
   }
   return item as unknown as ProjectUiNode;
 }
@@ -268,7 +279,7 @@ export function readProjectUi(config: Record<string, unknown>): ProjectUiDocumen
   const ids = new Set<string>();
   for (const [page, root] of Object.entries(pages)) {
     if (!PAGE_SET.has(page)) throw new Error(`UI 页面不受支持：${page}`);
-    validateNode(root, config, ids, `ui.pages.${page}`, page as ProjectUiPageId);
+    validateNode(root, config, ids, `ui.pages.${page}`, page as ProjectUiPageId, true);
   }
   return ui as unknown as ProjectUiDocument;
 }
@@ -278,6 +289,7 @@ export function projectUiAssetKeys(ui: ProjectUiDocument | null): string[] {
   const visit = (node: ProjectUiNode): void => {
     if (node.asset) keys.add(node.asset);
     if (node.style?.backgroundImage) keys.add(node.style.backgroundImage.asset);
+    for (const style of Object.values(node.states ?? {})) if (style.backgroundImage) keys.add(style.backgroundImage.asset);
     node.children?.forEach(visit);
   };
   if (ui) Object.values(ui.pages).forEach(root => { if (root) visit(root); });

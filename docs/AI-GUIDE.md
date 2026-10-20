@@ -4,7 +4,7 @@ Windows免安装导出见[导出合同](windows-game-export-contract.md)：导�
 
 本指南面向编写剧情、配置与演出的内容作者。默认使用正式 Agent Port 工具，在隔离草稿中修改、验证和试玩；不需要先读引擎源码、长期台账或重新接线播放器。已有项目保持原位，新项目使用现有模板。
 
-本批公开创作合同为 **2.39.0**（73 项公开能力），`project.simulate` 新增源位置与版本关联的 `coverage`，失败和预算耗尽的部分报告保留在错误 `details.report`；保留作品界面变量条件、只读数值条、数组列表/数量、有限赋值按钮，以及人物档案、用语辞典、结局册、可选永久收藏、多语言、已有配音、主题、分层立绘、逐帧动画与素材整理能力。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
+本批公开创作合同为 **2.40.0**（73 项公开能力），新增U2有限交互状态、根页面动效及读取有效值，见[交互合同](ui-interaction-contract.md)；保留`project.simulate`的源位置/版本coverage、失败部分报告，以及原作品界面、鉴赏、文本、主题与素材操作。客户端、Core、Authoring、Renderer、CLI 与 Editor 应使用同批构建，不能只复制新界面接旧 authority。
 
 项目代码扩展见[插件合同](project-plugins-contract.md)。`project.inspect.plugins` 可读取声明、参数与状态版本；普通创作 Agent 不注册、启用或执行插件代码。剧情检查遇到插件会返回 `requires-extension` / `incomplete`，表示“需要扩展，未运行”，不能用增加预算、占位继续或封装旧通过记录来替代 Owner 明确启用后的真实试玩。
 
@@ -250,7 +250,7 @@ Player 的显式主题字段只覆盖相应项目字段，不会因只显式设�
 
 ### 作品界面与人类接管
 
-不定制时沿用默认 UI。需要定制时，先用 `project.ui({view:"working"})`（MCP：`surdet_project_ui`）读取 value/defaultPages/nodes/fingerprint，再用 `project.ui.patch`（MCP：`surdet_project_ui_patch`）修改。文档位于 `game.config.json.ui`，结构 `{version:1,pages:{...}}`；省略页面即使用默认界面。2.39.0 的节点读取新增 effectiveStyle/rect/contentRect；有限文字装饰、背景、框体和九宫格的字段、明确清空、真实图片检查见[U1合同](ui-style-contract.md)。本批只接后端，前端绘制尚未交付，不把可保存配置等同于已实现视觉效果。
+不定制时沿用默认 UI。需要定制时，先用 `project.ui({view:"working"})`（MCP：`surdet_project_ui`）读取 value/defaultPages/nodes/fingerprint，再用 `project.ui.patch`（MCP：`surdet_project_ui_patch`）修改。文档位于 `game.config.json.ui`，结构 `{version:1,pages:{...}}`；省略页面即使用默认界面。2.39.0新增effectiveStyle/rect/contentRect的U1前后端已合入；有限样式和图片检查见[U1合同](ui-style-contract.md)。2.40.0新增effectiveStates/effectiveTransition，U2可见状态及动画仍待前端，不能把可保存配置当成已实现视觉效果。
 
 页面：title、system-menu、save-load、settings、gallery、backlog、dialogue、choices、toolbar、hud。固定组件：container、image、text、button、toggle、slider、progress、input、scroll、tabs、content。每个节点有全作品唯一的 id、type 和 `frame:{x,y,width,height,anchorX?,anchorY?}`。设计坐标为 1280×720，节点原点＝父级原点＋x/y－anchor×本节点宽高；锚点范围0..1，默认0，尺寸须为正。兄弟顺序即叠放顺序；tabs 子项用 tab 命名分组。
 

@@ -1,18 +1,19 @@
 import { imageSize } from 'image-size';
-import { projectUiNineSlice, type ProjectUiDocument, type ProjectUiNode } from '@surdet/core';
+import { projectUiNineSlice, type ProjectUiDocument, type ProjectUiNode, type ProjectUiBackgroundImage } from '@surdet/core';
 import type { ProjectAssetCatalog } from './contracts.js';
 import { AuthoringOperationError } from './change-session.js';
 
 export type UiAssetReader = (path: string) => Promise<Uint8Array>;
 
-export function uiSliceAssets(ui: ProjectUiDocument | null, assets: ProjectAssetCatalog): Array<{ node: ProjectUiNode; path: string }> {
-  const result: Array<{ node: ProjectUiNode; path: string }> = [];
+export function uiSliceAssets(ui: ProjectUiDocument | null, assets: ProjectAssetCatalog): Array<{ node: ProjectUiNode; path: string; image: ProjectUiBackgroundImage }> {
+  const result: Array<{ node: ProjectUiNode; path: string; image: ProjectUiBackgroundImage }> = [];
   const visit = (node: ProjectUiNode): void => {
-    const image = node.style?.backgroundImage;
-    if (image?.slice) {
+    for (const style of [node.style, ...Object.values(node.states ?? {})]) {
+      const image = style?.backgroundImage;
+      if (!image?.slice) continue;
       const matches = assets.backgrounds.filter(asset => asset.key === image.asset && asset.resolved);
       if (matches.length !== 1) throw new AuthoringOperationError('UI_INVALID', `九宫格图片缺失或不唯一：${image.asset}`);
-      result.push({ node, path: matches[0]!.sourcePath });
+      result.push({ node, path: matches[0]!.sourcePath, image });
     }
     node.children?.forEach(visit);
   };
@@ -23,7 +24,7 @@ export function uiSliceAssets(ui: ProjectUiDocument | null, assets: ProjectAsset
 /** Actual bytes are supplied by each host's existing safe project-file reader. No filesystem imports. */
 export function validateUiImageBytes(ui: ProjectUiDocument | null, assets: ProjectAssetCatalog, read: (path: string) => Uint8Array): void {
   const sizes = new Map<string, { width: number; height: number }>();
-  for (const { node, path } of uiSliceAssets(ui, assets)) {
+  for (const { node, path, image } of uiSliceAssets(ui, assets)) {
     try {
       let size = sizes.get(path);
       if (!size) {
@@ -33,7 +34,7 @@ export function validateUiImageBytes(ui: ProjectUiDocument | null, assets: Proje
           ? { width: metadata.height, height: metadata.width } : { width: metadata.width, height: metadata.height };
         sizes.set(path, size);
       }
-      projectUiNineSlice(size, node.frame, node.style!.backgroundImage!.slice!);
+      projectUiNineSlice(size, node.frame, image.slice!);
     } catch (error) {
       throw new AuthoringOperationError('UI_INVALID', `UI 节点 ${node.id} 的九宫格图片 ${path}：${error instanceof Error ? error.message : String(error)}`);
     }
