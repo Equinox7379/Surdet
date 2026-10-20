@@ -1,6 +1,6 @@
 # U2：作品界面状态与进出场合同
 
-Authoring **2.40.0**，仍为73项能力、`ui.version:1`和原`project.ui`/`project.ui.patch`事务。本批交付后端数据、依赖与帧调度接口；**尚未接入Editor状态表单或Player可见动画，不是完整U2交付。** U1基础样式前端已随#80合入，不更换默认外观。
+Authoring **2.40.0**，仍为73项能力、`ui.version:1`和原`project.ui`/`project.ui.patch`事务。后端#81与前端#82分别交付数据/调度和Editor/Player接线，当前均未合入main。Windows浏览器已验证编辑保存重开及真实Player交互/进退场/重置/读档/减少动态；Electron、原生IME和本轮最终导出包尚未验。U1基础样式前端已随#80合入，不更换默认外观。
 
 ## 控件状态
 

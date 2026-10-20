@@ -855,7 +855,8 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
     const safePaint = (pose: ProjectUiMotionPose): void => { try { paint(pose); } catch (error) { report(error); } };
     const safeComplete = (): void => { running.delete(page); try { complete(); } catch (error) { report(error); } };
     running.add(page);
-    try { motion!.play(motionKey(page), resolved, direction, safePaint, safeComplete); return; } catch { /* disposed driver */ }
+    try { motion!.play(motionKey(page), resolved, direction, safePaint, safeComplete,
+      () => { safePaint(STABLE_POSE); safeComplete(); }); return; } catch { /* disposed driver */ }
     safePaint(STABLE_POSE); safeComplete();
   }
 
@@ -877,13 +878,11 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
 
   function refresh(): void {
     if (disposed) return;
-    // The driver was reset or disposed behind this UI's back (Runtime resetSession/dispose cancel without callbacks):
-    // nothing may stay half-entered or linger as a closing picture.
-    if (motion && running.size > 0 && !motion.needsUpdate) settleMotion();
     const previousFailure = refreshFailure; refreshFailure = null;
     for (const [page, display] of pages) {
       const wasHidden = display.element.hidden;
       display.element.hidden = options.isPageVisible?.(page) === false;
+      if (display.blocker) display.blocker.hidden = display.element.hidden;
       if (display.element.hidden) {
         if (!wasHidden && !display.hiddenThisFrame) { display.hiddenThisFrame = true; window.requestAnimationFrame(() => { display.hiddenThisFrame = false; }); }
         if (display.marker) display.marker.hidden = true;
@@ -984,6 +983,7 @@ export function createProjectUiDom(options: ProjectUiDomOptions): ProjectUiDom {
           const blocker = display.blocker = document.createElement('div');
           blocker.dataset.uiMotionBlocker = page;
           blocker.setAttribute('aria-hidden', 'true');
+          blocker.hidden = element.hidden;
           blocker.style.cssText = `position:absolute;inset:0;z-index:${PAGE_LEVEL[page]};pointer-events:auto`;
           design.insertBefore(blocker, element);
         }

@@ -1585,6 +1585,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
       clearRollback();
       sessionStart = Date.now() - Math.max(0, snap.meta.playTimeSec ?? 0) * 1000;
       playerShell!.commands.completeOperation({ base: 'game', overlay: 'none' });
+      uiDom?.resetMotion();
       activeSaveLoad = null;
       menu.hideTitle();
       refreshCommandRail();
@@ -1605,6 +1606,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     clearRollback();
     sessionStart = Date.now() - Math.max(0, snap.meta.playTimeSec ?? 0) * 1000;
     playerShell!.commands.completeOperation({ base: 'game', overlay: 'none' });
+    uiDom?.resetMotion();
     menu.hideTitle();
     activeSaveLoad = null;
     clearCountedThisSession = false;
