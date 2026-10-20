@@ -13,7 +13,7 @@ import { assertConfigSourcesReadable, configSourceError, configSourcePath, parse
 import { assetPathForHandle, assertProjectWriteUnlocked, readProjectSourceText, runProjectWriteOperation, writeProjectText } from '../project-io.js';
 import { editorWorkspaceStatus } from '../editor-workspace.js';
 import { AuthoringOperationError, parseProjectConfigDocument, patchUiDocument, renameConfigReferences, renameGalleryLabel, applyConfigReferenceRename, type UiPatch } from '@surdet/authoring';
-import { commitCharacterTable, commitEndScenes, commitStageConfiguration, commitThemeConfiguration, commitUiConfiguration, parseCharacterVisualsDraft, parseThemeEditorDraft, projectThemeEditorDraft, type CharacterTableEditRow } from '../authoring-project-storage.js';
+import { commitCharacterTable, commitEndScenes, commitStageConfiguration, commitThemeConfiguration, commitUiConfiguration, parseCharacterVisualsDraft, parseThemeEditorDraft, previewUiShareImport, projectThemeEditorDraft, type CharacterTableEditRow, type UiShareImportPreview, type UiShareImportTarget } from '../authoring-project-storage.js';
 import { disposeUiDesigner, redrawUiDesignerHistory, renderUiDesigner } from '../ui-designer.js';
 import { renderThemeConfigForm } from '../theme-config-form.js';
 import { renderTextCatalogSection, type TextBindingDraft } from './text-catalog.js';
@@ -2094,6 +2094,60 @@ function renderEndingsSection(): HTMLElement {
   ops.append(save, unset, reload);
   sec.append(body, status, ops);
   return sec;
+}
+
+export interface PreparedUiShareImport {
+  preview: UiShareImportPreview;
+  resources: Array<{ path: string; state: 'present' | 'missing' }>;
+  stageMissingAssets(): Promise<number>;
+  apply(): Promise<void>;
+}
+
+/** Prepare only; each explicit action rechecks the original project/draft and resources. */
+export async function prepareUiShareImportDraft(text: string, target?: UiShareImportTarget): Promise<PreparedUiShareImport> {
+  assertProjectWriteUnlocked();
+  if (state.reviewWorkspace || state.reviewPreviewReadOnly || state.projectLoading) throw new Error('当前项目不可导入界面');
+  const root = state.dirHandle, revision = configSessionRevision, sequence = ++uiShareImportSequence;
+  const currentText = (): string => previewUiConfigText(previewThemeConfigText(state.gameConfigText));
+  const sourceText = currentText();
+  const plan = previewUiShareImport(text, parseProjectConfigDocument(sourceText), target);
+  let applied = false;
+  const assertCurrent = (): void => {
+    if (applied) throw new Error('这次界面导入已经应用');
+    if (sequence !== uiShareImportSequence || root !== state.dirHandle || revision !== configSessionRevision || sourceText !== currentText())
+      throw new Error('导入预览期间项目或草稿已变化，请重新预览');
+    assertProjectWriteUnlocked();
+    if (state.reviewWorkspace || state.reviewPreviewReadOnly || state.projectLoading) throw new Error('当前项目不可导入界面');
+  };
+  const checkResources = async (): Promise<File[]> => {
+    assertCurrent();
+    const missing = await missingUiShareAssets(plan.share, shareAssets());
+    assertCurrent();
+    return missing;
+  };
+  const missing = await checkResources(), missingNames = new Set(missing.map(file => file.name));
+  return {
+    // The caller may edit its preview DOM/data without altering the captured application.
+    preview: structuredClone(plan),
+    resources: plan.share.assets.map(asset => ({ path: asset.path, state: missingNames.has(asset.path.split('/').at(-1)!) ? 'missing' : 'present' })),
+    async stageMissingAssets() {
+      const files = await checkResources();
+      if (files.length) {
+        if (!stageSharedAssetsHook) throw new Error('缺少素材，请先通过现有素材导入工作台导入共享包的图片/字体');
+        stageSharedAssetsHook(files);
+      }
+      return files.length;
+    },
+    async apply() {
+      const files = await checkResources();
+      if (files.length) throw new Error('缺少共享素材，请先完成素材导入再应用界面');
+      readUiConfigDraft(); readThemeConfigDraft(); pushConfigHistory(false);
+      uiDraft = structuredClone(plan.value);
+      if (plan.themeForm !== null) themeDraft = plan.themeForm;
+      applied = true; configSessionLoaded = true; scheduleConfigDraftStateChanged();
+      rerenderConfig();
+    },
+  };
 }
 
 function renderUiSection(): HTMLElement {
