@@ -22,12 +22,16 @@ let styleFocus: string | null = null;
 /** U2: which interaction state the style form edits and the canvas shows for the selected control. */
 let selectedState: UiStateName | 'normal' = 'normal';
 let selectedStateOwner: string | null = null;
+// The existing configuration history rebuilds the whole workspace synchronously.
+// That redraw is not closing the designer or switching projects.
+let historyRedraw = false;
 /** The one canvas preview of a page enter/exit; it only moves the canvas layer, never the work or the player. */
 let motionPreview: { controller: ProjectUiMotionController; frame: number; stop(): void } | null = null;
 function stopMotionPreview(): void { const preview = motionPreview; motionPreview = null; preview?.stop(); }
 export function disposeUiDesigner(): void {
   designerGeneration += 1;
   stopMotionPreview();
+  if (!historyRedraw) { selectedState = 'normal'; selectedStateOwner = null; styleFocus = null; }
   dragCleanup?.(); dragCleanup = null;
   activeImages?.dispose(); activeImages = null;
   for (const url of styleImageUrls) URL.revokeObjectURL(url);
@@ -231,8 +235,12 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
   save.onclick = () => { void options.save().then(() => options.onStatus('界面已保存，重新打开或试玩可查看正式结果。')).catch(error => options.onStatus(`保存失败：${String(error)}`, false)); };
   const preview = element('button', '', '试玩草稿'); preview.type = 'button';
   preview.onclick = () => { void options.preview().catch(error => options.onStatus(`试玩未启动：${String(error)}`, false)); };
-  const undo = element('button', '', '撤销'); undo.onclick = () => options.undo();
-  const redo = element('button', '', '重做'); redo.onclick = () => options.redo();
+  const moveHistory = (change: () => void): void => {
+    historyRedraw = true;
+    try { change(); } finally { historyRedraw = false; }
+  };
+  const undo = element('button', '', '撤销'); undo.onclick = () => moveHistory(options.undo);
+  const redo = element('button', '', '重做'); redo.onclick = () => moveHistory(options.redo);
   const restore = element('button', '', '本页恢复默认');
   restore.onclick = () => apply({ type: 'page.remove', page: selectedPage });
   toolbar.append(pageSelect, save, preview, undo, redo, restore);
@@ -314,7 +322,8 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     item.style.opacity = String(style?.opacity ?? 1);
     // U1 box fields: the same Core values and decoration layer as the Player, scaled to the canvas.
     const boxed = stateful || usesProjectUiBox(style);
-    let decor: HTMLDivElement | null = null, surface = onSurface || (style?.background !== undefined && !boxed);
+    let decor: HTMLDivElement | null = null, focusRing: HTMLSpanElement | null = null;
+    let surface = onSurface || (style?.background !== undefined && !boxed);
     if (boxed) {
       try {
         const effective = interaction ? interactionStyle(node, config, interaction) : inherited, content = projectUiContentRect(rect, style);
@@ -383,6 +392,7 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
           item.style.height = `${Math.max(8, initial.height + dy) / 720 * 100}%`;
         }
         if (decor) { decor.style.transform = item.style.transform; decor.style.width = item.style.width; decor.style.height = item.style.height; }
+        if (focusRing) { focusRing.style.transform = item.style.transform; focusRing.style.width = item.style.width; focusRing.style.height = item.style.height; }
       };
       const stop = (next: PointerEvent): void => {
         cleanup();
@@ -406,14 +416,24 @@ export function renderUiDesigner(options: UiDesignerOptions): HTMLElement {
     if (shownState === 'focus') {
       // The Player's own keyboard focus marker (accent ring over a panel-coloured ring), drawn outside the node's style.
       const theme = (() => { try { return resolvePlayerTheme(config); } catch { return resolvePlayerTheme({}); } })();
-      const ring = element('span');
+      const ring = focusRing = element('span');
       ring.dataset.uiFocusPreview = 'true';
       ring.setAttribute('aria-hidden', 'true');
-      ring.style.cssText = `position:absolute;inset:0;pointer-events:none;border-radius:inherit;outline:${cqw(2)} solid #${theme.colors.accent.toString(16).padStart(6, '0')};outline-offset:${cqw(2)};box-shadow:0 0 0 ${cqw(2)} #${theme.colors.panel.toString(16).padStart(6, '0')}`;
-      item.appendChild(ring);
+      ring.style.cssText = `position:absolute;pointer-events:none;z-index:2;border-radius:${item.style.borderRadius};outline:${cqw(2)} solid #${theme.colors.accent.toString(16).padStart(6, '0')};outline-offset:${cqw(2)};box-shadow:0 0 0 ${cqw(2)} #${theme.colors.panel.toString(16).padStart(6, '0')}`;
+      for (const key of ['left', 'top', 'width', 'height'] as const) ring.style[key] = item.style[key];
     }
-    if (decor) canvas.appendChild(decor);
-    canvas.appendChild(item);
+    if (stateful && decor) {
+      // Match the Player's compositing: author opacity applies once to the whole
+      // control, while its focus preview stays outside that transparent group.
+      const group = element('div'); group.dataset.uiCanvasGroup = node.id;
+      group.style.cssText = `position:absolute;inset:0;pointer-events:none;opacity:${item.style.opacity}`;
+      item.style.opacity = '1'; decor.style.opacity = '1'; item.style.pointerEvents = 'auto';
+      group.append(decor, item); canvas.appendChild(group);
+    } else {
+      if (decor) canvas.appendChild(decor);
+      canvas.appendChild(item);
+    }
+    if (focusRing) canvas.appendChild(focusRing);
     let children = node.children ?? [];
     if (node.type === 'tabs' && children.length) {
       const tabChildren = children;

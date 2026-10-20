@@ -5,7 +5,7 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { startDevProject } from '../scripts/dev-project.mjs';
 import { createNodeFsBridge, nodeBackedFileSystemInit } from './asset-import-authority.e2e.mjs';
-import { createStageFixture } from './support/stage-fixture.mjs';
+import { createProject } from '../../cli/dist/new.js';
 
 // U2 in the real Editor: interaction states and page enter/exit edited in the designer → Authoring draft → undo/redo →
 // save → reopen, the canvas state preview and the one-off motion preview, then the same draft in the designer's own
@@ -37,15 +37,19 @@ const ui = { version: 1, pages: {
     { id: 'menu_title', type: 'text', frame: frame(480, 200, 320, 60), text: literal('暂停菜单'), style: { fontSize: 32 } },
     { id: 'menu_close', type: 'button', frame: frame(480, 300, 320, 56), text: literal('返回游戏'), action: { kind: 'close' }, style: { background: 0xffffff, color: 0x223344 } },
     { id: 'menu_restart', type: 'button', frame: frame(480, 400, 320, 56), text: literal('重新开始'), action: { kind: 'start' }, style: { background: 0xffffff, color: 0x223344 } },
+    { id: 'reduce_motion', type: 'toggle', frame: frame(860, 300, 180, 56), text: literal('减少动态'), binding: { kind: 'setting', name: 'reducedMotion' } },
   ] },
 } };
 
-const fixture = createStageFixture(path.join(output, 'project'));
+// U2 exercises UI state and lifecycle, not pinned portrait/stage assets. Use the
+// ordinary blank project path so this test has no unrelated stage-fixture setup.
+const fixture = { root: path.join(output, 'project') };
+createProject('u2-ui-interaction', { directory: fixture.root, template: 'blank', title: 'U2 交互验收' });
 const configPath = path.join(fixture.root, 'game.config.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 Object.assign(config, { privateAuditMarker: 'KEEP_UI_SOURCE', variables: { ready: { type: 'flag', initial: false } }, ui });
 fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
-fs.writeFileSync(path.join(fixture.root, 'content/scenario/start.gal'), '@scene start\n@stage dock\n凛：第一句话。\n凛：第二句话。\n凛：第三句话。\n凛：第四句话。\n凛：第五句话。\n');
+fs.writeFileSync(path.join(fixture.root, 'content/scenario/start.gal'), '@scene start\n凛：第一句话。\n凛：第二句话。\n凛：第三句话。\n凛：第四句话。\n凛：第五句话。\n');
 
 const PLAIN_STATES = { hover: { background: 0xff0000 }, pressed: { color: 0x112233 }, disabled: { opacity: 0.5 } };
 const MENU_TRANSITION = { enter: MENU_ENTER, exit: { ...MENU_EXIT, durationMs: 500 } };
@@ -98,7 +102,9 @@ const canvasLook = (page, id) => page.evaluate(id => {
   const decor = item?.previousElementSibling?.matches('[data-ui-decor]') ? item.previousElementSibling : null;
   const fill = decor?.querySelector('[data-ui-decor-background]');
   return { state: item.dataset.uiPreviewState ?? null, color: getComputedStyle(item).color, opacity: item.style.opacity, decorOpacity: decor?.style.opacity ?? null,
-    background: fill ? getComputedStyle(fill).backgroundColor : null, focusRing: Boolean(item.querySelector('[data-ui-focus-preview]')), decor: Boolean(decor) };
+    groupOpacity: item.closest('[data-ui-canvas-group]')?.style.opacity ?? null,
+    background: fill ? getComputedStyle(fill).backgroundColor : null,
+    focusRing: Boolean(document.querySelector('.ui-designer-canvas [data-ui-focus-preview]')), decor: Boolean(decor) };
 }, id);
 
 try {
@@ -153,7 +159,7 @@ try {
   assert.match(await page.locator('[data-ui-disabled-opacity]').innerText(), /最终整体不透明度 23%/);
   assert.equal(await page.locator('[data-ui-disabled-opacity]').getAttribute('data-ui-disabled-opacity'), '0.225');
   canvas = await canvasLook(page, 'btn_plain');
-  assert.deepEqual([canvas.state, canvas.opacity, canvas.decorOpacity], ['disabled', '0.225', '0.225'], 'canvas disabled = state opacity × 0.45, once');
+  assert.deepEqual([canvas.state, canvas.opacity, canvas.decorOpacity, canvas.groupOpacity], ['disabled', '1', '1', '0.225'], 'canvas disabled = state opacity × 0.45, composited once');
 
   await control(page, 'state:focus').click();
   canvas = await canvasLook(page, 'btn_plain');
@@ -263,7 +269,7 @@ try {
   page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
   page.setDefaultTimeout(20000);
   page.on('pageerror', error => errors.push(`editor(reopen): ${error.message}`));
-  page.on('console', message => { if (message.type() === 'error') errors.push(`console: ${message.text()}`); });
+  page.on('console', message => { if (message.type() === 'error') errors.push(`console: ${message.text()} [${message.location().url}]`); });
   await openDesigner(page);
   const reopened = await draftNode(page, 'title', 'btn_plain');
   assert.deepEqual([reopened.node.states, reopened.dirty.dirtySections], [PLAIN_STATES, []]);
@@ -446,6 +452,37 @@ try {
   assert(restartLog.some(item => item.kind === 'pose') && restartLog.every(item => item.kind !== 'pose' || item.opacity !== ''), `the menu was still entering when the new game began: ${JSON.stringify(restartLog)}`);
   assert.deepEqual([await body(), await pageState('system-menu')], ['第一句话。', []], 'no late motion callback reopens the menu or advances the new story');
   log('player-restart', { restartLog });
+
+  // Real Player storage/lifecycle: loading in mid-entry returns to the saved line,
+  // and a confirmed reading-setting change finishes the current projection now.
+  assert.equal(await player.evaluate(() => window.__surdetDebug.quickSave()), true);
+  await clickStage();
+  await player.waitForFunction(() => document.querySelector('[data-ui-node="body"]')?.textContent === '第二句话。');
+  const midLoad = await player.evaluate(async () => {
+    window.surdetDebug.openSystemMenu();
+    const during = document.querySelector('[data-ui-page="system-menu"]').style.opacity;
+    const loaded = await window.__surdetDebug.quickLoad();
+    return { during, loaded, ghosts: document.querySelectorAll('[data-ui-closing]').length };
+  });
+  assert(midLoad.during !== '' && Number(midLoad.during) < 1);
+  log('player-load', { midLoad });
+  assert.equal(midLoad.loaded, true); assert.equal(midLoad.ghosts, 0, `load leaves no old exit picture: ${JSON.stringify(midLoad)}`);
+  await player.waitForFunction(() => document.querySelector('[data-ui-node="body"]')?.textContent === '第一句话。');
+  assert.deepEqual(await pageState('system-menu'), []);
+  const midReduce = await player.evaluate(() => {
+    window.surdetDebug.openSystemMenu();
+    const during = document.querySelector('[data-ui-page="system-menu"]').style.opacity;
+    document.querySelector('[data-ui-node="reduce_motion"] input').click();
+    return during;
+  });
+  assert(midReduce !== '' && Number(midReduce) < 1);
+  await player.waitForFunction(() => window.surdetDebug.settings.settings.reducedMotion === true);
+  await menuSettled();
+  assert.deepEqual(await pageState('system-menu'), STABLE_MENU);
+  await player.evaluate(() => document.querySelector('[data-ui-node="reduce_motion"] input').click());
+  await player.waitForFunction(() => window.surdetDebug.settings.settings.reducedMotion === false);
+  await player.locator('[data-ui-node="menu_close"]').click(); await menuGone();
+  log('player-load-and-setting', { midLoad, midReduce });
 
   // Closing the preview while the menu is entering: the Player goes with its motion, no late callback errors.
   at = await centre('btn_menu'); await page.mouse.click(at.x, at.y);

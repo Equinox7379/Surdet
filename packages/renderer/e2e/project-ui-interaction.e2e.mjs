@@ -274,6 +274,24 @@ try {
   await step(400);
   assert.deepEqual(await menu(), []); assert.equal(await blockers(), 0); assert.equal(await busy(), false);
 
+  // Cancel notifications are synchronous, even when a different page still keeps the driver busy.
+  const cancelledMenu = await page.evaluate(() => {
+    window.ui.show('toolbar', window.ctx());
+    window.ui.show('system-menu', window.ctx()); window.motion.update(50);
+    window.motion.cancel('project-ui:system-menu');
+    const element = document.querySelector('[data-ui-page="system-menu"]');
+    return { opacity: element.style.opacity, transform: element.style.transform,
+      blocker: Boolean(document.querySelector('[data-ui-motion-blocker="system-menu"]')), busy: window.motion.needsUpdate };
+  });
+  assert.deepEqual(cancelledMenu, { opacity: '', transform: '', blocker: false, busy: true });
+  const cancelledGhost = await page.evaluate(() => {
+    window.ui.hide('system-menu'); window.motion.cancel('project-ui:system-menu');
+    return Boolean(document.querySelector('[data-ui-page="system-menu"]'));
+  });
+  assert.equal(cancelledGhost, false, 'cancelled exit is removed without waiting for UI refresh');
+  await step(100);
+  await page.evaluate(() => window.ui.hide('toolbar'));
+
   // A new session (resetMotion) and a driver cancelled behind the UI's back both settle at once.
   await page.evaluate(() => { window.ui.show('system-menu', window.ctx()); window.motion.update(50); window.ui.resetMotion(); });
   assert.deepEqual(await menu(), [{ opacity: '', transform: '', closing: null, inert: false }]); assert.equal(await blockers(), 0); assert.equal(await busy(), false);
@@ -288,6 +306,20 @@ try {
 
   // The Player Shell commits its session (whose listener refreshes this UI and hides the page) before it asks for
   // hide(): a page still on screen this frame plays its exit; one hidden since an earlier frame simply goes.
+  const clicksBeforeNested = await page.evaluate(() => window.stageClicks);
+  await page.evaluate(() => {
+    window.ui.show('system-menu', window.ctx()); window.motion.update(50);
+    window.hiddenPages = ['system-menu']; window.ui.refresh();
+  });
+  await page.mouse.click(1000, 500);
+  assert.equal(await page.evaluate(() => window.stageClicks), clicksBeforeNested + 1,
+    'the hidden parent menu must not block a built-in child page on the renderer canvas');
+  await page.evaluate(() => {
+    window.hiddenPages = []; window.ui.refresh();
+  });
+  assert.equal(await page.evaluate(() => !document.querySelector('[data-ui-motion-blocker]').hidden), true,
+    'returning to the entering parent restores its own blocker');
+  await page.evaluate(() => window.ui.resetMotion());
   await page.evaluate(() => { window.ui.show('system-menu', window.ctx()); window.motion.update(400); });
   await page.evaluate(() => { window.hiddenPages = ['system-menu']; window.ui.refresh(); window.ui.hide('system-menu'); });
   assert.deepEqual(await menu(), [{ opacity: '', transform: '', closing: 'true', inert: true }], 'a page hidden by the closing session still leaves with its exit');
