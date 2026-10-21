@@ -305,6 +305,10 @@ export async function openReviewPreview(
   hasher: ReviewBytesHasher = defaultBytesHasher,
   displayHandle?: FileSystemDirectoryHandle,
 ): Promise<ReviewPreviewResult> {
+  const assertStillCurrent = (): void => {
+    if (state.reviewWorkspace !== workspace) throw new Error('审阅任务已经切换，未继续打开旧结果。');
+  };
+  assertStillCurrent();
   if (workspace.identity.kind !== 'integration-result' || workspace.projectHandle === null) {
     throw new Error('当前审阅没有可预览的结果或项目快照');
   }
@@ -314,7 +318,9 @@ export async function openReviewPreview(
       throw new Error('正式结果在读取期间发生变化，请重新预览。');
     }
   }
-  await openProjectFromHandle(displayHandle ?? workspace.projectHandle, { source: 'review-fixture' });
+  assertStillCurrent();
+  await openProjectFromHandle(displayHandle ?? workspace.projectHandle, { source: 'review-fixture', assertStillCurrent });
+  assertStillCurrent();
   const sceneIds = [...state.scenes.values()].map((scene) => scene.id);
   const sceneId = selectReviewPreviewScene(sceneIds, workspace.projection, request.sceneId, state.entryScene);
   if (sceneId === null) throw new Error('结果快照没有可运行场景');
@@ -326,6 +332,7 @@ export async function openReviewPreview(
   state.previewTrace = [];
   state.selectedTraceStep = null;
   if (displayHandle === undefined) await refreshReviewFixtureIdentity(workspace, hasher);
+  assertStillCurrent();
   return {
     sceneId,
     choices: { ...(request.choices ?? {}) },

@@ -210,7 +210,7 @@ interface LoadedProjectData {
 
 export async function openProjectFromHandle(
   dir: FileSystemDirectoryHandle,
-  options: { source?: 'normal' | 'review-fixture'; preserveReviewWorkspace?: boolean } = {},
+  options: { source?: 'normal' | 'review-fixture'; preserveReviewWorkspace?: boolean; assertStillCurrent?: () => void } = {},
 ): Promise<void> {
   if (state.pendingSceneDeletes.length > 0 || state.pendingSceneCommit !== null) {
     throw new Error('当前仍有待保存的场景改名或删除，请先保存全部');
@@ -274,7 +274,7 @@ export async function reloadCurrentProjectFromHandle(options: {
 
 async function loadProjectFromHandle(
   dir: FileSystemDirectoryHandle,
-  options: { source?: 'normal' | 'review-fixture'; notifyProjectLoaded?: boolean; preserveReviewWorkspace?: boolean },
+  options: { source?: 'normal' | 'review-fixture'; notifyProjectLoaded?: boolean; preserveReviewWorkspace?: boolean; assertStillCurrent?: () => void },
   closeOldRuntime: boolean,
 ): Promise<void> {
   const permissions = dir as FileSystemDirectoryHandle & {
@@ -284,6 +284,8 @@ async function loadProjectFromHandle(
     && await permissions.queryPermission?.({ mode: 'readwrite' }) === 'denied';
   const readAndCommit = async (): Promise<void> => {
     const loaded = await readProjectFromHandle(dir, reviewPreviewReadOnly);
+    // A preview's review may change while the project files are being read.
+    options.assertStillCurrent?.();
     if (closeOldRuntime) onProjectClosing();
     assetRefreshRevision += 1;
     commitLoadedProject(loaded, options);
