@@ -119,12 +119,15 @@ try {
   if (process.env.SURDET_DESKTOP_E2E_OUTPUT) await page.screenshot({ path: path.join(output, 'export-form.png') });
   console.log('PASS the real inspection fills the form; the plugin needs its own permission; version and location are required');
 
-  // 3. A real export call on this machine: its reason is shown, nothing is left behind, and the Editor is unlocked again.
+  // 3. A real export call: validate either the finished game or the failed export's cleanup.
   await page.evaluate(() => { window.__exportPhases = []; window.surdetDesktop.onGameExportProgress(progress => window.__exportPhases.push(progress.phase)); });
   await run.click();
   await page.waitForFunction(() => {
     const dialog = document.querySelector('dialog.game-export-dialog');
-    return dialog && !dialog.querySelector('.game-export-form').hidden && /导出没有完成|已导出/.test(dialog.querySelector('.game-export-status').textContent);
+    if (!dialog) return false;
+    const message = dialog.querySelector('.game-export-status').textContent;
+    return (/^导出没有完成：/.test(message) && !dialog.querySelector('.game-export-form').hidden)
+      || (/^已导出/.test(message) && !dialog.querySelector('.game-export-result').hidden);
   }, undefined, { timeout: 120_000 });
   const realOutcome = await status.innerText();
   console.log(`REAL EXPORT ON ${process.platform}: ${realOutcome.split('\n')[0]}`);
@@ -132,11 +135,32 @@ try {
   assert.ok(phases.includes('checking'), `the real export reported its stages: ${phases}`);
   if (process.platform !== 'win32') {
     assert.match(realOutcome, /^导出没有完成：/, 'a failed export is not shown as finished');
+  }
+  if (realOutcome.startsWith('已导出')) {
+    assert.match(realOutcome, /^已导出「导出验证」1\.2\.0。/);
+    assert.equal(await dialog.locator('.game-export-form').isVisible(), false, 'a finished export shows its result instead of the form');
+    assert.deepEqual(await fs.readdir(exportParent), ['导出验证-windows']);
+    const executable = path.join(exportParent, '导出验证-windows', '导出验证.exe');
+    assert.equal((await fs.stat(executable)).isFile(), true, 'the real export produced its executable');
+    await dialog.locator('.game-export-result').getByText(executable, { exact: true }).waitFor();
+
+    await dialog.getByRole('button', { name: '再导出一份' }).click();
+    await dialog.locator('.game-export-form').waitFor({ state: 'visible' });
+    await dialog.locator('.game-export-where').getByText('尚未选择').waitFor();
+    await dialog.getByLabel('Windows 版本').fill('1.2.0');
+    await plugin.check();
+    await dialog.getByLabel('程序图标').selectOption('content/assets/ui/icon.png');
+    const controlledParent = await fs.mkdtemp(path.join(output, 'controlled-parent-'));
+    await app.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] }); }, controlledParent);
+    await dialog.getByRole('button', { name: '选择位置…' }).click();
+    await dialog.locator('.game-export-where').getByText(controlledParent).waitFor();
+  } else {
+    assert.match(realOutcome, /^导出没有完成：/, 'a failed export is not shown as finished');
     assert.deepEqual(await fs.readdir(exportParent), [], 'a failed export leaves no folder behind');
     assert.equal(await dialog.locator('.game-export-where').innerText(), exportParent, 'the location stays chosen for a retry');
   }
   assert.equal(await page.locator('[data-action="save-project"]').isDisabled(), false, 'the export no longer holds the Editor lock');
-  console.log('PASS a real export call reports its stages and its reason; nothing is left behind and the lock is released');
+  console.log('PASS the real export outcome and files agree; the lock is released and the next export has a usable form/location');
 
   // 4. Controlled main-process export: stage progress, protection while it runs, and a cancellation that settles late.
   await app.evaluate(({ ipcMain }) => {

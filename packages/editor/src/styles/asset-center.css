@@ -427,6 +427,12 @@
   font-weight: 650;
 }
 
+.asset-center-batch-controls .asset-center-batch-primary:not(:disabled):hover {
+  border-color: var(--surdet-action-primary-hover);
+  background: var(--surdet-action-primary-hover);
+  color: var(--surdet-text-on-accent);
+}
+
 .asset-center-folder-controls,
 .asset-center-sort {
   display: grid;
@@ -1020,6 +1026,12 @@
   font-weight: 650;
 }
 
+.asset-relocation-actions .asset-relocation-primary:not(:disabled):hover {
+  border-color: var(--surdet-action-primary-hover);
+  background: var(--surdet-action-primary-hover);
+  color: var(--surdet-text-on-accent);
+}
+
 .asset-relocation-batch {
   display: grid;
   gap: var(--surdet-space-16);
@@ -1141,6 +1153,14 @@
 }
 
 @media (max-width: 1024px) {
+  #asset-center-view.v4-asset-center .asset-center-library-header:has(.asset-center-batch-controls > strong) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .asset-relocation-batch-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .asset-center-header {
     align-items: stretch;
     flex-direction: column;

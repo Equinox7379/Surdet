@@ -1,7 +1,8 @@
 /**
  * 文字一致性检查：审计逻辑与 CLI 共用 Core；本面板只负责人类可读呈现与现有跳转/名词表动作。
  */
-import { state, h } from '../state.js';
+import { state, h, setStatus } from '../state.js';
+import { isValidationCurrent } from './issues.js';
 import { parseTerminology, auditSpeakers, auditTerminology, levenshtein } from '@surdet/core';
 import type { AuditFinding } from '@surdet/core';
 
@@ -88,7 +89,7 @@ function groupFindings(findings: readonly AuditFinding[]): AuditFinding[][] {
   return [...groups.values()];
 }
 
-function appendFinding(parent: HTMLElement, findings: readonly AuditFinding[], pairs: SpeakerPair[]): void {
+function appendFinding(parent: HTMLElement, findings: readonly AuditFinding[], pairs: SpeakerPair[], validation: NonNullable<typeof state.lastValidation>): void {
   const finding = findings[0]!;
   const grouped = findings.length > 1;
   const record = h('article', grouped ? 'project-health-record project-health-record--grouped' : 'project-health-record');
@@ -109,7 +110,13 @@ function appendFinding(parent: HTMLElement, findings: readonly AuditFinding[], p
     jump.type = 'button';
     if (grouped) jump.setAttribute('aria-label', `打开场景 ${sceneName} · 第 ${item.line} 行`);
     jump.setAttribute('data-audit-jump', `${sceneKey}:${item.line}`);
-    jump.onclick = () => onJumpHook(sceneKey, Math.max(0, item.line - 1));
+    jump.onclick = () => {
+      if (!isValidationCurrent() || state.lastValidation !== validation) {
+        setStatus('内容已修改，请等待重新校验后再定位', false, 4000);
+        return;
+      }
+      onJumpHook(sceneKey, Math.max(0, item.line - 1));
+    };
     actions.appendChild(jump);
   }
 
@@ -149,11 +156,11 @@ export function renderAuditPanel(container: HTMLElement): void {
   container.appendChild(workspace);
 
   const validation = state.lastValidation;
-  if (!validation) {
+  if (!validation || !isValidationCurrent()) {
     const empty = h('section', 'project-health-empty');
-    empty.setAttribute('data-audit-state', 'waiting');
+    empty.setAttribute('data-audit-state', validation ? 'stale' : 'waiting');
     empty.append(
-      h('h2', undefined, '正在等待项目校验'),
+      h('h2', undefined, validation ? '内容已修改，正在等待重新校验' : '正在等待项目校验'),
       h('p', undefined, '校验完成后会列出需要确认的称谓和设定用词。'),
     );
     workspace.appendChild(empty);
@@ -233,7 +240,7 @@ export function renderAuditPanel(container: HTMLElement): void {
       const heading = h('div', 'project-health-section-heading');
       heading.append(h('h2', undefined, titleText), h('span', undefined, `${group.length} 项`));
       section.appendChild(heading);
-      for (const same of groupFindings(group)) appendFinding(section, same, pairs);
+      for (const same of groupFindings(group)) appendFinding(section, same, pairs, validation);
       workspace.appendChild(section);
     }
   }
