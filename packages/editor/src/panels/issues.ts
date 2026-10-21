@@ -18,17 +18,20 @@ let onIssueJumpHook: (sceneKey: string, line: number, range?: SourceRange) => vo
 let onTimelineJumpHook: (timelineId: string) => void = () => {};
 let onConfigJumpHook: () => void = () => {};
 let onValidationAppliedHook: () => void = () => {};
+let onValidationInvalidatedHook: () => void = () => {};
 
 export function bindIssueNavigation(opts: {
   onJump: (sceneKey: string, line: number, range?: SourceRange) => void;
   onTimeline?: (timelineId: string) => void;
   onConfig?: () => void;
   onValidationApplied?: () => void;
+  onValidationInvalidated?: () => void;
 }): void {
   onIssueJumpHook = opts.onJump;
   onTimelineJumpHook = opts.onTimeline ?? (() => {});
   onConfigJumpHook = opts.onConfig ?? (() => {});
   onValidationAppliedHook = opts.onValidationApplied ?? (() => {});
+  onValidationInvalidatedHook = opts.onValidationInvalidated ?? (() => {});
 }
 
 /** 项目身份切换时使旧定时器和 Worker 回包失效，禁止旧项目校验覆盖新项目。 */
@@ -38,12 +41,14 @@ export function invalidatePendingValidation(): void {
     validateTimer = null;
   }
   validateSeq += 1;
+  onValidationInvalidatedHook();
 }
 
 export function scheduleValidate(): void {
   if (validateTimer) clearTimeout(validateTimer);
   // Editing invalidates results immediately, including the debounce window.
   validateSeq += 1;
+  onValidationInvalidatedHook();
   validateTimer = setTimeout(runValidate, 300);
 }
 
@@ -151,6 +156,7 @@ export function runValidate(): void {
   if (validateTimer) { clearTimeout(validateTimer); validateTimer = null; }
   // 两条路径都按输入序号丢弃过期结果；摘要计算也可能跨越项目切换。
   const seq = ++validateSeq;
+  onValidationInvalidatedHook();
   if (validateWorker) {
     const input = buildValidateInput();
     validateWorker.postMessage({ seq, ...input });
