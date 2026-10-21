@@ -381,12 +381,13 @@ export class FileSaveStore {
     const changed: Array<{ file: string; before: Buffer | null }> = [];
     try {
       this.#exactPhysicalEntry(path.basename(file));
-      writeFileAtomic(file, json);
+      // Publication may succeed before its caller reports an error.
       changed.push({ file, before: mainBefore });
+      writeFileAtomic(file, json);
       if (previousMain !== null) {
         this.#exactPhysicalEntry(path.basename(backupFile));
-        writeFileAtomic(backupFile, previousMain);
         changed.push({ file: backupFile, before: backupBefore });
+        writeFileAtomic(backupFile, previousMain);
       }
       // 索引发布可能已改变文件后才报错，因此在调用前记录补偿内容。
       changed.push({ file: indexFile, before: indexBefore });
