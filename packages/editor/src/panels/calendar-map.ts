@@ -302,6 +302,7 @@ export function renderCalendarMap(
       temp.setAttribute('pointer-events', 'none');
       svg.appendChild(temp);
       const move = (ev: PointerEvent): void => {
+        if (ev.pointerId !== e.pointerId) return;
         const p = toView(ev);
         if (!p) return;
         temp.setAttribute('x1', String(x));
@@ -309,11 +310,20 @@ export function renderCalendarMap(
         temp.setAttribute('x2', String(clampCoord(p.x, 0, MAP_W)));
         temp.setAttribute('y2', String(clampCoord(p.y, 0, MAP_H)));
       };
-      const up = (ev: PointerEvent): void => {
-        port.releasePointerCapture(ev.pointerId);
+      const cleanup = (): void => {
         port.removeEventListener('pointermove', move);
         port.removeEventListener('pointerup', up);
+        port.removeEventListener('pointercancel', cancel);
+        port.removeEventListener('lostpointercapture', cancel);
         temp.remove();
+        if (port.hasPointerCapture(e.pointerId)) port.releasePointerCapture(e.pointerId);
+      };
+      const cancel = (ev: PointerEvent): void => {
+        if (ev.pointerId === e.pointerId) cleanup();
+      };
+      const up = (ev: PointerEvent): void => {
+        if (ev.pointerId !== e.pointerId) return;
+        cleanup();
         const p = toView(ev);
         if (!p) return;
         // 命中测试：落点在哪个节点矩形内（排除自身）
@@ -337,6 +347,8 @@ export function renderCalendarMap(
       };
       port.addEventListener('pointermove', move);
       port.addEventListener('pointerup', up);
+      port.addEventListener('pointercancel', cancel);
+      port.addEventListener('lostpointercapture', cancel);
     });
     g.appendChild(port);
 
@@ -347,6 +359,7 @@ export function renderCalendarMap(
       g.setPointerCapture(e.pointerId);
       g.style.cursor = 'grabbing';
       const move = (ev: PointerEvent): void => {
+        if (ev.pointerId !== e.pointerId) return;
         const p = toView(ev);
         if (!p) return;
         const nx = clampCoord(p.x, 0, MAP_W);
@@ -363,14 +376,19 @@ export function renderCalendarMap(
         refreshLines(id);
       };
       const up = (ev: PointerEvent): void => {
-        g.releasePointerCapture(ev.pointerId);
+        if (ev.pointerId !== e.pointerId) return;
         g.removeEventListener('pointermove', move);
         g.removeEventListener('pointerup', up);
+        g.removeEventListener('pointercancel', up);
+        g.removeEventListener('lostpointercapture', up);
+        if (g.hasPointerCapture(e.pointerId)) g.releasePointerCapture(e.pointerId);
         g.style.cursor = 'grab';
         onMoved(); // 重渲染区块：表格 x/y 输入框同步 + 重叠状态重算
       };
       g.addEventListener('pointermove', move);
       g.addEventListener('pointerup', up);
+      g.addEventListener('pointercancel', up);
+      g.addEventListener('lostpointercapture', up);
     });
 
     svg.appendChild(g);

@@ -3,6 +3,7 @@ import { compileScene } from '@surdet/core';
 import { state } from '../src/state.js';
 import { bindStatsHooks, renderStatsPanel } from '../src/panels/stats-panel.js';
 import { bindAuditHooks, renderAuditPanel } from '../src/panels/audit-panel.js';
+import { applyValidation } from '../src/panels/issues.js';
 import { addTerminologyVariant, resetConfigSession } from '../src/panels/config.js';
 
 class FakeElement {
@@ -88,6 +89,7 @@ class FakeElement {
 const documentStub = {
   createElement: (tag: string) => new FakeElement(tag),
   getElementById: () => null,
+  querySelector: () => null,
 };
 
 function visibleText(element: FakeElement): string {
@@ -174,6 +176,12 @@ describe('project overview panel', () => {
 });
 
 describe('text audit panel', () => {
+  function renderCurrentAudit(container: FakeElement): void {
+    const validation = state.lastValidation!;
+    applyValidation(validation.issues, [], validation.scenes);
+    renderAuditPanel(container as unknown as HTMLElement);
+  }
+
   it('uses Chinese issue types and separate keyboard-reachable actions', () => {
     vi.stubGlobal('document', documentStub);
     state.scenes.clear();
@@ -190,7 +198,7 @@ describe('text audit panel', () => {
       onAddVariant: (canonical, variant) => variants.push([canonical, variant]),
     });
     const container = new FakeElement('section');
-    renderAuditPanel(container as unknown as HTMLElement);
+    renderCurrentAudit(container);
     expect(visibleText(container)).toContain('文字一致性检查');
     expect(visibleText(container)).toContain('疑似角色名笔误');
     expect(visibleText(container)).not.toContain('CONSIST_TYPO');
@@ -215,7 +223,7 @@ describe('text audit panel', () => {
     const jumps: Array<[string, number]> = [];
     bindAuditHooks({ onJump: (sceneKey, line) => jumps.push([sceneKey, line]) });
     const container = new FakeElement('section');
-    renderAuditPanel(container as unknown as HTMLElement);
+    renderCurrentAudit(container);
     const records = container.querySelectorAll('[data-audit-finding="TERM_VARIANT"]');
     expect(records).toHaveLength(1);
     expect(visibleText(container)).toContain('2 处');
@@ -240,7 +248,7 @@ describe('text audit panel', () => {
     bindAuditHooks({ onJump: (sceneKey, line) => jumps.push([sceneKey, line]) });
     const container = new FakeElement('section');
 
-    renderAuditPanel(container as unknown as HTMLElement);
+    renderCurrentAudit(container);
     const jump = container.querySelector('[data-audit-jump]');
     expect(jump?.tagName).toBe('BUTTON');
     jump?.click();
@@ -255,7 +263,7 @@ describe('text audit panel', () => {
     };
     state.configFiles.terminology = { terms: [] };
     const container = new FakeElement('section');
-    renderAuditPanel(container as unknown as HTMLElement);
+    renderCurrentAudit(container);
     expect(visibleText(container)).toContain('检查不完整');
     expect(visibleText(container)).toContain('不能代表整个项目');
     expect(visibleText(container)).not.toContain('未发现称谓和设定用词问题');
@@ -268,7 +276,7 @@ describe('text audit panel', () => {
       scenes: new Map(),
     };
     const container = new FakeElement('section');
-    renderAuditPanel(container as unknown as HTMLElement);
+    renderCurrentAudit(container);
     expect(visibleText(container)).toContain('检查不完整');
     expect(visibleText(container)).toContain('1 个剧本错误');
     expect(visibleText(container)).not.toContain('正在等待项目校验');
