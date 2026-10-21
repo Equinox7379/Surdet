@@ -137,7 +137,20 @@ async function main(): Promise<number> {
     case 'lint': {
       const jsonOut = args.includes('--json');
       const projectDir = path.resolve(positional[0] ?? process.cwd());
-      const result = lintProject(projectDir);
+      let result: ReturnType<typeof lintProject>;
+      try {
+        result = lintProject(projectDir);
+      } catch (error) {
+        if (!jsonOut) throw error;
+        const file = error instanceof Error && 'path' in error && typeof error.path === 'string'
+          ? error.path : projectDir;
+        result = { ok: false, sceneCount: 0, issues: [{
+          severity: 'error', code: 'PROJECT_READ',
+          text: error instanceof Error ? error.message : String(error),
+          file, line: 0, col: 0,
+          hint: '检查项目目录、内容路径及读取权限；本次校验未能完成，修复读取错误后重新运行。',
+        }] };
+      }
 
       if (jsonOut) {
         // 机器可读输出（M5 支柱1）：结构稳定 { ok, sceneCount, issues[{severity,code,text,hint,file,line,col}] }

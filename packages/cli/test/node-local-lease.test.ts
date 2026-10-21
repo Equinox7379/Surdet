@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuthoringOperationError, normalizeAuthoringError, type ChangeRecord } from '@surdet/authoring';
 import { NodeChangeStore } from '../src/authoring/node-change-store.js';
+import * as jsonRecords from '../src/authoring/node-json-record.js';
 import {
   NodeLocalLeaseManager,
   type LeaseHandle,
@@ -447,6 +448,168 @@ describe('NodeLocalLeaseManager', () => {
     });
 
     await replacement.release();
+  });
+
+  it.each([
+    ['change', false], ['project', false], ['review', true], ['workspace', true],
+  ] as const)('does not let a delayed %s stale contender retire a live successor (reacquired=%s)', async (scope, reacquire) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-lease-race-'));
+    temporaryRoots.push(root);
+    const state = makeState();
+    const resourceId = scope === 'project' ? root : 'stale-race';
+    const original = await makeManager(root, state).acquire({ scope, resourceId });
+    state.clock.advance(15_001);
+    state.alive.set(1001, false);
+    const slowEntered = deferred();
+    const resumeSlow = deferred();
+    const slowManager = makeManager(root, { ...state, pid: 1003 }, {
+      isProcessAlive: async pid => {
+        expect(pid).toBe(1001);
+        slowEntered.resolve();
+        await resumeSlow.promise;
+        return false;
+      },
+    });
+    const slowResult = slowManager.acquire({ scope, resourceId }).then(
+      lease => ({ lease, error: undefined }),
+      error => ({ lease: undefined, error }),
+    );
+    await slowEntered.promise;
+    const fastManager = makeManager(root, { ...state, pid: 1002 });
+    let successor = await fastManager.acquire({ scope, resourceId });
+    await fastManager.assertOwned(successor);
+    if (reacquire) {
+      await successor.release();
+      successor = await fastManager.acquire({ scope, resourceId });
+    }
+    resumeSlow.resolve();
+    const outcome = await slowResult;
+    expect(outcome.lease, 'a stale observation must not grant a second lease').toBeUndefined();
+    expect(outcome.error).toMatchObject({ code: scope === 'change' ? 'CHANGE_BUSY' : scope === 'review' ? 'REVIEW_BUSY' : 'PROJECT_BUSY' });
+    await fastManager.assertOwned(successor);
+    const retired = await fsp.readdir(path.join(root, '.locks', 'stale'));
+    expect(retired).toHaveLength(1);
+    expect(JSON.parse(await fsp.readFile(path.join(root, '.locks', 'stale', retired[0]!, 'lease.json'), 'utf8')))
+      .toMatchObject({ ownerToken: original.ownerToken, pid: 1001 });
+    await successor.release();
+  });
+
+  it('can retire successive dead owners while retaining each old lease', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-lease-successive-'));
+    temporaryRoots.push(root);
+    const state = makeState();
+    const first = await makeManager(root, state).acquire({ scope: 'change', resourceId: 'successive' });
+    state.clock.advance(15_001);
+    state.alive.set(1001, false);
+    const second = await makeManager(root, { ...state, pid: 1002 }).acquire({ scope: 'change', resourceId: 'successive' });
+    state.clock.advance(15_001);
+    state.alive.set(1002, false);
+    const thirdManager = makeManager(root, { ...state, pid: 1003 });
+    const third = await thirdManager.acquire({ scope: 'change', resourceId: 'successive' });
+    const staleRoot = path.join(root, '.locks', 'stale');
+    const retired = await fsp.readdir(staleRoot);
+    expect(retired).toHaveLength(2);
+    const records = await Promise.all(retired.map(async entry => JSON.parse(await fsp.readFile(path.join(staleRoot, entry, 'lease.json'), 'utf8'))));
+    expect(records.map(record => record.ownerToken).sort()).toEqual([first.ownerToken, second.ownerToken].sort());
+    await thirdManager.assertOwned(third);
+    await third.release();
+  });
+
+  it('waits for the live successor publication after losing a stale takeover race', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-lease-race-publish-'));
+    temporaryRoots.push(root);
+    const state = makeState();
+    const resourceId = 'stale-publication';
+    const original = await makeManager(root, state).acquire({ scope: 'change', resourceId });
+    state.clock.advance(15_001);
+    state.alive.set(1001, false);
+    const slowEntered = deferred();
+    const resumeSlow = deferred();
+    const publicationEntered = deferred();
+    const mayPublish = deferred();
+    const pollEntered = deferred();
+    const mayReadPublished = deferred();
+    const slowManager = makeManager(root, { ...state, pid: 1003 }, {
+      isProcessAlive: async () => {
+        slowEntered.resolve();
+        await resumeSlow.promise;
+        return false;
+      },
+      publicationDelay: async () => {
+        pollEntered.resolve();
+        await mayReadPublished.promise;
+      },
+    });
+    const slowResult = slowManager.acquire({ scope: 'change', resourceId }).then(
+      lease => ({ lease, error: undefined }), error => ({ lease: undefined, error }),
+    );
+    await slowEntered.promise;
+    const create = jsonRecords.createJsonRecord;
+    const publishing = vi.spyOn(jsonRecords, 'createJsonRecord').mockImplementation(async (file, value) => {
+      publicationEntered.resolve();
+      await mayPublish.promise;
+      return create(file, value);
+    });
+    try {
+      const fastManager = makeManager(root, { ...state, pid: 1002 });
+      const fastResult = fastManager.acquire({ scope: 'change', resourceId });
+      await publicationEntered.promise;
+      resumeSlow.resolve();
+      await pollEntered.promise;
+      expect(await fsp.readdir(original.directory)).toEqual([]);
+      mayPublish.resolve();
+      const successor = await fastResult;
+      mayReadPublished.resolve();
+      const outcome = await slowResult;
+      expect(outcome.lease).toBeUndefined();
+      expect(outcome.error).toMatchObject({ code: 'CHANGE_BUSY', details: { manualRecoveryRequired: false } });
+      await fastManager.assertOwned(successor);
+      expect(await fsp.readdir(path.join(root, '.locks', 'stale'))).toHaveLength(1);
+      await successor.release();
+    } finally {
+      resumeSlow.resolve();
+      mayPublish.resolve();
+      mayReadPublished.resolve();
+      publishing.mockRestore();
+    }
+  });
+
+  it.each(['before-retirement', 'before-publication'] as const)('preserves lease evidence on a %s failure', async phase => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'surdet-local-lease-interrupted-'));
+    temporaryRoots.push(root);
+    const state = makeState();
+    const resourceId = 'interrupted';
+    const original = await makeManager(root, state).acquire({ scope: 'change', resourceId });
+    state.clock.advance(15_001);
+    state.alive.set(1001, false);
+    const interrupted = Object.assign(new Error(`test ${phase} EIO`), { code: 'EIO' });
+    const contender = makeManager(root, { ...state, pid: 1002 }, {
+      ...(phase === 'before-retirement' ? { isProcessAlive: async () => { throw interrupted; } } : {}),
+    });
+    const publishing = phase === 'before-publication'
+      ? vi.spyOn(jsonRecords, 'createJsonRecord').mockRejectedValueOnce(interrupted) : undefined;
+    try {
+      await expect(contender.acquire({ scope: 'change', resourceId })).rejects.toBe(interrupted);
+    } finally {
+      publishing?.mockRestore();
+    }
+    const staleRoot = path.join(root, '.locks', 'stale');
+    if (phase === 'before-retirement') {
+      expect(JSON.parse(await fsp.readFile(path.join(original.directory, 'lease.json'), 'utf8')))
+        .toMatchObject({ ownerToken: original.ownerToken });
+      await expect(fsp.readdir(staleRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+    } else {
+      const retired = await fsp.readdir(staleRoot);
+      expect(retired).toHaveLength(1);
+      expect(JSON.parse(await fsp.readFile(path.join(staleRoot, retired[0]!, 'lease.json'), 'utf8')))
+        .toMatchObject({ ownerToken: original.ownerToken });
+      expect(await fsp.readdir(original.directory)).toEqual([]);
+      const next = makeManager(root, { ...state, pid: 1003 }, { publicationDelay: async () => undefined });
+      await expect(next.acquire({ scope: 'change', resourceId })).rejects.toMatchObject({
+        code: 'LEASE_CORRUPT', details: { manualRecoveryRequired: true },
+      });
+      expect(await fsp.readdir(staleRoot)).toEqual(retired);
+    }
   });
 
   it('blocks alive, foreign-host, fresh, and corrupt leases without deleting evidence', async () => {
