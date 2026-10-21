@@ -3,14 +3,14 @@
   "artifactKind": "renderer-v4-qualification-cleanup-final",
   "cleanedAt": "2026-08-10T12:19:29.996Z",
   "tempRoots": [
-    "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10",
-    "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-1",
-    "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2"
+    "<local-path>",
+    "<local-path>",
+    "<local-path>"
   ],
   "worktreeCount": 13,
   "worktrees": [
     {
-      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10/q1-007-a-b-a",
+      "path": "<local-path>",
       "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
       "group": "q1-007-a-b",
       "roles": [
@@ -29,7 +29,7 @@
       "failureEvidence": "docs/baselines/renderer-v4-qualification-cleanup-build-collector-failure-2026-08-10.json"
     },
     {
-      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10/q1-007-a-b-b",
+      "path": "<local-path>",
       "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
       "group": "q1-007-a-b",
       "roles": [
@@ -48,7 +48,7 @@
       "failureEvidence": "docs/baselines/renderer-v4-qualification-cleanup-build-collector-failure-2026-08-10.json"
     },
     {
-      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-1/q1-007-a-b-a",
+      "path": "<local-path>",
       "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
       "group": "q1-007-a-b",
       "roles": [
@@ -67,7 +67,7 @@
       "failureEvidence": "docs/baselines/renderer-v4-qualification-cleanup-instrumentation-failure-2026-08-10.json"
     },
     {
-      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-1/q1-007-a-b-b",
+      "path": "<local-path>",
       "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
       "group": "q1-007-a-b",
       "roles": [
@@ -86,7 +86,7 @@
       "failureEvidence": "docs/baselines/renderer-v4-qualification-cleanup-instrumentation-failure-2026-08-10.json"
     },
     {
-      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q1-007-a-b-a",
+      "path": "<local-path>",
       "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
       "group": "q1-007-a-b",
       "roles": [
@@ -105,7 +105,7 @@
       "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
     },
     {
-      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q1-007-a-b-b",
+      "path": "<local-path>",
       "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
       "group": "q1-007-a-b",
       "roles": [
@@ -124,7 +124,7 @@
       "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
     },
     {
-      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q2-007-b-a-b",
+      "path": "<local-path>",
       "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
       "group": "q2-007-b-a",
       "roles": [
@@ -143,7 +143,7 @@
       "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
     },
     {
-      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q2-007-b-a-a",
+      "path": "<local-path>",
       "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
       "group": "q2-007-b-a",
       "roles": [
@@ -162,7 +162,7 @@
       "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
     },
     {
-      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q3-f7-a-b-a",
+      "path": "<local-path>",
       "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
       "group": "q3-f7-a-b",
       "roles": [
@@ -181,7 +181,7 @@
       "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
     },
     {
-      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q3-f7-a-b-b",
+      "path": "<local-path>",
       "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
       "group": "q3-f7-a-b",
       "roles": [
@@ -200,7 +200,7 @@
       "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
     },
     {
-      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q4-f7-b-a-b",
+      "path": "<local-path>",
       "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
       "group": "q4-f7-b-a",
       "roles": [
@@ -219,7 +219,7 @@
       "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
     },
     {
-      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q4-f7-b-a-a",
+      "path": "<local-path>",
       "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
       "group": "q4-f7-b-a",
       "roles": [
@@ -238,7 +238,7 @@
       "sourceManifest": "docs/baselines/renderer-v4-qualification-cleanup-2026-08-10.json"
     },
     {
-      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10-2/q5-f7-same-root",
+      "path": "<local-path>",
       "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
       "group": "q5-f7-same-root",
       "roles": [
