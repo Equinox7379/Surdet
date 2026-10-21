@@ -339,6 +339,8 @@
       "host": "n/a",
       "tests": [
         "packages/renderer/test/transition-registry.test.ts",
+        "packages/core/test/timeline.test.ts",
+        "packages/renderer/test/integration/stage-runtime.test.ts",
         "packages/core/test/compiler.test.ts",
         "packages/cli/test/lint.test.ts"
       ],
