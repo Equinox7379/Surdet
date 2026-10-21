@@ -1380,6 +1380,50 @@ describe('Editor review panel', () => {
   });
 });
 
+describe('late result preview callbacks', () => {
+  it.each(['success', 'failure'] as const)('does not redraw an old review after a switched task and %s', async outcome => {
+    const old = state.reviewWorkspace;
+    const current = resultWorkspace(), replacement = resultWorkspace();
+    replacement.projection.task.title = 'New current review';
+    replacement.identity.reviewId = replacement.projection.reviewId = 'replacement';
+    const live = new FakeElement('section');
+    vi.stubGlobal('document', { ...documentStub, getElementById: (id: string) => id === 'review-view' ? live : id === 'status' ? statusElement : null });
+    let finish!: () => void, fail!: (error: Error) => void;
+    const pending = new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; });
+    state.reviewWorkspace = current;
+    renderReviewPanel(live as unknown as HTMLElement, current, { onPreview: () => pending });
+    live.querySelector('[data-action="preview-result"]')!.click();
+    const read = vi.spyOn(reviewWorkspaceModule, 'openReviewWorkspace').mockResolvedValue(replacement);
+    try {
+      await openListedReviewTask(async () => ({} as FileSystemDirectoryHandle), () => true);
+      renderReviewPanel(live as unknown as HTMLElement, replacement);
+      if (outcome === 'success') finish(); else fail(new Error('late failure'));
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      expect(state.reviewWorkspace).toBe(replacement);
+      expect(textOf(live)).toContain('New current review');
+      expect(statusElement.textContent).not.toContain('late failure');
+    } finally { finish(); read.mockRestore(); state.reviewWorkspace = old; }
+  });
+
+  it.each(['success', 'failure'] as const)('releases the same review preview after %s', async outcome => {
+    const old = state.reviewWorkspace, workspace = resultWorkspace();
+    const live = new FakeElement('section');
+    vi.stubGlobal('document', { ...documentStub, getElementById: (id: string) => id === 'review-view' ? live : id === 'status' ? statusElement : null });
+    let finish!: () => void, fail!: (error: Error) => void;
+    const pending = new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; });
+    state.reviewWorkspace = workspace;
+    renderReviewPanel(live as unknown as HTMLElement, workspace, { onPreview: () => pending });
+    live.querySelector('[data-action="preview-result"]')!.click();
+    try {
+      expect(live.querySelector('[data-action="preview-result"]')?.disabled).toBe(true);
+      if (outcome === 'success') finish(); else fail(new Error('current failure'));
+      await vi.waitFor(() => expect(live.querySelector('[data-action="preview-result"]')?.disabled).toBe(false));
+      expect(state.reviewWorkspace).toBe(workspace);
+      if (outcome === 'failure') expect(statusElement.textContent).toContain('current failure');
+    } finally { finish(); state.reviewWorkspace = old; }
+  });
+});
+
 describe('review tasks opened from the current-project list', () => {
   const base64 = (text: string) => Buffer.from(text, 'utf8').toString('base64');
   const listedResult = async () => {

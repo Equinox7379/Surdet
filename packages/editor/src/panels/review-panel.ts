@@ -1324,6 +1324,7 @@ function renderResultReview(
       operation = options.onPreview ? options.onPreview(workspace, request) : openReviewPreview(workspace, request);
     } catch (error) {
       resultPreviews.delete(workspace);
+      if (state.reviewWorkspace !== workspace) return;
       renderReviewPanel(container, workspace, options);
       setStatus(`预览结果失败：${errorMessage(error)}`, false, 6000);
       return;
@@ -1331,6 +1332,7 @@ function renderResultReview(
     void Promise.resolve(operation)
       .then(() => {
         resultPreviews.delete(workspace);
+        if (state.reviewWorkspace !== workspace) return;
         const target = document.getElementById('review-view') ?? container;
         renderReviewPanel(target, workspace, options);
         const host = target.querySelector('#review-preview-host');
@@ -1341,6 +1343,7 @@ function renderResultReview(
       })
       .catch((error) => {
         resultPreviews.delete(workspace);
+        if (state.reviewWorkspace !== workspace) return;
         renderReviewPanel(container, workspace, options);
         setStatus(`预览结果失败：${errorMessage(error)}`, false, 6000);
       });
@@ -1588,6 +1591,10 @@ export function renderReviewPanel(
   if (tasks !== null) container.querySelector('.review-workspace-header')?.appendChild(tasks);
 }
 
+// Only a newer successful open invalidates an earlier picker/read continuation.
+let reviewOpenSequence = 0;
+let committedReviewOpenSequence = 0;
+
 /**
  * 顶层“打开审阅任务”入口与当前项目任务列表共用；创建 review workspace 后只切换到审阅页，
  * 不自动写回任何回执。列表入口只替换目录来源，草稿、未明回执与切换保护保持不变。
@@ -1597,11 +1604,14 @@ export async function openReviewPanelWorkspace(
   confirmReplace?: (current: ReviewWorkspaceState | null) => boolean,
 ): Promise<boolean> {
   if (isReviewReceiptWriting() || isReviewApplyRunning()) throw new Error('审阅操作仍在进行，请完成后再打开其他任务。');
+  const sequence = ++reviewOpenSequence;
   const previous = state.reviewWorkspace;
   const recovering = hasPendingReviewReceipt(previous);
   const pick = () => (window as unknown as { showDirectoryPicker: (opts?: unknown) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker;
   const root = source ? await source() : await pick()({ mode: 'readwrite' });
+  if (sequence < committedReviewOpenSequence) return false;
   const workspace = await openReviewWorkspace(root);
+  if (sequence < committedReviewOpenSequence) return false;
   // The old approval button can be used while directory reading awaits I/O.
   // An unknown but settled receipt may still reopen here to reconcile its actual outcome.
   if (isReviewReceiptWriting() || isReviewApplyRunning()) throw new Error('审阅操作仍在进行，已保留原任务，请完成后再打开。');
@@ -1614,6 +1624,7 @@ export async function openReviewPanelWorkspace(
   }
   // Checked against the review as it is now: edits made while reading must not be dropped silently.
   if (confirmReplace !== undefined && !confirmReplace(current)) return false;
+  committedReviewOpenSequence = sequence;
   state.reviewWorkspace = workspace;
   state.mainTab = 'review';
   state.selectedObjectRef = null;
