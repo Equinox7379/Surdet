@@ -407,12 +407,20 @@ export class NodeLocalLeaseManager {
         this.dataRoot,
         '.locks',
         'stale',
-        `${this.now()}-${safeId(lease.ownerToken)}-${crypto.randomUUID().slice(0, 8)}`,
+        `${scope}-${path.basename(directory)}-${safeId(lease.ownerToken)}`,
       );
       await fs.mkdir(path.dirname(quarantine), { recursive: true });
       try {
+        // Keep the retired, nonempty directory at an owner-specific destination.
+        // A contender with the same stale observation cannot replace it and move
+        // a newer owner's lock. Re-reading alone would leave another rename race.
         await fs.rename(directory, quarantine);
       } catch (error) {
+        const alreadyRetired = await fs.lstat(quarantine).then(stat => stat.isDirectory()).catch((statError: unknown) => {
+          if (errorCode(statError) === 'ENOENT') return false;
+          throw statError;
+        });
+        if (alreadyRetired) continue;
         throw busyError(
           scope,
           resourceId,
