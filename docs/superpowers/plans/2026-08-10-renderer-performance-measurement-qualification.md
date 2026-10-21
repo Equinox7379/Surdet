@@ -93,7 +93,7 @@
 - 旧角色版本：`007438b569ec95350fdc9d7882ad49f55bbb7968`
 - 当前角色版本：`f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59`
 - 每一个 Q 组都必须使用从这两个精确提交创建的全新、干净、独立 Git worktree；不得复用旧 worktree、当前主工作树或上一组 worktree。
-- 固定临时根目录：`C:\Users\Equinox\AppData\Local\Temp\surdet-renderer-v4-qualification-2026-08-10`。
+- 固定临时根目录：`<local-path>`。
 - 若该根目录已存在，不覆盖它；使用一个明确编号的新根目录，并在计划和报告中记录实际根目录。
 - 工作树必须在插桩前干净；插桩后只允许存在一个由统一诊断脚本生成的精确 tracked source diff。
 - 所有运行均使用同一份 `package-lock.json`、同一 Node/npm/Electron/Playwright、同一构建命令和同一 Windows 主机；每次 Electron 启动使用独立临时 `userData`。
@@ -328,7 +328,7 @@ Page 侧必须尝试记录：
 - [x] 阶段 1–4 Shell 专项测试 45/45；根级 v4 结构/安全测试 3/3；Shell typecheck、`node --check`、`git diff --check` 通过。
 - [x] runner 提交：`test(shell): add v4 qualification matrix runner`，SHA：`8fa4fcc58cc3536fe63bf3bd868872b062fe4e0a`。
 - [x] 先后发现并保留两次未进入 holdout 的执行器阻断：仓库根路径等值校验、Starter 相对 `./assets/` bundle 入口解析、冻结 `007438b` 旧入口缺少 `createRendererRuntime`；对应失败证据保存在 `docs/baselines/renderer-v4-qualification-runner-failure-2026-08-10.json`、`docs/baselines/renderer-v4-qualification-runner-failure-instrumentation-2026-08-10.json` 及 cleanup 快照中，均明确 `qHoldoutDataStarted=false`。
-- [x] 以新的隔离临时根 `C:\Users\Equinox\AppData\Local\Temp\surdet-renderer-v4-qualification-2026-08-10-2` 创建 9 个新 worktree；007 两组、f7 三组 clean `npm ci` + `npm run build` 后的 build manifest 均等价，未比较 mtime；证据为 `docs/baselines/renderer-v4-build-equivalence-007-2026-08-10.json` 与 `docs/baselines/renderer-v4-build-equivalence-f7-2026-08-10.json`。
+- [x] 以新的隔离临时根 `<local-path>` 创建 9 个新 worktree；007 两组、f7 三组 clean `npm ci` + `npm run build` 后的 build manifest 均等价，未比较 mtime；证据为 `docs/baselines/renderer-v4-build-equivalence-007-2026-08-10.json` 与 `docs/baselines/renderer-v4-build-equivalence-f7-2026-08-10.json`。
 - [x] 阶段 4 最终执行器修复提交链：`d60dfce684170704fd4fd2e1e2b7cc849078fc5c`、`c98f7cef0733aeacb1b1fb7b452026fa53f9d5e4`、`b8f53e5c18a98815ed42239220cfa289aec6ee00`；修复后才开始 Q1，未修改生产 Renderer、Starter 游戏逻辑或协议。
 - [x] 下一入口：阶段 5；实际等价性通过后已按冻结 Q 矩阵产生 holdout。
 

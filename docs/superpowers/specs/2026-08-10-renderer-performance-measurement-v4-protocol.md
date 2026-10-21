@@ -17,7 +17,7 @@
 - 同提交比较必须使用全新干净物理 worktree；Q5 使用同一干净构建根但仍为独立 Electron/userData 启动。
 - 构建使用：`npm ci --ignore-scripts --no-audit --no-fund`，随后 `npm run build`。
 - 不比较文件 mtime；构建 manifest 必须比较相对路径、字节大小和 SHA-256，另记录 shell/starter bundle entry SHA。
-- 固定临时根：`C:\Users\Equinox\AppData\Local\Temp\surdet-renderer-v4-qualification-2026-08-10`。存在时使用编号递增的新根，不覆盖旧目录。
+- 固定临时根：`<local-path>`。存在时使用编号递增的新根，不覆盖旧目录。
 
 ## Q 组矩阵
 
