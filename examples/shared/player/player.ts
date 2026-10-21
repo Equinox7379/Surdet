@@ -122,7 +122,7 @@ export interface PlayerProject {
     stage?: unknown;
     title?: string;
     entryScene: string;
-    variables: Record<string, unknown>;
+    variables?: Record<string, unknown>;
     characters?: Record<string, { name?: string; avatar?: string; portraits?: CharacterPortraits; visuals?: CharacterVisuals }>;
     font?: string;
     fonts?: Partial<Record<'body' | 'title' | 'ui', string>>;
@@ -215,7 +215,7 @@ export async function startPlayer(project: PlayerProject, signal?: AbortSignal):
     return [{ id, name, avatarKey: project.showSpeakerAvatars === false ? undefined : (profile.avatar ?? id) }];
   });
   // 变量表（game.config.json）
-  const decls: VarDeclaration[] = Object.entries(gameConfig.variables).map(([name, d]) => ({
+  const decls: VarDeclaration[] = Object.entries(gameConfig.variables === undefined ? {} : gameConfig.variables).map(([name, d]) => ({
     name,
     ...(d as Omit<VarDeclaration, 'name'>),
   }));

@@ -19,7 +19,9 @@ window.surdetProfile = {
   read: async key => { if (key === 'clear-record' && window.delayProfile) await new Promise(resolve => window.releaseProfile = resolve); return null; },
   write: async () => {}, delete: async () => {},
 };
-await startPlayer({ id:'audit-player-intents', config:{title:'Async intent test',entryScene:'start',characters:{},variables:{}},
+const config = {title:'Async intent test',entryScene:'start',characters:{}};
+if (!new URL(location.href).searchParams.has('without-variables')) config.variables = {};
+await startPlayer({ id:'audit-player-intents', config,
   sceneFiles:{'content/scenario/start.gal':async()=> '@scene start\\n第一句。\\n第二句。\\n@end\\n'},
   assetFiles:{},fontFiles:{},resolveSceneUrl:path=>path });
 window.playerReady = true;
@@ -31,13 +33,26 @@ try {
   server = await createServer({ root, configFile: false, cacheDir: path.join(output, 'vite'),
     server: { host: '127.0.0.1', port: 0 }, plugins: [{ name: 'player-intent-fixture', configureServer(instance) {
       instance.middlewares.use((req, res, next) => {
-        if (req.url !== '/audit-player/') return next();
+        if (req.url?.split('?')[0] !== '/audit-player/') return next();
         res.setHeader('Content-Type', 'text/html'); res.end(html);
       });
     } }] });
   await server.listen();
   const port = server.httpServer.address().port;
   browser = await chromium.launch({ headless: true });
+  page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+  page.on('pageerror', error => errors.push(error.message));
+  const startupFailure = new Promise((_, reject) => page.once('pageerror', reject));
+  await Promise.race([
+    page.goto(`http://127.0.0.1:${port}/audit-player/?without-variables`)
+      .then(() => page.waitForFunction(() => window.playerReady, null, { timeout: 60000 })),
+    startupFailure,
+  ]);
+  await page.evaluate(() => window.__surdetDebug.titleSelect('new'));
+  await page.waitForFunction(() => window.__surdetDebug.position?.sceneId === 'start');
+  assert.equal(await page.evaluate(() => window.__surdetDebug.position.sceneId), 'start');
+  await page.screenshot({ path: path.join(output, 'no-variable-table-first-line.png') });
+  await page.close();
   page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${port}/audit-player/`);
@@ -72,7 +87,7 @@ try {
   await page.keyboard.press('o');
   assert.equal(await page.evaluate(() => window.__surdetDebug.uiSession.overlay), 'gallery');
   assert.deepEqual(errors, []);
-  console.log('PASS full shared Player: delayed new game cancelled by title, delayed list keeps settings, real G/O keys respect overlays; page errors 0');
+  console.log('PASS full shared Player: omitted variable table starts the story; delayed new game cancelled by title, delayed list keeps settings, real G/O keys respect overlays; page errors 0');
 } catch (error) {
   if (page && !page.isClosed()) await page.screenshot({ path: path.join(output, 'failure.png') });
   if (page && !page.isClosed()) console.error(await page.evaluate(() => ({ ui: window.__surdetDebug?.uiSession,
