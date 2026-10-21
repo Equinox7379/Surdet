@@ -549,8 +549,8 @@ export class RendererStageHost {
     return this.#world.snapshotPresentation();
   }
 
-  validatePresentation(snapshot: unknown): void {
-    this.#world.validatePresentation?.(snapshot);
+  validatePresentation(snapshot: unknown, timelineEvents?: readonly TimelineFrameEvent[]): void {
+    this.#world.validatePresentation?.(snapshot, timelineEvents);
   }
 
   restorePresentation(snapshot: unknown): void {

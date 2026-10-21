@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
+import { Application, TickerPlugin } from 'pixi.js';
+import { FrameScheduler } from '../../src/frame-scheduler.js';
 import { RenderPerformanceMonitor } from '../../src/performance.js';
 import { RendererError } from '../../src/api/renderer-errors.js';
 import { RendererStageHost } from '../../src/pixi-stage-host.js';
@@ -242,16 +244,30 @@ describe('Renderer v2 runtime facade', () => {
     expect(internals.observableSnapshot()).toEqual(before);
   });
 
-  it('projects a theme through Runtime to all five real Layers exactly once', async () => {
+  it('projects a theme through Runtime to all five real Layers exactly once and coalesces their requests into one render', async () => {
+    const pending = new Map<number, FrameRequestCallback>();
+    let now = 0, nextId = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const id = ++nextId; pending.set(id, callback); return id;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => { pending.delete(id); });
+    const app = new Application();
+    const render = vi.fn();
+    // Keep the real Application.render, TickerPlugin and Ticker; only the GPU boundary is a spy.
+    app.renderer = { render } as never;
+    TickerPlugin.init.call(app, { autoStart: false, sharedTicker: false });
     const lifecycle = new RenderLifecycle();
     const assets = new RenderAssetRegistry({ lifecycle });
     const stage = new RendererStageHost(assets, lifecycle);
-    let frameRequests = 0;
-    stage.setFrameRequest(() => { frameRequests += 1; });
     const base = fakeInternals();
+    const scheduler = new FrameScheduler(app, base.controller, [stage], { monitor: base.monitor });
+    const frameRequests = vi.spyOn(app, 'start');
+    const updates = vi.spyOn(base.controller, 'update');
     const internals = {
       ...base,
       stage,
+      scheduler,
       assetRegistry: assets,
       lifecycle,
       resourceSnapshot: () => lifecycle.snapshot(),
@@ -271,36 +287,62 @@ describe('Renderer v2 runtime facade', () => {
     const loadingThemeSpy = vi.spyOn(LoadingLayer.prototype, 'setTheme');
 
     const runtime = await createRendererRuntimeFromInternals(internals);
-    const resourcesBefore = runtime.queries.diagnostics.resourceSnapshot();
-    runtime.commands.preferences.setTheme({ colors: { accent: 0x47c8ff } });
+    try {
+      const resourcesBefore = runtime.queries.diagnostics.resourceSnapshot();
+      expect(pending.size).toBe(0);
+      expect(render).not.toHaveBeenCalled();
+      runtime.commands.preferences.setTheme({ colors: { accent: 0x47c8ff } });
 
-    expect(themeSpies).toHaveLength(4);
-    expect(themeSpies.every((spy) => spy.mock.calls.length === 1)).toBe(true);
-    expect(themeSpies.every((spy) => spy.mock.calls[0]?.[0].colors.accent === 0x47c8ff)).toBe(true);
-    expect(loadingThemeSpy).toHaveBeenCalledTimes(1);
-    expect(loadingThemeSpy.mock.calls[0]?.[0].colors.accent).toBe(0x47c8ff);
-    expect(runtime.queries.preferences.theme().colors.accent).toBe(0x47c8ff);
-    expect(frameRequests).toBe(1);
+      expect(themeSpies).toHaveLength(4);
+      expect(themeSpies.every((spy) => spy.mock.calls.length === 1)).toBe(true);
+      expect(themeSpies.every((spy) => spy.mock.calls[0]?.[0].colors.accent === 0x47c8ff)).toBe(true);
+      expect(loadingThemeSpy).toHaveBeenCalledTimes(1);
+      expect(loadingThemeSpy.mock.calls[0]?.[0].colors.accent).toBe(0x47c8ff);
+      expect(runtime.queries.preferences.theme().colors.accent).toBe(0x47c8ff);
+      // Gallery requests once inside setTheme; StageHost requests once after all five projections.
+      expect(frameRequests).toHaveBeenCalledTimes(2);
+      expect(pending.size).toBe(1);
+      expect(render).not.toHaveBeenCalled();
 
-    runtime.commands.preferences.setTheme({ colors: { accent: 0x47c8ff } });
-    expect(themeSpies.every((spy) => spy.mock.calls.length === 1)).toBe(true);
-    expect(loadingThemeSpy).toHaveBeenCalledTimes(1);
-    expect(frameRequests).toBe(1);
+      const [id, callback] = pending.entries().next().value!;
+      pending.delete(id); now += 16; callback(now);
+      expect(updates).toHaveBeenCalledExactlyOnceWith(16);
+      expect(render).toHaveBeenCalledExactlyOnceWith({ container: app.stage });
+      expect(base.monitor.snapshot().frames).toBe(1);
+      expect(app.ticker.started).toBe(false);
+      expect(pending.size).toBe(0);
 
-    expect(() => runtime.commands.preferences.setTheme({ colors: { accent: -1 } } as never))
-      .toThrow(/RENDERER_THEME_INVALID/);
-    expect(runtime.queries.preferences.theme().colors.accent).toBe(0x47c8ff);
-    expect(themeSpies.every((spy) => spy.mock.calls.length === 1)).toBe(true);
-    expect(loadingThemeSpy).toHaveBeenCalledTimes(1);
-    expect(runtime.queries.diagnostics.resourceSnapshot()).toMatchObject({
-      listeners: resourcesBefore.listeners,
-      activeTweens: resourcesBefore.activeTweens,
-      displayObjectsByOwner: resourcesBefore.displayObjectsByOwner,
-    });
+      runtime.commands.preferences.setTheme({ colors: { accent: 0x47c8ff } });
+      expect(themeSpies.every((spy) => spy.mock.calls.length === 1)).toBe(true);
+      expect(loadingThemeSpy).toHaveBeenCalledTimes(1);
+      expect(frameRequests).toHaveBeenCalledTimes(2);
+      expect(render).toHaveBeenCalledTimes(1);
+      expect(pending.size).toBe(0);
 
-    runtime.dispose();
-    expect(() => runtime.commands.preferences.setTheme({ colors: { accent: 0x123456 } }))
-      .toThrow(RendererError);
+      expect(() => runtime.commands.preferences.setTheme({ colors: { accent: -1 } } as never))
+        .toThrow(/RENDERER_THEME_INVALID/);
+      expect(runtime.queries.preferences.theme().colors.accent).toBe(0x47c8ff);
+      expect(themeSpies.every((spy) => spy.mock.calls.length === 1)).toBe(true);
+      expect(loadingThemeSpy).toHaveBeenCalledTimes(1);
+      expect(frameRequests).toHaveBeenCalledTimes(2);
+      expect(render).toHaveBeenCalledTimes(1);
+      expect(pending.size).toBe(0);
+      expect(runtime.queries.diagnostics.resourceSnapshot()).toMatchObject({
+        listeners: resourcesBefore.listeners,
+        activeTweens: resourcesBefore.activeTweens,
+        displayObjectsByOwner: resourcesBefore.displayObjectsByOwner,
+      });
+
+      runtime.dispose();
+      expect(() => runtime.commands.preferences.setTheme({ colors: { accent: 0x123456 } }))
+        .toThrow(RendererError);
+    } finally {
+      runtime.dispose();
+      TickerPlugin.destroy.call(app);
+      app.stage.destroy({ children: true });
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    }
   });
 
   it('attempts every runtime disposer after failures and reports RendererError with AggregateError', async () => {

@@ -143,7 +143,7 @@ describe('legacy World contract', () => {
       timelines: [],
     })).not.toThrow();
     expect(worldValidator).toHaveBeenCalledOnce();
-    expect(worldValidator).toHaveBeenCalledWith(stageSnapshot);
+    expect(worldValidator).toHaveBeenCalledWith(stageSnapshot, []);
     expect(worldValidator.mock.calls[0]?.[0]).not.toHaveProperty('timelines');
   });
 });

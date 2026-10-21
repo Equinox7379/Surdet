@@ -24,6 +24,7 @@ import type { RendererResourceSnapshot } from '../diagnostics/renderer-baseline.
 import type { RenderAssetRegistry } from '../services/render-asset-registry.js';
 import { preparePresentationRestore } from './presentation-controller.js';
 import { createRendererTheme, type RendererTheme } from '../theme.js';
+import type { TimelineFrameEvent } from '../timeline-player.js';
 
 /**
  * Narrow stage capability consumed only by the runtime port factory.
@@ -50,7 +51,7 @@ export interface PresentationStage extends
   releaseRegisteredAssetSources?: () => Promise<void>;
   captureThumbnail?: () => string | null;
   isFadeActive?: () => boolean;
-  validatePresentation?: (snapshot: unknown) => void;
+  validatePresentation?: (snapshot: unknown, timelineEvents?: readonly TimelineFrameEvent[]) => void;
   getFontFamily?: (role: RendererFontRole) => string;
   showVideo?: (source: string, onEnd: (failure?: Error) => void) => void;
   hideVideo?: () => void;
@@ -78,8 +79,8 @@ interface PresentationPortStage extends PresentationStage {
 export interface PresentationPorts {
   readonly commands: RendererCommands;
   readonly queries: RendererQueries;
-  /** Internal narrow port: accepts only a complete snapshot's `stage` field. */
-  readonly validateStagePresentation?: (snapshot: unknown) => void;
+  /** Stage data stays opaque; active timeline events let its owner validate interpolation origins. */
+  readonly validateStagePresentation?: (snapshot: unknown, timelineEvents?: readonly TimelineFrameEvent[]) => void;
 }
 
 export interface PresentationPortOptions {
@@ -294,9 +295,9 @@ export function createPresentationPorts(
   };
 
   const validateStagePresentation = options.worldLayer?.validatePresentation
-    ? (snapshot: unknown) => options.worldLayer!.validatePresentation!.call(options.worldLayer, snapshot)
+    ? (snapshot: unknown, timelineEvents?: readonly TimelineFrameEvent[]) => options.worldLayer!.validatePresentation!.call(options.worldLayer, snapshot, timelineEvents)
     : stage.validatePresentation
-      ? (snapshot: unknown) => stage.validatePresentation!.call(stage, snapshot)
+      ? (snapshot: unknown, timelineEvents?: readonly TimelineFrameEvent[]) => stage.validatePresentation!.call(stage, snapshot, timelineEvents)
       : () => undefined;
 
   const presentationCommands: PresentationCommands = {

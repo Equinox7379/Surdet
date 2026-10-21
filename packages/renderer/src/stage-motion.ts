@@ -18,6 +18,8 @@ export interface StageMotionSnapshot {
   timelines: [string, Motion][];
   cancelled?: string[];
   origins?: [string, StageProperty, StageSource][];
+  /** Camera ownership alone must not change v1 portrait layout. */
+  legacyCamera?: true;
 }
 const properties: readonly StageProperty[] = ['x', 'y', 'scale', 'opacity', 'z', 'facing', 'baseHeight', 'anchorX', 'anchorY', 'color'];
 const easings: readonly MotionEasing[] = ['linear', 'inOutSine', 'outCubic', 'inOutCubic', 'inOutQuad'];
@@ -53,6 +55,7 @@ export class StageMotionController {
   #direct: Motion[] = [];
   #timelines = new Map<string, Motion>();
   #cancelled = new Set<string>();
+  #legacyCamera = false;
   constructor(private readonly read: (target: string, property: StageProperty) => number | string,
     private readonly write: (target: string, patch: StageValues) => void) {}
   get active(): boolean { return this.#direct.length > 0; }
@@ -61,7 +64,8 @@ export class StageMotionController {
       && (Object.keys(motion.to) as StageProperty[]).some(property => this.#owners.get(target)?.get(property) === motion.token));
   }
   get hasState(): boolean { return this.#owners.size > 0 || this.#timelines.size > 0 || this.#cancelled.size > 0; }
-  get hasSpatialState(): boolean { return [...this.#owners.keys()].some(target => !target.startsWith('screen:')); }
+  get hasCameraState(): boolean { return this.#owners.has('camera'); }
+  get hasSpatialState(): boolean { return [...this.#owners.keys()].some(target => !target.startsWith('screen:') && (target !== 'camera' || !this.#legacyCamera)); }
 
   #prepare(target: string, to: StageValues, duration = 0, easing: MotionEasing = 'linear', source?: StageSource): Motion {
     if (source && !validStageSource(source)) throw new Error('Invalid stage source');
@@ -78,8 +82,9 @@ export class StageMotionController {
     }
     return { token: this.#sequence + 1, target, from, to: { ...to }, duration, elapsed: 0, easing, ...(source ? { source: copy(source) } : {}) };
   }
-  #claim(motion: Motion): void {
+  #claim(motion: Motion, legacyCamera = false): void {
     this.#sequence = motion.token;
+    if (motion.target === 'camera') this.#legacyCamera = legacyCamera;
     const owners = this.#owners.get(motion.target) ?? new Map<StageProperty, number>();
     for (const property of Object.keys(motion.to) as StageProperty[]) owners.set(property, motion.token);
     this.#owners.set(motion.target, owners);
@@ -100,9 +105,9 @@ export class StageMotionController {
     }
     if (Object.keys(patch).length) this.write(motion.target, patch);
   }
-  start(target: string, to: StageValues, duration = 0, easing: MotionEasing = 'linear', source?: StageSource): void {
+  start(target: string, to: StageValues, duration = 0, easing: MotionEasing = 'linear', source?: StageSource, legacyCamera = false): void {
     const motion = this.#prepare(target, to, duration, easing, source);
-    this.#claim(motion);
+    this.#claim(motion, legacyCamera);
     this.#apply(motion, duration === 0 ? 1 : 0);
     if (duration > 0) this.#direct.push(motion);
   }
@@ -116,13 +121,13 @@ export class StageMotionController {
     const motion = this.#timelines.get(identity);
     return !!motion && this.#owners.get(motion.target)?.get(property) === motion.token;
   }
-  timeline(identity: string, target: string, to: StageValues, progress: number, source?: StageSource): void {
+  timeline(identity: string, target: string, to: StageValues, progress: number, source?: StageSource, legacyCamera = false): void {
     if (this.#cancelled.has(identity)) return;
     if (!Number.isFinite(progress) || progress < 0 || progress > 1) throw new Error('Invalid stage timeline progress');
     let motion = this.#timelines.get(identity);
     if (!motion) {
       motion = this.#prepare(target, to, 0, 'linear', source);
-      this.#claim(motion);
+      this.#claim(motion, legacyCamera);
       this.#timelines.set(identity, motion);
     } else if (motion.target !== target || JSON.stringify(motion.to) !== JSON.stringify(to)) {
       throw new Error('Stage timeline identity changed during playback');
@@ -152,6 +157,7 @@ export class StageMotionController {
     for (const key of this.#cancelled) if (key.startsWith(`${runId}/`)) this.#cancelled.delete(key);
   }
   cancel(target: string): void {
+    if (target === 'camera') this.#legacyCamera = false;
     this.#owners.delete(target); this.#origins.delete(target);
     this.#direct = this.#direct.filter(motion => motion.target !== target);
     for (const [key, motion] of this.#timelines) if (motion.target === target) { this.#timelines.delete(key); this.#cancelled.add(key); }
@@ -160,6 +166,7 @@ export class StageMotionController {
     // A scene clear cancels active cues; reset/dispose forgets the old session.
     if (cancelActiveTimelines) for (const identity of this.#timelines.keys()) this.#cancelled.add(identity);
     else this.#cancelled.clear();
+    this.#legacyCamera = false;
     this.#sequence++; this.#owners.clear(); this.#origins.clear(); this.#direct = []; this.#timelines.clear();
   }
   sources(target: string): Record<string, StageSource> { return copy(Object.fromEntries(this.#origins.get(target) ?? [])); }
@@ -167,11 +174,12 @@ export class StageMotionController {
     return copy({ version: 1, sequence: this.#sequence,
       owners: [...this.#owners].flatMap(([target, owners]) => [...owners].map(([property, token]): [string, StageProperty, number] => [target, property, token])),
       origins: [...this.#origins].flatMap(([target, values]) => [...values].map(([property, source]): [string, StageProperty, StageSource] => [target, property, source])),
-      direct: this.#direct, timelines: [...this.#timelines], cancelled: [...this.#cancelled] });
+      direct: this.#direct, timelines: [...this.#timelines], cancelled: [...this.#cancelled], ...(this.#legacyCamera ? { legacyCamera: true as const } : {}) });
   }
   restore(prepared: StageMotionSnapshot): void {
     const snapshot = copy(prepared);
     this.#sequence = snapshot.sequence;
+    this.#legacyCamera = snapshot.legacyCamera === true;
     this.#origins.clear();
     for (const [target, property, source] of snapshot.origins ?? []) {
       const values = this.#origins.get(target) ?? new Map<StageProperty, StageSource>(); values.set(property, source); this.#origins.set(target, values);
@@ -193,6 +201,7 @@ export function prepareStageMotions(value: unknown, targets: ReadonlySet<string>
   if (!raw || raw.version !== 1 || !Number.isSafeInteger(raw.sequence) || raw.sequence! < 0
     || !Array.isArray(raw.owners) || !Array.isArray(raw.direct) || !Array.isArray(raw.timelines)) throw new Error('Invalid stage motion snapshot');
   if (raw.owners.length > 100_000 || raw.direct.length > 10_000 || raw.timelines.length > 10_000) throw new Error('Stage motion snapshot exceeds bounds');
+  if (raw.legacyCamera !== undefined && (raw.legacyCamera !== true || !raw.owners.some(entry => Array.isArray(entry) && entry[0] === 'camera'))) throw new Error('Invalid saved camera layout');
   const seen = new Set<string>();
   for (const entry of raw.owners) {
     if (!Array.isArray(entry) || entry.length !== 3 || !targets.has(entry[0]) || !properties.includes(entry[1])
