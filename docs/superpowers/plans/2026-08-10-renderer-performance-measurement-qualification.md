@@ -64,13 +64,13 @@
 
 - [x] 整改前 `npm run verify:all` 在 `34367148e57ad821d838495d496cb7aeeeb3ac3f` 上因 20 个 tracked stage6 `.log` 失败；20 个精确日志已从 index 移除、磁盘副本保留；计划/卫生提交：`13970fcfb66d03a865cbac7890b1dea9cf88fa6c`。
 - [x] 先写聚合测试并捕获缺模块红灯；随后实现 `renderer-v4-qualification-summary.mjs`、三态 single verifier 和根级工具接线；聚合实现提交：`a39501b1fe64364110c013a1a377d115146af1bc`。
-- [x] 现有五个 Q artifact 只读验证均为 `valid=true`、`not-qualified`、退出码 2；聚合摘要固定输出为 `docs/baselines/renderer-v4-qualification-summary-2026-08-10.json`，`resampled=false`、200 raw、10 warmup，摘要 SHA：`31554a17096f2544aff373a715583cf9e343230c9dcc41b6a4ee38a961b79fe6`。
+- [x] 现有五个 Q artifact 当时只读验证均为 `valid=true`、`not-qualified`、退出码 2；聚合摘要输出为 `docs/baselines/renderer-v4-qualification-summary-2026-08-10.json`，`resampled=false`、200 raw、10 warmup。历史原始版本（2026-10-21 路径脱敏前）的摘要 SHA：`31554a17096f2544aff373a715583cf9e343230c9dcc41b6a4ee38a961b79fe6`。该值只记录原始版本，不适用于当前脱敏后的 JSON；当前版保留原测量值和未达标结论，仅修改路径及五个输入的既有摘要，没有重新采样。
 - [x] Shell 全量 13 files/109 tests、`verify:tools` 10/10、boundaries 3/3、legacy 4/4、tracked hygiene 和 `npm run verify:all` 均通过；未重新采样、未运行旧正式 A/B、未修改门限。
 - [x] 最终报告、计划和摘要已精确暂存；在 `82fca398d3f2004166b21db70d20fcb6ab5afb50` 上完成最终全量门禁和 `git diff --check`，相对整改起点统计为 27 个文件、`1329 insertions / 1954 deletions`；摘要/报告/计划 SHA 已在最终收尾复核中记录；四个保护文件仍仅为未跟踪；下一入口为 `WAITING_FOR_REVIEW`，不得 push。
 
 ## 恢复时的当前事实（阶段 0 开始前只读核对）
 
-- 主工作树：`E:\surdet`
+- 主工作树：`<local-path>`（本机目录已脱敏）
 - 起始 HEAD：`f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59`
 - `surdet/main`：同为 `f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59`
 - 起始工作树：只存在四个受保护未跟踪文件，不能触碰。

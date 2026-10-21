@@ -6,7 +6,7 @@
   "resampled": false,
   "inputs": {
     "q1": {
-      "path": "E:\\surdet\\docs\\baselines\\renderer-v4-q1-007-a-b-2026-08-10.json",
+      "path": "C:\\surdet-public-evidence\\repository\\docs\\baselines\\renderer-v4-q1-007-a-b-2026-08-10.json",
       "sha256": "a56c7d01d5b14cd150d389839586c94a5f15105b33a518eb7d1e5625cef72a30",
       "group": "q1-007-a-b",
       "qualificationStatus": "not-qualified",
@@ -32,7 +32,7 @@
       "buildEquivalent": true
     },
     "q2": {
-      "path": "E:\\surdet\\docs\\baselines\\renderer-v4-q2-007-b-a-2026-08-10.json",
+      "path": "C:\\surdet-public-evidence\\repository\\docs\\baselines\\renderer-v4-q2-007-b-a-2026-08-10.json",
       "sha256": "9cff517d05a8d422ffa2f789001a12b8481d91a9326902c0acc6a66280d7000e",
       "group": "q2-007-b-a",
       "qualificationStatus": "not-qualified",
@@ -58,7 +58,7 @@
       "buildEquivalent": true
     },
     "q3": {
-      "path": "E:\\surdet\\docs\\baselines\\renderer-v4-q3-f7-a-b-2026-08-10.json",
+      "path": "C:\\surdet-public-evidence\\repository\\docs\\baselines\\renderer-v4-q3-f7-a-b-2026-08-10.json",
       "sha256": "20a1114ff4597c9d427c8f764e6b022376e7da5e298a92dca6426abfc5b6360d",
       "group": "q3-f7-a-b",
       "qualificationStatus": "not-qualified",
@@ -84,7 +84,7 @@
       "buildEquivalent": true
     },
     "q4": {
-      "path": "E:\\surdet\\docs\\baselines\\renderer-v4-q4-f7-b-a-2026-08-10.json",
+      "path": "C:\\surdet-public-evidence\\repository\\docs\\baselines\\renderer-v4-q4-f7-b-a-2026-08-10.json",
       "sha256": "f3c331c53d3fa64822925f95c08aae6a44a42084ef168806c4c4c0e1bce2f239",
       "group": "q4-f7-b-a",
       "qualificationStatus": "not-qualified",
@@ -110,7 +110,7 @@
       "buildEquivalent": true
     },
     "q5": {
-      "path": "E:\\surdet\\docs\\baselines\\renderer-v4-q5-f7-same-root-2026-08-10.json",
+      "path": "C:\\surdet-public-evidence\\repository\\docs\\baselines\\renderer-v4-q5-f7-same-root-2026-08-10.json",
       "sha256": "d99228b1368ee1fc8498ba2d3df8593087494ac76d0f89bd1f9ad5b81430ebf7",
       "group": "q5-f7-same-root",
       "qualificationStatus": "not-qualified",
