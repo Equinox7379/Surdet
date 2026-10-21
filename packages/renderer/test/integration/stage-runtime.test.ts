@@ -194,6 +194,30 @@ describe('camera timeline save restoration', () => {
       expect(h.interpreter.status).toBe('awaiting-timer');
     } finally { h.dispose(); }
   });
+  it.each(([1, 2] as const).flatMap(version => (['pan', 'zoom'] as const).map(action => ({ version, action }))))('rejects a missing v$version $action origin at the endpoint before it steals a later cue ownership', async ({ version, action }) => {
+    const h = await harness(null);
+    try {
+      const definition: TimelineDefinition = { version, id: 'endpoints', durationMs: 1250, tracks: [{ kind: 'camera', cues: [
+        { atMs: 0, durationMs: 500, easing: 'linear', action: 'pan', x: 200, y: 100 },
+        { atMs: 0, durationMs: 500, easing: 'linear', action: 'zoom', scale: 2 },
+        { atMs: 250, durationMs: 1000, easing: 'linear', action: 'pan', x: -100, y: -50 },
+        { atMs: 250, durationMs: 1000, easing: 'linear', action: 'zoom', scale: .75 },
+      ] }] };
+      h.timelines.register(definition); h.load('@timeline endpoints @blocking\n完成。\n@end');
+      h.controller.update(250); h.controller.update(250);
+      const saved = JSON.parse(JSON.stringify(h.interpreter.saveSnapshot()));
+      saved.presentation.payload.stage.motions.timelines = saved.presentation.payload.stage.motions.timelines.filter(
+        ([, motion]: [string, { to: Record<string, number> }]) => action === 'pan' ? motion.to.x !== 200 : motion.to.scale !== 2);
+      h.controller.update(50);
+      const before = JSON.parse(JSON.stringify(h.interpreter.saveSnapshot()));
+      expect(() => h.interpreter.loadSnapshot(saved)).toThrow();
+      const current = h.interpreter.saveSnapshot()!;
+      expect(current.presentation).toEqual(before.presentation);
+      expect(current.position).toMatchObject({ pc: before.position.pc, sceneId: before.position.sceneId });
+      expect(current.variables).toEqual(before.variables);
+      expect(h.interpreter.status).toBe('awaiting-timer');
+    } finally { h.dispose(); }
+  });
   it('restores a later direct zoom without letting an earlier v1 camera cue regain scale ownership', async () => {
     const h = await harness(null);
     try {

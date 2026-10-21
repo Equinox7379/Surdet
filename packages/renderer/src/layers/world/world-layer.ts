@@ -1277,7 +1277,7 @@ export class WorldLayer implements WorldProjectionPort {
       const identity = `${event.runId}/${event.cueId}`;
       if (prepared?.motions?.cancelled?.includes(identity)) continue;
       const motion = prepared?.motions?.timelines.find(([id]) => id === identity)?.[1];
-      if (!motion && event.progress > 0 && event.progress < 1) throw invalidSnapshot('Saved camera is missing its original interpolation state');
+      if (!motion && event.progress > 0) throw invalidSnapshot('Saved camera is missing its original interpolation state');
       if (motion && prepared?.motions) {
         const expected = event.cue.action === 'pan'
           ? { x: Math.max(-2000, Math.min(2000, Number(event.cue.x))), y: Math.max(-2000, Math.min(2000, Number(event.cue.y))) }
