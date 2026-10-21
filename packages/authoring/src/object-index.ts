@@ -550,9 +550,14 @@ function addTimelineObjects(
   });
   for (const reference of analyzeTimelineCompositionReferences({ timelineId: name, path: timelinePath, definition })) {
     const assetRef = reference.objectRef;
+    if (assetRef === undefined) continue;
+    if (reference.kind === 'timeline') {
+      addReferenceCandidate(candidates, timelineRef, assetRef);
+      continue;
+    }
     const trackIndex = reference.source.trackIndex;
     const cueIndex = reference.source.cueIndex;
-    if (assetRef === undefined || trackIndex === undefined || cueIndex === undefined) continue;
+    if (trackIndex === undefined || cueIndex === undefined) continue;
     const cueRef = `timeline:${name}/track:${trackIndex}/cue:${cueIndex}`;
     const trackRef = `timeline:${name}/track:${trackIndex}`;
     const cue = definition['tracks'] && Array.isArray(definition['tracks'])

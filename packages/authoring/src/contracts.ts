@@ -238,7 +238,7 @@ export type SceneBlockInput =
 /** 单行可替换的场景指令；结构入口、音频/视频及 return 边界不在此列。 */
 export const REPLACEABLE_SCENE_INSTRUCTIONS = [
   'bg', 'show', 'hide', 'pose', 'layer', 'stage', 'wait',
-  'set', 'mod', 'goto', 'jump', 'call',
+  'set', 'mod', 'goto', 'loop', 'jump', 'call',
   'fadein', 'fadeout', 'shake', 'flash', 'zoom', 'wipe', 'transition',
   'particle', 'mov', 'tint', 'filter', 'title', 'chapter', 'tip', 'note', 'center', 'nvl', 'timeline',
 ] as const;

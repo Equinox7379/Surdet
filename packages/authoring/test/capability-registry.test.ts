@@ -119,6 +119,10 @@ describe('authoring capability registry', () => {
       'patchStageProperties', 'replaceText', 'replaceInstruction', 'insertAfter', 'insertBefore', 'replaceChoiceOption',
       'replaceChoiceGroup', 'replaceConditionBlock', 'removeObject', 'renameLabel', 'removeLabel',
     ]);
+    const replaceInstruction = variants.find((variant) => variant.properties.kind.const === 'replaceInstruction')!;
+    const replaceableNames = replaceInstruction.properties.instruction.properties.name.enum;
+    expect(replaceableNames).toEqual(expect.arrayContaining(['goto', 'loop', 'jump', 'call']));
+    for (const name of ['scene', 'choice', 'return', 'end', 'bgm', 'video']) expect(replaceableNames).not.toContain(name);
     const choice = variants.find((variant) => variant.properties.kind.const === 'replaceChoiceGroup')!;
     expect(choice.properties.choice.properties.kind.const).toBe('choice');
     const conditionPatch = variants.find((variant) => variant.properties.kind.const === 'replaceConditionBlock')!;
