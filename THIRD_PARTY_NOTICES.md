@@ -40,8 +40,19 @@ MIT covers Surdet-authored engine code and technical documentation. Third-party 
 - 没有明确单独许可的作品素材，目前不应被当成可自由复用素材库。正式公开前需要 Owner 确认权利与公开范围，或从公开交付中排除/替换；本文件不删除现有作品。
 - Live2D / Spine 的 SDK、模型及运行库若以后进入交付，按其届时实际版本与许可单独核对；引擎 MIT 许可不能替代第三方授权。
 
+<a id="readme-showcase"></a>
+
+## README 展示图片 / README showcase
+
+- `docs/readme/editor-arrange.png` 与 `docs/readme/player-harbor.png`：2026-10-21 在 Windows / Chromium 中捕获的真实 Surdet Editor 与共享 Player。编排图右侧为运行预览，不是静态排布示意；游戏图截取实际舞台区域。没有拼接虚构界面或修改人物原图。
+- 展示使用项目素材库中选定的凛外套立绘、港口晨景，以及浅色花纹对话框与按钮皮肤。它们由 OpenAI 图像生成工具制作并由项目所有者选择用于本页展示，不宣称是手绘作品。演示对白为本页单独编写，未使用未公开游戏的台本。
+- 这些图片展示的是自定义项目外观，不是新项目默认模板；展示使用不代表整套素材库已随主线交付。其美术不因出现在 MIT 项目截图中而成为 MIT / CC0 素材，不应提取并作为自由素材包再分发。
+- 后文 `docs/guide/images/` 配图来自既有作者指南，部分出自较早的 Linux 桌面构建；版本与范围见[作者指南](docs/guide/README.md#截图与版本说明)。
+
+The two lead captures show the real browser Editor and shared Player on Windows, using selected AI-generated library art and a purpose-written demo scene. The Editor's right pane is a running preview; the game image is a capture of the actual stage, not a fabricated interface. This is a custom project appearance, not the default template or a claim that the full art library ships on the main branch. Inclusion in a screenshot does not license the artwork under MIT or CC0. Later guide images come from earlier author-guide sessions, including Linux desktop builds.
+
 ## 当前发布状态
 
-2026-10-21：项目所有者已授权在完成隐私清理后公开现有 Surdet 仓库。引擎继续采用 MIT；此次公开不扩大第三方或作品素材的使用许可，也不代表 npm 包或安装器已经发行。仓库是否公开以 GitHub 当前可见性为准。
+2026-10-21：项目所有者已授权公开现有 Surdet 仓库，仓库现已公开。引擎继续采用 MIT；此次公开不扩大第三方或作品素材的使用许可，也不代表 npm 包或安装器已经发行。
 
-On 2026-10-21, the project owner authorized publication of the existing Surdet repository after privacy cleanup. The engine remains MIT-licensed. This does not expand the licenses of third-party or game assets, or announce an npm or installer release. Repository availability follows its current visibility on GitHub.
+On 2026-10-21, the project owner authorized publication of the existing Surdet repository, which is now public. The engine remains MIT-licensed. This does not expand the licenses of third-party or game assets, or announce an npm or installer release.

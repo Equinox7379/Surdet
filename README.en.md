@@ -8,86 +8,27 @@ A visual novel engine with a visual editor, scene direction, a shared player run
 
 [简体中文](README.md) · **English**
 
-[![License: MIT](https://img.shields.io/badge/engine-MIT-7eaa92?style=flat-square)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-3178c6?style=flat-square&logo=typescript&logoColor=white)](packages/core)
-[![Node.js 24+](https://img.shields.io/badge/Node.js-24%2B-417e38?style=flat-square&logo=nodedotjs&logoColor=white)](package.json)
-[![Windows](https://img.shields.io/badge/desktop-Windows-0078d4?style=flat-square)](docs/guide/export-windows.md)
-[![MCP](https://img.shields.io/badge/AI_tools-MCP-7868a6?style=flat-square)](docs/AI-GUIDE.md)
+[![License: MIT](https://img.shields.io/badge/engine-MIT-7eaa92?style=flat-square)](LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-3178c6?style=flat-square&logo=typescript&logoColor=white)](packages/core) [![Node.js 24+](https://img.shields.io/badge/Node.js-24%2B-417e38?style=flat-square&logo=nodedotjs&logoColor=white)](package.json) [![Windows](https://img.shields.io/badge/desktop-Windows-0078d4?style=flat-square)](docs/guide/export-windows.md) [![MCP](https://img.shields.io/badge/AI_tools-MCP-7868a6?style=flat-square)](docs/AI-GUIDE.md)
 
-[Get started](#quick-start) · [Author guide](docs/guide/README.md) · [Complete tutorial](docs/guide/tutorial.md) · [Connect an AI assistant](#external-agent-authoring) · [Contribute](#contributing)
+<table>
+<tr><th>1 · Arrange the scene</th><th>2 · Play it in the real Player</th></tr>
+<tr>
+<td width="50%"><a href="docs/readme/editor-arrange.png"><img src="docs/readme/editor-arrange.png" alt="The actual Editor arranging dialogue and choices, with the same scene running beside it" width="640"></a></td>
+<td width="50%"><a href="docs/readme/player-harbor.png"><img src="docs/readme/player-harbor.png" alt="The actual Player showing Rin at the harbor, with the illustrated dialogue skin" width="640"></a></td>
+</tr>
+</table>
 
-![Harbor artwork from Surdet's bundled Letters from the Misty Harbor example](examples/starter/content/assets/bg/harbor.png)
+<sub>One scene, from arrangement to playback. Real Editor / Player captures using selected library artwork; click either image to enlarge.</sub>
 
-<sub>Background artwork from the bundled example 雾港来信 (Letters from the Misty Harbor). Game assets have separate licensing terms; see below.</sub>
+**[See the demo](#see-it-in-action) · [Run from source](#quick-start) · [Follow the tutorial](docs/guide/tutorial.md)**
 
 </div>
 
-## From a line of dialogue to a game
+## Three things that stay in your hands
 
-A late apology. An unsent letter. A choice that changes the ending. A story can start with something small. Surdet helps you build from that first moment through dialogue, branches, characters, staging, menus, and playtesting, until you have a game to share with players.
-
-Arrange scenes in the visual Editor or write readable `.gal` scripts directly. Work on your own or give a clearly defined task to an external AI assistant through MCP. The Editor and authoring tools use the same project operations and validation rules, and your project stays in local files.
-
-Surdet is under active development, with **Windows desktop authoring and game export** as its current focus. Source code, examples, and a Chinese author tutorial live in this repository. Building from source is the recommended starting point; there is no signed installer release or public npm installation workflow yet.
-
-## What you can build
-
-| Your goal | Tools in Surdet |
-| --- | --- |
-| Turn a script into a branching visual novel | Arrangement, manuscript, and source views; characters, variables, conditions, jumps, and a flow map |
-| Shape the rhythm of a line | Ruby annotations, emphasis marks, color, size, pauses, tag completion, and diagnostics |
-| Direct a scene | Character poses, layered environments, parallax, cameras, transitions, filters, and multitrack timelines |
-| Give your game its own interface | A UI designer, themes, nine-slice skins, interaction states, page transitions, and import previews |
-| Support comfortable reading | Save/load, rollback, backlog, auto mode, skip, reading settings, and collection pages |
-| Prepare multiple languages | Text keys, translation CSVs, existing voice recording associations, and language switching without restarting the story |
-| Collaborate with an AI assistant | CLI and MCP tools for discovery, inspection, isolated drafts, validation, playtesting, and authorized application |
-| Deliver a Windows game | Export a runnable game folder from the desktop Editor |
-
-### Keep the script readable and the next playtest close
-
-In arrangement view, backgrounds, characters, dialogue, and choices become editable story steps. Manuscript view supports continuous reading and revision. Source view gives you direct control over the script. Start a playtest from a particular line or follow the flow map to inspect a branch.
-
-![Story arrangement and branching choices in the Editor](docs/guide/images/tutorial-branch-steps.png)
-
-Diagnostics point back to the relevant source location. Incorrect inline tags remain as you wrote them while the Editor explains the problem. Undo, redo, drafts, and saving stay part of the regular writing workflow.
-
-### See how the branches connect
-
-As a story grows, its routes become harder to keep in your head. The flow view shows scenes and choices together. Story checks record visited locations, condition results, and reasons for stopping, helping you find broken connections and references.
-
-![The Editor's story flow map](docs/guide/images/tutorial-flow.png)
-
-Automated checks have explicit path and execution budgets. They produce inspectable results; they do not decide whether a scene reads well or feels right to play.
-
-### Give words room to perform
-
-ADV dialogue, NVL text, ruby annotations, and emphasis marks support different reading rhythms. The stage can move characters and environment layers independently. Multitrack timelines organize longer sequences and support bounded reuse of clips.
-
-![Inline tag highlighting and completion in source view](docs/guide/images/pending-source-completion.png)
-
-Backgrounds, portraits, music, sound effects, voice recordings, and video enter through project asset references. Importing, moving, and renaming assets have dedicated project operations, so replacing a picture does not require editing player code.
-
-### Make the interface part of the story
-
-Project UI configuration can organize title, dialogue, choices, system menu, save, settings, backlog, and gallery pages. The designer exposes typography, backgrounds, borders, padding, shadows, nine-slice skins, hover/focus/pressed/disabled states, and page entry and exit motion.
-
-Before importing a theme or UI fragment, inspect the affected pages and changes to images and fonts. Preview it, try it in the Player, then choose whether to apply it. Technical examples explain the format:
-
-- [U1 style example](docs/ui-style-u1-example.md)
-- [U2 interactions and page motion](docs/ui-interaction-contract.md)
-- [U3 complete technical theme and import preview](docs/ui-theme-u3-technical.md)
-
-These examples demonstrate behavior and formats. The final art direction, layout, and feel of your game still deserve their own design and playtesting.
-
-### Leave room for translation
-
-Register text keys for dialogue, choices, character display names, and custom UI strings. Export a CSV, fill in translations, and preview the import before confirming it. Dialogue can also be associated with existing recordings by text key and language.
-
-![Text catalog and translation status](docs/guide/images/translation-catalog.png)
-
-The shared Player can switch the game's language from reading settings while keeping story progress. Missing translations display the source text; missing or outdated voice recordings allow silent reading. Surdet does not automatically translate text or generate voice acting.
-
-> Editor screenshots on this page come from actual author-guide sessions and show the Chinese interface. Some were captured using an earlier Linux desktop build; they are not a pixel-exact preview of a current Windows release. See the [author guide](docs/guide/README.md#截图与版本说明) for version and verification details.
+- **Your writing workflow.** Arrange scenes visually or edit readable `.gal` scripts; both work on the same story.
+- **Your project files.** Scripts, configuration, and assets live in your own folders, ready for your tools and version control.
+- **Your final decision.** External AI can work in an isolated draft; review the diff and play it before authorizing a write-back.
 
 ## Quick start
 
@@ -115,6 +56,9 @@ npm run desktop -w surdet-editor
 
 Create an example project to explore a working short story, or choose a blank project and write your first line.
 
+<details>
+<summary>Optional: build a double-clickable Editor folder</summary>
+
 To produce a folder containing a directly runnable Editor:
 
 ```powershell
@@ -122,6 +66,8 @@ npm run desktop:pack -w surdet-editor
 ```
 
 The output is `packages/editor/release/editor/win-unpacked/`. Keep the entire folder and run `Surdet Editor.exe`. Users of this built application do not need a separate Node.js installation.
+
+</details>
 
 <details>
 <summary>Browser development and the sample game</summary>
@@ -140,7 +86,7 @@ Run the bundled 雾港来信 (Letters from the Misty Harbor) example:
 npm run dev -w surdet-starter
 ```
 
-The example has three endings and optional exploration content. See the respective guides for each entry point's behavior and export requirements. Windows desktop is the primary validation target.
+The example has three endings and optional exploration content.
 
 </details>
 
@@ -154,7 +100,75 @@ Follow the [Rainy Night Station tutorial](docs/guide/tutorial.md), currently in 
 4. Play the branches and use saves, the backlog, and reading settings.
 5. Check problems, record a saved version, and export a Windows game.
 
-Practice assets are included. Once you know the workflow, replace them with artwork and audio you have permission to use.
+Practice assets are included; import your own artwork and audio as your story takes shape.
+
+## Current maturity
+
+> **Ready to explore from source; still under active development.** The current focus is Windows authoring and Windows game export.
+
+- **Getting it:** source builds are the entry point. Desktop builds are unsigned; no signed installer or public npm install workflow is offered here.
+- **Authoring scope:** dialogue, branching, staging, custom UI, translation, and AI drafts are available. For supported boundaries and upgrade / save behavior, see [capabilities](docs/capability-matrix.md), [known limitations](docs/known-limitations.md), and [version support](docs/guide/versions-and-data.md).
+- **Platform and language:** browser development uses Chrome / Edge; a complete Linux or macOS authoring release is not promised. This page is bilingual; the Editor and detailed author guides are primarily Chinese.
+- **What the pictures show:** the two lead images were captured on Windows on 2026-10-21, from the real browser Editor and its shared Player, with selected artwork and a purpose-written demo scene. They do not depict the default new-project appearance. Later guide images come from earlier builds. [Image provenance and asset terms](THIRD_PARTY_NOTICES.md#readme-showcase).
+
+Writing, art direction, voice acting, and final playtesting remain the author's work; examples and checks help with that work rather than finish it for you.
+
+## See it in action
+
+The lead images follow the same short harbor scene: add a background and Rin's portrait, write a line of dialogue, then add two choices. The Editor's **Run preview** launches the real Player beside the script; the enlarged capture below shows its dialogue skin and reading controls.
+
+![The same harbor scene running in the Player, with Rin and the illustrated dialogue interface](docs/readme/player-harbor.png)
+
+| Your goal | Tools in Surdet |
+| --- | --- |
+| Turn a script into a branching visual novel | Arrangement, manuscript, and source views; characters, variables, conditions, jumps, and a flow map |
+| Shape the rhythm of a line | Ruby annotations, emphasis marks, color, size, pauses, tag completion, and diagnostics |
+| Direct a scene | Character poses, layered environments, parallax, cameras, transitions, filters, and multitrack timelines |
+| Give your game its own interface | A UI designer, themes, nine-slice skins, interaction states, page transitions, and import previews |
+| Support comfortable reading | Save/load, rollback, backlog, auto mode, skip, reading settings, and collection pages |
+| Prepare multiple languages | Text keys, translation CSVs, existing voice recording associations, and language switching without restarting the story |
+| Collaborate with an AI assistant | CLI and MCP tools for discovery, inspection, isolated drafts, validation, playtesting, and authorized application |
+| Deliver a Windows game | Export a runnable game folder from the desktop Editor |
+
+### Keep the script readable and the next playtest close
+
+In arrangement view, backgrounds, characters, dialogue, and choices become editable story steps. Manuscript view supports continuous reading and revision. Source view gives you direct control over the script. Start a playtest from a particular line or follow the flow map to inspect a branch.
+
+Diagnostics point back to the relevant source location. Incorrect inline tags remain as you wrote them while the Editor explains the problem. Undo, redo, drafts, and saving stay part of the regular writing workflow.
+
+### See how the branches connect
+
+As a story grows, its routes become harder to keep in your head. The flow view shows scenes and choices together. Story checks record visited locations, condition results, and reasons for stopping, helping you find broken connections and references.
+
+![The Editor's story flow map](docs/guide/images/tutorial-flow.png)
+
+Follow a reported location back to the script, make a change, and play the branch again.
+
+### Give words room to perform
+
+ADV dialogue, NVL text, ruby annotations, and emphasis marks support different reading rhythms. The stage can move characters and environment layers independently. Multitrack timelines organize longer sequences and support bounded reuse of clips.
+
+![Inline tag highlighting and completion in source view](docs/guide/images/pending-source-completion.png)
+
+Backgrounds, portraits, music, sound effects, voice recordings, and video enter through project asset references. Importing, moving, and renaming assets have dedicated project operations, so replacing a picture does not require editing player code.
+
+### Make the interface part of the story
+
+Project UI configuration can organize title, dialogue, choices, system menu, save, settings, backlog, and gallery pages. The designer exposes typography, backgrounds, borders, padding, shadows, nine-slice skins, hover/focus/pressed/disabled states, and page entry and exit motion.
+
+Before importing a theme or UI fragment, inspect the affected pages and changes to images and fonts. Preview it, try it in the Player, then choose whether to apply it. Technical examples explain the format:
+
+- [Typography and illustrated UI skins](docs/ui-style-u1-example.md)
+- [Control interactions and page motion](docs/ui-interaction-contract.md)
+- [A complete theme and import preview](docs/ui-theme-u3-technical.md)
+
+### Leave room for translation
+
+Register text keys for dialogue, choices, character display names, and custom UI strings. Export a CSV, fill in translations, and preview the import before confirming it. Dialogue can also be associated with existing recordings by text key and language.
+
+![Text catalog and translation status](docs/guide/images/translation-catalog.png)
+
+The shared Player can switch the game's language from reading settings while keeping story progress. Missing translations display the source text; missing or outdated voice recordings allow silent reading.
 
 ## What a script looks like
 
@@ -255,7 +269,7 @@ Create a blank project with the CLI:
 node packages/cli/dist/index.js new my-story --directory "C:/games/my-story" --template blank
 ```
 
-Ordinary projects use the shared Player rather than a copied menu and save implementation. Standalone source projects still need matching Surdet packages and development dependencies. Do not assume that `@surdet/*` packages are available on public npm; follow the generated project's README.
+Ordinary projects use the shared Player rather than a copied menu and save implementation. Follow the generated project's README to prepare its source dependencies.
 
 ## Workspace
 
@@ -283,23 +297,15 @@ See the [architecture guide](docs/architecture.md) for more detail.
 | --- | --- |
 | Make a game without reading engine code | [Chinese author guide](docs/guide/README.md) · [Complete tutorial](docs/guide/tutorial.md) |
 | Exact script syntax | [DSL specification](docs/dsl-spec.md) · [Inline text](docs/guide/inline-text.md) |
-| Assets and scene direction | [Author guide](docs/guide/assets-and-staging.md) · [Presentation contract](docs/presentation-effects-contract.md) |
+| Assets and scene direction | [Author guide](docs/guide/assets-and-staging.md) · [Stage and effects reference](docs/presentation-effects-contract.md) |
 | Custom UI and theme sharing | [Styles](docs/ui-style-contract.md) · [Interaction](docs/ui-interaction-contract.md) · [Import preview](docs/ui-sharing-import-contract.md) |
 | Translations and voice associations | [Text and translation](docs/guide/translation.md) |
-| Windows game export | [Author steps](docs/guide/export-windows.md) · [Export contract](docs/windows-game-export-contract.md) |
+| Windows game export | [Author steps](docs/guide/export-windows.md) · [Export support details](docs/windows-game-export-contract.md) |
 | External AI tools | [AI authoring guide](docs/AI-GUIDE.md) |
 | Implemented and planned capabilities | [Capability matrix](docs/capability-matrix.md) · [Known limitations](docs/known-limitations.md) |
 | Upgrades, script revisions, and saves | [Version and data support](docs/guide/versions-and-data.md) |
 
-The [documentation index](docs/README.md) lists all current guides. Detailed author documentation is primarily in Chinese. This English README provides the project overview and startup instructions; documentation translations are welcome.
-
-## Current status
-
-- **Platforms:** Windows desktop authoring and Windows game export are the current focus. Browser development primarily uses Chrome / Edge. Linux development checks do not imply a complete Linux or macOS authoring release.
-- **Distribution:** Source and build instructions are available here. Desktop builds are unsigned; there is no signed installer release. Versions in the source tree do not imply that corresponding packages are published on npm.
-- **Content:** The engine imports artwork and audio, but does not automatically finish a game's writing, art, voice acting, or quality review. Example placeholders serve specific demonstration purposes.
-- **Features:** The capability matrix distinguishes implemented features from plans. Pre-battle formation editing, for example, remains planned. Save compatibility and recovery after script changes have defined limits.
-- **Languages:** The language switch at the top changes this README. Editor screenshots and most author documentation remain Chinese; this does not claim that the entire Editor has an English interface.
+The [documentation index](docs/README.md) lists all current guides. Tutorial improvements and translations are welcome.
 
 ## Contributing
 
