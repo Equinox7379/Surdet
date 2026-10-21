@@ -25,7 +25,7 @@ export type FlowEdit =
 export interface FlowEditFile { path: string; sceneId: string; before: string | null; after: string }
 export interface FlowEditPlan { summary: string; note?: string; files: FlowEditFile[] }
 
-const TERMINALS = new Set(['end', 'jump', 'goto', 'return']);
+const TERMINALS = new Set(['end', 'jump', 'goto', 'loop', 'return']);
 
 export const endpointName = (endpoint: FlowEndpoint): string => endpoint.label === undefined ? `${endpoint.sceneId} 开头` : `${endpoint.sceneId} · ${endpoint.label}`;
 
@@ -217,7 +217,7 @@ export async function planFlowEdit(files: Record<string, string>, edit: FlowEdit
       option: { ...option, target: { kind: target.name, value: target.value } } });
     return { summary: `把选项「${option.label}」改为去 ${endpointName(edit.to)}（条件和效果保持不变）`, files: changed(run) };
   }
-  if (row?.kind !== 'instr' || !['goto', 'jump', 'call'].includes(row.name)) throw new Error(`${edge.sceneId} 第 ${edge.line} 行已不是跳转，请刷新流程图`);
+  if (row?.kind !== 'instr' || !['goto', 'loop', 'jump', 'call'].includes(row.name)) throw new Error(`${edge.sceneId} 第 ${edge.line} 行已不是跳转，请刷新流程图`);
   const original = instructionInput(row.raw);
   const replaceable = original as Extract<ScenePatchOperation, { kind: 'replaceInstruction' }>['instruction'];
   await assertRoundTrip(files, edge.sceneId, edge.line, item => ({ kind: 'replaceInstruction', target: item.ref, expectedFingerprint: item.fingerprint, instruction: replaceable }));
