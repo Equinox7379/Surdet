@@ -913,9 +913,10 @@ export class WorldLayer implements WorldProjectionPort {
 
   zoom(scale = 1, durationMs = 400): void {
     this.#worldEffects.beforeStageMutation();
-    if (this.#stage || this.#stageMotions.hasSpatialState) {
+    if (this.#stage || this.#stageMotions.hasSpatialState || this.#stageMotions.hasCameraState) {
       this.#zoomRemain = 0;
-      this.#stageMotions.start('camera', { scale: Math.max(.25, Math.min(4, scale)) }, presentationDuration(durationMs, this.#presentation));
+      this.#stageMotions.start('camera', { scale: Math.max(.25, Math.min(4, scale)) }, presentationDuration(durationMs, this.#presentation), 'linear', undefined,
+        !this.#stage && !this.#stageMotions.hasSpatialState);
       this.#ensureEffectRegistration(); this.#requestFrame(); return;
     }
     this.#zoomFrom = this.worldContainer.scale.x;
@@ -1020,8 +1021,23 @@ export class WorldLayer implements WorldProjectionPort {
     }
     // Legacy files retain their old pixel/layout interpretation until a new
     // pose or an explicit stage configuration opts this target into the new model.
-    if (!this.#stage && event.definitionVersion !== 2 && !this.#stageMotions.hasSpatialState
-      && !this.#actorKeys(target).some(key => this.#portraitViews.get(key)?.pose) && this.#stageLayers.size === 0) return false;
+    const legacyLayout = !this.#stage && event.definitionVersion !== 2 && !this.#stageMotions.hasSpatialState
+      && !this.#actorKeys(target).some(key => this.#portraitViews.get(key)?.pose) && this.#stageLayers.size === 0;
+    if (event.track === 'camera' && (cue.action === 'pan' || cue.action === 'zoom')) {
+      const values = cue.action === 'pan'
+        ? { x: legacyLayout ? Math.max(-2000, Math.min(2000, Number(cue.x))) : Number(cue.x),
+          y: legacyLayout ? Math.max(-2000, Math.min(2000, Number(cue.y))) : Number(cue.y) }
+        : { scale: Math.max(.25, Math.min(4, Number(cue.scale))) };
+      if (event.started) {
+        // A legacy pan takes position only; preserve an already running zoom and its remaining time.
+        if (legacyLayout && cue.action === 'pan' && this.#zoomRemain > 0)
+          this.#stageMotions.start('camera', { scale: this.#zoomTo }, this.#zoomRemain, 'linear', undefined, true);
+        this.#zoomRemain = 0;
+      }
+      this.#stageMotions.timeline(identity, 'camera', values, event.progress, event.source, legacyLayout);
+      return true;
+    }
+    if (legacyLayout) return false;
     const mods = new Map<string, string>();
     for (const name of ['x', 'y', 'scale', 'opacity', 'z', 'facing', 'baseHeight', 'anchorX', 'anchorY', 'distance'] as const)
       if (cue[name] !== undefined) mods.set(name, String(cue[name]));
@@ -1086,12 +1102,6 @@ export class WorldLayer implements WorldProjectionPort {
         for (const name of ['x', 'y', 'scale', 'opacity', 'z'] as const) if (cue[name] !== undefined) values[name] = Number(cue[name]);
         this.#stageMotions.timeline(identity, `layer:${target}`, values, event.progress, event.source);
       }
-      return true;
-    }
-    if (event.track === 'camera' && (cue.action === 'pan' || cue.action === 'zoom')) {
-      const values = cue.action === 'pan' ? { x: Number(cue.x), y: Number(cue.y) } : { scale: Math.max(.25, Math.min(4, Number(cue.scale))) };
-      if (event.started) this.#zoomRemain = 0;
-      this.#stageMotions.timeline(identity, 'camera', values, event.progress, event.source);
       return true;
     }
     return false;
@@ -1260,9 +1270,22 @@ export class WorldLayer implements WorldProjectionPort {
     };
   }
 
-  validatePresentation(snapshot: unknown): void {
-    if (snapshot === null || snapshot === undefined) return;
-    this.#prepareSnapshot(snapshot);
+  validatePresentation(snapshot: unknown, timelineEvents: readonly TimelineFrameEvent[] = []): void {
+    const prepared = snapshot === null || snapshot === undefined ? null : this.#prepareSnapshot(snapshot);
+    for (const event of timelineEvents) {
+      if (event.track !== 'camera' || (event.cue.action !== 'pan' && event.cue.action !== 'zoom')) continue;
+      const identity = `${event.runId}/${event.cueId}`;
+      if (prepared?.motions?.cancelled?.includes(identity)) continue;
+      const motion = prepared?.motions?.timelines.find(([id]) => id === identity)?.[1];
+      if (!motion && event.progress > 0 && event.progress < 1) throw invalidSnapshot('Saved camera is missing its original interpolation state');
+      if (motion) {
+        const expected = event.cue.action === 'pan'
+          ? { x: Math.max(-2000, Math.min(2000, Number(event.cue.x))), y: Math.max(-2000, Math.min(2000, Number(event.cue.y))) }
+          : { scale: Math.max(.25, Math.min(4, Number(event.cue.scale))) };
+        if (motion.target !== 'camera' || Object.keys(motion.to).length !== Object.keys(expected).length
+          || Object.entries(expected).some(([key, value]) => motion.to[key as StageProperty] !== value)) throw invalidSnapshot('Saved camera differs from its timeline');
+      }
+    }
   }
 
   restorePresentation(snapshot: unknown): void {
@@ -1308,6 +1331,8 @@ export class WorldLayer implements WorldProjectionPort {
     for (const { filter } of this.#pluginFilters.values()) filter.destroy();
     this.#pluginFilters.clear();
     this.#storyFilter.destroy();
+    this.#colorMatrix?.destroy();
+    this.#colorMatrix = null;
     this.#frameRequest = null;
     try {
       this.#lifecycle.releaseOwner('world');
