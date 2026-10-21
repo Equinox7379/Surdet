@@ -245,6 +245,7 @@ function simulationStateSignature(snapshot: SaveSnapshot): string {
     snapshot.position,
     snapshot.callStack ?? [],
     snapshot.variables,
+    snapshot.growth ?? null,
     snapshot.random ?? null,
   ]);
 }
@@ -447,8 +448,14 @@ export function simulateSnapshot(
           choiceBranches.add(branchKey);
           interpreter.loadSnapshot(cloneSnapshot(base));
           saveRoundtrips++;
-          interpreter.choose(option.index);
-          drive([...choices, option.index], steps);
+          const branchChoices = [...choices, option.index];
+          try {
+            interpreter.choose(option.index);
+          } catch (error) {
+            finish(branchChoices, 'failed', errorText(error));
+            continue;
+          }
+          drive(branchChoices, steps);
         }
         return;
       } catch (error) {

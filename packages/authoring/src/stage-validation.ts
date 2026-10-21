@@ -4,6 +4,7 @@ import {
 } from '@surdet/core';
 import type { ProjectSnapshot } from './project-snapshot.js';
 import type { ProjectAssetCatalog } from './contracts.js';
+import { timelineIdFromPath } from './timeline-identity.js';
 
 export function validateProjectStageContent(snapshot: ProjectSnapshot, assets?: ProjectAssetCatalog): LintIssue[] {
   const issues: LintIssue[] = [];
@@ -63,7 +64,7 @@ export function validateProjectStageContent(snapshot: ProjectSnapshot, assets?: 
   const definitions = new Map<string, { path: string; definition: TimelineDefinition }>();
   for (const file of snapshot.timelines) {
     try { const definition = JSON.parse(file.text.replace(/^\uFEFF/, '')) as TimelineDefinition;
-      if (definition.version === 1 || definition.version === 2) definitions.set(file.path.replace(/^.*\//, '').replace(/\.json$/i, ''), { path: file.path, definition });
+      if (definition.version === 1 || definition.version === 2) definitions.set(timelineIdFromPath(file.path), { path: file.path, definition });
     } catch { /* Existing JSON validator reports the exact malformed file. */ }
   }
   for (const { path, definition } of definitions.values()) {
