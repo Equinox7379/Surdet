@@ -151,11 +151,11 @@ export interface PreparedPresentationRestore {
 /**
  * Shared read-only preparation for both Presentation validate and restore.
  * The stage validator is intentionally a narrow port: it receives only the
- * `stage` field and never the complete Presentation snapshot.
+ * `stage` field and active timeline events, never the complete Presentation snapshot.
  */
 export function preparePresentationRestore(
   payload: unknown,
-  validateStagePresentation: ((snapshot: unknown) => void) | undefined,
+  validateStagePresentation: ((snapshot: unknown, timelineEvents?: readonly TimelineFrameEvent[]) => void) | undefined,
   currentTimelineSequence = 0,
 ): PreparedPresentationRestore {
   if (payload === null || payload === undefined) {
@@ -171,9 +171,7 @@ export function preparePresentationRestore(
     throw invalidPresentation('Presentation snapshot must be a version 1 object');
   }
   const stage = payload.stage ?? null;
-  if (validateStagePresentation) {
-    validateStagePresentation(stage);
-  } else if (stage !== null) {
+  if (!validateStagePresentation && stage !== null) {
     throw invalidPresentation('Presentation stage validator is not configured');
   }
   const dialogue = prepareDialogueRestore(payload.dialogue);
@@ -219,6 +217,7 @@ export function preparePresentationRestore(
       events: player.eventsAtCursor(),
     });
   }
+  validateStagePresentation?.(stage, timelines.flatMap(timeline => timeline.events.map(event => ({ ...event, runId: timeline.id }))));
   // Old saves without screen origins cannot faithfully resume a nonzero cursor.
   // Reject in the shared preflight, before either Core or the live World is changed.
   const motions = isRecord(stage) && isRecord(stage.motions) ? stage.motions as unknown as StageMotionSnapshot : undefined;
@@ -268,7 +267,7 @@ export interface PresentationControllerOptions extends AdvRendererOptions {
   readonly lifecycle?: RenderLifecycle;
   readonly resetProjection?: (options?: ResetSessionOptions) => void;
   /** Read-only nested World validation used by the shared presentation prepare path. */
-  readonly validateStagePresentation?: (snapshot: unknown) => void;
+  readonly validateStagePresentation?: (snapshot: unknown, timelineEvents?: readonly TimelineFrameEvent[]) => void;
   readonly updateProjection?: (deltaMs: number) => void;
   /** 暂停期间仍需完成的菜单界面推进（如系统菜单入场动画）；返回 true 表示菜单界面还有待完成工作。 */
   readonly updateMenuProjection?: (deltaMs: number) => boolean | void;
@@ -289,7 +288,7 @@ export class PresentationController {
   #commands: RendererCommands;
   #queries: RendererQueries;
   #resetProjection?: (options?: ResetSessionOptions) => void;
-  #validateStagePresentation?: (snapshot: unknown) => void;
+  #validateStagePresentation?: (snapshot: unknown, timelineEvents?: readonly TimelineFrameEvent[]) => void;
   #updateProjection?: (deltaMs: number) => void;
   #updateMenuProjection?: (deltaMs: number) => boolean | void;
   /** 暂停期间菜单界面推进是否仍有待完成工作（最近一次 updateMenuProjection 的返回值）。 */
