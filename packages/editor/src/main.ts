@@ -2010,6 +2010,11 @@ bindIssueNavigation({
     const audit = document.getElementById('audit-view');
     if (audit) renderAuditPanel(audit);
   },
+  onValidationInvalidated: () => {
+    if (state.mainTab !== 'audit') return;
+    const audit = document.getElementById('audit-view');
+    if (audit) renderAuditPanel(audit);
+  },
 });
 bindStatsHooks({
   onJump: (sceneKey) => jumpToScene(sceneKey),

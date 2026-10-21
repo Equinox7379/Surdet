@@ -9,9 +9,10 @@ after(async () => { await browser?.close(); });
 
 for (const [container, primary] of [
   ['asset-center-batch-controls', 'asset-center-batch-primary'],
-  ['asset-relocation-actions', 'asset-relocation-primary'],
+  ['asset-relocation asset-relocation-actions', 'asset-relocation-primary'],
+  ['asset-relocation', 'asset-relocation-primary'],
 ]) {
-  test(`${primary} keeps the theme's accent foreground and hover background`, async () => {
+  test(`${primary} in ${container} keeps the theme's accent foreground and hover background`, async () => {
     const page = await browser.newPage({ viewport: { width: 900, height: 300 } });
     try {
       const tokens = await readFile(new URL('../src/styles/tokens.css', import.meta.url), 'utf8');
@@ -37,7 +38,11 @@ for (const [container, primary] of [
       await page.locator('#disabled').hover();
       assert.deepEqual(await appearance('#disabled'), { background: colors.primary, color: colors.ink });
       await page.locator('#secondary').hover();
-      assert.equal((await appearance('#secondary')).background, colors.subtle);
+      const secondary = (await appearance('#secondary')).background;
+      if (container === 'asset-relocation') {
+        // Direct replacement controls did not have the action-row's secondary styling.
+        assert.notEqual(secondary, colors.primary); assert.notEqual(secondary, colors.hover);
+      } else assert.equal(secondary, colors.subtle);
     } finally { await page.close(); }
   });
 }
