@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "generatedAt": "2026-08-09T14:23:52.463Z",
   "roots": {
-    "m0": "<local-path>",
-    "current": "<local-path>",
-    "m6": "<local-path>",
-    "m7": "<local-path>"
+    "m0": "C:/surdet-public-evidence/surdet-m7-5-v3-20260809-1/baseline",
+    "current": "C:/surdet-public-evidence/surdet-m7-5-v3-20260809-1/current",
+    "m6": "C:/surdet-public-evidence/surdet-m7-ab-20260809-2/m6",
+    "m7": "C:/surdet-public-evidence/surdet-m7-ab-20260809-2/m7"
   },
   "bundles": {
     "m0": {
