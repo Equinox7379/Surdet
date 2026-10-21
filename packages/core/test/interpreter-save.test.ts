@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { compileScene } from '../src/dsl/compiler.js';
 import { Interpreter } from '../src/runtime/interpreter.js';
 import { SceneRegistry } from '../src/runtime/scene-registry.js';
@@ -24,6 +24,76 @@ function makeInterp(variableDecls: VarDeclaration[] = decls) {
 }
 
 describe('Interpreter 存档', () => {
+  it.each(['constructor', 'toString', '__proto__'])('CH-01 loads a snapshot without growth for %s using configured defaults', characterId => {
+    const { store, registry, interp } = makeInterp();
+    const growth = new GrowthSystem({ curve: { base: 10 }, profiles: [{ characterId, initialLevel: 2 }] }, store);
+    interp.setGrowth(growth);
+    registry.register(compileScene('正文。', 'main.gal', 'main'));
+    interp.start('main');
+    const incoming = interp.saveSnapshot()!;
+    delete incoming.growth;
+    store.set('trust', 9);
+    growth.gainExp(characterId, 15);
+    interp.loadSnapshot(JSON.parse(JSON.stringify(incoming)));
+    expect(store.getNumber('trust')).toBe(0);
+    expect(growth.levelOf(characterId)).toBe(2);
+    expect(growth.experienceOf(characterId)).toBe(0);
+    expect(interp.status).toBe('awaiting-advance');
+  });
+
+  it('CH-01 preflights missing growth before cleanup or any state commit', () => {
+    const { store, registry, interp, bus } = makeInterp();
+    const growth = new GrowthSystem({ curve: { base: 10 }, profiles: [{ characterId: 'rin' }] }, store);
+    const random = createSeededRandomSource(17);
+    interp.setGrowth(growth);
+    interp.setRandomSource(random);
+    registry.register(compileScene('甲\n乙', 'main.gal', 'main'));
+    interp.start('main');
+    const incoming = interp.saveSnapshot()!;
+    delete incoming.growth;
+    store.set('trust', 9);
+    random.next();
+    growth.gainExp('rin', 15);
+    interp.advance();
+    interp.gallery.unlockCg('live-cg');
+    interp.clearTracker.markClear('live-ending');
+    const before = {
+      variables: store.snapshot(), random: random.snapshot(), growth: growth.snapshot(),
+      readSet: interp.readTracker.snapshot(), gallery: interp.gallery.snapshot(),
+      clears: interp.clearTracker.snapshot(), position: interp.savePosition(), status: interp.status,
+    };
+    const cleanup = vi.fn(), reset = vi.fn();
+    bus.on('stateReset', reset);
+    // A failing growth preflight must also protect snapshots that omit the entire system.
+    const validation = vi.spyOn(growth, 'validateSnapshot').mockImplementation(() => { throw new Error('growth preflight refused'); });
+    expect(() => interp.loadSnapshot(incoming, cleanup)).toThrow('growth preflight refused');
+    expect({
+      variables: store.snapshot(), random: random.snapshot(), growth: growth.snapshot(),
+      readSet: interp.readTracker.snapshot(), gallery: interp.gallery.snapshot(),
+      clears: interp.clearTracker.snapshot(), position: interp.savePosition(), status: interp.status,
+    }).toEqual(before);
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(reset).not.toHaveBeenCalled();
+    validation.mockRestore();
+    interp.loadSnapshot(incoming, cleanup);
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(store.getNumber('trust')).toBe(0);
+    expect(growth.levelOf('rin')).toBe(1);
+  });
+
+  it.each([
+    ['@clear', 'ending'], ['@clear ""', 'ending'], ['@clear " "', 'ending'],
+    ['@clear "\t "', 'ending'], ['@clear " good end "', ' good end '], ['@clear good', 'good'],
+  ])('CH-04 %s records and emits the effective ending identity', (source, expected) => {
+    const { store, bus, registry, interp } = makeInterp();
+    const endings: string[] = [];
+    bus.on('clear', event => endings.push(event.ending));
+    registry.register(compileScene(`${source}\n正文。`, 'ending.gal', 'ending'));
+    interp.start('ending');
+    expect(endings).toEqual([expected]);
+    expect(interp.clearTracker.endings()).toEqual([expected]);
+  });
+
   it('releases the restore guard after a cleanup error and keeps ordinary text reentry supported', () => {
     const { registry, interp, bus } = makeInterp();
     registry.register(compileScene('甲\n乙\n丙', 'main.gal', 'main'));

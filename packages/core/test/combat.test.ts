@@ -24,7 +24,63 @@ const config: CombatConfig = {
 // rng 固定返回 0.5（命中 0.95 → 命中；无暴击）
 const fixedRng = (): number => 0.5;
 
+function separatedCombat(distance: number, range = 1, skills = ['long'], move = 0) {
+  const solver = new CombatSolver({
+    teams: ['allies', 'enemies'], elementChain: {}, winCondition: 'all_down',
+    units: [
+      { id: 'caster', name: 'Caster', hp: 100, atk: 5, def: 0, range, move, kind: 'human', skills },
+      { id: 'target', name: 'Target', hp: 100, atk: 5, def: 0, range: 1, move: distance - 1, kind: 'human' },
+    ],
+    skills: [
+      { id: 'long', name: 'Long', power: 2, cooldown: 3, hit: 1, effects: ['long'] },
+      { id: 'normal', name: 'Normal', power: 1, cooldown: 0, hit: 1 },
+    ],
+  }, fixedRng);
+  solver.start({ allies: ['caster'], enemies: ['target'] });
+  solver.pass();
+  solver.moveUnit('enemies_0', 1);
+  return solver;
+}
+
 describe('CombatSolver', () => {
+  it('CH-03 does not suggest a long attack beyond range 99 or report an available attack', () => {
+    const solver = separatedCombat(100);
+    expect(() => solver.act('allies_0', 'enemies_0', 'long')).toThrow(/超出射程/);
+    expect(solver.canAttackAny('allies_0')).toBe(false);
+    expect(solver.actingTeamStalemate).toBe(true);
+    expect(solver.suggestAction('allies')).toEqual({ kind: 'pass' });
+  });
+
+  it('CH-03 suggests movement beyond range 99 when the unit can move', () => {
+    const solver = separatedCombat(100, 1, ['long'], 2);
+    const suggestion = solver.suggestAction('allies');
+    expect(suggestion).toEqual({ kind: 'move', uid: 'allies_0', dir: 1 });
+    if (suggestion.kind !== 'move') throw new Error('expected movement');
+    expect(() => solver.moveUnit(suggestion.uid, suggestion.dir)).not.toThrow();
+  });
+
+  it('CH-03 suggests and executes a long attack at exactly range 99', () => {
+    const solver = separatedCombat(99);
+    expect(solver.canAttackAny('allies_0')).toBe(true);
+    expect(solver.actingTeamStalemate).toBe(false);
+    const suggestion = solver.suggestAction('allies');
+    expect(suggestion).toEqual({ kind: 'attack', attackerUid: 'allies_0', targetUid: 'enemies_0', skillId: 'long' });
+    if (suggestion.kind !== 'attack') throw new Error('expected attack');
+    expect(solver.act(suggestion.attackerUid, suggestion.targetUid, suggestion.skillId ?? undefined).hit).toBe(true);
+  });
+
+  it.each([
+    { skills: ['long'], expected: null },
+    { skills: ['long', 'normal'], expected: 'normal' },
+  ])('CH-03 skips out-of-range long skills and executes $expected at normal range 100', ({ skills, expected }) => {
+    const solver = separatedCombat(100, 100, skills);
+    expect(solver.canAttackAny('allies_0')).toBe(true);
+    const suggestion = solver.suggestAction('allies');
+    expect(suggestion).toEqual({ kind: 'attack', attackerUid: 'allies_0', targetUid: 'enemies_0', skillId: expected });
+    if (suggestion.kind !== 'attack') throw new Error('expected attack');
+    expect(solver.act(suggestion.attackerUid, suggestion.targetUid, suggestion.skillId ?? undefined).hit).toBe(true);
+  });
+
   it.each([
     { label: '无阵营', teams: [] },
     { label: '单阵营', teams: ['allies'] },

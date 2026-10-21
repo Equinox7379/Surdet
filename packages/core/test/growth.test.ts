@@ -30,6 +30,30 @@ function makeGrowth(overrides: Partial<GrowthConfig> = {}) {
 }
 
 describe('GrowthSystem（角色成长）', () => {
+  it.each(['constructor', 'toString', '__proto__'])('CH-01 restores missing and own growth entries for %s', characterId => {
+    const { growth } = makeGrowth({ profiles: [{ characterId, initialLevel: 2, maxLevel: 5 }] });
+    growth.gainExp(characterId, 18);
+    expect(growth.levelOf(characterId)).toBe(3);
+    expect(growth.experienceOf(characterId)).toBe(3);
+    const saved = JSON.parse(JSON.stringify(growth.snapshot()));
+    growth.restore({ levels: {}, experience: {} });
+    expect(growth.levelOf(characterId)).toBe(2);
+    expect(growth.experienceOf(characterId)).toBe(0);
+    growth.restore(saved);
+    expect(growth.levelOf(characterId)).toBe(3);
+    expect(growth.experienceOf(characterId)).toBe(3);
+  });
+
+  it.each(['constructor', 'toString', '__proto__'])('CH-01 rejects invalid own growth entries for %s without changing state', characterId => {
+    const { growth } = makeGrowth({ profiles: [{ characterId, maxLevel: 5 }] });
+    growth.gainExp(characterId, 12);
+    const before = growth.snapshot();
+    expect(() => growth.restore({ levels: { [characterId]: 6 }, experience: {} })).toThrow(/存档等级非法/);
+    expect(growth.snapshot()).toEqual(before);
+    expect(() => growth.restore({ levels: { [characterId]: 3 }, experience: { [characterId]: -1 } })).toThrow(/存档经验非法/);
+    expect(growth.snapshot()).toEqual(before);
+  });
+
   it.each([0, -1, 1.5, Infinity, NaN, 6])('rejects invalid restored level %s without resetting live growth', (level) => {
     const { growth } = makeGrowth({ profiles: [{ characterId: 'lynn', maxLevel: 5 }] });
     growth.gainExp('lynn', 12);
