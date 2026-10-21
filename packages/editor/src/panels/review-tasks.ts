@@ -132,7 +132,7 @@ function draftKey(workspace: ReviewWorkspaceState | null): string | null {
  * while the task was being read; declining keeps the current review as it is.
  */
 export async function openListedReviewTask(
-  open: () => Promise<FileSystemDirectoryHandle>,
+  open: (() => Promise<FileSystemDirectoryHandle>) | undefined,
   confirm: (message: string) => boolean,
 ): Promise<boolean> {
   const before = state.reviewWorkspace, confirmed = draftKey(before);

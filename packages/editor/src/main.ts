@@ -99,7 +99,7 @@ import { renderStoryCheckPanel, disposeStoryCheckPanel, resetStoryChecks, refres
 import { renderContentHistoryPanel } from './panels/content-history-panel.js';
 import { renderSearchPanel, bindSearchHooks, focusSearchInput, resetSearchSession } from './panels/search-panel.js';
 import { renderAuditPanel, bindAuditHooks } from './panels/audit-panel.js';
-import { openReviewPanelWorkspace, renderReviewPanel, disposeReviewApply } from './panels/review-panel.js';
+import { renderReviewPanel, disposeReviewApply } from './panels/review-panel.js';
 import {
   openListedReviewTask, refreshReviewTasks, renderReviewTaskList, reviewTaskPendingCount, reviewTaskPreviewDirectory,
 } from './panels/review-tasks.js';
@@ -2079,7 +2079,10 @@ function renderAll(): void {
     onOpenReview: () => {
       void (async () => {
         try {
-          await openReviewPanelWorkspace();
+          if (!await openListedReviewTask(undefined, message => window.confirm(message))) {
+            setStatus('已保留当前审阅及其修改，未打开其他任务', true, 5000);
+            return;
+          }
           renderAll();
           setStatus('已打开审阅任务', true, 4000);
         } catch (error) {

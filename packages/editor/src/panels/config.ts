@@ -1192,6 +1192,8 @@ async function saveVariablesUnlocked(): Promise<boolean> {
     return false;
   }
   state.gameConfigText = text;
+  // Undo changes row drafts, not the source of a completed disk write.
+  for (const snapshot of [...configHist.past, ...configHist.future]) snapshot.gameConfigText = text;
   markConfigSectionSaved('variables', submittedRows, sessionRevision);
   requestValidateHook();
   setStatus(`变量表已保存（${Object.keys(variables).length} 个变量）`, true, 4000);
@@ -1442,6 +1444,7 @@ async function saveCharactersUnlocked(): Promise<boolean> {
   try {
     const result = await commitCharacterTable(submittedRows);
     if (sessionRevision === configSessionRevision) {
+      for (const snapshot of [...configHist.past, ...configHist.future]) snapshot.gameConfigText = result.updatedText;
       const created = submittedRows.filter(row => row.create);
       const promote = (list: CharacterTableEditRow[] | null, restoreMissing: boolean) => {
         if (!list) return;
