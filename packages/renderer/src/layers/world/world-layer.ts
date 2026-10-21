@@ -1278,12 +1278,19 @@ export class WorldLayer implements WorldProjectionPort {
       if (prepared?.motions?.cancelled?.includes(identity)) continue;
       const motion = prepared?.motions?.timelines.find(([id]) => id === identity)?.[1];
       if (!motion && event.progress > 0 && event.progress < 1) throw invalidSnapshot('Saved camera is missing its original interpolation state');
-      if (motion) {
+      if (motion && prepared?.motions) {
         const expected = event.cue.action === 'pan'
           ? { x: Math.max(-2000, Math.min(2000, Number(event.cue.x))), y: Math.max(-2000, Math.min(2000, Number(event.cue.y))) }
           : { scale: Math.max(.25, Math.min(4, Number(event.cue.scale))) };
         if (motion.target !== 'camera' || Object.keys(motion.to).length !== Object.keys(expected).length
           || Object.entries(expected).some(([key, value]) => motion.to[key as StageProperty] !== value)) throw invalidSnapshot('Saved camera differs from its timeline');
+        for (const [key, to] of Object.entries(expected)) {
+          const property = key as 'x' | 'y' | 'scale';
+          if (!prepared.motions.owners.some(([target, owned, token]) => target === 'camera' && owned === property && token === motion.token)) continue;
+          const from = Number(motion.from[property]);
+          const current = property === 'scale' ? prepared.cameraScale : prepared.cameraPan[property];
+          if (from + (to - from) * event.progress !== current) throw invalidSnapshot('Saved camera origin differs from its current position');
+        }
       }
     }
   }

@@ -177,6 +177,23 @@ describe('camera timeline save restoration', () => {
       }
     } finally { h.dispose(); }
   });
+  it.each(([1, 2] as const).flatMap(version => (['x', 'y', 'scale'] as const).map(property => ({ version, property }))))('rejects finite but inconsistent v$version camera $property origins without changing the running game', async ({ version, property }) => {
+    const h = await harness(null);
+    try {
+      h.timelines.register(camera(version)); h.load('@timeline camera @blocking\n完成。\n@end'); h.controller.update(500);
+      const saved = JSON.parse(JSON.stringify(h.interpreter.saveSnapshot()));
+      const motion = saved.presentation.payload.stage.motions.timelines.find(([, value]: [string, { from: Record<string, number> }]) => property in value.from)[1];
+      motion.from[property] = property === 'scale' ? 1.25 : 50;
+      h.controller.update(100);
+      const before = JSON.parse(JSON.stringify(h.interpreter.saveSnapshot()));
+      expect(() => h.interpreter.loadSnapshot(saved)).toThrow();
+      const current = h.interpreter.saveSnapshot()!;
+      expect(current.presentation).toEqual(before.presentation);
+      expect(current.position).toMatchObject({ pc: before.position.pc, sceneId: before.position.sceneId });
+      expect(current.variables).toEqual(before.variables);
+      expect(h.interpreter.status).toBe('awaiting-timer');
+    } finally { h.dispose(); }
+  });
   it('restores a later direct zoom without letting an earlier v1 camera cue regain scale ownership', async () => {
     const h = await harness(null);
     try {
