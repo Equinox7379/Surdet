@@ -7,8 +7,8 @@ import * as workspaceApi from '../src/review-workspace.js';
 import type { ReviewWorkspaceState } from '../src/review-workspace.js';
 import { openReviewPanelWorkspace } from '../src/panels/review-panel.js';
 import { openListedReviewTask } from '../src/panels/review-tasks.js';
-import { openReviewPreview } from '../src/review-preview.js';
-import { bindProjectIoHooks } from '../src/project-io.js';
+import { openReviewPreview, selectReviewPreviewScene } from '../src/review-preview.js';
+import { bindProjectIoHooks, openProjectFromHandle } from '../src/project-io.js';
 
 // Run the shipped top-bar callback, returning its async work only for awaiting.
 const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
@@ -120,6 +120,61 @@ describe('review replacement uses consent and successful-open order', () => {
 });
 
 describe('review project read ownership', () => {
+  it.each(['current', 'switched', 'scan-failure'] as const)('keeps the previous project until the final fixture scan settles (%s)', async mode => {
+    const previous = { ...state }, gate = deferred<void>();
+    const missing = () => new DOMException('missing', 'NotFoundError');
+    const scene = { kind: 'file', name: 'start.gal', getFile: async () => new File(['@scene start\n@end\n'], 'start.gal') };
+    const config = { kind: 'file', name: 'game.config.json', getFile: async () => new File([
+      JSON.stringify({ title: 'Preview project', entryScene: 'start', characters: {} }),
+    ], 'game.config.json') };
+    const scenario = { kind: 'directory', name: 'scenario', async *values() { yield scene; } };
+    const content = { kind: 'directory', name: 'content',
+      getDirectoryHandle: async (name: string) => { if (name === 'scenario') return scenario; throw missing(); } };
+    const directory = { kind: 'directory', name: 'Preview project',
+      getDirectoryHandle: async (name: string) => { if (name === 'content') return content; throw missing(); },
+      getFileHandle: async (name: string) => { if (name === 'game.config.json') return config; throw missing(); },
+    } as unknown as FileSystemDirectoryHandle;
+    const current = workspace('scan-A'); current.identity.kind = current.projection.kind = 'integration-result'; current.projectHandle = directory;
+    const closing = vi.fn(), scan = vi.fn(async () => { await gate.promise; if (mode === 'scan-failure') throw new Error('controlled scan failure'); return false; });
+    // Run the shipped preview orchestration and real project IO, controlling only the async scan.
+    // No identity calculation or hash verification runs in this concurrency test.
+    const source = readFileSync(new URL('../src/review-preview.ts', import.meta.url), 'utf8');
+    const body = source.slice(source.indexOf('export async function openReviewPreview(')).replace('export async function', 'async function');
+    const script = transpileModule(body, { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText;
+    const preview = new Function('state', 'openProjectFromHandle', 'refreshReviewFixtureIdentity', 'hashReviewFixtureTree', 'selectReviewPreviewScene',
+      `${script}\nreturn openReviewPreview;`)(state, openProjectFromHandle, scan, () => { throw new Error('Unexpected identity verification'); }, selectReviewPreviewScene) as typeof openReviewPreview;
+    bindProjectIoHooks({ renderAll: () => {}, renderSidebar: () => {}, runValidate: () => {}, onProjectClosing: closing });
+    const oldHandle = {} as FileSystemDirectoryHandle, oldScenes = new Map();
+    Object.assign(state, { reviewWorkspace: current, dirName: 'Original project', dirHandle: oldHandle, scenes: oldScenes,
+      gameConfigText: '{"title":"Original project"}', pendingSceneDeletes: [], pendingSceneCommit: null, pendingTimelineRestores: new Map(),
+      previewTimelineId: null, projectLoading: false });
+    vi.stubGlobal('document', { getElementById: () => null });
+    const completion = preview(current, {}, async () => { throw new Error('Unexpected identity calculation'); }).then(value => ({ value }), error => ({ error }));
+    try {
+      await Promise.race([vi.waitFor(() => expect(scan).toHaveBeenCalledOnce()), completion.then(result => { if ('error' in result) throw result.error; })]);
+      expect(closing).not.toHaveBeenCalled();
+      expect(state.projectLoading).toBe(true);
+      expect(state.dirHandle).toBe(oldHandle); expect(state.scenes).toBe(oldScenes);
+      expect(state.gameConfigText).toBe('{"title":"Original project"}');
+      const replacement = workspace('scan-B');
+      if (mode === 'switched') {
+        vi.spyOn(workspaceApi, 'openReviewWorkspace').mockResolvedValue(replacement);
+        expect(await openListedReviewTask(async () => ({} as FileSystemDirectoryHandle), () => true)).toBe(true);
+      }
+      gate.resolve(); const result = await completion;
+      expect(state.projectLoading).toBe(false);
+      if (mode === 'current') {
+        expect(result).toMatchObject({ value: { sceneId: 'start' } }); expect(closing).toHaveBeenCalledOnce();
+        expect(state.dirHandle).toBe(directory); expect(state.dirName).toBe('Preview project');
+      } else {
+        expect(result).toMatchObject({ error: expect.any(Error) }); expect(closing).not.toHaveBeenCalled();
+        expect(state.dirHandle).toBe(oldHandle); expect(state.scenes).toBe(oldScenes);
+        expect(state.gameConfigText).toBe('{"title":"Original project"}');
+        expect(state.reviewWorkspace).toBe(mode === 'switched' ? replacement : current);
+      }
+    } finally { gate.resolve(); await completion; Object.assign(state, previous); }
+  });
+
   it.each([false, true])('commits the preview only if its review is still current (switch: %s)', async switchReview => {
     const previous = { ...state };
     const gate = deferred<void>();

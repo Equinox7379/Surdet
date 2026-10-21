@@ -319,7 +319,8 @@ export async function openReviewPreview(
     }
   }
   assertStillCurrent();
-  await openProjectFromHandle(displayHandle ?? workspace.projectHandle, { source: 'review-fixture', assertStillCurrent });
+  await openProjectFromHandle(displayHandle ?? workspace.projectHandle, { source: 'review-fixture', assertStillCurrent,
+    ...(displayHandle === undefined ? { beforeCommit: async () => { await refreshReviewFixtureIdentity(workspace, hasher); } } : {}) });
   assertStillCurrent();
   const sceneIds = [...state.scenes.values()].map((scene) => scene.id);
   const sceneId = selectReviewPreviewScene(sceneIds, workspace.projection, request.sceneId, state.entryScene);
@@ -331,7 +332,6 @@ export async function openReviewPreview(
   state.previewChoices = request.choices === undefined ? null : { ...request.choices };
   state.previewTrace = [];
   state.selectedTraceStep = null;
-  if (displayHandle === undefined) await refreshReviewFixtureIdentity(workspace, hasher);
   assertStillCurrent();
   return {
     sceneId,
