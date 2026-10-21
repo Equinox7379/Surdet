@@ -42,4 +42,6 @@ MIT covers Surdet-authored engine code and technical documentation. Third-party 
 
 ## 当前发布状态
 
-2026-10-03：Owner 已选择引擎采用 MIT，但要求先完成前端优化再正式开源。当前工作只准备许可与发布范围，未公开仓库、发布 npm 包、上传安装包或授权所有素材。本文件不构成素材权属或最终发行的法律保证。
+2026-10-21：项目所有者已授权在完成隐私清理后公开现有 Surdet 仓库。引擎继续采用 MIT；此次公开不扩大第三方或作品素材的使用许可，也不代表 npm 包或安装器已经发行。仓库是否公开以 GitHub 当前可见性为准。
+
+On 2026-10-21, the project owner authorized publication of the existing Surdet repository after privacy cleanup. The engine remains MIT-licensed. This does not expand the licenses of third-party or game assets, or announce an npm or installer release. Repository availability follows its current visibility on GitHub.
