@@ -127,7 +127,7 @@ describe('FileSaveStore legacy backup preservation', () => {
     expect(f.store.read(f.slot)?.variables.revision).toBe(0);
   });
 
-  it.each(['main', 'backup', 'index-before', 'index-after'] as const)('compensates failed first migration at %s and supports a clean retry', stage => {
+  it.each(['main', 'main-after', 'backup', 'backup-after', 'index-before', 'index-after'] as const)('compensates failed first migration at %s and supports a clean retry', stage => {
     const f = fixture();
     plant(f.l1, snap(f.slot, 1));
     plant(`${f.l1}.bak`, snap(f.slot, 0));
@@ -135,12 +135,12 @@ describe('FileSaveStore legacy backup preservation', () => {
     plant(f.index, { [sanitizeSlot(f.slot)]: snap(f.slot, 1).meta });
     const before = files(f.dir);
     const rename = fs.renameSync;
-    const target = stage === 'main' ? f.main : stage === 'backup' ? f.backup : f.index;
+    const target = stage.startsWith('main') ? f.main : stage.startsWith('backup') ? f.backup : f.index;
     let injected = false;
     const fault = vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
       if (!injected && String(to) === target) {
         injected = true;
-        if (stage === 'index-after') rename(from, to);
+        if (stage.endsWith('-after')) rename(from, to);
         throw new Error(`injected ${stage}`);
       }
       return rename(from, to);
@@ -152,6 +152,29 @@ describe('FileSaveStore legacy backup preservation', () => {
     f.store.write(f.slot, snap(f.slot, 2));
     f.store.restoreBackup(f.slot);
     expect(f.store.read(f.slot)?.variables.revision).toBe(1);
+  });
+
+  it.each([
+    ['absent', 'main-after'], ['existing', 'main-after'],
+    ['absent', 'backup-after'], ['existing', 'backup-after'],
+  ] as const)('restores an %s canonical primary and absent backup after %s publication reports failure', (state, stage) => {
+    const f = fixture();
+    if (state === 'existing') plant(f.main, snap(f.slot, 1));
+    else plant(f.l1, snap(f.slot, 1));
+    plant(f.index, { [f.slot]: snap(f.slot, 1).meta });
+    const before = files(f.dir), rename = fs.renameSync;
+    let injected = false;
+    const fault = vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+      rename(from, to);
+      if (!injected && String(to) === (stage === 'main-after' ? f.main : f.backup)) { injected = true; throw new Error(`injected ${stage} absent`); }
+    });
+    expect(() => f.store.write(f.slot, snap(f.slot, 2))).toThrow(`injected ${stage} absent`);
+    expect(injected).toBe(true);
+    expect(files(f.dir)).toEqual(before);
+    fault.mockRestore();
+    f.store.write(f.slot, snap(f.slot, 2));
+    expect(f.store.read(f.slot)?.variables.revision).toBe(2);
+    expect(f.store.listBackupMeta()[0]?.updatedAt).toBe(1);
   });
 });
 
@@ -238,8 +261,8 @@ describe('FileSaveStore explicit deletion keeps its existing ownership contract'
 
 describe('FileSaveStore explicit restore failure compensation', () => {
   it.each([
-    ['existing', 'main'], ['existing', 'index-before'], ['existing', 'index-after'],
-    ['absent', 'main'], ['absent', 'index-before'], ['absent', 'index-after'],
+    ['existing', 'main'], ['existing', 'main-after'], ['existing', 'index-before'], ['existing', 'index-after'],
+    ['absent', 'main'], ['absent', 'main-after'], ['absent', 'index-before'], ['absent', 'index-after'],
   ] as const)('keeps %s main/index bytes and all backups when restore fails at %s', (state, stage) => {
     const f = fixture();
     plant(`${f.l1}.bak`, snap(f.slot, 1));
@@ -249,12 +272,12 @@ describe('FileSaveStore explicit restore failure compensation', () => {
     }
     const before = files(f.dir);
     const rename = fs.renameSync;
-    const target = stage === 'main' ? f.main : f.index;
+    const target = stage.startsWith('main') ? f.main : f.index;
     let injected = false;
     const fault = vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
       if (!injected && String(to) === target) {
         injected = true;
-        if (stage === 'index-after') rename(from, to);
+        if (stage.endsWith('-after')) rename(from, to);
         throw new Error(`injected restore ${stage}`);
       }
       return rename(from, to);
