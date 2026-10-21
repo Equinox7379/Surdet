@@ -9,7 +9,7 @@ after(async () => { await browser?.close(); });
 
 for (const [container, primary] of [
   ['asset-center-batch-controls', 'asset-center-batch-primary'],
-  ['asset-relocation asset-relocation-actions', 'asset-relocation-primary'],
+  ['asset-relocation-actions', 'asset-relocation-primary'],
   ['asset-relocation', 'asset-relocation-primary'],
 ]) {
   test(`${primary} in ${container} keeps the theme's accent foreground and hover background`, async () => {
