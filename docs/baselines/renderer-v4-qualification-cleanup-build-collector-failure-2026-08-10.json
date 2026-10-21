@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "artifactKind": "renderer-v4-qualification-cleanup",
-  "tempRoot": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10",
+  "tempRoot": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10",
   "worktrees": [
     {
-      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10\\q1-007-a-b-a",
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10/q1-007-a-b-a",
       "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
       "group": "q1-007-a-b",
       "roles": [
@@ -22,7 +22,7 @@
       "cleaned": false
     },
     {
-      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10\\q1-007-a-b-b",
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10/q1-007-a-b-b",
       "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
       "group": "q1-007-a-b",
       "roles": [
@@ -40,7 +40,7 @@
       "cleaned": false
     },
     {
-      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10\\q2-007-b-a-b",
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10/q2-007-b-a-b",
       "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
       "group": "q2-007-b-a",
       "roles": [
@@ -58,7 +58,7 @@
       "cleaned": false
     },
     {
-      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10\\q2-007-b-a-a",
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10/q2-007-b-a-a",
       "commit": "007438b569ec95350fdc9d7882ad49f55bbb7968",
       "group": "q2-007-b-a",
       "roles": [
@@ -76,7 +76,7 @@
       "cleaned": false
     },
     {
-      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10\\q3-f7-a-b-a",
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10/q3-f7-a-b-a",
       "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
       "group": "q3-f7-a-b",
       "roles": [
@@ -94,7 +94,7 @@
       "cleaned": false
     },
     {
-      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10\\q3-f7-a-b-b",
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10/q3-f7-a-b-b",
       "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
       "group": "q3-f7-a-b",
       "roles": [
@@ -112,7 +112,7 @@
       "cleaned": false
     },
     {
-      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10\\q4-f7-b-a-b",
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10/q4-f7-b-a-b",
       "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
       "group": "q4-f7-b-a",
       "roles": [
@@ -130,7 +130,7 @@
       "cleaned": false
     },
     {
-      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10\\q4-f7-b-a-a",
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10/q4-f7-b-a-a",
       "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
       "group": "q4-f7-b-a",
       "roles": [
@@ -148,7 +148,7 @@
       "cleaned": false
     },
     {
-      "path": "C:\\Users\\Equinox\\AppData\\Local\\Temp\\surdet-renderer-v4-qualification-2026-08-10\\q5-f7-same-root",
+      "path": "C:/surdet-public-evidence/surdet-renderer-v4-qualification-2026-08-10/q5-f7-same-root",
       "commit": "f7f4522adb297d8b97b6ba0b0824b5db6a8aaf59",
       "group": "q5-f7-same-root",
       "roles": [
