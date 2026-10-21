@@ -184,6 +184,7 @@ function initialSnapshot(initial: PlayerUiSessionInitialState | undefined): Play
  */
 export class PlayerUiSession {
   #snapshot: PlayerUiSessionSnapshot;
+  #intentRevision = 0;
   #operationOrigin: PlayerUiSessionSnapshot | null = null;
   readonly #onChange?: () => void;
 
@@ -194,6 +195,11 @@ export class PlayerUiSession {
 
   snapshot(): PlayerUiSessionSnapshot {
     return this.#snapshot;
+  }
+
+  /** Navigation/operation history, independent of passive renderer projections. */
+  intentRevision(): number {
+    return this.#intentRevision;
   }
 
   openOverlay(overlay: ActiveOverlay): PlayerUiSessionSnapshot {
@@ -318,6 +324,7 @@ export class PlayerUiSession {
       throw transitionError('fail-operation is missing its origin snapshot');
     }
     this.#snapshot = origin;
+    this.#intentRevision++;
     this.#onChange?.();
     return this.#snapshot;
   }
@@ -345,7 +352,7 @@ export class PlayerUiSession {
     if (hidden && (this.#snapshot.base !== 'game' || this.#snapshot.overlay !== 'none')) {
       throw transitionError('interfaceHidden requires base=game and overlay=none');
     }
-    return this.#commit({ ...this.#snapshot, interfaceHidden: hidden });
+    return this.#commit({ ...this.#snapshot, interfaceHidden: hidden }, hidden !== this.#snapshot.interfaceHidden);
   }
 
   toggleInterface(): PlayerUiSessionSnapshot {
@@ -353,7 +360,7 @@ export class PlayerUiSession {
   }
 
   setVideoActive(active: boolean): PlayerUiSessionSnapshot {
-    return this.#commit({ ...this.#snapshot, videoActive: active });
+    return this.#commit({ ...this.#snapshot, videoActive: active }, false);
   }
 
   reset(base: PlayerBase = 'title'): PlayerUiSessionSnapshot {
@@ -382,9 +389,10 @@ export class PlayerUiSession {
     }
   }
 
-  #commit(snapshot: PlayerUiSessionSnapshot): PlayerUiSessionSnapshot {
+  #commit(snapshot: PlayerUiSessionSnapshot, recordsIntent = true): PlayerUiSessionSnapshot {
     validateSnapshot(snapshot);
     this.#snapshot = freezeSnapshot(snapshot);
+    if (recordsIntent) this.#intentRevision++;
     this.#onChange?.();
     return this.#snapshot;
   }

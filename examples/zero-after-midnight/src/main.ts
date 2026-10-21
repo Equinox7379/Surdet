@@ -1051,8 +1051,11 @@ async function main(): Promise<void> {
     };
   }
 
+  let gameStartRequestId = 0;
+
   /** 标题画面显示中；来源/返回由 PlayerShellController 持有。 */
   function showTitleScreen(): void {
+    gameStartRequestId++;
     clearRollback();
     // 标题页不是暂停菜单：冻结解释器并清空上一轮投影，避免隐藏剧情继续响应输入。
     interp.pauseHost();
@@ -1082,10 +1085,11 @@ async function main(): Promise<void> {
 
   /** 标题菜单选择（E2E 探针 titleSelect 与画面点击共用同一入口；自我迭代②） */
   async function titleSelect(id: string): Promise<void> {
-    if (gameResourcesDisposed) return;
+    if (gameResourcesDisposed || isUiBusy()) return;
     playerShell!.commands.consumePointer();
     switch (id) {
       case 'new': {
+        const requestId = ++gameStartRequestId;
         clearRollback();
         runtime.resetSession();
         menu.hideTitle();
@@ -1098,7 +1102,7 @@ async function main(): Promise<void> {
         clearCountedThisSession = false; // 新周目会话开始，周目计数重新可用
         // 周目继承：存在全局通关记录时，按 ngp.json 继承项把通关值应用到新周目初始表
         const rec = await loadClearRecord();
-        if (gameResourcesDisposed) return;
+        if (gameResourcesDisposed || requestId !== gameStartRequestId) return;
         if (rec) {
           const inherited = ngp.computeInheritFrom(
             store.snapshot(),
@@ -1143,24 +1147,27 @@ async function main(): Promise<void> {
 
   // ===== 存档/读档 UI：多槽位 + 快速/自动档 =====
   const SLOT_IDS = ['1', '2', '3', '4', '5', '6', QUICK_SLOT, AUTO_SLOT];
+  let saveLoadRequestId = 0;
   async function openSaveLoad(
     mode: 'save' | 'load',
     source: 'title' | 'game' | 'system-menu' = uiSnapshot().base,
   ): Promise<void> {
-    if (gameResourcesDisposed) return;
+    if (gameResourcesDisposed || isUiBusy() || uiSnapshot().interfaceHidden) return;
+    const requestId = ++saveLoadRequestId;
+    const intentRevision = uiSession.intentRevision();
     if (source === 'title') leaveTitleForOverlay();
     let slots: SaveSlotView[];
     try {
       slots = await listPlayerSaveSlots(saves, browserSave, SLOT_IDS, mode);
     } catch (err) {
-      if (gameResourcesDisposed) return;
+      if (gameResourcesDisposed || requestId !== saveLoadRequestId || intentRevision !== uiSession.intentRevision()) return;
       if (source === 'title') showTitleScreen();
       else refreshCommandRail();
       console.error('[zero] 存档列表读取失败:', err);
       dialogue.showBanner('存档列表读取失败，请重试。', 'tip');
       return;
     }
-    if (gameResourcesDisposed) return;
+    if (gameResourcesDisposed || requestId !== saveLoadRequestId || intentRevision !== uiSession.intentRevision()) return;
     activeSaveLoad = { mode, slots };
     playerShell!.commands.open({ slot: 'save-load', source, mode });
   }
@@ -1216,6 +1223,7 @@ async function main(): Promise<void> {
     }
 
     playerShell!.commands.beginOperation('loading');
+    gameStartRequestId++;
     try {
       const snap = await saves.load(slotId);
       if (gameResourcesDisposed) return false;
@@ -1239,6 +1247,7 @@ async function main(): Promise<void> {
       return false;
     }
     playerShell!.commands.beginOperation('loading');
+    gameStartRequestId++;
     try {
       await saves.restoreBackup(slotId);
       if (gameResourcesDisposed) return false;
@@ -1376,15 +1385,17 @@ async function main(): Promise<void> {
     if (gameResourcesDisposed) return false;
     if (quickSaveInFlight) await quickSaveInFlight;
     if (gameResourcesDisposed || isUiBusy() || uiSnapshot().base !== 'game' || uiSnapshot().overlay !== 'none') return false;
+    const intentRevision = uiSession.intentRevision();
     try {
       if (!await saves.has(QUICK_SLOT)) return false;
     } catch (err) {
       console.error('[zero] 快速读档槽位读取失败：', err);
       return false;
     }
-    if (gameResourcesDisposed || isUiBusy() || uiSnapshot().base !== 'game' || uiSnapshot().overlay !== 'none') return false;
+    if (gameResourcesDisposed || isUiBusy() || intentRevision !== uiSession.intentRevision()) return false;
     const railWasVisible = debugProjection().dialogue?.commandRailVisible === true;
     playerShell!.commands.beginOperation('loading');
+    gameStartRequestId++;
     if (railWasVisible) dialogue.hideCommandRail();
     try {
       const snap = await saves.load(QUICK_SLOT);
@@ -1740,17 +1751,19 @@ async function main(): Promise<void> {
       refreshCommandRail();
     } else if (e.key === 'g' || e.key === 'G') {
       // 鉴赏（回想）：CG 全屏回看 / 音乐播放；未解锁条目显示 ???
+      if (isUiBusy() || uiSnapshot().interfaceHidden) return;
       if (isOverlay('gallery')) {
         closeGallery();
-      } else {
+      } else if (uiSnapshot().overlay === 'none') {
         openGallery();
       }
       console.info('[zero] 鉴赏', isOverlay('gallery') ? '开' : '关');
     } else if (e.key === 'o' || e.key === 'O') {
       // 设置图形面板：◀ ▶ 步进各设置项（即时持久化并投影生效）
+      if (isUiBusy() || uiSnapshot().interfaceHidden) return;
       if (isOverlay('settings')) {
         closeSettings();
-      } else {
+      } else if (uiSnapshot().overlay === 'none') {
         playerShell!.commands.open({ slot: 'settings', source: 'game' });
       }
       console.info('[zero] 设置面板', isOverlay('settings') ? '开' : '关');
