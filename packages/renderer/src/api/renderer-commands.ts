@@ -100,7 +100,7 @@ export interface WorldProjectionPort extends WorldCommands {
   captureThumbnail(): string | null;
   snapshotPresentation(): unknown;
   /** Read-only validation/prepare hook used before a complete presentation commit. */
-  validatePresentation?(snapshot: unknown): void;
+  validatePresentation?(snapshot: unknown, timelineEvents?: readonly TimelineFrameEvent[]): void;
   restorePresentation(snapshot: unknown): void;
   clearPresentation(): void;
   reset(options?: { preserveWorld?: boolean }): void;

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { Container, Sprite, Texture, TextureSource } from 'pixi.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -78,6 +79,212 @@ async function harness(stageConfig: ProjectStage | null = config(), captureWorld
     dispose() { off(); controller.dispose(); dialogue.dispose(); world.dispose(); assets.dispose(); lifecycle.dispose(); },
   };
 }
+
+describe('camera timeline save restoration', () => {
+  const camera = (version: 1 | 2): TimelineDefinition => ({ version, id: 'camera', durationMs: 1000, tracks: [
+    { kind: 'camera', cues: [
+      { atMs: 0, durationMs: 1000, easing: 'linear', action: 'pan', x: 200, y: 100 },
+      { atMs: 0, durationMs: 1000, easing: 'linear', action: 'zoom', scale: 2 },
+    ] },
+  ] });
+  it.each([1, 2] as const)('resumes version %s pan and zoom from the saved cursor without moving on repeated load', async version => {
+    const a = await harness(null), b = await harness(null);
+    try {
+      for (const h of [a, b]) { h.timelines.register(camera(version)); h.load('@timeline camera @blocking\n完成。\n@end'); }
+      a.controller.update(500);
+      expect(a.world.inspectStage().camera).toEqual({ x: 100, y: 50, scale: 1.5 });
+      for (let i = 0; i < 3; i++) {
+        b.interpreter.loadSnapshot(JSON.parse(JSON.stringify(a.interpreter.saveSnapshot())));
+        expect(b.world.inspectStage().camera).toEqual(a.world.inspectStage().camera);
+        a.interpreter.loadSnapshot(JSON.parse(JSON.stringify(b.interpreter.saveSnapshot())));
+        expect(a.world.inspectStage().camera).toEqual({ x: 100, y: 50, scale: 1.5 });
+      }
+      b.controller.setPresentationPaused(true); b.controller.update(500);
+      expect(b.world.inspectStage().camera).toEqual({ x: 100, y: 50, scale: 1.5 });
+      b.controller.setPresentationPaused(false);
+      for (const h of [a, b]) h.controller.update(250);
+      expect(b.world.inspectStage().camera).toEqual({ x: 150, y: 75, scale: 1.75 });
+      expect(b.world.inspectStage().camera).toEqual(a.world.inspectStage().camera);
+      expect(b.controller.advance()).toBe(true);
+      expect(b.world.inspectStage().camera).toEqual({ x: 200, y: 100, scale: 2 });
+      expect(b.interpreter.status).toBe('awaiting-advance');
+    } finally { a.dispose(); b.dispose(); }
+  });
+  it('restores the shipped Tide Mark arrival camera without opting portraits into stage layout', async () => {
+    const definition = JSON.parse(readFileSync(new URL('../../../../games/tide-mark/content/timelines/tm_arrival.json', import.meta.url), 'utf8')) as TimelineDefinition;
+    const h = await harness(null);
+    try {
+      for (const expression of ['normal', 'hesitant']) await h.assets.registerPortrait('lynn', 'coat', expression, h.normal);
+      await h.assets.registerBackground('harbor', h.dock);
+      h.timelines.register(definition); h.load('@timeline tm_arrival @blocking\n到港。\n@end');
+      h.controller.update(750);
+      expect(h.world.inspectStage().camera.x).toBeCloseTo(10);
+      const before = h.world.snapshotPresentation();
+      h.interpreter.loadSnapshot(JSON.parse(JSON.stringify(h.interpreter.saveSnapshot())));
+      expect(h.world.inspectStage().camera.x).toBeCloseTo(10);
+      expect(h.world.snapshotPresentation().portraits).toEqual(before.portraits);
+      expect(h.world.snapshotPresentation().portraits[0]!.view.pose).toBeUndefined();
+      h.controller.update(750);
+      expect(h.world.inspectStage().camera.x).toBeCloseTo(20);
+      expect(h.world.snapshotPresentation().portraits[0]!.view.pose).toBeUndefined();
+    } finally { h.dispose(); }
+  });
+  it.each([1, 2] as const)('retains version %s nonlinear, overlapping and sequential camera writers at start, middle and end', async version => {
+    const a = await harness(null), b = await harness(null);
+    const definition: TimelineDefinition = { version, id: 'overlap', durationMs: 1250, tracks: [{ kind: 'camera', cues: [
+      { atMs: 0, durationMs: 1000, easing: 'outCubic', action: 'pan', x: 200, y: 100 },
+      { atMs: 250, durationMs: 500, easing: 'inOutSine', action: 'pan', x: -100, y: -50 },
+      { atMs: 0, durationMs: 500, easing: 'inOutCubic', action: 'zoom', scale: 2 },
+      { atMs: 500, durationMs: 500, easing: 'inOutSine', action: 'zoom', scale: .75 },
+    ] }] };
+    try {
+      for (const h of [a, b]) { h.timelines.register(definition); h.load('@timeline overlap @blocking\n完成。\n@end'); }
+      for (const step of [0, 250, 125, 125, 250, 250, 250]) {
+        a.controller.update(step); b.controller.update(step);
+        b.interpreter.loadSnapshot(JSON.parse(JSON.stringify(a.interpreter.saveSnapshot())));
+        expect(b.world.inspectStage().camera).toEqual(a.world.inspectStage().camera);
+      }
+      expect(b.world.inspectStage().camera).toEqual({ x: -100, y: -50, scale: .75 });
+      expect(b.interpreter.status).toBe('awaiting-advance');
+    } finally { a.dispose(); b.dispose(); }
+  });
+  it.each([1, 2] as const)('rejects version %s missing, invalid or mismatched camera origins before changing the running game', async version => {
+    const h = await harness(null);
+    try {
+      h.timelines.register(camera(version)); h.load('@timeline camera @blocking\n完成。\n@end'); h.controller.update(500);
+      const saved = JSON.parse(JSON.stringify(h.interpreter.saveSnapshot()));
+      h.controller.update(100);
+      const before = JSON.parse(JSON.stringify(h.interpreter.saveSnapshot()));
+      const corruptions = [
+        (value: typeof saved) => { value.presentation.payload.stage.motions.timelines = []; },
+        (value: typeof saved) => { value.presentation.payload.stage.version = 1; delete value.presentation.payload.stage.motions; },
+        (value: typeof saved) => { value.presentation.payload.stage = null; },
+        (value: typeof saved) => { value.presentation.payload.stage.motions.timelines[0][1].from.x = Number.NaN; },
+        (value: typeof saved) => { value.presentation.payload.stage.motions.timelines[0][1].from.x = 2001; },
+        (value: typeof saved) => { value.presentation.payload.stage.motions.timelines[0][1].to.x = 201; },
+        (value: typeof saved) => { value.presentation.payload.stage.motions.timelines[0][0] += 'wrong'; },
+        (value: typeof saved) => { value.presentation.payload.stage.motions.timelines.push(value.presentation.payload.stage.motions.timelines[0]); },
+        (value: typeof saved) => { value.presentation.payload.stage.motions.legacyCamera = 'invalid'; },
+      ];
+      for (const corrupt of corruptions) {
+        const value = JSON.parse(JSON.stringify(saved)); corrupt(value);
+        expect(() => h.interpreter.loadSnapshot(value)).toThrow();
+        const current = h.interpreter.saveSnapshot()!;
+        expect(current.presentation).toEqual(before.presentation);
+        expect(current.position).toMatchObject({ pc: before.position.pc, sceneId: before.position.sceneId });
+        expect(current.variables).toEqual(before.variables);
+        expect(h.interpreter.status).toBe('awaiting-timer');
+      }
+    } finally { h.dispose(); }
+  });
+  it.each(([1, 2] as const).flatMap(version => (['x', 'y', 'scale'] as const).map(property => ({ version, property }))))('rejects finite but inconsistent v$version camera $property origins without changing the running game', async ({ version, property }) => {
+    const h = await harness(null);
+    try {
+      h.timelines.register(camera(version)); h.load('@timeline camera @blocking\n完成。\n@end'); h.controller.update(500);
+      const saved = JSON.parse(JSON.stringify(h.interpreter.saveSnapshot()));
+      const motion = saved.presentation.payload.stage.motions.timelines.find(([, value]: [string, { from: Record<string, number> }]) => property in value.from)[1];
+      motion.from[property] = property === 'scale' ? 1.25 : 50;
+      h.controller.update(100);
+      const before = JSON.parse(JSON.stringify(h.interpreter.saveSnapshot()));
+      expect(() => h.interpreter.loadSnapshot(saved)).toThrow();
+      const current = h.interpreter.saveSnapshot()!;
+      expect(current.presentation).toEqual(before.presentation);
+      expect(current.position).toMatchObject({ pc: before.position.pc, sceneId: before.position.sceneId });
+      expect(current.variables).toEqual(before.variables);
+      expect(h.interpreter.status).toBe('awaiting-timer');
+    } finally { h.dispose(); }
+  });
+  it.each(([1, 2] as const).flatMap(version => (['pan', 'zoom'] as const).map(action => ({ version, action }))))('rejects a missing v$version $action origin at the endpoint before it steals a later cue ownership', async ({ version, action }) => {
+    const h = await harness(null);
+    try {
+      const definition: TimelineDefinition = { version, id: 'endpoints', durationMs: 1250, tracks: [{ kind: 'camera', cues: [
+        { atMs: 0, durationMs: 500, easing: 'linear', action: 'pan', x: 200, y: 100 },
+        { atMs: 0, durationMs: 500, easing: 'linear', action: 'zoom', scale: 2 },
+        { atMs: 250, durationMs: 1000, easing: 'linear', action: 'pan', x: -100, y: -50 },
+        { atMs: 250, durationMs: 1000, easing: 'linear', action: 'zoom', scale: .75 },
+      ] }] };
+      h.timelines.register(definition); h.load('@timeline endpoints @blocking\n完成。\n@end');
+      h.controller.update(250); h.controller.update(250);
+      const saved = JSON.parse(JSON.stringify(h.interpreter.saveSnapshot()));
+      saved.presentation.payload.stage.motions.timelines = saved.presentation.payload.stage.motions.timelines.filter(
+        ([, motion]: [string, { to: Record<string, number> }]) => action === 'pan' ? motion.to.x !== 200 : motion.to.scale !== 2);
+      h.controller.update(50);
+      const before = JSON.parse(JSON.stringify(h.interpreter.saveSnapshot()));
+      expect(() => h.interpreter.loadSnapshot(saved)).toThrow();
+      const current = h.interpreter.saveSnapshot()!;
+      expect(current.presentation).toEqual(before.presentation);
+      expect(current.position).toMatchObject({ pc: before.position.pc, sceneId: before.position.sceneId });
+      expect(current.variables).toEqual(before.variables);
+      expect(h.interpreter.status).toBe('awaiting-timer');
+    } finally { h.dispose(); }
+  });
+  it('restores a later direct zoom without letting an earlier v1 camera cue regain scale ownership', async () => {
+    const h = await harness(null);
+    try {
+      h.timelines.register(camera(1)); h.load('@timeline camera @blocking\n完成。\n@end'); h.controller.update(250);
+      h.world.zoom(3, 500); h.controller.update(250);
+      expect(h.world.inspectStage().camera).toEqual({ x: 100, y: 50, scale: 2.125 });
+      const saved = JSON.parse(JSON.stringify(h.interpreter.saveSnapshot()));
+      h.interpreter.loadSnapshot(saved);
+      expect(h.world.inspectStage().camera).toEqual({ x: 100, y: 50, scale: 2.125 });
+      h.controller.update(500);
+      expect(h.world.inspectStage().camera).toEqual({ x: 200, y: 100, scale: 3 });
+      expect(h.interpreter.status).toBe('awaiting-advance');
+    } finally { h.dispose(); }
+  });
+  it('keeps a running direct zoom when a v1 pan claims only position, including a mid-motion load', async () => {
+    const h = await harness(null);
+    try {
+      const definition = camera(1); definition.tracks[0]!.cues.splice(1, 1);
+      h.timelines.register(definition); h.world.zoom(2, 1000);
+      h.load('@timeline camera @blocking\n完成。\n@end'); h.controller.update(500);
+      expect(h.world.inspectStage().camera).toEqual({ x: 100, y: 50, scale: 1.5 });
+      h.interpreter.loadSnapshot(JSON.parse(JSON.stringify(h.interpreter.saveSnapshot())));
+      expect(h.world.inspectStage().camera).toEqual({ x: 100, y: 50, scale: 1.5 });
+      h.controller.update(500);
+      expect(h.world.inspectStage().camera).toEqual({ x: 200, y: 100, scale: 2 });
+    } finally { h.dispose(); }
+  });
+  it('cancels current v1 camera cues on scene clear, retains future cues and resets ownership on a new run', async () => {
+    const h = await harness(null);
+    try {
+      const definition = camera(1);
+      definition.tracks[0]!.cues.push({ atMs: 600, durationMs: 200, easing: 'linear', action: 'pan', x: 40, y: 0 });
+      h.timelines.register(definition); h.load('@timeline camera\n第一句。\n@stage off\n清场。\n@end'); h.controller.update(300);
+      h.interpreter.advance();
+      expect(h.world.inspectStage().camera).toEqual({ x: 0, y: 0, scale: 1 });
+      h.interpreter.loadSnapshot(JSON.parse(JSON.stringify(h.interpreter.saveSnapshot())));
+      h.controller.update(200);
+      expect(h.world.inspectStage().camera).toEqual({ x: 0, y: 0, scale: 1 });
+      h.controller.update(300);
+      expect(h.world.inspectStage().camera).toEqual({ x: 40, y: 0, scale: 1 });
+      h.controller.update(200);
+      h.controller.resetSession(); h.interpreter.start('start'); h.controller.update(300);
+      expect(h.world.inspectStage().camera).toEqual({ x: 60, y: 30, scale: 1.3 });
+    } finally { h.dispose(); }
+  });
+  it('keeps reduced-motion camera settlement after save/load while preserving the v1 story clock and later portrait layout', async () => {
+    const h = await harness(null);
+    try {
+      const definition = camera(1);
+      definition.durationMs = 1200;
+      definition.tracks.push({ kind: 'portrait', target: 'rin:coat', cues: [
+        { atMs: 1100, durationMs: 0, easing: 'linear', action: 'show', expression: 'normal', position: 'left' },
+      ] });
+      h.timelines.register(definition); h.load('@timeline camera @blocking\n完成。\n@end'); h.controller.update(250);
+      h.world.setPresentationPreferences({ reducedMotion: true });
+      expect(h.world.inspectStage().camera).toEqual({ x: 200, y: 100, scale: 2 });
+      h.interpreter.loadSnapshot(JSON.parse(JSON.stringify(h.interpreter.saveSnapshot())));
+      h.world.setPresentationPreferences({ reducedMotion: false }); h.controller.update(250);
+      expect(h.world.inspectStage().camera).toEqual({ x: 200, y: 100, scale: 2 });
+      expect(h.interpreter.status).toBe('awaiting-timer');
+      h.controller.update(700);
+      expect(h.world.snapshotPresentation().portraits[0]!.view.pose).toBeUndefined();
+      expect(h.sprites().find(sprite => sprite.texture === h.normal)!.x).toBe(320);
+      expect(h.interpreter.status).toBe('awaiting-advance');
+    } finally { h.dispose(); }
+  });
+});
 
 describe('Stage composition through Core, Controller and the real World projection', () => {
   it.each([['dissolve', 1], ['rule', 1], ['dissolve', 2], ['rule', 2]] as const)('plays a screen-first %s cue in version %s, restores as completed and starts future cues', async (action, version) => {
