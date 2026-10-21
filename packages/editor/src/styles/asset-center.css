@@ -1019,14 +1019,14 @@
   gap: 8px;
 }
 
-.asset-relocation-actions .asset-relocation-primary {
+.asset-relocation .asset-relocation-primary {
   border-color: var(--surdet-action-primary);
   background: var(--surdet-action-primary);
   color: var(--surdet-text-on-accent);
   font-weight: 650;
 }
 
-.asset-relocation-actions .asset-relocation-primary:not(:disabled):hover {
+.asset-relocation .asset-relocation-primary:not(:disabled):hover {
   border-color: var(--surdet-action-primary-hover);
   background: var(--surdet-action-primary-hover);
   color: var(--surdet-text-on-accent);
