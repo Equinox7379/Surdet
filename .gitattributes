@@ -1,0 +1,7 @@
+# These five frozen inputs are referenced by the existing qualification summary.
+# Keep their bytes stable across Windows and Unix checkouts after redaction.
+docs/baselines/renderer-v4-q1-007-a-b-2026-08-10.json text eol=lf
+docs/baselines/renderer-v4-q2-007-b-a-2026-08-10.json text eol=lf
+docs/baselines/renderer-v4-q3-f7-a-b-2026-08-10.json text eol=lf
+docs/baselines/renderer-v4-q4-f7-b-a-2026-08-10.json text eol=lf
+docs/baselines/renderer-v4-q5-f7-same-root-2026-08-10.json text eol=lf
