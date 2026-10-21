@@ -337,7 +337,7 @@ export class FileSaveStore {
       }
     }
     for (const cand of this.#legacyCandidates(slot)) {
-      if (!fs.existsSync(cand)) continue;
+      if (cand.endsWith('.bak') || !fs.existsSync(cand)) continue;
       const snap = this.#readFile(cand); // 损坏 → 大声失败（不伪装成空槽位）
       if (snap === null) continue;
       this.#assertOwnedBy(snap, slot, cand); // 文件名巧合不转移所有权
@@ -372,18 +372,22 @@ export class FileSaveStore {
     const indexFile = this.indexPath();
     const mainBefore = existingFile === null ? null : fs.readFileSync(existingFile);
     const backupBefore = existingBackup === null ? null : fs.readFileSync(existingBackup);
+    // canonical 原件用于失败补偿；首次覆盖 legacy 时，上一版则来自有效且属于
+    // 当前槽位的旧主档。两者不能混用，否则补偿会凭空留下 canonical 主档。
+    const previousMain = mainBefore ?? this.#legacyMainBytesForBackup(slot);
     const indexBefore = fs.existsSync(indexFile) ? fs.readFileSync(indexFile) : null;
     const backupFile = `${file}.bak`;
     this.#setIndexEntry(index, slot, { ...data.meta, id: slot });
     const changed: Array<{ file: string; before: Buffer | null }> = [];
     try {
       this.#exactPhysicalEntry(path.basename(file));
-      writeFileAtomic(file, json);
+      // Publication may succeed before its caller reports an error.
       changed.push({ file, before: mainBefore });
-      if (mainBefore !== null) {
+      writeFileAtomic(file, json);
+      if (previousMain !== null) {
         this.#exactPhysicalEntry(path.basename(backupFile));
-        writeFileAtomic(backupFile, mainBefore);
         changed.push({ file: backupFile, before: backupBefore });
+        writeFileAtomic(backupFile, previousMain);
       }
       // 索引发布可能已改变文件后才报错，因此在调用前记录补偿内容。
       changed.push({ file: indexFile, before: indexBefore });
@@ -405,7 +409,8 @@ export class FileSaveStore {
     }
     // A5 懒迁移收尾：仅清理所有权已验证的 legacy 文件（历史碰撞中属于
     // 其他逻辑槽位的数据保持原样）；新写入恒落 canonical 物理身份。
-    try { this.#cleanupVerifiedLegacy(slot); }
+    // 只有替代备份和索引均已发布才清理；backup-only 的首次保存保留旧备份。
+    try { if (previousMain !== null) this.#cleanupVerifiedLegacy(slot); }
     catch (error) { console.warn(`存档已保存，旧格式副本暂未清理：${slot}`, error); }
   }
 
@@ -521,7 +526,23 @@ export class FileSaveStore {
     index[slot] = meta;
   }
 
-  /** 懒迁移清理：仅删除可读且所有权证明属于该槽位的 legacy 文件（主档与 .bak 独立验证）；
+  /** 首次覆盖仅从有效且属于当前槽位的 legacy 主档取得上一版；L1 优先于 L0。 */
+  #legacyMainBytesForBackup(slot: string): Buffer | null {
+    for (const cand of this.#legacyCandidates(slot)) {
+      if (cand.endsWith('.bak') || !fs.existsSync(cand)) continue;
+      try {
+        const snap = this.#readFile(cand);
+        if (snap === null || snap.meta?.id !== slot) continue;
+        assertValidSnapshot(snap, 'legacy');
+        return fs.readFileSync(cand);
+      } catch {
+        // 无法证明有效且归属本槽位的原件不作为备份来源，也不自动清理。
+      }
+    }
+    return null;
+  }
+
+  /** 懒迁移清理：仅删除有效且所有权证明属于该槽位的 legacy 文件（主档与 .bak 独立验证）；
    *  内容属于其他逻辑槽位（历史碰撞别名）→ 保持原样；损坏不可证明 → 保留。 */
   #cleanupVerifiedLegacy(slot: string): void {
     for (const cand of this.#legacyCandidates(slot)) {
@@ -529,6 +550,7 @@ export class FileSaveStore {
       let snap: SaveSnapshot | null = null;
       try {
         snap = this.#readFile(cand);
+        if (snap !== null) assertValidSnapshot(snap, 'legacy');
       } catch {
         continue;
       }
