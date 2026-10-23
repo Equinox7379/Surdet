@@ -339,6 +339,8 @@
       "host": "n/a",
       "tests": [
         "packages/renderer/test/transition-registry.test.ts",
+        "packages/core/test/timeline.test.ts",
+        "packages/renderer/test/integration/stage-runtime.test.ts",
         "packages/core/test/compiler.test.ts",
         "packages/cli/test/lint.test.ts"
       ],
@@ -347,7 +349,7 @@
         "docs/dsl-spec.md",
         "docs/AI-GUIDE.md"
       ],
-      "limitation": "五种内置转场含旧世界溶解dissolve；rule遮罩和时间轴转场尚未交付，自定义插件转场不在本批范围。"
+      "limitation": "六种内置转场含旧世界溶解dissolve与rule遮罩；时间轴v1/v2的screen轨道支持dissolve/rule，已开始的转场在读档/回退后视为完成，且不接管其他轨道属性；自定义插件转场不在本批范围。"
     },
     {
       "id": "player-shell-coordination",

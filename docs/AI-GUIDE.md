@@ -334,7 +334,7 @@ Editor「配置 → 文本与译稿」使用同一操作：读取目录→填写
 
 ### 从已有素材做一段有演出的剧情
 
-遮罩图片放在 `content/assets/rule/`。读取 `project.assets.rules` 核对唯一可用条目，从 `intelligence.items` 的 rule 条目复制 `usage.scene`，在修改背景/人物之后使用 `@transition rule 800 @rule="实际遮罩键" @soft=.15 @reverse=false`；减少动态立即显示新画面。缺图/重名/不支持格式校验报错，候选只接受基线已解析的 `asset:rule:键`。本批没有时间轴遮罩动作，别编造cue；详见[演出合同](presentation-effects-contract.md)。
+遮罩图片放在 `content/assets/rule/`。读取 `project.assets.rules` 核对唯一可用条目，从 `intelligence.items` 的 rule 条目复制 `usage.scene`，在修改背景/人物之后使用 `@transition rule 800 @rule="实际遮罩键" @soft=.15 @reverse=false`；减少动态立即显示新画面。缺图/重名/不支持格式校验报错，候选只接受基线已解析的 `asset:rule:键`。时间轴遮罩使用 screen 轨道的 rule cue，复制同一条目的 `usage.timeline`；参数与存读档边界见[演出合同的时间轴 screen 转场](presentation-effects-contract.md#时间轴-screen-转场)。
 
 先读取 `project.assets({ "view": "working" })`（未建草稿时用 project）。背景和立绘的可用条目带有 `usage.scene` 与 `usage.timeline`：前者是可直接放进 scene.create 的 blocks 或 scene.patch 的 insertAfter.blocks 的指令对象，后者是可放进 timeline.create 的 definition.tracks 的轨道。示例已经使用当前项目的真实键，并处理场景参数的引号，不要把 sourcePath 当成素材键，也不要去掉示例 args 内的引号。
 
