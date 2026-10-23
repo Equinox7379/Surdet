@@ -38,8 +38,8 @@
 
 ## 教程素材
 
-教程用的三张占位图在 [`tutorial-assets/`](tutorial-assets/) 里，是用程序画的色块，可以随意使用：
+教程使用的三张图片在 [`tutorial-assets/`](tutorial-assets/) 里。2026-10-17 已用新的日式动画背景和透明立绘替换原几何占位图；既有教程截图仍可能显示旧素材。图片由内置生图工具生成，来源与提示见[默认素材说明](../../packages/cli/templates/game/content/assets/README.md)：
 
 - `station_night.png`：雨夜车站背景
 - `platform_dawn.png`：清晨站台背景
-- `rin_coat_normal.png`：人物「凛」的占位立绘（透明背景）
+- `rin_coat_normal.png`：人物「凛」的外套立绘（透明背景）

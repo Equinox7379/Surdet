@@ -9,9 +9,18 @@
     "firstRunHint": "点击或空格继续 · Esc 打开菜单 · ↑ 回看上一句"
   },
   "characters": {
+    "rin": {
+      "name": "凛"
+    },
     "narrator": {
       "name": "旁白"
     }
+  },
+  "theme": {
+    "dialogSkin": "ui_dialog",
+    "buttonSkin": "ui_button",
+    "dialogMarginX": 24,
+    "dialogMarginBottom": 12
   },
   "variables": {
     "opened": {
