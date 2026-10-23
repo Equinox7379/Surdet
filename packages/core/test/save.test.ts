@@ -286,8 +286,10 @@ describe('assertValidSnapshot 当前 schema 严格校验', () => {
   it('严格验证 kind、meta、schemaVersion 和必需 gallery', () => {
     expect(() => assertValidSnapshot({ ...current(), kind: 'broken' })).toThrow(/kind/);
     expect(() => assertValidSnapshot({ ...current(), meta: { ...current().meta, id: 1 } })).toThrow(/meta\.id/);
-    expect(() => assertValidSnapshot({ ...current(), meta: { ...current().meta, createdAt: Number.NaN } })).toThrow(/createdAt/);
-    expect(() => assertValidSnapshot({ ...current(), meta: { ...current().meta, updatedAt: Number.POSITIVE_INFINITY } })).toThrow(/updatedAt/);
+    expect(() => assertValidSnapshot({ ...current(), meta: { ...current().meta, createdAt: Number.NaN } })).toThrow(/JSON/);
+    expect(() => assertValidSnapshot({ ...current(), meta: { ...current().meta, updatedAt: Number.POSITIVE_INFINITY } })).toThrow(/JSON/);
+    expect(() => assertValidSnapshot({ ...current(), meta: { ...current().meta, createdAt: '1' } })).toThrow(/createdAt/);
+    expect(() => assertValidSnapshot({ ...current(), meta: { ...current().meta, updatedAt: '2' } })).toThrow(/updatedAt/);
     expect(() => assertValidSnapshot({ ...current(), meta: { ...current().meta, schemaVersion: 1.5 } })).toThrow(/schemaVersion/);
     expect(() => assertValidSnapshot({ ...current(), meta: { ...current().meta, schemaVersion: -1 } })).toThrow(/schemaVersion/);
     expect(() => assertValidSnapshot({ ...current(), gallery: undefined })).toThrow(/gallery/);
@@ -295,7 +297,11 @@ describe('assertValidSnapshot 当前 schema 严格校验', () => {
 
   it('严格验证 gallery.texts、position.pc 和 callStack.pc', () => {
     expect(() => assertValidSnapshot({ ...current(), gallery: { cgs: [], music: [], texts: [1] } })).toThrow(/gallery\.texts/);
-    for (const pc of [Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5]) {
+    for (const pc of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => assertValidSnapshot({ ...current(), position: { sceneId: 'ch01', pc } })).toThrow(/JSON/);
+      expect(() => assertValidSnapshot({ ...current(), callStack: [{ sceneId: 'ch01', pc }] })).toThrow(/JSON/);
+    }
+    for (const pc of [-1, 1.5, '3']) {
       expect(() => assertValidSnapshot({ ...current(), position: { sceneId: 'ch01', pc } })).toThrow(/position\.pc/);
       expect(() => assertValidSnapshot({ ...current(), callStack: [{ sceneId: 'ch01', pc }] })).toThrow(/callStack.*pc/);
     }
@@ -303,10 +309,12 @@ describe('assertValidSnapshot 当前 schema 严格校验', () => {
 
   it('严格验证 growth 数值和 systems.newGamePlus 的 JSON 安全性', () => {
     for (const value of [Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(() => assertValidSnapshot({ ...current(), growth: { levels: { lynn: value } } })).toThrow(/growth\.levels/);
-      expect(() => assertValidSnapshot({ ...current(), growth: { experience: { lynn: value } } })).toThrow(/growth\.experience/);
+      expect(() => assertValidSnapshot({ ...current(), growth: { levels: { lynn: value } } })).toThrow(/JSON/);
+      expect(() => assertValidSnapshot({ ...current(), growth: { experience: { lynn: value } } })).toThrow(/JSON/);
     }
-    expect(() => assertValidSnapshot({ ...current(), systems: { newGamePlus: () => 'unsafe' } })).toThrow(/newGamePlus/);
+    expect(() => assertValidSnapshot({ ...current(), growth: { levels: { lynn: '2' } } })).toThrow(/growth\.levels/);
+    expect(() => assertValidSnapshot({ ...current(), growth: { experience: { lynn: '3' } } })).toThrow(/growth\.experience/);
+    expect(() => assertValidSnapshot({ ...current(), systems: { newGamePlus: () => 'unsafe' } })).toThrow(/JSON/);
   });
 
   it('允许当前 v3 合法快照和可 JSON 序列化的无原型对象', () => {

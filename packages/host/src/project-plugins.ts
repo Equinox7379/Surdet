@@ -192,7 +192,7 @@ export class ProjectPluginHost {
       const prepared = new Map<string, unknown>(); this.#preparing = true;
       try {
         for (const [id, plugin] of this.#loaded) if (plugin.definition.state) {
-          const saved = snapshot[id];
+          const saved = Object.hasOwn(snapshot, id) ? snapshot[id] : undefined;
           let value: unknown;
           try { value = saved ? (plugin.definition.state.restore ? plugin.definition.state.restore(clone(saved.value)) : saved.value) : plugin.definition.state.initial; }
           catch (cause) { throw new Error(`PLUGIN_STATE：插件 ${id} 状态恢复失败：${String(cause)}`, { cause }); }

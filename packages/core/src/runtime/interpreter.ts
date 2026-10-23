@@ -591,7 +591,8 @@ export class Interpreter {
     this.#presentationHooks?.validate?.(snap.presentation?.payload ?? null);
     const restoredVariables = { ...Object.fromEntries(this.#store.declarations().map(decl => [decl.name, decl.initial])), ...snap.variables };
     this.#store.validateRestore(restoredVariables, { allowReadonly: true });
-    if (snap.growth && this.#growth) this.#growth.validateSnapshot(snap.growth);
+    const restoredGrowth = snap.growth ?? { levels: {}, experience: {} };
+    this.#growth?.validateSnapshot(restoredGrowth);
     if (snap.random !== undefined) {
       if (this.#randomSource.restore === undefined) {
         throw new RuntimeError('该存档包含 seeded 随机状态，但当前解释器没有可恢复的随机源');
@@ -620,7 +621,7 @@ export class Interpreter {
     this.readTracker.restore(snap.readSet);
     this.gallery.restore(snap.gallery);
     this.clearTracker.restore(snap.clears); // 旧档无 clears 字段按未通关
-    this.#growth?.restore(snap.growth ?? { levels: {}, experience: {} }); // 旧档无 growth 按配置初值恢复
+    this.#growth?.restore(restoredGrowth); // 旧档无 growth 按配置初值恢复
     this.#systemHooks.restore?.(snap.systems ?? {});
     this.#pendingChoice = null;
     // v1 旧档无 callStack 字段 → 按空栈加载（@call 引入前的存档不受影响）
@@ -1295,7 +1296,8 @@ export class Interpreter {
       case 'clear': {
         // @clear [结局ID]：周目通关记录。缺省结局标识 = 当前场景 ID（多结局各放一条 @clear）。
         // 引擎只记录与广播；全局通关记录（跨周目）由宿主在 clear 事件回调中落盘。
-        const ending = (arg0 === undefined ? '' : dequoteInstrArg(arg0)) || this.#scene!.sceneId;
+        const explicitEnding = arg0 === undefined ? '' : dequoteInstrArg(arg0);
+        const ending = explicitEnding.trim() ? explicitEnding : this.#scene!.sceneId;
         const fresh = this.clearTracker.markClear(ending);
         this.#bus.emit('clear', { ending, fresh });
         return;

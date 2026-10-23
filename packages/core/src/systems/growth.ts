@@ -209,8 +209,10 @@ export class GrowthSystem {
 
   validateSnapshot(snap: GrowthSnapshot): void {
     for (const profile of this.#config.profiles) {
-      const level = snap.levels?.[profile.characterId];
-      const xp = snap.experience?.[profile.characterId];
+      const level = snap.levels && Object.hasOwn(snap.levels, profile.characterId)
+        ? snap.levels[profile.characterId] : undefined;
+      const xp = snap.experience && Object.hasOwn(snap.experience, profile.characterId)
+        ? snap.experience[profile.characterId] : undefined;
       if (level !== undefined && (!Number.isSafeInteger(level) || level < 1
         || (profile.maxLevel !== undefined && level > profile.maxLevel))) {
         throw new Error(`GrowthSystem: '${profile.characterId}' 存档等级非法`);

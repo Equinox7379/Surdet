@@ -13,7 +13,7 @@ function localeChain(locale: Locale, fallback: Locale): string[] {
 
 function interpolate(value: string, params: Readonly<Record<string, string | number>>): string {
   return value.replace(/\{([A-Za-z0-9_.-]+)\}/g, (match, key: string) => {
-    const result = params[key];
+    const result = Object.hasOwn(params, key) ? params[key] : undefined;
     return result === undefined ? match : String(result);
   });
 }
@@ -37,7 +37,8 @@ export class Localizer {
 
   t(key: string, params: Readonly<Record<string, string | number>> = {}): string {
     for (const locale of localeChain(this.#locale, this.#fallback)) {
-      const value = this.#catalogs.get(locale)?.[key];
+      const catalog = this.#catalogs.get(locale);
+      const value = catalog && Object.hasOwn(catalog, key) ? catalog[key] : undefined;
       if (value !== undefined) return interpolate(value, params);
     }
     return key;

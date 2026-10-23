@@ -37,7 +37,7 @@ export interface CombatSkillDef {
   hit: number;
   /**
    * 特殊效果标记（扩展点，宿主可自定义消费）。引擎内置：
-   *  - `'long'`：射程视为 99（无视距离攻击），见 act() 的射程判定。
+   *  - `'long'`：射程视为 99，见 act() 的射程判定。
    */
   effects?: string[];
 }
@@ -334,11 +334,12 @@ export class CombatSolver {
     if (!unit.alive) return false;
     for (const t of this.#units) {
       if (!t.alive || t.team === unit.team) continue;
-      if (Math.abs(unit.position - t.position) <= unit.range) return true;
-      // 超出普攻射程时，仅 'long' 技能（无视距离）且冷却就绪才可行动
+      const distance = Math.abs(unit.position - t.position);
+      if (distance <= unit.range) return true;
+      // 超出普攻射程时，'long' 技能仍须满足 99 射程且冷却就绪。
       for (const sid of unit.skills) {
         const s = this.#config.skills.find((x) => x.id === sid);
-        if (s?.effects?.includes('long') && (unit.cooldowns.get(sid) ?? 0) <= 0) return true;
+        if (s?.effects?.includes('long') && distance <= 99 && (unit.cooldowns.get(sid) ?? 0) <= 0) return true;
       }
     }
     return false;
@@ -389,11 +390,15 @@ export class CombatSolver {
         const s = this.#config.skills.find((x) => x.id === sid);
         return !!s && !!s.effects?.includes('long');
       });
-      const pool = inRange.length > 0 ? inRange : longReady.length > 0 ? enemies : [];
+      const pool = inRange.length > 0 ? inRange
+        : longReady.length > 0 ? enemies.filter(t => Math.abs(u.position - t.position) <= 99) : [];
       if (pool.length > 0) {
         const target = [...pool].sort((a, b) => a.hp - b.hp)[0]!;
         let skillId: string | null = null;
-        if (inRange.includes(target)) skillId = readySkills[0] ?? null;
+        if (inRange.includes(target)) skillId = readySkills.find(sid => {
+          const skill = this.#config.skills.find(s => s.id === sid);
+          return !skill?.effects?.includes('long') || Math.abs(u.position - target.position) <= 99;
+        }) ?? null;
         else skillId = longReady[0] ?? null;
         return { kind: 'attack', attackerUid: u.uid, targetUid: target.uid, skillId };
       }

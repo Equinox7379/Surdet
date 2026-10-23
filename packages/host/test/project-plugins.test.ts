@@ -20,6 +20,30 @@ async function runtime(def = definition(), source = '@count 2\n第一句。\n@pa
   return { plugins, interpreter, store, host, bus };
 }
 describe('trusted project plugin host', () => {
+  it.each(['reset', 'missing snapshot'])('CH-02 restores own constructor state then uses initial state for %s', async action => {
+    const declarations = readProjectPlugins({ plugins: [{ id: 'constructor', entry: 'plugins/constructor.ts', apiVersion: 1, stateVersion: 1, instructions: [] }] });
+    const restore = vi.fn((value: unknown) => value);
+    const plugins = await ProjectPluginHost.load(declarations, {
+      trustedIds: ['constructor'],
+      loadEntry: async () => ({ default: () => ({ apiVersion: 1, instructions: {}, state: {
+        initial: 3,
+        validate(value) { if (typeof value !== 'number') throw new Error('expected number'); },
+        restore,
+      } }) }),
+    });
+    try {
+      plugins.hooks.prepareRestore(JSON.parse('{"constructor":{"version":1,"value":8}}'))();
+      expect(plugins.hooks.snapshot()).toEqual({ ['constructor']: { version: 1, value: 8 } });
+      expect(restore).toHaveBeenCalledExactlyOnceWith(8);
+      expect(() => plugins.hooks.prepareRestore({ ['constructor']: { version: 2, value: 9 } })).toThrow('PLUGIN_VERSION');
+      expect(() => plugins.hooks.prepareRestore({ ['constructor']: { version: 1, value: 'invalid' } })).toThrow('PLUGIN_STATE');
+      expect(plugins.hooks.snapshot()).toEqual({ ['constructor']: { version: 1, value: 8 } });
+      if (action === 'reset') plugins.resetState();
+      else plugins.hooks.prepareRestore({})();
+      expect(plugins.hooks.snapshot()).toEqual({ ['constructor']: { version: 1, value: 3 } });
+    } finally { plugins.dispose(); }
+  });
+
   it('does not import untrusted code, and refuses missing entries or incompatible modules', async () => {
     const loadEntry = vi.fn(); const plugins = await ProjectPluginHost.load(declarations, { trustedIds: [], loadEntry });
     expect(loadEntry).not.toHaveBeenCalled(); plugins.dispose();
